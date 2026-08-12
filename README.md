@@ -59,6 +59,30 @@ cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 python scripts/make_mock_portfolio.py   # regenerate data/portfolio.xlsx if needed
 ```
 
+## Running tests
+
+```bash
+.venv/Scripts/pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest
+```
+
+65 tests in `tests/`, covering every module in `app/` including a mocked-model
+regression suite for the chat loop (`tests/test_chat_turn.py`). The suite is
+fully hermetic: no real `ANTHROPIC_API_KEY` is required and no network call
+is ever made — `call_reasoning_model` is mocked in every test that touches
+the chat loop, and `tests/conftest.py` sets a dummy key before any app module
+is imported (importing `app.model_gateway` alone requires *a* key to be set,
+since it constructs the Anthropic client at import time). All persisted
+state (`permissions.json`, `privacy_preferences.json`, `audit_log.jsonl`,
+`data/portfolio.xlsx`) is redirected to `tmp_path` fixtures per test, so
+tests never touch your real local data.
+
+Writing the tests surfaced one real bug, fixed as part of this work:
+`PrivacyPreferenceStore.list_all()` did a shallow `dict()` copy, so a caller
+mutating a returned entry (e.g. `entries["k"]["disposition"] = ...`) would
+silently corrupt the store's actual in-memory state. Fixed to copy each
+entry too.
+
 ## Run
 
 ```bash

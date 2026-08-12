@@ -53,4 +53,4 @@ class PrivacyPreferenceStore:
         return False
 
     def list_all(self) -> dict:
-        return dict(self._state)
+        return {key: dict(entry) for key, entry in self._state.items()}
