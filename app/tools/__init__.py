@@ -1,6 +1,7 @@
 """Tool schema list + dispatcher, same shape as vibe-agent's backend/tools.py
 and cinema's app/assistant.py tool wiring."""
 
+from ..audit import AuditLog
 from ..permissions import PermissionManager
 from ..privacy_preferences import PrivacyPreferenceStore
 from .portfolio import retrieve_portfolio
@@ -20,8 +21,12 @@ TOOLS = [
 
 
 def execute_tool(
-    name: str, permissions: PermissionManager, preferences: PrivacyPreferenceStore, allow_once: bool = False
+    name: str,
+    permissions: PermissionManager,
+    preferences: PrivacyPreferenceStore,
+    audit_log: AuditLog,
+    allow_once: bool = False,
 ) -> dict:
     if name == "retrieve_portfolio":
-        return retrieve_portfolio(permissions, preferences, allow_once=allow_once)
+        return retrieve_portfolio(permissions, preferences, audit_log, allow_once=allow_once)
     raise ValueError(f"Unknown tool: {name}")

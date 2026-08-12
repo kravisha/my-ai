@@ -14,9 +14,11 @@ import pytest
 from openpyxl import Workbook
 
 from app import permissions as permissions_module
-from app import audit as audit_module
+from app.audit import AuditLog
 from app.permissions import PermissionManager
 from app.privacy_preferences import PrivacyPreferenceStore
+from app.session import SessionStore
+from app.users import UserStore
 
 TEST_ACCOUNT_ID = "ACCT-TEST-99999"
 
@@ -37,10 +39,18 @@ def preferences_store(tmp_path):
 
 
 @pytest.fixture
-def isolated_audit_log(tmp_path, monkeypatch):
-    log_path = tmp_path / "audit_log.jsonl"
-    monkeypatch.setattr(audit_module, "AUDIT_LOG_PATH", log_path)
-    return log_path
+def isolated_audit_log(tmp_path):
+    return AuditLog(path=tmp_path / "audit_log.jsonl")
+
+
+@pytest.fixture
+def users_store(tmp_path):
+    return UserStore(path=tmp_path / "users.json")
+
+
+@pytest.fixture
+def session_store(tmp_path):
+    return SessionStore(path=tmp_path / "session.json")
 
 
 @pytest.fixture

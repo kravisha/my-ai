@@ -5,4 +5,7 @@ __pycache__/
 permissions.json
 audit_log.jsonl
 privacy_preferences.json
+users.json
+session.json
+user_data/
 .pytest_cache/

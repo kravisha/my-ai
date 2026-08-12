@@ -1,22 +1,32 @@
-"""My AI - Milestone 1/2 CLI.
+"""My AI - Milestone 1/2/3 CLI.
 
 Interactive loop: `grant <resource>` / `revoke <resource>` / `show
-preferences` / `reset preference <key>` are handled directly (permission and
-disposition intent are not parsed from freeform text - deliberately out of
-scope, see the milestone plans). Everything else is routed through the
-tool-use loop, where the model decides if/when it needs a tool, and the tool
-itself enforces layer-1 permission. If the tool reports that a layer-2
-forwarding disposition is still needed, this loop pauses *before* telling
-the model anything, asks the user directly, stores the answer, and only
-then continues - the model never participates in the consent negotiation.
+preferences` / `reset preference <key>` / `logout` are handled directly
+(permission and disposition intent are not parsed from freeform text -
+deliberately out of scope, see the milestone plans). Everything else is
+routed through the tool-use loop, where the model decides if/when it needs a
+tool, and the tool itself enforces layer-1 permission. If the tool reports
+that a layer-2 forwarding disposition is still needed, this loop pauses
+*before* telling the model anything, asks the user directly, stores the
+answer, and only then continues - the model never participates in the
+consent negotiation.
+
+Milestone 3 adds a login/register step before any of the above: every
+resource is now scoped to the authenticated user (see users.py/session.py),
+so two accounts never share permission, preference, or audit state even
+though they may read the same underlying demo file.
 """
 
+import getpass
 import json
 
+from .audit import AuditLog
 from .model_gateway import call_reasoning_model
 from .permissions import RESOURCE_PATHS, PermissionManager
 from .privacy_preferences import PrivacyPreferenceStore
+from .session import SessionStore
 from .tools import TOOLS, execute_tool
+from .users import UserStore, ensure_user_data_dir, normalize_username
 
 SYSTEM_PROMPT = (
     "You are My AI, a personal assistant with access to the user's local data "
@@ -35,6 +45,46 @@ SYSTEM_PROMPT = (
     "You never have access to the user's account ID - if asked, say so plainly "
     "rather than inventing one."
 )
+
+
+def handle_auth(users: UserStore, sessions: SessionStore) -> str:
+    username = sessions.validate()
+    if username is not None:
+        print(f"Welcome back, {username}.")
+        return username
+
+    try:
+        while True:
+            choice = input("[My AI] Login or register? [login/register] > ").strip().lower()
+            if choice == "register":
+                reg_username = input("Choose a username: ").strip()
+                password = getpass.getpass("Choose a password: ")
+                confirm = getpass.getpass("Confirm password: ")
+                if password != confirm:
+                    print("Passwords did not match, please try again.")
+                    continue
+                try:
+                    normalized = users.register(reg_username, password)
+                except ValueError as e:
+                    print(f"Could not register: {e}")
+                    continue
+                sessions.create(normalized)
+                print(f"Registered and logged in as {normalized}.")
+                return normalized
+            if choice == "login":
+                login_username = input("Username: ").strip()
+                password = getpass.getpass("Password: ")
+                if not users.authenticate(login_username, password):
+                    print("Invalid username or password.")
+                    continue
+                normalized = normalize_username(login_username)
+                sessions.create(normalized)
+                print(f"Logged in as {normalized}.")
+                return normalized
+            print("Please answer 'login' or 'register'.")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise SystemExit(0)
 
 
 def handle_grant_revoke(command: str, permissions: PermissionManager) -> bool:
@@ -90,7 +140,13 @@ def resolve_consent(result: dict, preferences: PrivacyPreferenceStore) -> str:
         print("Please answer 'always', 'once', or 'never'.")
 
 
-def chat_turn(user_input: str, messages: list, permissions: PermissionManager, preferences: PrivacyPreferenceStore) -> None:
+def chat_turn(
+    user_input: str,
+    messages: list,
+    permissions: PermissionManager,
+    preferences: PrivacyPreferenceStore,
+    audit_log: AuditLog,
+) -> None:
     messages.append({"role": "user", "content": user_input})
 
     while True:
@@ -106,10 +162,12 @@ def chat_turn(user_input: str, messages: list, permissions: PermissionManager, p
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            result = execute_tool(block.name, permissions, preferences)
+            result = execute_tool(block.name, permissions, preferences, audit_log)
             if result.get("status") == "needs_consent":
                 answer = resolve_consent(result, preferences)
-                result = execute_tool(block.name, permissions, preferences, allow_once=(answer == "once"))
+                result = execute_tool(
+                    block.name, permissions, preferences, audit_log, allow_once=(answer == "once")
+                )
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -122,11 +180,18 @@ def chat_turn(user_input: str, messages: list, permissions: PermissionManager, p
 
 
 def main() -> None:
-    permissions = PermissionManager()
-    preferences = PrivacyPreferenceStore()
+    users = UserStore()
+    sessions = SessionStore()
+    username = handle_auth(users, sessions)
+
+    user_dir = ensure_user_data_dir(username)
+    permissions = PermissionManager(path=user_dir / "permissions.json")
+    preferences = PrivacyPreferenceStore(path=user_dir / "privacy_preferences.json")
+    audit_log = AuditLog(path=user_dir / "audit_log.jsonl")
     messages: list = []
-    print("My AI (Milestone 2). Commands: 'grant portfolio', 'revoke portfolio', "
-          "'show preferences', 'reset preference <key>', or ask a question. Ctrl+C to quit.")
+    print(f"My AI (Milestone 3). Logged in as {username}. Commands: 'grant portfolio', "
+          "'revoke portfolio', 'show preferences', 'reset preference <key>', 'logout', "
+          "or ask a question. Ctrl+C to quit.")
 
     while True:
         try:
@@ -137,11 +202,15 @@ def main() -> None:
 
         if not user_input:
             continue
+        if user_input == "logout":
+            sessions.revoke()
+            print("Logged out.")
+            break
         if handle_grant_revoke(user_input, permissions):
             continue
         if handle_preference_commands(user_input, preferences):
             continue
-        chat_turn(user_input, messages, permissions, preferences)
+        chat_turn(user_input, messages, permissions, preferences, audit_log)
 
 
 if __name__ == "__main__":

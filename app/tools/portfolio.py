@@ -15,7 +15,7 @@ layer 2 at all, regardless of disposition.
 
 from openpyxl import load_workbook
 
-from .. import audit
+from ..audit import AuditLog
 from ..permissions import RESOURCE_PATHS, PermissionManager
 from ..privacy_filter import sanitize_portfolio_rows
 from ..privacy_preferences import PrivacyPreferenceStore
@@ -30,10 +30,13 @@ CONSENT_PROMPT = (
 
 
 def retrieve_portfolio(
-    permissions: PermissionManager, preferences: PrivacyPreferenceStore, allow_once: bool = False
+    permissions: PermissionManager,
+    preferences: PrivacyPreferenceStore,
+    audit_log: AuditLog,
+    allow_once: bool = False,
 ) -> dict:
     if not permissions.is_granted(RESOURCE):
-        audit.record(
+        audit_log.record(
             action="retrieve_portfolio",
             resource=RESOURCE,
             authorized=False,
@@ -45,7 +48,7 @@ def retrieve_portfolio(
     if disposition is None:
         if allow_once:
             sanitized = _read_and_sanitize()
-            audit.record(
+            audit_log.record(
                 action="retrieve_portfolio",
                 resource=RESOURCE,
                 authorized=True,
@@ -55,7 +58,7 @@ def retrieve_portfolio(
         return {"status": "needs_consent", "consent_key": FORWARDING_KEY, "prompt": CONSENT_PROMPT}
 
     if disposition == "never":
-        audit.record(
+        audit_log.record(
             action="retrieve_portfolio",
             resource=RESOURCE,
             authorized=False,
@@ -64,7 +67,7 @@ def retrieve_portfolio(
         return {"error": "You've asked me not to share portfolio data with the reasoning model."}
 
     sanitized = _read_and_sanitize()
-    audit.record(
+    audit_log.record(
         action="retrieve_portfolio",
         resource=RESOURCE,
         authorized=True,

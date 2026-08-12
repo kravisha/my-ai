@@ -16,12 +16,12 @@ def test_tools_schema_entries_have_required_keys():
         assert tool["input_schema"]["type"] == "object"
 
 
-def test_execute_tool_dispatches_retrieve_portfolio(permissions_store, preferences_store, mock_portfolio_path):
+def test_execute_tool_dispatches_retrieve_portfolio(permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log):
     permissions_store.grant("portfolio")
-    result = execute_tool("retrieve_portfolio", permissions_store, preferences_store)
+    result = execute_tool("retrieve_portfolio", permissions_store, preferences_store, isolated_audit_log)
     assert result["status"] == "needs_consent"
 
 
-def test_execute_tool_unknown_name_raises(permissions_store, preferences_store):
+def test_execute_tool_unknown_name_raises(permissions_store, preferences_store, isolated_audit_log):
     with pytest.raises(ValueError):
-        execute_tool("not_a_real_tool", permissions_store, preferences_store)
+        execute_tool("not_a_real_tool", permissions_store, preferences_store, isolated_audit_log)

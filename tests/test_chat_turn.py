@@ -55,16 +55,16 @@ def _extract_tool_results(messages):
     return results
 
 
-def test_simple_text_reply_prints_and_returns(monkeypatch, capsys, permissions_store, preferences_store):
+def test_simple_text_reply_prints_and_returns(monkeypatch, capsys, permissions_store, preferences_store, isolated_audit_log):
     monkeypatch.setattr("app.main.call_reasoning_model", MagicMock(return_value=text_response("Hello!")))
 
-    chat_turn("hi", [], permissions_store, preferences_store)
+    chat_turn("hi", [], permissions_store, preferences_store, isolated_audit_log)
 
     assert "Hello!" in capsys.readouterr().out
 
 
 def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     permissions_store.grant("portfolio")
     preferences_store.set(FORWARDING_KEY, "always")
@@ -73,7 +73,7 @@ def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
 
     messages = []
-    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log)
 
     assert call_model.call_count == 2
     tool_results = _extract_tool_results(messages)
@@ -84,7 +84,7 @@ def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(
 
 
 def test_tool_use_needing_consent_pauses_for_input_then_continues(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     permissions_store.grant("portfolio")
     monkeypatch.setattr("builtins.input", lambda _: "always")
@@ -93,7 +93,7 @@ def test_tool_use_needing_consent_pauses_for_input_then_continues(
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
 
     messages = []
-    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log)
 
     assert preferences_store.get(FORWARDING_KEY) == "always"
     tool_results = _extract_tool_results(messages)
@@ -103,7 +103,7 @@ def test_tool_use_needing_consent_pauses_for_input_then_continues(
 
 
 def test_tool_use_answered_once_returns_holdings_without_persisting(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     """Regression test for the bug where answering 'once' never actually
     granted the pending call - execute_tool was re-invoked with no way to
@@ -117,7 +117,7 @@ def test_tool_use_answered_once_returns_holdings_without_persisting(
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
 
     messages = []
-    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log)
 
     assert preferences_store.get(FORWARDING_KEY) is None
     tool_results = _extract_tool_results(messages)
@@ -128,7 +128,7 @@ def test_tool_use_answered_once_returns_holdings_without_persisting(
 
 
 def test_denial_reasons_reach_the_model_verbatim_and_distinctly(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     """Regression test for the bug where both denial kinds were narrated
     identically - the raw tool_result payload passed to the model must
@@ -137,7 +137,7 @@ def test_denial_reasons_reach_the_model_verbatim_and_distinctly(
     call_model = MagicMock(side_effect=[tool_use_response(), text_response("denied")])
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
     messages_not_granted = []
-    chat_turn("Analyze my portfolio", messages_not_granted, permissions_store, preferences_store)
+    chat_turn("Analyze my portfolio", messages_not_granted, permissions_store, preferences_store, isolated_audit_log)
     not_granted_error = json.loads(_extract_tool_results(messages_not_granted)[0]["content"])["error"]
     assert _extract_tool_results(messages_not_granted)[0]["is_error"] is True
 
@@ -145,7 +145,7 @@ def test_denial_reasons_reach_the_model_verbatim_and_distinctly(
     preferences_store.set(FORWARDING_KEY, "never")
     call_model.side_effect = [tool_use_response(), text_response("denied")]
     messages_never = []
-    chat_turn("Analyze my portfolio", messages_never, permissions_store, preferences_store)
+    chat_turn("Analyze my portfolio", messages_never, permissions_store, preferences_store, isolated_audit_log)
     never_error = json.loads(_extract_tool_results(messages_never)[0]["content"])["error"]
     assert _extract_tool_results(messages_never)[0]["is_error"] is True
 
@@ -153,7 +153,7 @@ def test_denial_reasons_reach_the_model_verbatim_and_distinctly(
 
 
 def test_each_chat_turn_call_invokes_the_model_fresh_no_client_side_cache(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     """Two separate chat_turn calls for the same kind of question must each
     trigger their own model call and, when the model asks for the tool,
@@ -169,15 +169,15 @@ def test_each_chat_turn_call_invokes_the_model_fresh_no_client_side_cache(
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
 
     messages = []
-    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
-    chat_turn("What price did I buy NVDA at?", messages, permissions_store, preferences_store)
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log)
+    chat_turn("What price did I buy NVDA at?", messages, permissions_store, preferences_store, isolated_audit_log)
 
     assert call_model.call_count == 4
     assert len(_extract_tool_results(messages)) == 2
 
 
 def test_permission_revoked_between_turns_is_reflected_in_the_next_tool_call(
-    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
 ):
     """The concrete case the first Milestone 2 bug was about: state changes
     between turns (here, revoke) must be visible to the very next tool call,
@@ -188,12 +188,12 @@ def test_permission_revoked_between_turns_is_reflected_in_the_next_tool_call(
     call_model = MagicMock(side_effect=[tool_use_response(), text_response("Here you go.")])
     monkeypatch.setattr("app.main.call_reasoning_model", call_model)
     messages = []
-    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log)
     assert "holdings" in json.loads(_extract_tool_results(messages)[0]["content"])
 
     permissions_store.revoke("portfolio")
     call_model.side_effect = [tool_use_response(), text_response("Can't help with that.")]
-    chat_turn("Analyze my portfolio", messages, permissions_store, preferences_store)
+    chat_turn("Analyze my portfolio", messages, permissions_store, preferences_store, isolated_audit_log)
 
     second_result = json.loads(_extract_tool_results(messages)[1]["content"])
     assert "error" in second_result
