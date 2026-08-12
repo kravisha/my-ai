@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+permissions.json
+audit_log.jsonl
+privacy_preferences.json
