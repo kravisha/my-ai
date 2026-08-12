@@ -29,7 +29,9 @@ CONSENT_PROMPT = (
 )
 
 
-def retrieve_portfolio(permissions: PermissionManager, preferences: PrivacyPreferenceStore) -> dict:
+def retrieve_portfolio(
+    permissions: PermissionManager, preferences: PrivacyPreferenceStore, allow_once: bool = False
+) -> dict:
     if not permissions.is_granted(RESOURCE):
         audit.record(
             action="retrieve_portfolio",
@@ -41,6 +43,15 @@ def retrieve_portfolio(permissions: PermissionManager, preferences: PrivacyPrefe
 
     disposition = preferences.get(FORWARDING_KEY)
     if disposition is None:
+        if allow_once:
+            sanitized = _read_and_sanitize()
+            audit.record(
+                action="retrieve_portfolio",
+                resource=RESOURCE,
+                authorized=True,
+                result=f"returned {len(sanitized)} holdings (one-time consent, not persisted)",
+            )
+            return {"holdings": sanitized}
         return {"status": "needs_consent", "consent_key": FORWARDING_KEY, "prompt": CONSENT_PROMPT}
 
     if disposition == "never":

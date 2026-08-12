@@ -19,7 +19,9 @@ TOOLS = [
 ]
 
 
-def execute_tool(name: str, permissions: PermissionManager, preferences: PrivacyPreferenceStore) -> dict:
+def execute_tool(
+    name: str, permissions: PermissionManager, preferences: PrivacyPreferenceStore, allow_once: bool = False
+) -> dict:
     if name == "retrieve_portfolio":
-        return retrieve_portfolio(permissions, preferences)
+        return retrieve_portfolio(permissions, preferences, allow_once=allow_once)
     raise ValueError(f"Unknown tool: {name}")

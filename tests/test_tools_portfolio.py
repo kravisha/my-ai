@@ -99,6 +99,31 @@ def test_disposition_always_is_audited_as_authorized(permissions_store, preferen
     assert entry["result"] == "returned 2 holdings"
 
 
+def test_allow_once_returns_holdings_without_persisting_disposition(permissions_store, preferences_store, mock_portfolio_path):
+    permissions_store.grant("portfolio")
+    result = retrieve_portfolio(permissions_store, preferences_store, allow_once=True)
+    assert "holdings" in result
+    assert len(result["holdings"]) == 2
+    assert preferences_store.get(FORWARDING_KEY) is None
+
+
+def test_allow_once_is_audited_as_authorized_and_not_persisted(permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log):
+    permissions_store.grant("portfolio")
+    retrieve_portfolio(permissions_store, preferences_store, allow_once=True)
+    entry = json.loads(isolated_audit_log.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["authorized"] is True
+    assert "one-time" in entry["result"]
+
+
+def test_allow_once_is_ignored_once_a_real_disposition_exists(permissions_store, preferences_store, mock_portfolio_path):
+    """allow_once is only a fallback for the no-disposition-yet case - it must
+    not override an existing 'never'."""
+    permissions_store.grant("portfolio")
+    preferences_store.set(FORWARDING_KEY, "never")
+    result = retrieve_portfolio(permissions_store, preferences_store, allow_once=True)
+    assert "error" in result
+
+
 def test_layer_1_denial_takes_precedence_over_layer_2_disposition(permissions_store, preferences_store, mock_portfolio_path):
     """Even with forwarding explicitly allowed, revoked/missing resource
     permission must still block access - the layers are AND'd, not OR'd."""

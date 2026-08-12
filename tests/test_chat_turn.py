@@ -102,6 +102,31 @@ def test_tool_use_needing_consent_pauses_for_input_then_continues(
     assert "holdings" in payload, "the model must never see the needs_consent status itself"
 
 
+def test_tool_use_answered_once_returns_holdings_without_persisting(
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
+):
+    """Regression test for the bug where answering 'once' never actually
+    granted the pending call - execute_tool was re-invoked with no way to
+    bypass the still-unset disposition, so it returned needs_consent a
+    second time and that raw status/prompt dict leaked to the model instead
+    of the holdings."""
+    permissions_store.grant("portfolio")
+    monkeypatch.setattr("builtins.input", lambda _: "once")
+
+    call_model = MagicMock(side_effect=[tool_use_response(), text_response("Here you go.")])
+    monkeypatch.setattr("app.main.call_reasoning_model", call_model)
+
+    messages = []
+    chat_turn("What stocks do I own?", messages, permissions_store, preferences_store)
+
+    assert preferences_store.get(FORWARDING_KEY) is None
+    tool_results = _extract_tool_results(messages)
+    assert len(tool_results) == 1
+    payload = json.loads(tool_results[0]["content"])
+    assert "holdings" in payload, "the model must never see a raw needs_consent status"
+    assert tool_results[0]["is_error"] is False
+
+
 def test_denial_reasons_reach_the_model_verbatim_and_distinctly(
     monkeypatch, permissions_store, preferences_store, mock_portfolio_path,
 ):

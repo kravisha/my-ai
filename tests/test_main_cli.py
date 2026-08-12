@@ -63,8 +63,9 @@ def test_resolve_consent_always_persists_disposition(preferences_store, monkeypa
     monkeypatch.setattr("builtins.input", lambda _: "always")
     result = {"prompt": "Share holdings?", "consent_key": FORWARDING_KEY}
 
-    resolve_consent(result, preferences_store)
+    answer = resolve_consent(result, preferences_store)
 
+    assert answer == "always"
     assert preferences_store.get(FORWARDING_KEY) == "always"
     assert "Recorded" in capsys.readouterr().out
 
@@ -73,8 +74,9 @@ def test_resolve_consent_never_persists_disposition(preferences_store, monkeypat
     monkeypatch.setattr("builtins.input", lambda _: "never")
     result = {"prompt": "Share holdings?", "consent_key": FORWARDING_KEY}
 
-    resolve_consent(result, preferences_store)
+    answer = resolve_consent(result, preferences_store)
 
+    assert answer == "never"
     assert preferences_store.get(FORWARDING_KEY) == "never"
 
 
@@ -82,8 +84,9 @@ def test_resolve_consent_once_does_not_persist(preferences_store, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "once")
     result = {"prompt": "Share holdings?", "consent_key": FORWARDING_KEY}
 
-    resolve_consent(result, preferences_store)
+    answer = resolve_consent(result, preferences_store)
 
+    assert answer == "once"
     assert preferences_store.get(FORWARDING_KEY) is None
 
 

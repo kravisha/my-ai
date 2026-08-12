@@ -76,17 +76,17 @@ def handle_preference_commands(command: str, preferences: PrivacyPreferenceStore
     return False
 
 
-def resolve_consent(result: dict, preferences: PrivacyPreferenceStore) -> None:
+def resolve_consent(result: dict, preferences: PrivacyPreferenceStore) -> str:
     print(f"[My AI] {result['prompt']}")
     while True:
         answer = input("[always/once/never] > ").strip().lower()
         if answer in ("always", "never"):
             preferences.set(result["consent_key"], answer)
             print(f"Recorded: {result['consent_key']} = {answer}")
-            return
+            return answer
         if answer == "once":
             print("Allowing once - I'll ask again next time.")
-            return
+            return answer
         print("Please answer 'always', 'once', or 'never'.")
 
 
@@ -108,8 +108,8 @@ def chat_turn(user_input: str, messages: list, permissions: PermissionManager, p
                 continue
             result = execute_tool(block.name, permissions, preferences)
             if result.get("status") == "needs_consent":
-                resolve_consent(result, preferences)
-                result = execute_tool(block.name, permissions, preferences)
+                answer = resolve_consent(result, preferences)
+                result = execute_tool(block.name, permissions, preferences, allow_once=(answer == "once"))
             tool_results.append(
                 {
                     "type": "tool_result",
