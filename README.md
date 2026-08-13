@@ -1,4 +1,4 @@
-# My AI — Milestone 1+2+3+4: Permissioned Portfolio Demo + Data Governance + Multi-User Auth + Client-Server Split
+# My AI — Milestone 1+2+3+4+5: Permissioned Portfolio Demo + Data Governance + Multi-User Auth + Client-Server Split + Server Monitor
 
 A minimal, working slice of "My AI" — a personal, local, permissioned action
 layer that sits between the user and an external reasoning model. See
@@ -77,6 +77,30 @@ same kind of denial).
   (which `vibe-agent`'s own client doesn't bother with) by caching its
   bearer token locally and verifying it against `GET /auth/me` on launch.
 
+**Milestone 5 — server monitor:**
+- A standalone operator tool (`monitor/`, `python -m monitor.app`) - a
+  connected-clients list on the left, the selected client's live
+  conversation on the right, both refreshed every 2 seconds. Not a user
+  client: no login, watches every account's conversation via two new
+  unauthenticated `/admin/*` routes on the backend.
+- "Client" means **account**, not session/token — if the same person is
+  logged in via both the CLI and the desktop GUI at once, their messages
+  appear merged under one entry, consistent with how permissions/
+  preferences are already scoped per-user rather than per-session.
+- The backend now keeps an **in-memory, process-lifetime** transcript per
+  account (`backend/transcripts.py`) purely for this monitor to read - a
+  live "what's happening right now" view, not a permanent record (restarts
+  clear it; `audit_log.jsonl` remains the permanent record, but only for
+  tool *access* attempts, not full chat text). A consent pause/resume
+  round-trip (two separate `/chat` calls) is deliberately recorded as a
+  single question-and-answer pair, not two questions.
+- Chose polling over a truly live push (see Milestone 4's `always`/`once`/
+  `never` pop-up problem for the same tension) since running Tkinter's
+  mainloop and uvicorn's async event loop in one process is fiddlier than
+  the alternative — a small trade-off of a couple seconds' latency for a
+  much simpler, safer implementation, reusing the exact standalone-app
+  pattern `desktop/` already established.
+
 ## Out of scope so far
 
 Deliberately deferred: payments, telephony, the Secure Vault (no
@@ -109,12 +133,16 @@ python scripts/make_mock_portfolio.py   # regenerate data/portfolio.xlsx if need
 .venv/Scripts/python.exe -m pytest
 ```
 
-146 tests in `tests/`, covering every module in `app/`, the FastAPI backend
+158 tests in `tests/`, covering every module in `app/`, the FastAPI backend
 (`tests/test_backend_*.py`, via `TestClient` — no real server needs to be
 running), `api_client.py`'s own request/response/error-handling logic
-(`tests/test_api_client.py`, against a mocked `requests`), and the
-HTTP-backed CLI (`tests/test_auth_cli.py`, `tests/test_main_cli.py`, against
-a mocked `APIClient`). The suite is fully hermetic: no real
+(`tests/test_api_client.py`, against a mocked `requests`), the HTTP-backed
+CLI (`tests/test_auth_cli.py`, `tests/test_main_cli.py`, against a mocked
+`APIClient`), and the server monitor's backend half — `TranscriptStore`
+(`tests/test_transcripts.py`) and the `/admin/*` routes plus their `/chat`
+integration (`tests/test_backend_admin.py`; `monitor/app.py` itself has no
+automated tests, consistent with `desktop/`'s own zero-Tkinter-widget-tests
+precedent — verified manually instead). The suite is fully hermetic: no real
 `ANTHROPIC_API_KEY` is required, no real server is ever started, and no
 network call is ever made — `call_reasoning_model` is mocked in every test
 that touches the chat loop, `getpass.getpass` is mocked in every test that
@@ -139,6 +167,9 @@ branch for Milestone 4 surfaced a third: the chosen disposition
 (`always`/`never`) was being applied to the resumed tool call *after*
 executing it instead of before, so resuming would just hit the same
 `needs_consent` wall again — fixed by persisting the disposition first.
+Verified live for Milestone 5 too: a real consent pause/resume round-trip
+through the monitor's transcript correctly shows up as one question and
+one answer, not two.
 
 ## Run
 
@@ -159,6 +190,15 @@ Both clients start with a login/register step — everything from there is
 scoped to whichever account you log into, and either client can be logged
 into as a *different* account than the other, at the same time, against the
 same backend.
+
+```bash
+# terminal 3, optional - the operator-side conversation monitor
+.venv/Scripts/python.exe -m monitor.app
+```
+
+No login for the monitor — it watches every account's conversation. Pick a
+client from the left list to see their conversation on the right; it
+refreshes every couple of seconds as new messages come in.
 
 ## Demo script — Milestone 3 (multi-user auth)
 
@@ -232,9 +272,13 @@ value never appears in either file or anywhere in the model conversation.
 backend/
   main.py                The FastAPI process - owns every store and the tool-use loop (incl. the
                          needs_consent pause/resume protocol - see the Milestone 4 section above).
-                         Every route requires Authorization: Bearer <token> except /auth/register
-                         and /auth/login. Nothing else in this repo touches app/*.py stores
-                         directly anymore - only this process does.
+                         Every route requires Authorization: Bearer <token> except /auth/register,
+                         /auth/login, and the two unauthenticated /admin/* routes the monitor polls.
+                         Nothing else in this repo touches app/*.py stores directly anymore - only
+                         this process does.
+  transcripts.py          TranscriptStore - in-memory, per-account conversation log for the
+                         monitor only (not persisted, not the permanent record - that's still
+                         audit_log.jsonl for tool access, this is just "what's happening right now")
 api_client.py             APIClient - thin requests wrapper shared by app/main.py and desktop/,
                          mirrors vibe-agent's desktop/client.py shape (raises APIError, holds a
                          bearer token)
@@ -265,6 +309,11 @@ desktop/
                          background thread (self.after(0, ...) hand-off) so a slow reply never
                          freezes the window; a needs_consent reply shows a ConsentDialog and the
                          chosen answer fires a second background-thread call to resume
+monitor/
+  app.py                  Standalone operator tool, no login - client list (left) + selected
+                         client's live conversation (right), polls GET /admin/clients and
+                         GET /admin/clients/<username>/transcript every 2s via plain `requests`
+                         (not api_client.APIClient - these two routes are unauthenticated)
 data/
   portfolio.xlsx         Mock demo holdings (fake tickers/shares/prices/dates/account_id) - shared
                          across all users; only the governance state around it is per-user

@@ -26,10 +26,12 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
+from backend.transcripts import TranscriptStore
 
 app = FastAPI(title="My AI Backend")
 users = UserStore()
 sessions = SessionStore()
+transcripts = TranscriptStore()
 
 
 def build_stores(username: str) -> tuple[PermissionManager, PrivacyPreferenceStore, AuditLog]:
@@ -137,9 +139,19 @@ def chat(request: ChatRequest, username: str = Depends(get_current_user)):
     the model's actual reply. No server-side session memory needed either
     way; the client already has to hold the messages list to keep chatting,
     so it can hold the one extra paused turn too.
+
+    Also records each completed user/assistant turn into `transcripts`
+    (see backend/transcripts.py) for the server monitor (monitor/app.py) -
+    a live, in-memory, separate-from-the-actual-protocol side effect. A
+    resume call never double-records the user's original question (guarded
+    on consent_answer is None), and a needs_consent pause itself isn't
+    recorded as an interim entry - only completed exchanges show up.
     """
     permissions, preferences, audit_log = build_stores(username)
     messages = [m.model_dump() for m in request.messages]
+
+    if request.consent_answer is None and messages and messages[-1]["role"] == "user":
+        transcripts.record(username, "user", messages[-1]["content"])
 
     if request.consent_answer is not None:
         last_assistant = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
@@ -174,6 +186,7 @@ def chat(request: ChatRequest, username: str = Depends(get_current_user)):
 
         if response.stop_reason != "tool_use":
             reply = "".join(b.text for b in response.content if b.type == "text")
+            transcripts.record(username, "assistant", reply)
             return {"reply": reply, "messages": messages}
 
         tool_results = []
@@ -257,3 +270,22 @@ def list_activity(username: str = Depends(get_current_user)):
     if not audit_log.path.exists():
         return []
     return [json.loads(line) for line in audit_log.path.read_text(encoding="utf-8").splitlines()]
+
+
+# --- Admin (server monitor) ---
+#
+# Unauthenticated, unlike every other route - this is an operator/admin view
+# across every account's conversations, not a route scoped to "your own"
+# data via get_current_user. The project has no admin-auth concept to reuse
+# yet and the whole system is local-only right now, so this is a deliberate,
+# flagged simplification rather than an oversight.
+
+
+@app.get("/admin/clients")
+def list_clients():
+    return {"clients": transcripts.list_clients()}
+
+
+@app.get("/admin/clients/{username}/transcript")
+def get_client_transcript(username: str):
+    return {"username": username, "entries": transcripts.get_transcript(username)}

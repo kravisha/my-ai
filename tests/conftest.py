@@ -65,9 +65,11 @@ def backend_client(tmp_path, monkeypatch):
 
     import backend.main as backend_main
     from app.users import ensure_user_data_dir as real_ensure_user_data_dir
+    from backend.transcripts import TranscriptStore
 
     monkeypatch.setattr(backend_main, "users", UserStore(path=tmp_path / "users.json"))
     monkeypatch.setattr(backend_main, "sessions", SessionStore(path=tmp_path / "sessions.json"))
+    monkeypatch.setattr(backend_main, "transcripts", TranscriptStore())
     monkeypatch.setattr(
         backend_main,
         "ensure_user_data_dir",
