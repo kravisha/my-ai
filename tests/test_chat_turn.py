@@ -55,12 +55,16 @@ def _extract_tool_results(messages):
     return results
 
 
-def test_simple_text_reply_prints_and_returns(monkeypatch, capsys, permissions_store, preferences_store, isolated_audit_log):
+def test_simple_text_reply_is_returned_not_printed(monkeypatch, capsys, permissions_store, preferences_store, isolated_audit_log):
+    """chat_turn returns its final answer instead of printing it, so callers
+    other than the CLI (e.g. a GUI inserting the text into a widget) can use
+    it too - the CLI itself is responsible for printing the return value."""
     monkeypatch.setattr("app.main.call_reasoning_model", MagicMock(return_value=text_response("Hello!")))
 
-    chat_turn("hi", [], permissions_store, preferences_store, isolated_audit_log)
+    result = chat_turn("hi", [], permissions_store, preferences_store, isolated_audit_log)
 
-    assert "Hello!" in capsys.readouterr().out
+    assert result == "Hello!"
+    assert capsys.readouterr().out == ""
 
 
 def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(
@@ -100,6 +104,36 @@ def test_tool_use_needing_consent_pauses_for_input_then_continues(
     assert len(tool_results) == 1
     payload = json.loads(tool_results[0]["content"])
     assert "holdings" in payload, "the model must never see the needs_consent status itself"
+
+
+def test_resolve_consent_fn_is_injectable_and_used_instead_of_real_input(
+    monkeypatch, permissions_store, preferences_store, mock_portfolio_path, isolated_audit_log,
+):
+    """A caller (e.g. a GUI) can pass its own resolve_consent_fn instead of
+    the real one, which calls the input() builtin and can't run on a
+    background thread. chat_turn must use whatever's passed in and never
+    fall back to prompting for real input when an override is supplied."""
+    permissions_store.grant("portfolio")
+    # "once" so the assertion doesn't depend on the fake resolver replicating
+    # resolve_consent's side effect of persisting a disposition - allow_once
+    # bypasses the disposition check entirely regardless of what's stored.
+    fake_resolver = MagicMock(return_value="once")
+    input_mock = MagicMock(side_effect=AssertionError("real input() should not be called"))
+    monkeypatch.setattr("builtins.input", input_mock)
+
+    call_model = MagicMock(side_effect=[tool_use_response(), text_response("Here you go.")])
+    monkeypatch.setattr("app.main.call_reasoning_model", call_model)
+
+    messages = []
+    chat_turn(
+        "What stocks do I own?", messages, permissions_store, preferences_store, isolated_audit_log,
+        resolve_consent_fn=fake_resolver,
+    )
+
+    fake_resolver.assert_called_once()
+    input_mock.assert_not_called()
+    tool_results = _extract_tool_results(messages)
+    assert "holdings" in json.loads(tool_results[0]["content"])
 
 
 def test_tool_use_answered_once_returns_holdings_without_persisting(

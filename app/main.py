@@ -146,7 +146,13 @@ def chat_turn(
     permissions: PermissionManager,
     preferences: PrivacyPreferenceStore,
     audit_log: AuditLog,
-) -> None:
+    resolve_consent_fn=resolve_consent,
+) -> str:
+    """Runs one turn of the tool-use loop and returns the model's final reply
+    text (the caller decides how to display it - printed by the CLI,
+    inserted into a widget by the desktop GUI). resolve_consent_fn is
+    injectable so a GUI can swap in a thread-safe dialog instead of the real
+    input() builtin; it defaults to the CLI's real resolve_consent."""
     messages.append({"role": "user", "content": user_input})
 
     while True:
@@ -154,9 +160,7 @@ def chat_turn(
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
-            text = "".join(b.text for b in response.content if b.type == "text")
-            print(text)
-            return
+            return "".join(b.text for b in response.content if b.type == "text")
 
         tool_results = []
         for block in response.content:
@@ -164,7 +168,7 @@ def chat_turn(
                 continue
             result = execute_tool(block.name, permissions, preferences, audit_log)
             if result.get("status") == "needs_consent":
-                answer = resolve_consent(result, preferences)
+                answer = resolve_consent_fn(result, preferences)
                 result = execute_tool(
                     block.name, permissions, preferences, audit_log, allow_once=(answer == "once")
                 )
@@ -210,7 +214,7 @@ def main() -> None:
             continue
         if handle_preference_commands(user_input, preferences):
             continue
-        chat_turn(user_input, messages, permissions, preferences, audit_log)
+        print(chat_turn(user_input, messages, permissions, preferences, audit_log))
 
 
 if __name__ == "__main__":
