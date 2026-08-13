@@ -1,23 +1,23 @@
-"""Login/register screen. Mirrors vibe-agent's desktop/screens/login.py
-(destroy-and-rebuild toggle between two sub-forms, blocking submit handlers,
-messagebox.showerror on failure) but calls UserStore/SessionStore directly
-instead of an HTTP client - there's no server here to talk to. Kept
-synchronous like vibe-agent's own login screen: bcrypt's hash time
-(~200-300ms) is far shorter than the network calls vibe-agent's login
-blocks on, so a brief freeze here is an acceptable, deliberate trade-off.
+"""Login/register screen. Same widgets/layout/toggle pattern as before (and
+as vibe-agent's own login.py) - only the submit handlers changed, from
+calling UserStore/SessionStore directly to calling api_client.APIClient
+over HTTP, now that the backend owns all of this. Kept synchronous, same
+as vibe-agent's login and as before: a login/register call is quick enough
+that a brief window freeze is an acceptable trade-off against the added
+complexity of threading it too.
 """
 
 import tkinter as tk
 from tkinter import messagebox
 
-from app.users import UserStore, normalize_username
+from api_client import APIClient, APIError
+from app.users import normalize_username
 
 
 class LoginScreen(tk.Frame):
-    def __init__(self, root, users: UserStore, sessions, on_success):
+    def __init__(self, root, client: APIClient, on_success):
         super().__init__(root)
-        self.users = users
-        self.sessions = sessions
+        self.client = client
         self.on_success = on_success
         self._build_login_form()
 
@@ -42,12 +42,12 @@ class LoginScreen(tk.Frame):
         def do_login():
             username = username_entry.get().strip()
             password = password_entry.get()
-            if not self.users.authenticate(username, password):
-                messagebox.showerror("Login failed", "Invalid username or password.")
+            try:
+                self.client.login(username, password)
+            except APIError as e:
+                messagebox.showerror("Login failed", str(e))
                 return
-            normalized = normalize_username(username)
-            self.sessions.create(normalized)
-            self.on_success(normalized)
+            self.on_success(normalize_username(username))
 
         tk.Button(self, text="Log In", command=do_login).pack(pady=(10, 0))
         tk.Button(self, text="Create a new account", command=self._build_register_form).pack(pady=(5, 20))
@@ -82,12 +82,11 @@ class LoginScreen(tk.Frame):
                 messagebox.showerror("Registration failed", "Passwords did not match.")
                 return
             try:
-                normalized = self.users.register(username, password)
-            except ValueError as e:
+                self.client.register(username, password)
+            except APIError as e:
                 messagebox.showerror("Registration failed", str(e))
                 return
-            self.sessions.create(normalized)
-            self.on_success(normalized)
+            self.on_success(normalize_username(username))
 
         tk.Button(self, text="Register", command=do_register).pack(pady=(10, 0))
         tk.Button(self, text="Back to login", command=self._build_login_form).pack(pady=(5, 20))

@@ -50,7 +50,31 @@ def users_store(tmp_path):
 
 @pytest.fixture
 def session_store(tmp_path):
-    return SessionStore(path=tmp_path / "session.json")
+    return SessionStore(path=tmp_path / "sessions.json")
+
+
+@pytest.fixture
+def backend_client(tmp_path, monkeypatch):
+    """A FastAPI TestClient against backend.main.app with its module-level
+    users/sessions singletons redirected to tmp_path, and per-user store
+    construction (ensure_user_data_dir's default root) redirected too - the
+    backend equivalent of permissions_store/preferences_store/users_store/
+    session_store, bundled together since every backend route needs all of
+    them wired consistently."""
+    from fastapi.testclient import TestClient
+
+    import backend.main as backend_main
+    from app.users import ensure_user_data_dir as real_ensure_user_data_dir
+
+    monkeypatch.setattr(backend_main, "users", UserStore(path=tmp_path / "users.json"))
+    monkeypatch.setattr(backend_main, "sessions", SessionStore(path=tmp_path / "sessions.json"))
+    monkeypatch.setattr(
+        backend_main,
+        "ensure_user_data_dir",
+        lambda username: real_ensure_user_data_dir(username, root=tmp_path / "user_data"),
+    )
+
+    return TestClient(backend_main.app)
 
 
 @pytest.fixture

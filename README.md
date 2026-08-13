@@ -1,4 +1,4 @@
-# My AI — Milestone 1+2+3: Permissioned Portfolio Demo + Data Governance + Multi-User Auth
+# My AI — Milestone 1+2+3+4: Permissioned Portfolio Demo + Data Governance + Multi-User Auth + Client-Server Split
 
 A minimal, working slice of "My AI" — a personal, local, permissioned action
 layer that sits between the user and an external reasoning model. See
@@ -54,14 +54,40 @@ same kind of denial).
   `[a-z0-9_-]{1,32}` (a username becomes a directory name, so this also
   closes a path-traversal risk and a Windows case-collision risk).
 
+**Milestone 4 — desktop GUI + client-server split:**
+- A real Tkinter desktop app (`desktop/`) — a login/register window plus a
+  dashboard (Chat / Access & Privacy / Activity tabs) — replacing the
+  terminal as the primary way to use My AI, modeled on the sibling
+  `vibe-agent` project's desktop app.
+- My AI is no longer one process. All business logic moved into a FastAPI
+  backend (`backend/main.py`) that owns every store and the tool-use loop;
+  the CLI and the desktop GUI are now both thin HTTP clients (`api_client.py`)
+  that only render UI and call the backend — the same client-server shape
+  `vibe-agent` uses, just without an HTTP framework the CLI needs to run
+  the backend first (`uvicorn backend.main:app`). `app/session.py` became a
+  real multi-token store (many logged-in clients at once, matching
+  `vibe-agent`'s DB `Session` table) instead of a single local session file.
+- The one thing `vibe-agent` has no equivalent of: the live `always`/`once`/
+  `never` consent pop-up mid-chat. Solved statelessly — `POST /chat` can
+  pause a reply with `needs_consent` instead of finishing it; the client
+  shows its own prompt/dialog, then resubmits the same conversation with the
+  answer attached, and the server resumes the one pending tool call. No
+  server-side conversation memory needed to support this.
+- The desktop client still gets the "Welcome back" skip-login convenience
+  (which `vibe-agent`'s own client doesn't bother with) by caching its
+  bearer token locally and verifying it against `GET /auth/me` on launch.
+
 ## Out of scope so far
 
 Deliberately deferred: payments, telephony, the Secure Vault (no
 credentials are handled here), the tiered memory/preferences system, a full
 multi-provider Model Adapter Layer (`model_gateway.py` is a thin
-single-model wrapper), streaming/interruptible voice, the thin-client/
-backend network split, and the generalized Universal Capability Layer
-(there's still exactly one capability, `retrieve_portfolio`). See
+single-model wrapper), streaming/interruptible voice, deploying the backend
+anywhere other than localhost (the thin-client/backend *split* is now
+built — see Milestone 4 above — but it still only ever runs as two local
+processes on your own machine, same as `vibe-agent`), and the generalized
+Universal Capability Layer (there's still exactly one capability,
+`retrieve_portfolio`). See
 `docs/MY_AI_DESIGN_SPEC.md` §16 for the full status. Permission grant/revoke
 and preference commands are explicit CLI commands, not parsed from
 freeform text, since reliably parsing *authorization* intent is a distinct,
@@ -83,43 +109,56 @@ python scripts/make_mock_portfolio.py   # regenerate data/portfolio.xlsx if need
 .venv/Scripts/python.exe -m pytest
 ```
 
-102 tests in `tests/`, covering every module in `app/` including a
-mocked-model regression suite for the chat loop (`tests/test_chat_turn.py`)
-and the login/register/session flow (`tests/test_users.py`,
-`tests/test_session.py`, `tests/test_auth_cli.py`,
-`tests/test_multi_user_isolation.py`). The suite is fully hermetic: no real
-`ANTHROPIC_API_KEY` is required and no network call is ever made —
-`call_reasoning_model` is mocked in every test that touches the chat loop,
-`getpass.getpass` is mocked in every test that touches login/register (real
-`getpass` reads directly from the console on Windows, bypassing redirected
-stdin entirely, so it can't be driven by piped input the way the rest of
-the CLI can for manual smoke testing), and `tests/conftest.py` sets a dummy
-key before any app module is imported (importing `app.model_gateway` alone
-requires *a* key to be set, since it constructs the Anthropic client at
-import time). All persisted state (`permissions.json`,
-`privacy_preferences.json`, `audit_log.jsonl`, `users.json`, `session.json`,
-`data/portfolio.xlsx`) is redirected to `tmp_path` fixtures per test, so
-tests never touch your real local data.
+146 tests in `tests/`, covering every module in `app/`, the FastAPI backend
+(`tests/test_backend_*.py`, via `TestClient` — no real server needs to be
+running), `api_client.py`'s own request/response/error-handling logic
+(`tests/test_api_client.py`, against a mocked `requests`), and the
+HTTP-backed CLI (`tests/test_auth_cli.py`, `tests/test_main_cli.py`, against
+a mocked `APIClient`). The suite is fully hermetic: no real
+`ANTHROPIC_API_KEY` is required, no real server is ever started, and no
+network call is ever made — `call_reasoning_model` is mocked in every test
+that touches the chat loop, `getpass.getpass` is mocked in every test that
+touches login/register (real `getpass` reads directly from the console on
+Windows, bypassing redirected stdin entirely, so it can't be driven by
+piped input the way the rest of the CLI can for manual smoke testing), and
+`tests/conftest.py` sets a dummy key before any app module is imported
+(importing `app.model_gateway` alone requires *a* key to be set, since it
+constructs the Anthropic client at import time). All persisted state is
+redirected to `tmp_path` fixtures per test, so tests never touch your real
+local data.
 
-Writing the Milestone 2 tests surfaced one real bug, fixed as part of that
-work: `PrivacyPreferenceStore.list_all()` did a shallow `dict()` copy, so a
-caller mutating a returned entry (e.g. `entries["k"]["disposition"] = ...`)
-would silently corrupt the store's actual in-memory state. Fixed to copy
-each entry too. Manually driving the CLI post-Milestone-2 also surfaced a
-second real bug: answering `once` to a consent prompt never actually
-granted the pending call — the tool was re-invoked with no way to bypass
-the still-unset disposition, so it silently behaved like a denial. Fixed by
-threading a one-time bypass through `execute_tool`/`retrieve_portfolio`.
+Writing the Milestone 2 tests surfaced one real bug: `PrivacyPreferenceStore
+.list_all()` did a shallow `dict()` copy, letting a caller mutating a
+returned entry silently corrupt the store's actual state — fixed to copy
+each entry too. Manually driving the CLI post-Milestone-2 surfaced a second:
+answering `once` to a consent prompt never actually granted the pending
+call, since the tool was re-invoked with no way to bypass the still-unset
+disposition — fixed by threading a one-time bypass through
+`execute_tool`/`retrieve_portfolio`. Writing `POST /chat`'s consent-resume
+branch for Milestone 4 surfaced a third: the chosen disposition
+(`always`/`never`) was being applied to the resumed tool call *after*
+executing it instead of before, so resuming would just hit the same
+`needs_consent` wall again — fixed by persisting the disposition first.
 
 ## Run
 
+Two processes now — start the backend first, then whichever client you want:
+
 ```bash
-python -m app.main
+# terminal 1
+.venv/Scripts/python.exe -m uvicorn backend.main:app --reload
 ```
 
-The first thing you'll see is a login/register prompt (see Milestone 3
-below) — everything from here on is scoped to whichever account you log
-into.
+```bash
+# terminal 2 - either one
+.venv/Scripts/python.exe -m app.main        # CLI
+.venv/Scripts/python.exe -m desktop.app     # desktop GUI
+```
+
+Both clients start with a login/register step — everything from there is
+scoped to whichever account you log into, and either client can be logged
+into as a *different* account than the other, at the same time, against the
+same backend.
 
 ## Demo script — Milestone 3 (multi-user auth)
 
@@ -129,7 +168,7 @@ Choose a username: alice
 Choose a password: ********
 Confirm password: ********
 Registered and logged in as alice.
-My AI (Milestone 3). Logged in as alice. Commands: ...
+My AI (Milestone 4). Logged in as alice. Commands: ...
 > logout
 Logged out.
 ```
@@ -139,20 +178,21 @@ the prompt:
 
 ```
 Welcome back, alice.
-My AI (Milestone 3). Logged in as alice. Commands: ...
+My AI (Milestone 4). Logged in as alice. Commands: ...
 ```
 
-Register a second account (`bob`) and you'll find `alice`'s grants,
-preferences, and audit trail are completely invisible to `bob` — each has
-their own `user_data/<username>/permissions.json` /
-`privacy_preferences.json` / `audit_log.jsonl`, even though both read the
-same `data/portfolio.xlsx`.
+Register a second account (`bob`) — from the other client, or the same one
+after logging out — and you'll find `alice`'s grants, preferences, and
+audit trail are completely invisible to `bob`: the backend keeps each
+account's `permissions.json`/`privacy_preferences.json`/`audit_log.jsonl`
+under its own `user_data/<username>/`, even though both read the same
+`data/portfolio.xlsx`.
 
 ## Demo script — Milestone 1 (core permission loop)
 
 ```
 > grant portfolio
-Granted: portfolio (data/portfolio.xlsx)
+Granted: portfolio
 > What stocks do I own?
 [My AI] I need to share your portfolio holdings ... Allow this?
 [always/once/never] > always
@@ -182,19 +222,29 @@ your portfolio data with me, which is a specific instruction you gave
 (separate from general permission settings).
 ```
 
-Check `audit_log.jsonl` and `privacy_preferences.json` afterward — every
-interaction above is recorded, and `account_id`'s actual value never
-appears in either file or anywhere in the model conversation.
+Check `user_data/<username>/audit_log.jsonl` and `privacy_preferences.json`
+afterward — every interaction above is recorded, and `account_id`'s actual
+value never appears in either file or anywhere in the model conversation.
 
 ## Architecture
 
 ```
+backend/
+  main.py                The FastAPI process - owns every store and the tool-use loop (incl. the
+                         needs_consent pause/resume protocol - see the Milestone 4 section above).
+                         Every route requires Authorization: Bearer <token> except /auth/register
+                         and /auth/login. Nothing else in this repo touches app/*.py stores
+                         directly anymore - only this process does.
+api_client.py             APIClient - thin requests wrapper shared by app/main.py and desktop/,
+                         mirrors vibe-agent's desktop/client.py shape (raises APIError, holds a
+                         bearer token)
 app/
-  main.py               CLI loop: login/register/logout (Milestone 3) + grant/revoke + preference
-                         commands + the tool-use chat loop, including the pause-for-consent flow
-                         (never delegated to the model)
+  main.py                CLI: login/register/logout + grant/revoke + preference commands, all now
+                         via api_client.APIClient - a local .cli_session file caches the bearer
+                         token so re-running skips login (verified against GET /auth/me)
   users.py               UserStore - register/authenticate (bcrypt), users.json + user_data/<user>/
-  session.py              SessionStore - create/validate/revoke a persisted local session, session.json
+  session.py              SessionStore - many concurrently-valid tokens (one per logged-in
+                         client), sessions.json - backend-only now, no client touches this directly
   permissions.py         PermissionManager - grant/revoke/is_granted (layer 1: resource access),
                          user_data/<user>/permissions.json
   privacy_preferences.py PrivacyPreferenceStore - get/set/forget/list_all (layer 2: forwarding),
@@ -206,6 +256,15 @@ app/
   tools/
     portfolio.py           retrieve_portfolio() - layer 1 check -> layer 2 check -> read -> sanitize -> return
     __init__.py             Tool schema + dispatcher
+desktop/
+  app.py                  Tk root, frame-swap between LoginScreen/DashboardScreen, a local
+                         .gui_session file caches the bearer token the same way the CLI's does
+  screens/
+    login.py                Login/register form, calls api_client.APIClient instead of app/*.py
+    dashboard.py             ttk.Notebook: Chat / Access & Privacy / Activity tabs. Chat runs on a
+                         background thread (self.after(0, ...) hand-off) so a slow reply never
+                         freezes the window; a needs_consent reply shows a ConsentDialog and the
+                         chosen answer fires a second background-thread call to resume
 data/
   portfolio.xlsx         Mock demo holdings (fake tickers/shares/prices/dates/account_id) - shared
                          across all users; only the governance state around it is per-user
@@ -214,6 +273,7 @@ docs/
   addenda/                Verbatim addenda, kept as authoritative source for future merges
 ```
 
-`users.json`, `session.json`, and `user_data/<username>/` (each holding that
-user's `permissions.json`/`privacy_preferences.json`/`audit_log.jsonl`) are
-local, gitignored state — regenerated fresh as you register/use accounts.
+`users.json`, `sessions.json`, `.cli_session`, `.gui_session`, and
+`user_data/<username>/` (each holding that user's
+`permissions.json`/`privacy_preferences.json`/`audit_log.jsonl`) are local,
+gitignored state — regenerated fresh as you register/use accounts.

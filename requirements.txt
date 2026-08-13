@@ -2,3 +2,6 @@ anthropic
 python-dotenv
 openpyxl
 bcrypt
+fastapi
+uvicorn[standard]
+requests

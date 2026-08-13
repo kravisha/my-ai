@@ -1,32 +1,28 @@
-"""Main dashboard screen: Chat / Access & Privacy / Activity tabs. Mirrors
-vibe-agent's desktop/screens/dashboard.py structure (ttk.Notebook, one
-tk.Frame per tab, <<NotebookTabChanged>> refresh) but calls app.main's
-existing chat_turn()/tool logic directly in-process instead of an HTTP
-client - there's no server here.
+"""Main dashboard screen: Chat / Access & Privacy / Activity tabs. Same
+tab structure and widget choices as before - only the plumbing changed,
+from calling app/*.py stores directly (in-process) to calling
+api_client.APIClient over HTTP, now that backend/main.py owns all of that.
 
-The one new piece vibe-agent's dashboard doesn't need: a way to answer the
-"needs_consent" pause that chat_turn's tool-use loop can hit mid-reply.
-That pause happens on the background thread the chat call runs on (same
-threading.Thread + self.after(0, ...) pattern vibe-agent already uses for
-its own chat send handler), so it can't just pop a dialog directly - see
-_gui_resolve_consent/ConsentDialog below for the thread-safe bridge.
+The consent-pause bridge got simpler with the HTTP move: no more
+threading.Event blocking a worker thread waiting for a dialog answer.
+Instead, a chat call either succeeds (reply) or pauses (needs_consent) as
+just another possible response shape - answering the dialog kicks off a
+*second* background-thread HTTP call (with the answer attached) rather than
+unblocking anything. Still runs on background threads throughout
+(threading.Thread + self.after(0, ...)) so the window never freezes during
+a call.
 """
 
-import json
 import threading
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import messagebox, scrolledtext, ttk
 
-from app.main import chat_turn
-from app.permissions import RESOURCE_PATHS
-from desktop.session_context import AppSession
+from api_client import APIClient, APIError
 
 
 class ConsentDialog(tk.Toplevel):
-    """Always/Once/Never prompt, the GUI equivalent of main.py's
-    resolve_consent(). Closing the window (instead of picking a button) is
-    treated as "once" - the least-committal choice - rather than leaving the
-    waiting background thread hung forever."""
+    """Always/Once/Never prompt. Closing the window (instead of picking a
+    button) is treated as "once" - the least-committal choice."""
 
     def __init__(self, parent, prompt: str, on_choice):
         super().__init__(parent)
@@ -52,15 +48,16 @@ class ConsentDialog(tk.Toplevel):
 
 
 class DashboardScreen(tk.Frame):
-    def __init__(self, root, session: AppSession, sessions, on_logout):
+    def __init__(self, root, client: APIClient, username: str, on_logout):
         super().__init__(root)
-        self.session = session
-        self.sessions = sessions
+        self.client = client
+        self.username = username
         self.on_logout = on_logout
+        self.messages: list = []
 
         header = tk.Frame(self)
         header.pack(fill=tk.X, padx=8, pady=(8, 0))
-        tk.Label(header, text=f"Logged in as {session.username}", font=("", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(header, text=f"Logged in as {username}", font=("", 10, "bold")).pack(side=tk.LEFT)
         tk.Button(header, text="Logout", command=self._logout).pack(side=tk.RIGHT)
 
         notebook = ttk.Notebook(self)
@@ -80,7 +77,7 @@ class DashboardScreen(tk.Frame):
         self._build_activity_tab()
 
     def _logout(self):
-        self.sessions.revoke()
+        self.client.logout()
         self.on_logout()
 
     # --- Chat tab ---
@@ -113,59 +110,49 @@ class DashboardScreen(tk.Frame):
         threading.Thread(target=self._get_reply, args=(user_text,), daemon=True).start()
 
     def _get_reply(self, user_text):
+        self.messages.append({"role": "user", "content": user_text})
         try:
-            reply = chat_turn(
-                user_text,
-                self.session.messages,
-                self.session.permissions,
-                self.session.preferences,
-                self.session.audit_log,
-                resolve_consent_fn=self._gui_resolve_consent,
-            )
-        except Exception as exc:
-            reply = f"[Error contacting My AI: {exc}]"
-        self.after(0, self._append_chat_line, f"My AI: {reply}")
+            body = self.client.chat(self.messages)
+        except APIError as exc:
+            self.after(0, self._append_chat_line, f"[Error contacting My AI: {exc}]")
+            return
+        self._handle_chat_response(body)
+
+    def _handle_chat_response(self, body):
+        """Runs on whichever background thread made the call. A reply ends
+        the turn; needs_consent shows a dialog on the main thread and waits
+        for a button click to kick off the resume call - no thread-blocking
+        needed, unlike the old in-process bridge, since this is now just
+        two independent HTTP calls instead of one paused function call."""
+        self.messages[:] = body["messages"]
+        if "needs_consent" in body:
+            prompt = body["needs_consent"]["prompt"]
+            consent_key = body["needs_consent"]["consent_key"]
+            self.after(0, self._show_consent_dialog, prompt, consent_key)
+            return
+        self.after(0, self._append_chat_line, f"My AI: {body['reply']}")
         self.after(0, self._refresh_access_tab)
 
-    def _gui_resolve_consent(self, result, preferences):
-        """Runs on the background chat thread (see _get_reply). Schedules
-        the actual dialog on the main thread via self.after(0, ...) - only
-        the main thread may touch Tk widgets - then blocks this thread on a
-        plain threading.Event until the user answers. This is the same
-        hand-off direction vibe-agent's dashboard.py already uses
-        (background thread -> self.after(0, callback)), just also waiting
-        for a reply to come back the other way."""
-        answer_box = {}
-        done = threading.Event()
+    def _show_consent_dialog(self, prompt, consent_key):
+        def on_choice(choice):
+            threading.Thread(target=self._resume_chat, args=(choice, consent_key), daemon=True).start()
 
-        def show_dialog():
-            def on_choice(choice):
-                if choice in ("always", "never"):
-                    preferences.set(result["consent_key"], choice)
-                answer_box["answer"] = choice
-                done.set()
+        ConsentDialog(self, prompt, on_choice)
 
-            ConsentDialog(self, result["prompt"], on_choice)
-
-        self.after(0, show_dialog)
-        done.wait()
-        return answer_box["answer"]
+    def _resume_chat(self, answer, consent_key):
+        try:
+            body = self.client.chat(self.messages, consent_answer=answer, consent_key=consent_key)
+        except APIError as exc:
+            self.after(0, self._append_chat_line, f"[Error contacting My AI: {exc}]")
+            return
+        self._handle_chat_response(body)
 
     # --- Access & Privacy tab ---
 
     def _build_access_tab(self):
         tk.Label(self.access_tab, text="Resource Access", font=("", 11, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
-
-        self.resource_status_labels = {}
-        for resource in RESOURCE_PATHS:
-            row = tk.Frame(self.access_tab)
-            row.pack(fill=tk.X, padx=8, pady=2)
-            tk.Label(row, text=resource, width=16, anchor="w").pack(side=tk.LEFT)
-            status_label = tk.Label(row, text="", width=14, anchor="w")
-            status_label.pack(side=tk.LEFT)
-            tk.Button(row, text="Grant", command=lambda r=resource: self._grant(r)).pack(side=tk.LEFT, padx=4)
-            tk.Button(row, text="Revoke", command=lambda r=resource: self._revoke(r)).pack(side=tk.LEFT, padx=4)
-            self.resource_status_labels[resource] = status_label
+        self.resource_rows_frame = tk.Frame(self.access_tab)
+        self.resource_rows_frame.pack(fill=tk.X, padx=8)
 
         tk.Label(self.access_tab, text="Privacy Preferences", font=("", 11, "bold")).pack(
             anchor="w", padx=8, pady=(16, 4)
@@ -184,11 +171,19 @@ class DashboardScreen(tk.Frame):
         self._refresh_access_tab()
 
     def _grant(self, resource):
-        self.session.permissions.grant(resource)
+        try:
+            self.client.grant(resource)
+        except APIError as exc:
+            messagebox.showerror("Grant failed", str(exc))
+            return
         self._refresh_access_tab()
 
     def _revoke(self, resource):
-        self.session.permissions.revoke(resource)
+        try:
+            self.client.revoke(resource)
+        except APIError as exc:
+            messagebox.showerror("Revoke failed", str(exc))
+            return
         self._refresh_access_tab()
 
     def _reset_selected_preference(self):
@@ -196,16 +191,36 @@ class DashboardScreen(tk.Frame):
         if not selection:
             return
         key = self.preferences_tree.item(selection[0], "values")[0]
-        self.session.preferences.forget(key)
+        try:
+            self.client.reset_preference(key)
+        except APIError as exc:
+            messagebox.showerror("Reset failed", str(exc))
+            return
         self._refresh_access_tab()
 
     def _refresh_access_tab(self):
-        for resource, label in self.resource_status_labels.items():
-            granted = self.session.permissions.is_granted(resource)
-            label.configure(text="Granted" if granted else "Not granted")
+        for widget in self.resource_rows_frame.winfo_children():
+            widget.destroy()
+        try:
+            permissions = self.client.list_permissions()
+        except APIError as exc:
+            messagebox.showerror("Could not load permissions", str(exc))
+            permissions = {}
+        for resource, granted in permissions.items():
+            row = tk.Frame(self.resource_rows_frame)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=resource, width=16, anchor="w").pack(side=tk.LEFT)
+            tk.Label(row, text="Granted" if granted else "Not granted", width=14, anchor="w").pack(side=tk.LEFT)
+            tk.Button(row, text="Grant", command=lambda r=resource: self._grant(r)).pack(side=tk.LEFT, padx=4)
+            tk.Button(row, text="Revoke", command=lambda r=resource: self._revoke(r)).pack(side=tk.LEFT, padx=4)
 
         self.preferences_tree.delete(*self.preferences_tree.get_children())
-        for key, entry in self.session.preferences.list_all().items():
+        try:
+            preferences = self.client.list_preferences()
+        except APIError as exc:
+            messagebox.showerror("Could not load preferences", str(exc))
+            preferences = {}
+        for key, entry in preferences.items():
             self.preferences_tree.insert("", tk.END, values=(key, entry["disposition"], entry["set_at"]))
 
     # --- Activity tab ---
@@ -226,11 +241,12 @@ class DashboardScreen(tk.Frame):
 
     def _refresh_activity(self):
         self.activity_tree.delete(*self.activity_tree.get_children())
-        path = self.session.audit_log.path
-        if not path.exists():
+        try:
+            entries = self.client.list_activity()
+        except APIError as exc:
+            messagebox.showerror("Could not load activity", str(exc))
             return
-        for line in path.read_text(encoding="utf-8").splitlines():
-            entry = json.loads(line)
+        for entry in entries:
             self.activity_tree.insert(
                 "",
                 tk.END,

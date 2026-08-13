@@ -1,11 +1,9 @@
-"""Persisted local session, matching vibe-agent's login pattern (bcrypt auth +
-a token with an expiry) but adapted to a single local CLI process instead of
-a multi-request server: there is exactly one active session on this machine
-at a time, so the store holds one record, not a keyed table.
-
-Re-running `python -m app.main` with a still-valid session skips the login
-prompt entirely, the way `gh`/`aws`/`docker`/`gcloud` persist a local
-credential instead of re-authenticating on every invocation.
+"""Server-side session store: many concurrently-valid tokens (one per logged
+-in client), matching vibe-agent's DB-backed Session table shape but as a
+JSON file, consistent with the rest of this project's storage. Every
+protected backend route resolves the caller via validate(token), the way
+vibe-agent's get_current_business() resolves a request via
+validate_session(db, token).
 """
 
 import json
@@ -13,7 +11,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SESSION_PATH = Path(__file__).resolve().parent.parent / "session.json"
+SESSION_PATH = Path(__file__).resolve().parent.parent / "sessions.json"
 SESSION_LIFETIME = timedelta(days=7)
 
 
@@ -22,28 +20,43 @@ class SessionStore:
         self.path = path
         self.lifetime = lifetime
 
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return {}
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _save(self, state: dict) -> None:
+        self.path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
     def create(self, username: str) -> str:
+        state = self._load()
         token = secrets.token_urlsafe(32)
-        record = {
+        state[token] = {
             "username": username,
-            "token": token,
             "expires_at": (datetime.now(timezone.utc) + self.lifetime).isoformat(),
         }
-        self.path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        self._save(state)
         return token
 
-    def validate(self) -> str | None:
-        if not self.path.exists():
+    def validate(self, token: str) -> str | None:
+        state = self._load()
+        record = state.get(token)
+        if record is None:
             return None
         try:
-            record = json.loads(self.path.read_text(encoding="utf-8"))
             expires_at = datetime.fromisoformat(record["expires_at"])
             username = record["username"]
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (KeyError, ValueError):
             return None
         if expires_at < datetime.now(timezone.utc):
             return None
         return username
 
-    def revoke(self) -> None:
-        self.path.unlink(missing_ok=True)
+    def revoke(self, token: str) -> None:
+        state = self._load()
+        if token in state:
+            del state[token]
+            self._save(state)

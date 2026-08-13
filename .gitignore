@@ -6,6 +6,8 @@ permissions.json
 audit_log.jsonl
 privacy_preferences.json
 users.json
-session.json
+sessions.json
 user_data/
+.cli_session
+.gui_session
 .pytest_cache/
