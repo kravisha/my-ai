@@ -152,6 +152,29 @@ def test_enqueue_directive_reason_is_optional(conn):
     assert pending["reason"] is None
 
 
+def test_schema_version_is_stamped_on_agent_registry_and_health_metrics(conn):
+    """Gap 1 (project brief): every message/record carries a schema
+    version, addressed alongside (not instead of) the additive-only-
+    columns rule - see the module docstring in fi_db.py for why both."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["schema_version"] == fi_db.SCHEMA_VERSION
+
+    fi_db.record_heartbeat(conn, "dummy-1")
+    metric_row = conn.execute("SELECT schema_version FROM health_metrics WHERE identity = 'dummy-1'").fetchone()
+    assert metric_row["schema_version"] == fi_db.SCHEMA_VERSION
+
+
+def test_schema_version_is_stamped_on_directives_and_survives_archival(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    pending = fi_db.fetch_next_pending_directive(conn)
+    assert pending["schema_version"] == fi_db.SCHEMA_VERSION
+
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["schema_version"] == fi_db.SCHEMA_VERSION
+
+
 def test_enqueue_directive_reason_is_captured_and_survives_archival(conn):
     """Gap 2 (project brief): COO decisions should be logged with a reason.
     This checks the reason is stored on the pending row and carried through

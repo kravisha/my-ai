@@ -14,6 +14,17 @@ The pending->completed move for directives is enforced by a SQL trigger,
 not application code doing a manual delete+insert - the DB itself
 guarantees the invariant, per the plan's explicit intent, rather than
 depending on every call site remembering to do both steps correctly.
+
+Schema evolution rule (confirmed 2026-08-14, resolving Gap 1's proposed
+schema_version removal by keeping both ideas rather than picking one):
+columns are only ever ADDED, never renamed or removed - every historical
+row stays fully readable under the current column layout, so there's
+nothing a version tag needs to disambiguate about *shape*. SCHEMA_VERSION
+below is a separate concern: a producer/semantic version, bumped when the
+*meaning* of written data changes even though the columns look the same
+(e.g. a detector algorithm change that shifts what a confidence score
+represents) - satisfies addendum_10 Phase A's literal "every message
+carries... schema version" requirement without contradicting it.
 """
 
 import json
@@ -23,6 +34,11 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 
+# Bump only when the *meaning* of newly-written rows changes in a way a
+# future reader/grader needs to distinguish from older rows - not on every
+# column addition (see the additive-only-columns rule above).
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_registry (
     identity TEXT PRIMARY KEY,
@@ -31,7 +47,8 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     status TEXT NOT NULL DEFAULT 'active',
     retire_requested INTEGER NOT NULL DEFAULT 0,
     spawned_at TEXT NOT NULL,
-    last_heartbeat_at TEXT
+    last_heartbeat_at TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS coo_directives (
@@ -44,7 +61,8 @@ CREATE TABLE IF NOT EXISTS coo_directives (
     requested_by TEXT NOT NULL,
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    detail TEXT
+    detail TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS coo_directives_completed (
@@ -58,7 +76,8 @@ CREATE TABLE IF NOT EXISTS coo_directives_completed (
     reason TEXT,
     completed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
-    detail TEXT
+    detail TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TRIGGER IF NOT EXISTS coo_directives_archive
@@ -66,10 +85,10 @@ AFTER UPDATE OF status ON coo_directives
 WHEN NEW.status IN ('success', 'failure')
 BEGIN
     INSERT INTO coo_directives_completed
-        (id, timestamp, directive_type, target_role, target_identity, params, requested_by, reason, completed_at, outcome, detail)
+        (id, timestamp, directive_type, target_role, target_identity, params, requested_by, reason, completed_at, outcome, detail, schema_version)
     VALUES
         (NEW.id, NEW.timestamp, NEW.directive_type, NEW.target_role, NEW.target_identity, NEW.params, NEW.requested_by, NEW.reason,
-         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.detail);
+         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.detail, NEW.schema_version);
     DELETE FROM coo_directives WHERE id = NEW.id;
 END;
 
@@ -78,7 +97,8 @@ CREATE TABLE IF NOT EXISTS health_metrics (
     identity TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     metric TEXT NOT NULL,
-    value TEXT
+    value TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE VIEW IF NOT EXISTS performance_card AS
@@ -116,10 +136,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
 def register_agent(conn: sqlite3.Connection, identity: str, role: str, pid: int) -> None:
     now = _now()
     conn.execute(
-        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at) "
-        "VALUES (?, ?, ?, 'active', 0, ?, ?) "
-        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at",
-        (identity, role, pid, now, now),
+        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version) "
+        "VALUES (?, ?, ?, 'active', 0, ?, ?, ?) "
+        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, schema_version=excluded.schema_version",
+        (identity, role, pid, now, now, SCHEMA_VERSION),
     )
     conn.commit()
 
@@ -142,8 +162,8 @@ def record_heartbeat(conn: sqlite3.Connection, identity: str, metric: str = "hea
     now = _now()
     conn.execute("UPDATE agent_registry SET last_heartbeat_at = ? WHERE identity = ?", (now, identity))
     conn.execute(
-        "INSERT INTO health_metrics (identity, timestamp, metric, value) VALUES (?, ?, ?, ?)",
-        (identity, now, metric, value),
+        "INSERT INTO health_metrics (identity, timestamp, metric, value, schema_version) VALUES (?, ?, ?, ?, ?)",
+        (identity, now, metric, value, SCHEMA_VERSION),
     )
     conn.commit()
 
@@ -182,9 +202,9 @@ def enqueue_directive(
     result" half of that requirement) is not yet designed; this only
     covers the reason-capture half."""
     cursor = conn.execute(
-        "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by, reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (_now(), directive_type, target_role, target_identity, json.dumps(params or {}), requested_by, reason),
+        "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by, reason, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), directive_type, target_role, target_identity, json.dumps(params or {}), requested_by, reason, SCHEMA_VERSION),
     )
     conn.commit()
     return cursor.lastrowid
