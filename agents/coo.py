@@ -67,12 +67,18 @@ def _ensure_baseline_population(conn) -> None:
     step."""
     agents = fi_db.list_agents(conn)
     active_roles = {a["role"] for a in agents if a["status"] == "active"}
+    known_roles = {a["role"] for a in agents}
     for role in BASELINE_ROLES:
         if role in active_roles:
             continue
         if _role_spawn_in_flight(conn, role):
             continue
-        fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role)
+        reason = (
+            f"baseline role '{role}' has never been spawned - establishing initial population"
+            if role not in known_roles
+            else f"baseline role '{role}' has zero active agents - respawning to maintain baseline"
+        )
+        fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role, reason=reason)
 
 
 def _coo_work(conn) -> None:

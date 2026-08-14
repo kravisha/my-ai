@@ -143,6 +143,31 @@ def test_complete_directive_with_failure_outcome(conn):
     assert completed[0]["detail"] == "process not found"
 
 
+def test_enqueue_directive_reason_is_optional(conn):
+    """Backward compatibility: existing callers that don't pass reason keep
+    working, and get a null reason rather than an error."""
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    pending = fi_db.fetch_next_pending_directive(conn)
+    assert pending["id"] == directive_id
+    assert pending["reason"] is None
+
+
+def test_enqueue_directive_reason_is_captured_and_survives_archival(conn):
+    """Gap 2 (project brief): COO decisions should be logged with a reason.
+    This checks the reason is stored on the pending row and carried through
+    to the completed table by the archive trigger, not dropped along the way."""
+    directive_id = fi_db.enqueue_directive(
+        conn, "spawn", "coo", target_role="dummy",
+        reason="baseline role 'dummy' has zero active agents - respawning to maintain baseline",
+    )
+    pending = fi_db.fetch_next_pending_directive(conn)
+    assert pending["reason"] == "baseline role 'dummy' has zero active agents - respawning to maintain baseline"
+
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["reason"] == "baseline role 'dummy' has zero active agents - respawning to maintain baseline"
+
+
 def test_performance_card_reflects_multiple_agents(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     fi_db.register_agent(conn, "coo-1", "coo", 222)

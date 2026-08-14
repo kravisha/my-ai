@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS coo_directives (
     target_identity TEXT,
     params TEXT,
     requested_by TEXT NOT NULL,
+    reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     detail TEXT
 );
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS coo_directives_completed (
     target_identity TEXT,
     params TEXT,
     requested_by TEXT NOT NULL,
+    reason TEXT,
     completed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
     detail TEXT
@@ -64,9 +66,9 @@ AFTER UPDATE OF status ON coo_directives
 WHEN NEW.status IN ('success', 'failure')
 BEGIN
     INSERT INTO coo_directives_completed
-        (id, timestamp, directive_type, target_role, target_identity, params, requested_by, completed_at, outcome, detail)
+        (id, timestamp, directive_type, target_role, target_identity, params, requested_by, reason, completed_at, outcome, detail)
     VALUES
-        (NEW.id, NEW.timestamp, NEW.directive_type, NEW.target_role, NEW.target_identity, NEW.params, NEW.requested_by,
+        (NEW.id, NEW.timestamp, NEW.directive_type, NEW.target_role, NEW.target_identity, NEW.params, NEW.requested_by, NEW.reason,
          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.detail);
     DELETE FROM coo_directives WHERE id = NEW.id;
 END;
@@ -171,11 +173,18 @@ def enqueue_directive(
     target_role: str | None = None,
     target_identity: str | None = None,
     params: dict | None = None,
+    reason: str | None = None,
 ) -> int:
+    """reason: why this directive was raised (e.g. "baseline role has zero
+    active agents"), addressing addendum_10 Phase B's "record every COO
+    decision with reason... so operational decisions can also be graded" -
+    see Gap 2 in the project brief. Grading itself (the "later observed
+    result" half of that requirement) is not yet designed; this only
+    covers the reason-capture half."""
     cursor = conn.execute(
-        "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (_now(), directive_type, target_role, target_identity, json.dumps(params or {}), requested_by),
+        "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by, reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (_now(), directive_type, target_role, target_identity, json.dumps(params or {}), requested_by, reason),
     )
     conn.commit()
     return cursor.lastrowid

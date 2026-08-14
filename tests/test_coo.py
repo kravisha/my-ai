@@ -23,6 +23,10 @@ def test_ensure_baseline_population_enqueues_spawn_when_role_missing(conn):
     assert pending["directive_type"] == "spawn"
     assert pending["target_role"] in BASELINE_ROLES
     assert pending["requested_by"] == "coo"
+    # Gap 2 (project brief): COO's decision must carry a reason, and a first-
+    # ever spawn should read differently from a respawn-after-death (see
+    # test_ensure_baseline_population_respawns_role_after_it_goes_gone below).
+    assert "never been spawned" in pending["reason"]
 
 
 def test_ensure_baseline_population_does_not_duplicate_when_role_already_active(conn):
@@ -43,6 +47,7 @@ def test_ensure_baseline_population_respawns_role_after_it_goes_gone(conn):
     pending = fi_db.fetch_next_pending_directive(conn)
     assert pending is not None
     assert pending["target_role"] == "dummy"
+    assert "zero active agents" in pending["reason"]
 
 
 def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn):
