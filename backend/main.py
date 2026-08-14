@@ -12,7 +12,9 @@ route vibe-agent has nothing to copy from is /chat's pause/resume protocol
 for the consent prompt - see the docstring on chat() below.
 """
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -26,9 +28,47 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
+from backend.coordinator import Coordinator
 from backend.transcripts import TranscriptStore
 
-app = FastAPI(title="My AI Backend")
+# How often the background loop below checks coo_directives for new work -
+# see _coordinator_poll_loop. Same cadence as an agent's own heartbeat
+# interval (agents/base.py), no reason for it to differ.
+COORDINATOR_POLL_INTERVAL_SECONDS = 1.0
+
+coordinator = Coordinator()
+_coordinator_poll_task: asyncio.Task | None = None
+
+
+async def _coordinator_poll_loop() -> None:
+    """Stands in for what a human would otherwise have to trigger by hand:
+    repeatedly calls process_next_directive() so COO's spawn/retire requests
+    (rows in coo_directives) actually get acted on. Runs as a plain asyncio
+    task in this process's own event loop - the Coordinator itself is not a
+    separate process, it lives inside the backend engine (confirmed process
+    model), so this needs no subprocess or IPC of its own."""
+    while True:
+        coordinator.process_next_directive()
+        await asyncio.sleep(COORDINATOR_POLL_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Server starts -> coordinator initializes -> coordinator spawns COO as
+    # the first managed process (addendum 6 / doc 2's confirmed startup
+    # sequence). Every agent COO wants after this goes through the normal
+    # directive queue, picked up by the poll loop below.
+    global _coordinator_poll_task
+    coordinator.bootstrap_coo()
+    _coordinator_poll_task = asyncio.create_task(_coordinator_poll_loop())
+    try:
+        yield
+    finally:
+        _coordinator_poll_task.cancel()
+        coordinator.close()
+
+
+app = FastAPI(title="My AI Backend", lifespan=lifespan)
 users = UserStore()
 sessions = SessionStore()
 transcripts = TranscriptStore()

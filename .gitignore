@@ -11,3 +11,6 @@ user_data/
 .cli_session
 .gui_session
 .pytest_cache/
+financial_intelligence.db
+financial_intelligence.db-wal
+financial_intelligence.db-shm
