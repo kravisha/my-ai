@@ -47,14 +47,6 @@ def analysis_response(payload: dict):
     return FakeResponse([FakeBlock("text", text=json.dumps(payload))])
 
 
-@pytest.fixture
-def conn():
-    connection = fi_db.get_connection(":memory:")
-    fi_db.init_schema(connection)
-    yield connection
-    connection.close()
-
-
 def test_analysis_work_idle_when_no_pending_report(conn, monkeypatch):
     call_model = MagicMock()
     monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)

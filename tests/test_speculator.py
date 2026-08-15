@@ -12,8 +12,6 @@ import subprocess
 import sys
 import time
 
-import pytest
-
 from agents.speculator import _speculator_work
 from backend import fi_db
 from backend.coordinator import PROJECT_ROOT
@@ -39,14 +37,6 @@ class FakeProvider:
 
 def post(text, confidence, posted_at="2026-01-01T00:00:05+00:00", security="SYN1"):
     return SocialPost(source="reddit", author="u1", posted_at=posted_at, text=text, security=security, engagement_score=confidence)
-
-
-@pytest.fixture
-def conn():
-    connection = fi_db.get_connection(":memory:")
-    fi_db.init_schema(connection)
-    yield connection
-    connection.close()
 
 
 def test_speculator_work_records_evidence_for_every_new_post(conn):

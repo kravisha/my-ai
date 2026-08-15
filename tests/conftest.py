@@ -19,6 +19,7 @@ from app.permissions import PermissionManager
 from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.users import UserStore
+from backend import fi_db
 
 TEST_ACCOUNT_ID = "ACCT-TEST-99999"
 
@@ -77,6 +78,18 @@ def backend_client(tmp_path, monkeypatch):
     )
 
     return TestClient(backend_main.app)
+
+
+@pytest.fixture
+def conn():
+    """Shared by every FI test file (test_fi_db.py, test_coo.py,
+    test_explorer.py, test_speculator.py, test_analysis.py) - previously
+    duplicated identically five times, consolidated here as part of the
+    Pre-Alpha persistence-abstraction work."""
+    connection = fi_db.get_connection(":memory:")
+    fi_db.init_schema(connection)
+    yield connection
+    connection.close()
 
 
 @pytest.fixture

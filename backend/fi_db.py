@@ -1,8 +1,18 @@
-"""Financial Intelligence system's coordination substrate: SQLite (WAL mode)
-as the *only* channel between processes - see docs/addenda/addendum_6 §1-3
-and the confirmed decision in [[project_my_ai_financial_intelligence]] that
-no agent ever calls another agent directly. Every coordination act (COO
-directives, agent registration, health) is a row in one of these tables.
+"""Financial Intelligence system's coordination substrate: a SQLite-backed
+(WAL mode) database, accessed only through backend/db.py's Database
+abstraction - see docs/addenda/addendum_6 §1-3 and the confirmed decision
+in [[project_my_ai_financial_intelligence]] that no agent ever calls another
+agent directly. Every coordination act (COO directives, agent registration,
+health) is a row in one of these tables.
+
+Data-access abstraction (Pre-Alpha requirement, 2026-08-15): this module is
+the *only* place that knows the FI schema and writes SQL, but it no longer
+touches sqlite3 directly - every read/write goes through backend/db.py's
+Database class, which hides row-factory/lastrowid/PRAGMA details. Nothing
+outside this module has ever needed to change as a result (confirmed:
+agents/base.py and every real agent module only ever pass the connection
+object through opaquely to this module's functions) - this rewrite is a
+pure internal-implementation change, not a public API change.
 
 Table design follows the queue-vs-log principle worked out this session:
 a table gets the pending->completed split only if something needs to ask
@@ -14,6 +24,12 @@ The pending->completed move for directives is enforced by a SQL trigger,
 not application code doing a manual delete+insert - the DB itself
 guarantees the invariant, per the plan's explicit intent, rather than
 depending on every call site remembering to do both steps correctly.
+Deliberately left as a trigger even after the Pre-Alpha persistence
+abstraction (2026-08-15): it's invisible to every caller outside this
+module (nothing else issues a raw UPDATE against these tables), so it
+doesn't violate "agents must not depend on SQLite-specific behavior" -
+reimplementing it in application code is real work with a cost, better
+scoped to whenever an actual PostgreSQL migration is undertaken.
 
 Schema evolution rule (confirmed 2026-08-14, resolving Gap 1's proposed
 schema_version removal by keeping both ideas rather than picking one):
@@ -28,9 +44,10 @@ carries... schema version" requirement without contradicting it.
 """
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+from backend.db import Database
 
 DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 
@@ -256,23 +273,18 @@ def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=5000;")
-    return conn
+def get_connection(db_path: str | Path = DB_PATH) -> Database:
+    return Database(db_path)
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
+def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
-    conn.commit()
 
 
 # --- Agent registry ---
 
 
-def register_agent(conn: sqlite3.Connection, identity: str, role: str, pid: int) -> None:
+def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     """identity is a permanent role-slot ID (addendum_5 §4: durable
     performance record independent of any one process instance - see
     backend/coordinator.py's _slot_identity), so this INSERT...ON CONFLICT
@@ -289,39 +301,35 @@ def register_agent(conn: sqlite3.Connection, identity: str, role: str, pid: int)
         "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, last_heartbeat_at=NULL, schema_version=excluded.schema_version",
         (identity, role, pid, now, SCHEMA_VERSION),
     )
-    conn.commit()
 
 
-def request_retirement(conn: sqlite3.Connection, identity: str) -> None:
+def request_retirement(conn: Database, identity: str) -> None:
     """The Coordinator calls this when processing a 'retire' directive - it
     only ever sets a flag. The target agent's own run loop (see
     agents/base.py) polls for this and exits itself; nothing forcibly kills
     the process. This *is* what "graceful retire" means concretely."""
     conn.execute("UPDATE agent_registry SET retire_requested = 1 WHERE identity = ?", (identity,))
-    conn.commit()
 
 
-def is_retirement_requested(conn: sqlite3.Connection, identity: str) -> bool:
-    row = conn.execute("SELECT retire_requested FROM agent_registry WHERE identity = ?", (identity,)).fetchone()
+def is_retirement_requested(conn: Database, identity: str) -> bool:
+    row = conn.fetchone("SELECT retire_requested FROM agent_registry WHERE identity = ?", (identity,))
     return bool(row and row["retire_requested"])
 
 
-def record_heartbeat(conn: sqlite3.Connection, identity: str, metric: str = "heartbeat", value: str | None = None) -> None:
+def record_heartbeat(conn: Database, identity: str, metric: str = "heartbeat", value: str | None = None) -> None:
     now = _now()
     conn.execute("UPDATE agent_registry SET last_heartbeat_at = ? WHERE identity = ?", (now, identity))
     conn.execute(
         "INSERT INTO health_metrics (identity, timestamp, metric, value, schema_version) VALUES (?, ?, ?, ?, ?)",
         (identity, now, metric, value, SCHEMA_VERSION),
     )
-    conn.commit()
 
 
-def mark_agent_gone(conn: sqlite3.Connection, identity: str) -> None:
+def mark_agent_gone(conn: Database, identity: str) -> None:
     conn.execute("UPDATE agent_registry SET status = 'gone' WHERE identity = ?", (identity,))
-    conn.commit()
 
 
-def mark_agent_crashed(conn: sqlite3.Connection, identity: str) -> None:
+def mark_agent_crashed(conn: Database, identity: str) -> None:
     """Distinct from mark_agent_gone: 'gone' means the agent's own run loop
     exited cleanly and marked itself on its way out (agents/base.py's
     finally block). 'crashed' means agents/coo.py's health evaluation
@@ -329,10 +337,9 @@ def mark_agent_crashed(conn: sqlite3.Connection, identity: str) -> None:
     happening - addendum_10 Phase B's restart-vs-crash distinction (Gap 3
     in the project brief)."""
     conn.execute("UPDATE agent_registry SET status = 'crashed' WHERE identity = ?", (identity,))
-    conn.commit()
 
 
-def list_stale_active_agents(conn: sqlite3.Connection, stale_seconds: float) -> list[dict]:
+def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
     """'active' agents whose most recent signal of life (last heartbeat, or
     spawn time if it never got as far as a first heartbeat) is older than
     stale_seconds - candidates for agents/coo.py's _evaluate_agent_health to
@@ -341,31 +348,29 @@ def list_stale_active_agents(conn: sqlite3.Connection, stale_seconds: float) -> 
     reaches that code at all, so its row would stay 'active' forever with a
     heartbeat that's stopped advancing unless something else notices - this
     is that something else."""
-    rows = conn.execute("SELECT * FROM agent_registry WHERE status = 'active'").fetchall()
+    rows = conn.fetchall("SELECT * FROM agent_registry WHERE status = 'active'")
     now = datetime.now(timezone.utc)
     stale = []
     for row in rows:
         reference = row["last_heartbeat_at"] or row["spawned_at"]
         if (now - parse_timestamp(reference)).total_seconds() >= stale_seconds:
-            stale.append(dict(row))
+            stale.append(row)
     return stale
 
 
-def get_agent(conn: sqlite3.Connection, identity: str) -> dict | None:
-    row = conn.execute("SELECT * FROM agent_registry WHERE identity = ?", (identity,)).fetchone()
-    return dict(row) if row else None
+def get_agent(conn: Database, identity: str) -> dict | None:
+    return conn.fetchone("SELECT * FROM agent_registry WHERE identity = ?", (identity,))
 
 
-def list_agents(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM agent_registry ORDER BY spawned_at").fetchall()
-    return [dict(r) for r in rows]
+def list_agents(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM agent_registry ORDER BY spawned_at")
 
 
 # --- COO -> Coordinator directive queue ---
 
 
 def enqueue_directive(
-    conn: sqlite3.Connection,
+    conn: Database,
     directive_type: str,
     requested_by: str,
     target_role: str | None = None,
@@ -380,23 +385,20 @@ def enqueue_directive(
     "later observed result") is recorded after the fact via
     record_observed_result, once list_directives_needing_observation says
     enough time has passed to check what actually happened."""
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by, reason, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), directive_type, target_role, target_identity, json.dumps(params or {}), requested_by, reason, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def fetch_next_pending_directive(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute(
+def fetch_next_pending_directive(conn: Database) -> dict | None:
+    return conn.fetchone(
         "SELECT * FROM coo_directives WHERE status = 'pending' ORDER BY timestamp ASC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
+    )
 
 
-def has_pending_spawn_directive(conn: sqlite3.Connection, role: str) -> bool:
+def has_pending_spawn_directive(conn: Database, role: str) -> bool:
     """True if a spawn directive for this role is sitting in the pending
     queue, not yet picked up by the Coordinator. Found via manual
     verification of Gap 3 (project brief): agents/coo.py's
@@ -408,27 +410,25 @@ def has_pending_spawn_directive(conn: sqlite3.Connection, role: str) -> bool:
     let alone completed. Without this check, that cycle sees no completed
     directive to call "in flight" and enqueues a second, genuinely
     duplicate spawn for the same role."""
-    row = conn.execute(
+    row = conn.fetchone(
         "SELECT 1 FROM coo_directives WHERE directive_type = 'spawn' AND target_role = ? AND status = 'pending' LIMIT 1",
         (role,),
-    ).fetchone()
+    )
     return row is not None
 
 
-def complete_directive(conn: sqlite3.Connection, directive_id: int, outcome: str, detail: str | None = None) -> None:
+def complete_directive(conn: Database, directive_id: int, outcome: str, detail: str | None = None) -> None:
     conn.execute(
         "UPDATE coo_directives SET status = ?, detail = ? WHERE id = ?",
         (outcome, detail, directive_id),
     )
-    conn.commit()
 
 
-def list_completed_directives(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM coo_directives_completed ORDER BY completed_at").fetchall()
-    return [dict(r) for r in rows]
+def list_completed_directives(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM coo_directives_completed ORDER BY completed_at")
 
 
-def most_recent_completed_spawn(conn: sqlite3.Connection, role: str) -> dict | None:
+def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
     """The latest completed spawn directive for a role, or None if it's
     never had one. Agent identity is now a permanent role-slot (addendum_5
     §4 - see backend/coordinator.py's _slot_identity), so every spawn
@@ -445,15 +445,14 @@ def most_recent_completed_spawn(conn: sqlite3.Connection, role: str) -> dict | N
     directives that complete faster than that - not a real risk against the
     Coordinator's own ~1s poll loop, but a real one in tests exercising this
     logic without a real subprocess in between."""
-    row = conn.execute(
+    return conn.fetchone(
         "SELECT * FROM coo_directives_completed WHERE directive_type = 'spawn' AND target_role = ? "
         "ORDER BY id DESC LIMIT 1",
         (role,),
-    ).fetchone()
-    return dict(row) if row else None
+    )
 
 
-def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds: float = 5.0) -> list[dict]:
+def list_directives_needing_observation(conn: Database, grace_seconds: float = 5.0) -> list[dict]:
     """Completed spawn directives whose outcome only proves the Coordinator's
     subprocess.Popen call didn't raise (see coordinator.py's _handle_spawn) -
     not that the decision panned out. Once grace_seconds has elapsed since
@@ -464,20 +463,20 @@ def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds:
     WHERE clause because completed_at is written by the archive trigger
     using SQLite's own strftime (a differently-formatted timestamp than this
     module's _now()) - see parse_timestamp."""
-    rows = conn.execute(
+    rows = conn.fetchall(
         "SELECT * FROM coo_directives_completed "
         "WHERE directive_type = 'spawn' AND outcome = 'success' AND observed_result IS NULL "
         "ORDER BY completed_at"
-    ).fetchall()
+    )
     now = datetime.now(timezone.utc)
     ready = []
     for row in rows:
         if (now - parse_timestamp(row["completed_at"])).total_seconds() >= grace_seconds:
-            ready.append(dict(row))
+            ready.append(row)
     return ready
 
 
-def record_observed_result(conn: sqlite3.Connection, directive_id: int, observed_result: str) -> None:
+def record_observed_result(conn: Database, directive_id: int, observed_result: str) -> None:
     """The "later observed result" half of addendum_10 Phase B's decision-
     grading requirement (Gap 2's other half - reason-capture already shipped
     in enqueue_directive). Written once, after the fact, by agents/coo.py's
@@ -486,22 +485,20 @@ def record_observed_result(conn: sqlite3.Connection, directive_id: int, observed
         "UPDATE coo_directives_completed SET observed_result = ?, observed_at = ? WHERE id = ?",
         (observed_result, _now(), directive_id),
     )
-    conn.commit()
 
 
 # --- Performance card (objective fields only - see plan for the deferred recognition/commendation split) ---
 
 
-def get_performance_card(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM performance_card ORDER BY identity").fetchall()
-    return [dict(r) for r in rows]
+def get_performance_card(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM performance_card ORDER BY identity")
 
 
 # --- Phase C: detector events, evidence, discovery report queue, analysis, grading ---
 
 
 def record_detector_event(
-    conn: sqlite3.Connection,
+    conn: Database,
     producer_identity: str,
     producer_spawned_at: str,
     security: str,
@@ -526,17 +523,15 @@ def record_detector_event(
     ran against, and (as JSON) which other securities in that group also
     triggered this same cycle - the evidence behind scope='peer' vs
     'individual'. All None for a scan that had no peer group in play."""
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO detector_events "
         "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def record_detector_judgment(conn: sqlite3.Connection, detector_event_id: int, judgment_passed: bool, judgment_note: str | None = None) -> None:
+def record_detector_judgment(conn: Database, detector_event_id: int, judgment_passed: bool, judgment_note: str | None = None) -> None:
     """The lightweight LLM judgment gate's verdict (addendum_7 §2 last
     bullet), recorded onto the detector_events row it evaluated - a 1:1
     relationship, no separate table needed."""
@@ -544,16 +539,14 @@ def record_detector_judgment(conn: sqlite3.Connection, detector_event_id: int, j
         "UPDATE detector_events SET judgment_passed = ?, judgment_note = ? WHERE id = ?",
         (int(judgment_passed), judgment_note, detector_event_id),
     )
-    conn.commit()
 
 
-def get_detector_event(conn: sqlite3.Connection, detector_event_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM detector_events WHERE id = ?", (detector_event_id,)).fetchone()
-    return dict(row) if row else None
+def get_detector_event(conn: Database, detector_event_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM detector_events WHERE id = ?", (detector_event_id,))
 
 
 def record_evidence_item(
-    conn: sqlite3.Connection,
+    conn: Database,
     producer_identity: str,
     producer_spawned_at: str,
     evidence_type: str,
@@ -564,26 +557,23 @@ def record_evidence_item(
     confidence: float | None = None,
     raw_ref: str | None = None,
 ) -> int:
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO evidence_items "
         "(created_at, producer_identity, producer_spawned_at, evidence_type, security, source, observed_at, content, confidence, raw_ref, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), producer_identity, producer_spawned_at, evidence_type, security, source, observed_at, content, confidence, raw_ref, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def list_evidence_items(conn: sqlite3.Connection, ids: list[int]) -> list[dict]:
+def list_evidence_items(conn: Database, ids: list[int]) -> list[dict]:
     if not ids:
         return []
     placeholders = ",".join("?" for _ in ids)
-    rows = conn.execute(f"SELECT * FROM evidence_items WHERE id IN ({placeholders})", ids).fetchall()
-    return [dict(r) for r in rows]
+    return conn.fetchall(f"SELECT * FROM evidence_items WHERE id IN ({placeholders})", ids)
 
 
 def enqueue_report(
-    conn: sqlite3.Connection,
+    conn: Database,
     producer_identity: str,
     producer_spawned_at: str,
     report_type: str,
@@ -593,39 +583,36 @@ def enqueue_report(
     evidence_ids: list[int] | None = None,
     judgment_confidence: float | None = None,
 ) -> int:
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO discovery_reports "
         "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def fetch_next_pending_report(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute(
+def fetch_next_pending_report(conn: Database) -> dict | None:
+    return conn.fetchone(
         "SELECT * FROM discovery_reports WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
+    )
 
 
-def has_pending_report(conn: sqlite3.Connection, producer_identity: str, security: str) -> bool:
+def has_pending_report(conn: Database, producer_identity: str, security: str) -> bool:
     """True if a report from this producer for this security is still
     sitting in the pending queue, unconsumed by Analysis. Explorer/
     Speculator check this before filing - without it, a static synthetic
     surface/stream would get re-filed as a "new" report every ~1s cycle
     even though Analysis hasn't had a chance to look at the last one yet
     (same idempotency shape as has_pending_spawn_directive)."""
-    row = conn.execute(
+    row = conn.fetchone(
         "SELECT 1 FROM discovery_reports WHERE producer_identity = ? AND security = ? LIMIT 1",
         (producer_identity, security),
-    ).fetchone()
+    )
     return row is not None
 
 
 def complete_report(
-    conn: sqlite3.Connection,
+    conn: Database,
     report_id: int,
     outcome: str,
     handled_by_identity: str | None = None,
@@ -636,16 +623,14 @@ def complete_report(
         "UPDATE discovery_reports SET status = ?, handled_by_identity = ?, handled_by_spawned_at = ?, detail = ? WHERE id = ?",
         (outcome, handled_by_identity, handled_by_spawned_at, detail, report_id),
     )
-    conn.commit()
 
 
-def list_completed_reports(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM discovery_reports_completed ORDER BY completed_at").fetchall()
-    return [dict(r) for r in rows]
+def list_completed_reports(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM discovery_reports_completed ORDER BY completed_at")
 
 
 def record_analysis_result(
-    conn: sqlite3.Connection,
+    conn: Database,
     producer_identity: str,
     producer_spawned_at: str,
     report_id: int,
@@ -662,34 +647,32 @@ def record_analysis_result(
     judgment, populated from the peer_context agents/explorer.py surfaced
     into this report's context, not a mechanical copy of detector_events'
     scope column."""
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO analysis_results "
         "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def list_recent_analysis_results(conn: sqlite3.Connection, security: str, since_seconds: float) -> list[dict]:
+def list_recent_analysis_results(conn: Database, security: str, since_seconds: float) -> list[dict]:
     """Analysis's own recent results for this security - a recency/
     duplicate check against this security's own history, not peer analysis
     (which is cross-security and explicitly out of scope for this
     increment)."""
-    rows = conn.execute(
+    rows = conn.fetchall(
         "SELECT * FROM analysis_results WHERE security = ? ORDER BY created_at DESC", (security,)
-    ).fetchall()
+    )
     now = datetime.now(timezone.utc)
     recent = []
     for row in rows:
         if (now - parse_timestamp(row["created_at"])).total_seconds() <= since_seconds:
-            recent.append(dict(row))
+            recent.append(row)
     return recent
 
 
 def record_grade(
-    conn: sqlite3.Connection,
+    conn: Database,
     grader_identity: str,
     grader_spawned_at: str,
     report_id: int,
@@ -701,17 +684,15 @@ def record_grade(
     overall_score: float,
     rationale: str,
 ) -> int:
-    cursor = conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO grades "
         "(created_at, grader_identity, grader_spawned_at, report_id, analysis_result_id, relevance_score, novelty_score, evidence_quality_score, worth_the_compute, overall_score, rationale, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), grader_identity, grader_spawned_at, report_id, analysis_result_id, relevance_score, novelty_score, evidence_quality_score, int(worth_the_compute), overall_score, rationale, SCHEMA_VERSION),
     )
-    conn.commit()
-    return cursor.lastrowid
 
 
-def list_grades_for_identity(conn: sqlite3.Connection, identity: str) -> list[dict]:
+def list_grades_for_identity(conn: Database, identity: str) -> list[dict]:
     """Grades attributable back to whichever agent produced the report
     being graded (Explorer/Speculator), not the grader (Analysis) - the
     queryable half of addendum_10 §10's grading feedback loop: "how has
@@ -721,11 +702,10 @@ def list_grades_for_identity(conn: sqlite3.Connection, identity: str) -> list[di
     this back to change Explorer/Speculator behavior - that consumption
     loop is Phase D (Trainer) territory; this just makes the feedback
     correctly persisted and attributable."""
-    rows = conn.execute(
+    return conn.fetchall(
         "SELECT g.* FROM grades g "
         "JOIN discovery_reports_completed r ON g.report_id = r.id "
         "WHERE r.producer_identity = ? "
         "ORDER BY g.created_at",
         (identity,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    )

@@ -5,8 +5,6 @@ subprocess tests)."""
 
 import time
 
-import pytest
-
 from agents.coo import (
     BASELINE_ROLES,
     _coo_work,
@@ -16,14 +14,6 @@ from agents.coo import (
     _role_spawn_in_flight,
 )
 from backend import fi_db
-
-
-@pytest.fixture
-def conn():
-    connection = fi_db.get_connection(":memory:")
-    fi_db.init_schema(connection)
-    yield connection
-    connection.close()
 
 
 def test_ensure_baseline_population_enqueues_spawn_when_role_missing(conn):
@@ -97,7 +87,7 @@ def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pen
 
     _ensure_baseline_population(conn)
 
-    count = conn.execute("SELECT COUNT(*) AS n FROM coo_directives WHERE target_role = 'dummy'").fetchone()["n"]
+    count = conn.fetchone("SELECT COUNT(*) AS n FROM coo_directives WHERE target_role = 'dummy'")["n"]
     assert count == 1
 
 

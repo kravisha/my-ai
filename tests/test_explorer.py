@@ -35,14 +35,6 @@ def judgment_response(passed: bool, note: str = "note"):
     return FakeResponse([FakeBlock("text", text=json.dumps({"passed": passed, "note": note}))])
 
 
-@pytest.fixture
-def conn():
-    connection = fi_db.get_connection(":memory:")
-    fi_db.init_schema(connection)
-    yield connection
-    connection.close()
-
-
 # --- detector math ---
 
 
@@ -257,7 +249,7 @@ def test_real_explorer_agent_classifies_cotriggering_securities_as_peer(tmp_path
         deadline = time.time() + 30
         reports = []
         while time.time() < deadline and len(reports) < 2:
-            reports = conn.execute("SELECT * FROM discovery_reports").fetchall()
+            reports = conn.fetchall("SELECT * FROM discovery_reports")
             time.sleep(0.5)
         assert len(reports) == 2, f"expected 2 reports (SYN1+SYN2), got {len(reports)}"
 

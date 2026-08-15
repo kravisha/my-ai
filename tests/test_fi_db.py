@@ -7,17 +7,7 @@ split.
 
 import json
 
-import pytest
-
 from backend import fi_db
-
-
-@pytest.fixture
-def conn():
-    connection = fi_db.get_connection(":memory:")
-    fi_db.init_schema(connection)
-    yield connection
-    connection.close()
 
 
 def test_init_schema_is_idempotent(conn):
@@ -175,7 +165,7 @@ def test_schema_version_is_stamped_on_agent_registry_and_health_metrics(conn):
     assert agent["schema_version"] == fi_db.SCHEMA_VERSION
 
     fi_db.record_heartbeat(conn, "dummy-1")
-    metric_row = conn.execute("SELECT schema_version FROM health_metrics WHERE identity = 'dummy-1'").fetchone()
+    metric_row = conn.fetchone("SELECT schema_version FROM health_metrics WHERE identity = 'dummy-1'")
     assert metric_row["schema_version"] == fi_db.SCHEMA_VERSION
 
 
