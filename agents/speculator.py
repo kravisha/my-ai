@@ -1,8 +1,15 @@
 """Speculator: the Discovery Slice's social-evidence role (addendum_7 §3,
-addendum_10 §5). Searches a synthetic social/context stream for one
-security (this increment - see agents/discovery_config.py), normalizes
-observations into structured evidence with source/timestamp/confidence, and
-files a report when new evidence's confidence clears a threshold.
+addendum_10 §5). Each cycle, searches a synthetic social/context stream for
+every security in the configured peer group (agents/discovery_config.py's
+PEER_GROUP_SECURITIES - the same group Explorer scans, so all three agents
+operate over consistent scope), normalizes observations into structured
+evidence with source/timestamp/confidence, and files a report per security
+when that security's new evidence confidence clears a threshold.
+
+No peer-comparison logic of its own - addendum_7 §5 ("Individual vs Peer
+Analysis") is written entirely in surface/spike language, Explorer's
+domain. Speculator's reports never carry a detector_event_id, so there's no
+row for peer/scope fields to attach to even if the spec asked for it.
 
 Deliberately no LLM call here - normalization and the report-filing gate
 stay deterministic (Explorer/Speculator stay procedural; deep reasoning is
@@ -26,34 +33,36 @@ ROLE = "speculator"
 
 
 def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_state: dict) -> None:
-    security = config.SECURITY
-    posts = provider.fetch_recent(security, since=cursor_state.get("since"))
-    if not posts:
-        return
+    """cursor_state is a flat dict keyed by security (not nested) - each
+    security in the peer group tracks its own "since" cursor independently."""
+    for security in config.PEER_GROUP_SECURITIES:
+        posts = provider.fetch_recent(security, since=cursor_state.get(security))
+        if not posts:
+            continue
 
-    new_evidence_ids = []
-    max_confidence = 0.0
-    for post in posts:
-        evidence_id = fi_db.record_evidence_item(
-            conn, identity, spawned_at, "social", security,
-            source=post.source, observed_at=post.posted_at, content=post.text,
-            confidence=post.engagement_score, raw_ref=f"{post.source}:{post.author}:{post.posted_at}",
+        new_evidence_ids = []
+        max_confidence = 0.0
+        for post in posts:
+            evidence_id = fi_db.record_evidence_item(
+                conn, identity, spawned_at, "social", security,
+                source=post.source, observed_at=post.posted_at, content=post.text,
+                confidence=post.engagement_score, raw_ref=f"{post.source}:{post.author}:{post.posted_at}",
+            )
+            new_evidence_ids.append(evidence_id)
+            max_confidence = max(max_confidence, post.engagement_score)
+
+        cursor_state[security] = posts[-1].posted_at
+
+        if max_confidence < config.SPECULATOR_CONFIDENCE_THRESHOLD:
+            continue
+        if fi_db.has_pending_report(conn, identity, security):
+            continue
+
+        fi_db.enqueue_report(
+            conn, identity, spawned_at, "speculator", security,
+            summary=f"Social evidence on {security}: {len(new_evidence_ids)} new post(s), max confidence {max_confidence:.2f}",
+            detector_event_id=None, evidence_ids=new_evidence_ids, judgment_confidence=max_confidence,
         )
-        new_evidence_ids.append(evidence_id)
-        max_confidence = max(max_confidence, post.engagement_score)
-
-    cursor_state["since"] = posts[-1].posted_at
-
-    if max_confidence < config.SPECULATOR_CONFIDENCE_THRESHOLD:
-        return
-    if fi_db.has_pending_report(conn, identity, security):
-        return
-
-    fi_db.enqueue_report(
-        conn, identity, spawned_at, "speculator", security,
-        summary=f"Social evidence on {security}: {len(new_evidence_ids)} new post(s), max confidence {max_confidence:.2f}",
-        detector_event_id=None, evidence_ids=new_evidence_ids, judgment_confidence=max_confidence,
-    )
 
 
 def main() -> None:

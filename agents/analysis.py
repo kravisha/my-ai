@@ -30,8 +30,10 @@ ANALYSIS_MAX_TOKENS = 4096
 REQUIRED_FIELDS = (
     "thesis", "evidence_summary", "confidence", "uncertainty",
     "relevance_score", "novelty_score", "evidence_quality_score",
-    "worth_the_compute", "rationale",
+    "worth_the_compute", "rationale", "peer_classification",
 )
+
+PEER_CLASSIFICATIONS = ("common_factor", "idiosyncratic", "not_applicable")
 
 
 def _extract_text(response) -> str:
@@ -42,11 +44,12 @@ def _extract_text(response) -> str:
 
 
 def _assemble_context(conn, report: dict) -> str:
-    """Detector event (Explorer's quantitative evidence) if present,
-    normalized social evidence (Speculator's) if present, and a recency
-    note against this security's own recent analysis history - a novelty
-    signal, not peer analysis (which is cross-security and out of scope
-    this increment)."""
+    """Detector event (Explorer's quantitative evidence, including its
+    addendum_7 §5 peer-vs-individual classification and peer_context) if
+    present, normalized social evidence (Speculator's) if present, and a
+    recency note against this security's own recent analysis history - a
+    novelty signal distinct from peer analysis (which compares across
+    securities in the same cycle, not across time for the same security)."""
     lines = [f"Security: {report['security']}", f"Report type: {report['report_type']}", f"Summary: {report['summary']}"]
 
     if report["detector_event_id"] is not None:
@@ -59,6 +62,21 @@ def _assemble_context(conn, report: dict) -> str:
             )
             if event["judgment_note"]:
                 lines.append(f"Explorer judgment note: {event['judgment_note']}")
+            if event["scope"] == "peer" and event["peer_context"]:
+                peer_context = json.loads(event["peer_context"])
+                lines.append(
+                    f"Peer analysis (addendum_7 §5): {len(peer_context['co_triggering'])} other "
+                    f"security(ies) in peer group '{peer_context['peer_group_name']}' v{peer_context['peer_group_version']} "
+                    f"also triggered this same cycle: {', '.join(peer_context['co_triggering'])}. "
+                    "This looks potentially market/sector/common-factor driven, not isolated to this "
+                    "security - factor this into peer_classification (favor 'common_factor')."
+                )
+            elif event["scope"] == "individual":
+                lines.append(
+                    "Peer analysis (addendum_7 §5): no other security in the peer group triggered this "
+                    "cycle - this anomaly is isolated. Investigate security-specific causes; factor this "
+                    "into peer_classification (favor 'idiosyncratic')."
+                )
 
     evidence_ids = json.loads(report["evidence_ids"] or "[]")
     if evidence_ids:
@@ -89,7 +107,12 @@ def _run_analysis(report_context: str) -> dict:
         '{"thesis": "...", "evidence_summary": "...", "confidence": <0.0-1.0>, '
         '"uncertainty": "...", "relevance_score": <0.0-1.0>, "novelty_score": <0.0-1.0>, '
         '"evidence_quality_score": <0.0-1.0>, "worth_the_compute": <true or false>, '
-        '"rationale": "..."}. thesis should include reasons the idea could be wrong.'
+        '"rationale": "...", "peer_classification": "common_factor" or "idiosyncratic" or '
+        '"not_applicable"}. thesis should include reasons the idea could be wrong. '
+        'peer_classification: "common_factor" if the context says peers also triggered '
+        '(market/sector-wide), "idiosyncratic" if the context says the anomaly is isolated, '
+        '"not_applicable" if the context has no peer-analysis information at all (e.g. a '
+        "Speculator-sourced report with no detector event)."
     )
     response = call_reasoning_model(
         system=system,
@@ -102,6 +125,8 @@ def _run_analysis(report_context: str) -> dict:
     missing = [f for f in REQUIRED_FIELDS if f not in parsed]
     if missing:
         raise ValueError(f"analysis response missing fields: {missing}")
+    if parsed["peer_classification"] not in PEER_CLASSIFICATIONS:
+        raise ValueError(f"analysis response has invalid peer_classification: {parsed['peer_classification']!r}")
     return parsed
 
 
@@ -128,6 +153,7 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
         analysis_result_id = fi_db.record_analysis_result(
             conn, identity, spawned_at, report["id"], report["security"],
             result["thesis"], result["evidence_summary"], result["confidence"], result["uncertainty"],
+            peer_classification=result["peer_classification"],
         )
         fi_db.record_grade(
             conn, identity, spawned_at, report["id"], analysis_result_id,

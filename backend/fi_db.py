@@ -125,6 +125,9 @@ CREATE TABLE IF NOT EXISTS detector_events (
     neighborhood_desc TEXT,
     surface_seed TEXT,
     scope TEXT NOT NULL DEFAULT 'individual',
+    peer_group_name TEXT,
+    peer_group_version INTEGER,
+    peer_context TEXT,
     judgment_passed INTEGER,
     judgment_note TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
@@ -208,6 +211,7 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     evidence_summary TEXT,
     confidence REAL,
     uncertainty TEXT,
+    peer_classification TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -509,15 +513,24 @@ def record_detector_event(
     neighborhood_desc: str | None = None,
     surface_seed: str | None = None,
     scope: str = "individual",
+    peer_group_name: str | None = None,
+    peer_group_version: int | None = None,
+    peer_context: str | None = None,
 ) -> int:
     """Only meaningful to call when ratio >= threshold (a real candidate,
     addendum_7 §4) - agents/explorer.py doesn't call this for a
-    non-triggering scan; that isn't a gradeable unit of work."""
+    non-triggering scan; that isn't a gradeable unit of work.
+
+    peer_group_name/peer_group_version/peer_context are the addendum_7 §5
+    peer-analysis fields: which explicit, versioned peer group this scan
+    ran against, and (as JSON) which other securities in that group also
+    triggered this same cycle - the evidence behind scope='peer' vs
+    'individual'. All None for a scan that had no peer group in play."""
     cursor = conn.execute(
         "INSERT INTO detector_events "
-        "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, SCHEMA_VERSION),
     )
     conn.commit()
     return cursor.lastrowid
@@ -641,12 +654,19 @@ def record_analysis_result(
     evidence_summary: str,
     confidence: float,
     uncertainty: str,
+    peer_classification: str | None = None,
 ) -> int:
+    """peer_classification: addendum_7 §5's "classify the event" -
+    'common_factor' | 'idiosyncratic' | 'not_applicable' (no peer context
+    at all, e.g. a Speculator-sourced report) - Analysis's own reasoned
+    judgment, populated from the peer_context agents/explorer.py surfaced
+    into this report's context, not a mechanical copy of detector_events'
+    scope column."""
     cursor = conn.execute(
         "INSERT INTO analysis_results "
-        "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, SCHEMA_VERSION),
     )
     conn.commit()
     return cursor.lastrowid

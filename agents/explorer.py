@@ -1,17 +1,20 @@
 """Explorer: the Discovery Slice's deterministic-detection role (addendum_7
-§2, addendum_10 §5). Constructs/inspects an option implied-volatility
-surface for one security (this increment - addendum_8 §4's own progression
-starts at one, see agents/discovery_config.py), runs the Peak IV / Local
-Baseline IV >= threshold detector (addendum_7 §4), and - only after the
-deterministic detector produces a candidate - uses a lightweight LLM
-judgment gate before filing a report (addendum_7 §2 last bullet: "Use
-lightweight LLM judgment only after a deterministic detector has produced a
-candidate and superficial interpretation is needed before filing a
-report").
+§2, addendum_10 §5). Each cycle, scans an option implied-volatility surface
+for every security in the configured peer group (agents/discovery_config.py's
+PEER_GROUP_SECURITIES), runs the Peak IV / Local Baseline IV >= threshold
+detector (addendum_7 §4) independently per security, then classifies each
+triggering candidate as 'peer' (at least PEER_MIN_COOCCURRING other
+securities in the group also triggered this cycle - addendum_7 §5:
+"potentially market/sector/common-factor driven") or 'individual'
+(isolated - "idiosyncratic, investigate security-specific causes"). Only
+after the deterministic detector produces a candidate does a lightweight
+LLM judgment gate run before filing a report (addendum_7 §2 last bullet).
 
-Individual analysis only - peer analysis (addendum_7 §5) needs multiple
-securities and explicit peer groups, out of scope for this increment
-(detector_events.scope is always 'individual').
+One Explorer process loops over the whole peer group rather than one
+process per security - multi-instance-per-role scaling is explicitly
+deferred project-wide (see agents/coo.py's BASELINE_ROLES /
+backend/coordinator.py's _slot_identity, both hard-assume exactly one
+identity per role).
 
 Run directly as: python -m agents.explorer <identity>
 Normally launched by backend/coordinator.py as a subprocess, not by hand.
@@ -111,42 +114,63 @@ def _judgment_gate(security: str, ratio: float, peak_iv: float, baseline_iv: flo
 
 
 def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
-    security = config.SECURITY
-    surface = provider.get_option_surface(security)
-    best = scan_for_anomaly(surface)
-    if best is None:
-        return
-    ratio, _si, _ei, peak_iv, baseline_iv = best
-    if ratio < config.IV_RATIO_THRESHOLD:
-        return
-
     neighborhood_desc = f"strike idx ±{config.NEIGHBORHOOD_STRIKE_RADIUS}, expiry idx ±{config.NEIGHBORHOOD_EXPIRY_RADIUS}"
-    event_id = fi_db.record_detector_event(
-        conn, identity, spawned_at, security, DETECTOR_TYPE,
-        peak_iv, baseline_iv, ratio, config.IV_RATIO_THRESHOLD,
-        neighborhood_desc=neighborhood_desc, surface_seed=str(config.MARKET_PROVIDER_SEED),
-    )
 
-    if fi_db.has_pending_report(conn, identity, security):
-        # A report from this producer+security is still unconsumed - don't
-        # spend an LLM call on the judgment gate for nothing this cycle.
-        return
+    # Scan every peer-group security independently first, so classification
+    # (below) can ask "how many others also triggered this same cycle"
+    # without re-scanning anything.
+    results = {}
+    for security in config.PEER_GROUP_SECURITIES:
+        surface = provider.get_option_surface(security)
+        results[security] = scan_for_anomaly(surface)
 
-    # A fresh heartbeat right before the one network call in this cycle -
-    # see agents/coo.py's HEALTH_STALE_THRESHOLD_SECONDS docstring for why
-    # (the same false-crash-detection bug applies here too, even though
-    # this call's max_tokens is much smaller and usually faster).
-    fi_db.record_heartbeat(conn, identity)
-    passed, note = _judgment_gate(security, ratio, peak_iv, baseline_iv)
-    fi_db.record_detector_judgment(conn, event_id, passed, note)
-    if not passed:
-        return
+    triggering = {
+        security: best for security, best in results.items()
+        if best is not None and best[0] >= config.IV_RATIO_THRESHOLD
+    }
 
-    fi_db.enqueue_report(
-        conn, identity, spawned_at, "explorer", security,
-        summary=f"IV surface anomaly on {security}: ratio {ratio:.2f} (peak {peak_iv:.4f} vs baseline {baseline_iv:.4f})",
-        detector_event_id=event_id, evidence_ids=[], judgment_confidence=None,
-    )
+    for security, (ratio, _si, _ei, peak_iv, baseline_iv) in triggering.items():
+        co_triggering = [s for s in triggering if s != security]
+        scope = "peer" if len(co_triggering) >= config.PEER_MIN_COOCCURRING else "individual"
+        peer_context = json.dumps({
+            "peer_group_name": config.PEER_GROUP_NAME,
+            "peer_group_version": config.PEER_GROUP_VERSION,
+            "co_triggering": co_triggering,
+            "group_size": len(config.PEER_GROUP_SECURITIES),
+            "triggering_count": len(triggering),
+        })
+
+        event_id = fi_db.record_detector_event(
+            conn, identity, spawned_at, security, DETECTOR_TYPE,
+            peak_iv, baseline_iv, ratio, config.IV_RATIO_THRESHOLD,
+            neighborhood_desc=neighborhood_desc, surface_seed=str(config.MARKET_PROVIDER_SEED),
+            scope=scope, peer_group_name=config.PEER_GROUP_NAME,
+            peer_group_version=config.PEER_GROUP_VERSION, peer_context=peer_context,
+        )
+
+        if fi_db.has_pending_report(conn, identity, security):
+            # A report from this producer+security is still unconsumed -
+            # don't spend an LLM call on the judgment gate for nothing.
+            continue
+
+        # A fresh heartbeat immediately before *each* judgment-gate call,
+        # not just once at the start of this cycle - with a peer group,
+        # multiple securities can trigger (and each need their own LLM
+        # call) in the same cycle, and each individual gap must stay under
+        # agents/coo.py's HEALTH_STALE_THRESHOLD_SECONDS, not the
+        # cumulative sum across the whole loop. See that constant's
+        # docstring for the concurrency bug this guards against.
+        fi_db.record_heartbeat(conn, identity)
+        passed, note = _judgment_gate(security, ratio, peak_iv, baseline_iv)
+        fi_db.record_detector_judgment(conn, event_id, passed, note)
+        if not passed:
+            continue
+
+        fi_db.enqueue_report(
+            conn, identity, spawned_at, "explorer", security,
+            summary=f"IV surface anomaly on {security}: ratio {ratio:.2f} (peak {peak_iv:.4f} vs baseline {baseline_iv:.4f}), scope={scope}",
+            detector_event_id=event_id, evidence_ids=[], judgment_confidence=None,
+        )
 
 
 def main() -> None:
@@ -154,7 +178,8 @@ def main() -> None:
         print("usage: python -m agents.explorer <identity>", file=sys.stderr)
         raise SystemExit(1)
     identity = sys.argv[1]
-    provider = SyntheticMarketDataProvider(seed=config.MARKET_PROVIDER_SEED, force_anomaly=config.FORCE_ANOMALY)
+    anomalies = {security: {} for security in config.FORCE_ANOMALY_SECURITIES}
+    provider = SyntheticMarketDataProvider(seed=config.MARKET_PROVIDER_SEED, anomalies=anomalies)
     spawned_at_cache: dict = {}
 
     def work_fn(conn) -> None:

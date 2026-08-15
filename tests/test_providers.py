@@ -32,11 +32,11 @@ def test_different_security_diverges_within_same_provider():
     assert p.get_option_surface("SYN1").points != p.get_option_surface("SYN2").points
 
 
-def test_no_forced_anomaly_stays_flat():
-    """Without force_anomaly, no cell should be anywhere close to a 2x
-    ratio against its own local neighborhood - otherwise Explorer's
-    detector would false-positive on ordinary noise."""
-    p = SyntheticMarketDataProvider(seed=42, force_anomaly=False)
+def test_no_anomalies_stays_flat():
+    """With no security named in `anomalies`, no cell should be anywhere
+    close to a 2x ratio against its own local neighborhood - otherwise
+    Explorer's detector would false-positive on ordinary noise."""
+    p = SyntheticMarketDataProvider(seed=42)
     surface = p.get_option_surface("SYN1")
     grid = {(STRIKES.index(pt.strike), EXPIRIES_DAYS.index(pt.expiry_days)): pt.iv for pt in surface.points}
     max_ratio = 0.0
@@ -51,12 +51,36 @@ def test_no_forced_anomaly_stays_flat():
 
 
 def test_forced_anomaly_produces_elevated_peak_cell():
-    p = SyntheticMarketDataProvider(seed=42, force_anomaly=True)
+    p = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
     surface = p.get_option_surface("SYN1")
     peak = max(pt.iv for pt in surface.points)
-    baseline_no_anomaly = SyntheticMarketDataProvider(seed=42, force_anomaly=False).get_option_surface("SYN1")
+    baseline_no_anomaly = SyntheticMarketDataProvider(seed=42).get_option_surface("SYN1")
     baseline_avg = sum(pt.iv for pt in baseline_no_anomaly.points) / len(baseline_no_anomaly.points)
     assert peak > baseline_avg * 2
+
+
+def test_anomaly_is_targeted_per_security_not_global():
+    """A security not named in `anomalies` stays flat even when another
+    security in the same provider instance is forced - addendum_7 §5's
+    isolated-anomaly scenario depends on this."""
+    p = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+    syn2_forced = p.get_option_surface("SYN2")
+    syn2_natural = SyntheticMarketDataProvider(seed=42).get_option_surface("SYN2")
+    assert syn2_forced.points == syn2_natural.points
+
+
+def test_co_movement_scenario_bumps_both_securities_at_same_cell():
+    """Two securities both given an empty anomaly override bump at the same
+    default grid cell - a genuine "same shape/spike" fixture for the
+    addendum_7 §5 peer/co-movement scenario, not two unrelated anomalies
+    that happen to coexist."""
+    p = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}, "SYN2": {}})
+    natural = SyntheticMarketDataProvider(seed=42).get_option_surface("SYN1").points
+    baseline_avg = sum(pt.iv for pt in natural) / len(natural)
+    peak1 = max(pt.iv for pt in p.get_option_surface("SYN1").points)
+    peak2 = max(pt.iv for pt in p.get_option_surface("SYN2").points)
+    assert peak1 > baseline_avg * 2
+    assert peak2 > baseline_avg * 2
 
 
 # --- social data ---

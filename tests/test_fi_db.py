@@ -330,6 +330,19 @@ def test_record_detector_event_and_get(conn):
     assert event["judgment_passed"] is None
 
 
+def test_record_detector_event_with_peer_fields(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0, scope="peer", peer_group_name="synthetic_peer_group_v1",
+        peer_group_version=1, peer_context='{"co_triggering": ["SYN2"]}',
+    )
+    event = fi_db.get_detector_event(conn, event_id)
+    assert event["scope"] == "peer"
+    assert event["peer_group_name"] == "synthetic_peer_group_v1"
+    assert event["peer_group_version"] == 1
+    assert event["peer_context"] == '{"co_triggering": ["SYN2"]}'
+
+
 def test_record_detector_judgment_updates_event(conn):
     event_id = fi_db.record_detector_event(
         conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
@@ -416,6 +429,17 @@ def test_record_analysis_result(conn):
         confidence=0.6, uncertainty="could be earnings-driven noise",
     )
     assert result_id is not None
+
+
+def test_record_analysis_result_with_peer_classification(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+        peer_classification="common_factor",
+    )
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert next(r for r in results if r["id"] == result_id)["peer_classification"] == "common_factor"
 
 
 def test_list_recent_analysis_results_respects_window(conn):

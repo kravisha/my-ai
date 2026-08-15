@@ -7,8 +7,12 @@ A surface is a grid over (strike moneyness, expiry days). The synthetic
 provider builds a smooth base surface (mild skew + term structure + small
 seeded noise) and, optionally, one sharp Gaussian-falloff bump at a chosen
 grid cell - the "mountain rising from a surrounding plain" mental model in
-addendum_7 §4. No numpy/scipy dependency: a handful of grid points with
-plain arithmetic doesn't need it, and requirements.txt has neither.
+addendum_7 §4. The bump is targeted per security (via `anomalies`), so a
+caller can force a dislocation onto specific securities in a peer group
+while leaving the rest flat - what makes both peer-analysis scenarios
+(addendum_7 §5: co-movement vs. an isolated anomaly) constructable without
+any extra machinery. No numpy/scipy dependency: a handful of grid points
+with plain arithmetic doesn't need it, and requirements.txt has neither.
 
 A surface is generated once per security and cached - deterministic and
 static across repeated calls with the same provider instance. This is
@@ -59,10 +63,17 @@ class MarketDataProvider(Protocol):
 
 
 class SyntheticMarketDataProvider:
-    def __init__(self, seed: int, force_anomaly: bool = False, anomaly_config: dict | None = None):
+    def __init__(self, seed: int, anomalies: dict[str, dict] | None = None):
+        """anomalies: maps security -> per-security bump config overrides
+        (strike_idx/expiry_idx/height/width, each optional - see _generate's
+        defaults). Only securities present in this dict get a forced bump;
+        everything else stays flat/natural. An empty dict value ({}) bumps
+        that security at the default center cell with default height/width -
+        two securities both given {} bump at the *same* grid cell, which is
+        a genuine "same shape/spike" co-movement fixture, not two unrelated
+        anomalies that happen to coexist."""
         self._seed = seed
-        self._force_anomaly = force_anomaly
-        self._anomaly_config = anomaly_config or {}
+        self._anomalies = anomalies or {}
         self._cache: dict[str, OptionSurface] = {}
 
     def get_option_surface(self, security: str, as_of: str | None = None) -> OptionSurface:
@@ -75,10 +86,11 @@ class SyntheticMarketDataProvider:
 
     def _generate(self, security: str) -> OptionSurface:
         rng = random.Random(f"{self._seed}:{security}")
-        anomaly_strike_idx = self._anomaly_config.get("strike_idx", len(STRIKES) // 2)
-        anomaly_expiry_idx = self._anomaly_config.get("expiry_idx", len(EXPIRIES_DAYS) // 2)
-        height = self._anomaly_config.get("height", DEFAULT_ANOMALY_HEIGHT)
-        width = self._anomaly_config.get("width", DEFAULT_ANOMALY_WIDTH)
+        anomaly_config = self._anomalies.get(security)
+        anomaly_strike_idx = (anomaly_config or {}).get("strike_idx", len(STRIKES) // 2)
+        anomaly_expiry_idx = (anomaly_config or {}).get("expiry_idx", len(EXPIRIES_DAYS) // 2)
+        height = (anomaly_config or {}).get("height", DEFAULT_ANOMALY_HEIGHT)
+        width = (anomaly_config or {}).get("width", DEFAULT_ANOMALY_WIDTH)
 
         points = []
         for strike_idx, strike in enumerate(STRIKES):
@@ -87,7 +99,7 @@ class SyntheticMarketDataProvider:
                 term = TERM_COEF * math.log(expiry_days)
                 noise = rng.uniform(-NOISE_AMPLITUDE, NOISE_AMPLITUDE)
                 iv = BASE_LEVEL + skew + term + noise
-                if self._force_anomaly:
+                if anomaly_config is not None:
                     dist_sq = (strike_idx - anomaly_strike_idx) ** 2 + (expiry_idx - anomaly_expiry_idx) ** 2
                     iv += height * math.exp(-dist_sq / (2 * width ** 2))
                 points.append(SurfacePoint(strike=strike, expiry_days=expiry_days, iv=iv))

@@ -39,6 +39,7 @@ VALID_RESULT = {
     "evidence_quality_score": 0.75,
     "worth_the_compute": True,
     "rationale": "Clean deterministic signal, no confounding social noise.",
+    "peer_classification": "idiosyncratic",
 }
 
 
@@ -90,6 +91,7 @@ def test_analysis_work_success_path_creates_result_and_grade(conn, monkeypatch):
     assert grades[0]["worth_the_compute"] == 1
     expected_overall = round((0.8 + 0.7 + 0.75) / 3, 4)
     assert grades[0]["overall_score"] == expected_overall
+    assert results[0]["peer_classification"] == "idiosyncratic"
 
 
 def test_analysis_work_malformed_json_marks_report_failed(conn, monkeypatch):
@@ -117,6 +119,51 @@ def test_analysis_work_missing_required_field_marks_report_failed(conn, monkeypa
     completed = fi_db.list_completed_reports(conn)
     assert completed[0]["outcome"] == "failed"
     assert "confidence" in completed[0]["detail"]
+
+
+def test_analysis_work_invalid_peer_classification_marks_report_failed(conn, monkeypatch):
+    bad_result = dict(VALID_RESULT)
+    bad_result["peer_classification"] = "definitely_bullish"  # not one of the three valid enum values
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", MagicMock(return_value=analysis_response(bad_result)))
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["outcome"] == "failed"
+    assert "peer_classification" in completed[0]["detail"]
+
+
+def test_assemble_context_surfaces_peer_framing_for_peer_scope(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0, scope="peer", peer_group_name="synthetic_peer_group_v1",
+        peer_group_version=1, peer_context=json.dumps({
+            "peer_group_name": "synthetic_peer_group_v1", "peer_group_version": 1,
+            "co_triggering": ["SYN2"], "group_size": 4, "triggering_count": 2,
+        }),
+    )
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", detector_event_id=event_id, evidence_ids=[])
+    report = fi_db.fetch_next_pending_report(conn)
+
+    context = _assemble_context(conn, report)
+
+    assert "SYN2" in context
+    assert "common-factor" in context.lower() or "common_factor" in context.lower()
+
+
+def test_assemble_context_surfaces_idiosyncratic_framing_for_individual_scope(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0, scope="individual",
+    )
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", detector_event_id=event_id, evidence_ids=[])
+    report = fi_db.fetch_next_pending_report(conn)
+
+    context = _assemble_context(conn, report)
+
+    assert "isolated" in context.lower()
+    assert "idiosyncratic" in context.lower()
 
 
 def test_assemble_context_includes_detector_event_and_evidence(conn):
@@ -184,6 +231,9 @@ def test_real_analysis_agent_consumes_report_and_produces_result(tmp_path):
         results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
         assert len(results) == 1
         assert results[0]["thesis"]
+        # no detector_event_id on this report -> no peer context in the
+        # prompt at all -> the LLM should correctly say not_applicable
+        assert results[0]["peer_classification"] == "not_applicable"
 
         grades = fi_db.list_grades_for_identity(conn, "explorer-1")
         assert len(grades) == 1
