@@ -16,10 +16,10 @@ _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 MODEL = "claude-sonnet-5"
 
 
-def call_reasoning_model(system: str, messages: list, tools: list):
+def call_reasoning_model(system: str, messages: list, tools: list, max_tokens: int = 2048):
     return _client.messages.create(
         model=MODEL,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         system=system,
         messages=messages,
         tools=tools,

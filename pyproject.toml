@@ -1,2 +1,6 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_llm: makes a real network call to the Anthropic API - excluded from the default run, use `pytest -m real_llm` to include",
+]
+addopts = "-m \"not real_llm\""

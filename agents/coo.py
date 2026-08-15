@@ -39,7 +39,11 @@ from agents.base import run_agent
 from backend import fi_db
 
 ROLE = "coo"
-BASELINE_ROLES = ["dummy"]
+# 'dummy' stays alongside the real Phase C roles: cheap, business-logic-free
+# diagnostic isolation if a new agent fails to spawn - if dummy comes up but
+# explorer/speculator/analysis don't, the problem is in the new agent code,
+# not the control plane.
+BASELINE_ROLES = ["dummy", "explorer", "speculator", "analysis"]
 
 # How long to wait after a spawn directive completes before checking whether
 # the target agent actually established itself (registered a heartbeat)
@@ -49,10 +53,25 @@ BASELINE_ROLES = ["dummy"]
 OBSERVATION_GRACE_SECONDS = 5.0
 
 # How long an 'active' agent's heartbeat can go stale before COO's health
-# evaluation treats it as crashed rather than merely slow. Comfortably
-# longer than agents/base.py's HEARTBEAT_INTERVAL_SECONDS (normal cycle-to-
-# cycle jitter shouldn't false-positive as a crash).
-HEALTH_STALE_THRESHOLD_SECONDS = 10.0
+# evaluation treats it as crashed rather than merely slow. Was 10.0 until
+# manual verification of Phase C caught a real bug at that value: a
+# heartbeat is only recorded after work_fn(conn) returns (agents/base.py),
+# and Analysis's real LLM call (app/model_gateway.py's call_reasoning_model,
+# max_tokens up to 4096) routinely took long enough to blow past 10s -
+# every time it did, COO wrongly concluded the still-alive-but-busy agent
+# had crashed and respawned a duplicate under the same permanent identity
+# (Gap 1's identity redesign) without the original process ever actually
+# dying. Observed three concurrent analysis-1 OS processes racing to
+# consume the same report queue as a direct result. 45s gives real headroom
+# over realistic LLM latency (including occasional slow responses) while
+# still being a bounded, reasonable "detect a genuine crash within under a
+# minute" guarantee for a background pipeline like this - not a real-time
+# system where 45s of crash-detection lag would matter. See agents/
+# explorer.py's and agents/analysis.py's own explicit heartbeat calls right
+# before their LLM calls for the other half of this fix: keeping the
+# heartbeat fresh going into a slow operation, not just tolerating a wider
+# window after the fact.
+HEALTH_STALE_THRESHOLD_SECONDS = 45.0
 
 
 def _role_spawn_in_flight(conn, role: str) -> bool:

@@ -190,14 +190,28 @@ def test_real_dummy_agent_spawn_and_graceful_retire(coordinator):
     assert process.returncode == 0
 
 
-def test_real_coo_bootstrap_establishes_baseline_population(coordinator):
+def test_real_coo_bootstrap_establishes_baseline_population(coordinator, monkeypatch):
     """The full startup story, end to end with real processes: Coordinator
     bootstraps a real COO (bypassing the directive queue), the running COO
     notices no dummy exists and enqueues a spawn directive for one, and a
     polling loop (standing in for what backend/main.py will run
     continuously) picks that directive up and actually spawns a real dummy
     agent - proving addendum 6 §2's whole startup sequence works, not just
-    each piece in isolation."""
+    each piece in isolation.
+
+    COO's BASELINE_ROLES now also includes explorer/speculator/analysis
+    (Phase C) - this test only asserts on dummy specifically (unchanged,
+    representative proof baseline population works), but bootstrapping COO
+    for real now also spawns those three as a side effect. Speculator's
+    synthetic stream can cross its confidence threshold within a few
+    cycles regardless of any forced anomaly, which would hand Analysis a
+    real report to reason about - a fake API key here (not this machine's
+    real one, which conftest.py's setdefault only supplies if none exists)
+    keeps this Phase A/B-era test keyless: any such call fails fast and
+    cleanly (caught by explorer.py's/analysis.py's own try/except), rather
+    than silently making a real, paid network call as an unintended side
+    effect of a later increment's larger BASELINE_ROLES."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
     coo_identity = coordinator.bootstrap_coo()
 
     deadline = time.time() + 15
@@ -216,19 +230,42 @@ def test_real_coo_bootstrap_establishes_baseline_population(coordinator):
     assert coo_agent is not None
     assert coo_agent["status"] == "active"
 
-    # cleanup: retire both real processes so the test doesn't leak them
-    for identity in (dummy_identity, coo_identity):
+    # cleanup: retire every real process this test spawned. BASELINE_ROLES
+    # now has 4 roles, not just dummy, so the wait loop above may have left
+    # some of their spawn directives still pending when it exited (it only
+    # waits for dummy). Drain those FIRST, before deciding what to retire -
+    # otherwise a spawn directive processed *during* cleanup could hand out
+    # a real subprocess identity that never makes it into the retire list.
+    while coordinator.process_next_directive():
+        pass
+
+    # known_process_identities() (populated the instant subprocess.Popen
+    # returns) is the source of truth for what's actually running now that
+    # the queue above is fully drained - not agent_registry, which could
+    # still be missing a just-spawned identity's registration write for a
+    # brief window (real registration takes well under 1s in practice).
+    # Wait for all of them to actually register before deciding who to
+    # retire - an identity Popen'd but not yet registered would fail
+    # _handle_retire's unknown-identity check and leak instead.
+    registration_deadline = time.time() + 5
+    while time.time() < registration_deadline:
+        if all(fi_db.get_agent(coordinator.conn, identity) is not None for identity in coordinator.known_process_identities()):
+            break
+        time.sleep(0.2)
+    to_retire = list(coordinator.known_process_identities())
+    for identity in to_retire:
         fi_db.enqueue_directive(coordinator.conn, "retire", "coo", target_identity=identity)
-        coordinator.process_next_directive()
+    while coordinator.process_next_directive():
+        pass
 
     deadline = time.time() + 10
     while time.time() < deadline:
         agents = {a["identity"]: a for a in fi_db.list_agents(coordinator.conn)}
-        if agents[dummy_identity]["status"] == "gone" and agents[coo_identity]["status"] == "gone":
+        if all(agents[identity]["status"] == "gone" for identity in to_retire):
             break
         time.sleep(0.2)
     else:
-        pytest.fail("dummy and/or coo did not retire cleanly within timeout")
+        pytest.fail("not all spawned agents retired cleanly within timeout")
 
-    for identity in (dummy_identity, coo_identity):
+    for identity in to_retire:
         coordinator._processes[identity].wait(timeout=5)

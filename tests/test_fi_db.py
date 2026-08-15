@@ -313,3 +313,157 @@ def test_performance_card_reflects_multiple_agents(conn):
 
 def test_performance_card_empty_when_no_agents(conn):
     assert fi_db.get_performance_card(conn) == []
+
+
+# --- Phase C: detector events, evidence, discovery report queue, analysis, grading ---
+
+
+def test_record_detector_event_and_get(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0, neighborhood_desc="strike idx ±1, expiry idx ±1", surface_seed="42",
+    )
+    event = fi_db.get_detector_event(conn, event_id)
+    assert event["security"] == "SYN1"
+    assert event["ratio"] == 2.4
+    assert event["scope"] == "individual"
+    assert event["judgment_passed"] is None
+
+
+def test_record_detector_judgment_updates_event(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0,
+    )
+    fi_db.record_detector_judgment(conn, event_id, True, "coherent enough")
+    event = fi_db.get_detector_event(conn, event_id)
+    assert event["judgment_passed"] == 1
+    assert event["judgment_note"] == "coherent enough"
+
+
+def test_record_and_list_evidence_items(conn):
+    id1 = fi_db.record_evidence_item(
+        conn, "speculator-1", "2026-01-01T00:00:00+00:00", "social", "SYN1",
+        source="reddit", content="something interesting", confidence=0.7, raw_ref="reddit:u1:t1",
+    )
+    id2 = fi_db.record_evidence_item(
+        conn, "speculator-1", "2026-01-01T00:00:00+00:00", "social", "SYN1",
+        source="reddit", content="something else", confidence=0.4, raw_ref="reddit:u2:t2",
+    )
+    items = fi_db.list_evidence_items(conn, [id1, id2])
+    assert {item["id"] for item in items} == {id1, id2}
+    assert fi_db.list_evidence_items(conn, []) == []
+
+
+def test_enqueue_report_and_fetch_next_pending(conn):
+    report_id = fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        summary="anomaly found", detector_event_id=1, evidence_ids=[], judgment_confidence=None,
+    )
+    pending = fi_db.fetch_next_pending_report(conn)
+    assert pending["id"] == report_id
+    assert pending["status"] == "pending"
+    assert json.loads(pending["evidence_ids"]) == []
+
+
+def test_fetch_next_pending_report_none_when_empty(conn):
+    assert fi_db.fetch_next_pending_report(conn) is None
+
+
+def test_has_pending_report_true_while_unconsumed(conn):
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    assert fi_db.has_pending_report(conn, "explorer-1", "SYN1") is True
+
+
+def test_has_pending_report_false_for_different_producer_or_security(conn):
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    assert fi_db.has_pending_report(conn, "speculator-1", "SYN1") is False
+    assert fi_db.has_pending_report(conn, "explorer-1", "SYN2") is False
+
+
+def test_complete_report_moves_to_completed_table_via_trigger(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    fi_db.complete_report(
+        conn, report_id, "analyzed",
+        handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00",
+    )
+
+    assert fi_db.fetch_next_pending_report(conn) is None
+    assert fi_db.has_pending_report(conn, "explorer-1", "SYN1") is False
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["id"] == report_id
+    assert completed[0]["outcome"] == "analyzed"
+    assert completed[0]["handled_by_identity"] == "analysis-1"
+    assert completed[0]["producer_identity"] == "explorer-1"
+
+
+def test_complete_report_with_failed_outcome(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    fi_db.complete_report(conn, report_id, "failed", detail="boom")
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["outcome"] == "failed"
+    assert completed[0]["detail"] == "boom"
+    assert completed[0]["handled_by_identity"] is None
+
+
+def test_record_analysis_result(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="vol looks overpriced here", evidence_summary="peak ratio 2.4",
+        confidence=0.6, uncertainty="could be earnings-driven noise",
+    )
+    assert result_id is not None
+
+
+def test_list_recent_analysis_results_respects_window(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    assert len(fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)) == 1
+    assert fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=0) == []
+    assert fi_db.list_recent_analysis_results(conn, "SYN2", since_seconds=999) == []
+
+
+def test_record_grade_and_list_for_identity(conn):
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    fi_db.complete_report(conn, report_id, "analyzed", handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    fi_db.record_grade(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, result_id,
+        relevance_score=0.8, novelty_score=0.6, evidence_quality_score=0.7,
+        worth_the_compute=True, overall_score=0.7, rationale="solid quantitative signal",
+    )
+
+    grades = fi_db.list_grades_for_identity(conn, "explorer-1")
+    assert len(grades) == 1
+    assert grades[0]["report_id"] == report_id
+    assert grades[0]["analysis_result_id"] == result_id
+    assert grades[0]["worth_the_compute"] == 1
+
+
+def test_list_grades_for_identity_attributes_to_producer_not_grader(conn):
+    """Grades are attributable to whoever produced the report (Explorer/
+    Speculator), not to Analysis (the grader) - querying by the grader's
+    own identity should find nothing."""
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1")
+    fi_db.complete_report(conn, report_id, "analyzed", handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    fi_db.record_grade(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, result_id,
+        relevance_score=0.8, novelty_score=0.6, evidence_quality_score=0.7,
+        worth_the_compute=True, overall_score=0.7, rationale="r",
+    )
+
+    assert fi_db.list_grades_for_identity(conn, "explorer-1") != []
+    assert fi_db.list_grades_for_identity(conn, "analysis-1") == []

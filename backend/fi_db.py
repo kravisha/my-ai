@@ -103,6 +103,130 @@ CREATE TABLE IF NOT EXISTS health_metrics (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Phase C (Discovery Slice, addendum_10 §5 / addendum_7): the first real
+-- multi-agent handoff chain in the project (detector event -> report ->
+-- analysis -> grade, addendum_5 §3), so provenance is a first-class concern
+-- here in a way it wasn't for Phase A/B's single-producer coo_directives -
+-- producer_identity/producer_spawned_at (and handled_by_*/grader_*) use the
+-- same permanent (identity, spawned_at) session-key scheme already
+-- established for agent_registry.
+
+CREATE TABLE IF NOT EXISTS detector_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    security TEXT NOT NULL,
+    detector_type TEXT NOT NULL,
+    peak_iv REAL NOT NULL,
+    baseline_iv REAL NOT NULL,
+    ratio REAL NOT NULL,
+    threshold REAL NOT NULL,
+    neighborhood_desc TEXT,
+    surface_seed TEXT,
+    scope TEXT NOT NULL DEFAULT 'individual',
+    judgment_passed INTEGER,
+    judgment_note TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    evidence_type TEXT NOT NULL,
+    security TEXT NOT NULL,
+    source TEXT,
+    observed_at TEXT,
+    content TEXT,
+    confidence REAL,
+    raw_ref TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS discovery_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    report_type TEXT NOT NULL,
+    security TEXT NOT NULL,
+    summary TEXT,
+    detector_event_id INTEGER,
+    evidence_ids TEXT,
+    judgment_confidence REAL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    handled_by_identity TEXT,
+    handled_by_spawned_at TEXT,
+    detail TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS discovery_reports_completed (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    report_type TEXT NOT NULL,
+    security TEXT NOT NULL,
+    summary TEXT,
+    detector_event_id INTEGER,
+    evidence_ids TEXT,
+    judgment_confidence REAL,
+    handled_by_identity TEXT,
+    handled_by_spawned_at TEXT,
+    detail TEXT,
+    completed_at TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TRIGGER IF NOT EXISTS discovery_reports_archive
+AFTER UPDATE OF status ON discovery_reports
+WHEN NEW.status IN ('analyzed', 'failed')
+BEGIN
+    INSERT INTO discovery_reports_completed
+        (id, created_at, producer_identity, producer_spawned_at, report_type, security, summary,
+         detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at,
+         detail, completed_at, outcome, schema_version)
+    VALUES
+        (NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary,
+         NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at,
+         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.schema_version);
+    DELETE FROM discovery_reports WHERE id = NEW.id;
+END;
+
+CREATE TABLE IF NOT EXISTS analysis_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    report_id INTEGER NOT NULL,
+    security TEXT NOT NULL,
+    thesis TEXT,
+    evidence_summary TEXT,
+    confidence REAL,
+    uncertainty TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS grades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    grader_identity TEXT NOT NULL,
+    grader_spawned_at TEXT NOT NULL,
+    report_id INTEGER NOT NULL,
+    analysis_result_id INTEGER NOT NULL,
+    relevance_score REAL,
+    novelty_score REAL,
+    evidence_quality_score REAL,
+    worth_the_compute INTEGER,
+    overall_score REAL,
+    rationale TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE VIEW IF NOT EXISTS performance_card AS
 SELECT
     r.identity,
@@ -366,4 +490,222 @@ def record_observed_result(conn: sqlite3.Connection, directive_id: int, observed
 
 def get_performance_card(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM performance_card ORDER BY identity").fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Phase C: detector events, evidence, discovery report queue, analysis, grading ---
+
+
+def record_detector_event(
+    conn: sqlite3.Connection,
+    producer_identity: str,
+    producer_spawned_at: str,
+    security: str,
+    detector_type: str,
+    peak_iv: float,
+    baseline_iv: float,
+    ratio: float,
+    threshold: float,
+    neighborhood_desc: str | None = None,
+    surface_seed: str | None = None,
+    scope: str = "individual",
+) -> int:
+    """Only meaningful to call when ratio >= threshold (a real candidate,
+    addendum_7 §4) - agents/explorer.py doesn't call this for a
+    non-triggering scan; that isn't a gradeable unit of work."""
+    cursor = conn.execute(
+        "INSERT INTO detector_events "
+        "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, SCHEMA_VERSION),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def record_detector_judgment(conn: sqlite3.Connection, detector_event_id: int, judgment_passed: bool, judgment_note: str | None = None) -> None:
+    """The lightweight LLM judgment gate's verdict (addendum_7 §2 last
+    bullet), recorded onto the detector_events row it evaluated - a 1:1
+    relationship, no separate table needed."""
+    conn.execute(
+        "UPDATE detector_events SET judgment_passed = ?, judgment_note = ? WHERE id = ?",
+        (int(judgment_passed), judgment_note, detector_event_id),
+    )
+    conn.commit()
+
+
+def get_detector_event(conn: sqlite3.Connection, detector_event_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM detector_events WHERE id = ?", (detector_event_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def record_evidence_item(
+    conn: sqlite3.Connection,
+    producer_identity: str,
+    producer_spawned_at: str,
+    evidence_type: str,
+    security: str,
+    source: str | None = None,
+    observed_at: str | None = None,
+    content: str | None = None,
+    confidence: float | None = None,
+    raw_ref: str | None = None,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO evidence_items "
+        "(created_at, producer_identity, producer_spawned_at, evidence_type, security, source, observed_at, content, confidence, raw_ref, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, evidence_type, security, source, observed_at, content, confidence, raw_ref, SCHEMA_VERSION),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def list_evidence_items(conn: sqlite3.Connection, ids: list[int]) -> list[dict]:
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(f"SELECT * FROM evidence_items WHERE id IN ({placeholders})", ids).fetchall()
+    return [dict(r) for r in rows]
+
+
+def enqueue_report(
+    conn: sqlite3.Connection,
+    producer_identity: str,
+    producer_spawned_at: str,
+    report_type: str,
+    security: str,
+    summary: str | None = None,
+    detector_event_id: int | None = None,
+    evidence_ids: list[int] | None = None,
+    judgment_confidence: float | None = None,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO discovery_reports "
+        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, SCHEMA_VERSION),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def fetch_next_pending_report(conn: sqlite3.Connection) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM discovery_reports WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def has_pending_report(conn: sqlite3.Connection, producer_identity: str, security: str) -> bool:
+    """True if a report from this producer for this security is still
+    sitting in the pending queue, unconsumed by Analysis. Explorer/
+    Speculator check this before filing - without it, a static synthetic
+    surface/stream would get re-filed as a "new" report every ~1s cycle
+    even though Analysis hasn't had a chance to look at the last one yet
+    (same idempotency shape as has_pending_spawn_directive)."""
+    row = conn.execute(
+        "SELECT 1 FROM discovery_reports WHERE producer_identity = ? AND security = ? LIMIT 1",
+        (producer_identity, security),
+    ).fetchone()
+    return row is not None
+
+
+def complete_report(
+    conn: sqlite3.Connection,
+    report_id: int,
+    outcome: str,
+    handled_by_identity: str | None = None,
+    handled_by_spawned_at: str | None = None,
+    detail: str | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE discovery_reports SET status = ?, handled_by_identity = ?, handled_by_spawned_at = ?, detail = ? WHERE id = ?",
+        (outcome, handled_by_identity, handled_by_spawned_at, detail, report_id),
+    )
+    conn.commit()
+
+
+def list_completed_reports(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT * FROM discovery_reports_completed ORDER BY completed_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def record_analysis_result(
+    conn: sqlite3.Connection,
+    producer_identity: str,
+    producer_spawned_at: str,
+    report_id: int,
+    security: str,
+    thesis: str,
+    evidence_summary: str,
+    confidence: float,
+    uncertainty: str,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO analysis_results "
+        "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, SCHEMA_VERSION),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def list_recent_analysis_results(conn: sqlite3.Connection, security: str, since_seconds: float) -> list[dict]:
+    """Analysis's own recent results for this security - a recency/
+    duplicate check against this security's own history, not peer analysis
+    (which is cross-security and explicitly out of scope for this
+    increment)."""
+    rows = conn.execute(
+        "SELECT * FROM analysis_results WHERE security = ? ORDER BY created_at DESC", (security,)
+    ).fetchall()
+    now = datetime.now(timezone.utc)
+    recent = []
+    for row in rows:
+        if (now - parse_timestamp(row["created_at"])).total_seconds() <= since_seconds:
+            recent.append(dict(row))
+    return recent
+
+
+def record_grade(
+    conn: sqlite3.Connection,
+    grader_identity: str,
+    grader_spawned_at: str,
+    report_id: int,
+    analysis_result_id: int,
+    relevance_score: float,
+    novelty_score: float,
+    evidence_quality_score: float,
+    worth_the_compute: bool,
+    overall_score: float,
+    rationale: str,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO grades "
+        "(created_at, grader_identity, grader_spawned_at, report_id, analysis_result_id, relevance_score, novelty_score, evidence_quality_score, worth_the_compute, overall_score, rationale, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), grader_identity, grader_spawned_at, report_id, analysis_result_id, relevance_score, novelty_score, evidence_quality_score, int(worth_the_compute), overall_score, rationale, SCHEMA_VERSION),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def list_grades_for_identity(conn: sqlite3.Connection, identity: str) -> list[dict]:
+    """Grades attributable back to whichever agent produced the report
+    being graded (Explorer/Speculator), not the grader (Analysis) - the
+    queryable half of addendum_10 §10's grading feedback loop: "how has
+    this identity's own reported work been graded over time." Joins
+    through discovery_reports_completed since grades itself only carries
+    report_id, not the original producer. Nothing in this increment reads
+    this back to change Explorer/Speculator behavior - that consumption
+    loop is Phase D (Trainer) territory; this just makes the feedback
+    correctly persisted and attributable."""
+    rows = conn.execute(
+        "SELECT g.* FROM grades g "
+        "JOIN discovery_reports_completed r ON g.report_id = r.id "
+        "WHERE r.producer_identity = ? "
+        "ORDER BY g.created_at",
+        (identity,),
+    ).fetchall()
     return [dict(r) for r in rows]

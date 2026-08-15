@@ -39,7 +39,8 @@ def test_ensure_baseline_population_enqueues_spawn_when_role_missing(conn):
 
 
 def test_ensure_baseline_population_does_not_duplicate_when_role_already_active(conn):
-    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    for i, role in enumerate(BASELINE_ROLES):
+        fi_db.register_agent(conn, f"{role}-1", role, 111 + i)
     _ensure_baseline_population(conn)
     assert fi_db.fetch_next_pending_directive(conn) is None
 
@@ -65,6 +66,12 @@ def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn
     soon as subprocess.Popen returns, before the child has actually called
     register_agent. COO must not enqueue a second spawn for the same role
     while that gap is still open."""
+    # other baseline roles already established - isolates this test to just
+    # dummy's in-flight check, not the unrelated "never been spawned" noise
+    # from the other roles.
+    for i, role in enumerate(r for r in BASELINE_ROLES if r != "dummy"):
+        fi_db.register_agent(conn, f"{role}-1", role, 200 + i)
+
     directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, directive_id, "success", detail="dummy-not-yet-registered")
 
