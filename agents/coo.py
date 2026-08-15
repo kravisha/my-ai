@@ -37,6 +37,13 @@ from backend import fi_db
 ROLE = "coo"
 BASELINE_ROLES = ["dummy"]
 
+# How long to wait after a spawn directive completes before checking whether
+# the target agent actually established itself (registered a heartbeat)
+# versus never came up or died immediately. Comfortably longer than
+# agents/base.py's HEARTBEAT_INTERVAL_SECONDS so a healthy agent has time to
+# register and send at least one heartbeat.
+OBSERVATION_GRACE_SECONDS = 5.0
+
 
 def _role_spawn_in_flight(conn, role: str) -> bool:
     """True if the most recent successful spawn directive for this role
@@ -81,8 +88,33 @@ def _ensure_baseline_population(conn) -> None:
         fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role, reason=reason)
 
 
+def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECONDS) -> None:
+    """The "later observed result" half of Gap 2 (project brief): the
+    Coordinator's 'success' outcome on a spawn directive only proves
+    subprocess.Popen didn't raise (backend/coordinator.py's _handle_spawn) -
+    not that the decision panned out. Once the grace period has passed,
+    check the registry for what actually happened and record it, so COO's
+    baseline-population decisions become gradeable against reality rather
+    than just against their own immediate mechanical outcome.
+
+    grace_seconds is overridable (default OBSERVATION_GRACE_SECONDS) so
+    tests can evaluate immediately instead of waiting out the real grace
+    period."""
+    for directive in fi_db.list_directives_needing_observation(conn, grace_seconds):
+        identity = directive["detail"]
+        agent = fi_db.get_agent(conn, identity)
+        if agent is None:
+            result = "never_registered"
+        elif agent["status"] == "active":
+            result = "established"
+        else:
+            result = "died_before_establishing"
+        fi_db.record_observed_result(conn, directive["id"], result)
+
+
 def _coo_work(conn) -> None:
     _ensure_baseline_population(conn)
+    _evaluate_past_decisions(conn)
     print(f"[COO] ecosystem: {fi_db.get_performance_card(conn)}")
 
 

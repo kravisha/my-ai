@@ -5,7 +5,7 @@ subprocess tests)."""
 
 import pytest
 
-from agents.coo import BASELINE_ROLES, _coo_work, _ensure_baseline_population, _role_spawn_in_flight
+from agents.coo import BASELINE_ROLES, _coo_work, _ensure_baseline_population, _evaluate_past_decisions, _role_spawn_in_flight
 from backend import fi_db
 
 
@@ -83,6 +83,59 @@ def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(
     pending = fi_db.fetch_next_pending_directive(conn)
     assert pending is not None
     assert pending["target_role"] == "dummy"
+
+
+def test_evaluate_past_decisions_marks_established_when_agent_active(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+
+    _evaluate_past_decisions(conn, grace_seconds=0)
+
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["observed_result"] == "established"
+
+
+def test_evaluate_past_decisions_marks_never_registered_when_agent_absent(conn):
+    """Grace period elapsed and the identity never showed up in
+    agent_registry at all - the spawn succeeded at the OS level but the
+    child never got as far as registering itself."""
+    directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+
+    _evaluate_past_decisions(conn, grace_seconds=0)
+
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["observed_result"] == "never_registered"
+
+
+def test_evaluate_past_decisions_marks_died_before_establishing(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_gone(conn, "dummy-1")
+
+    _evaluate_past_decisions(conn, grace_seconds=0)
+
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["observed_result"] == "died_before_establishing"
+
+
+def test_evaluate_past_decisions_is_idempotent(conn):
+    """Once a directive has an observed_result, later calls should not
+    re-evaluate or overwrite it (e.g. an agent that was 'established' at
+    observation time but later dies shouldn't retroactively rewrite the
+    original decision's grade)."""
+    directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+
+    _evaluate_past_decisions(conn, grace_seconds=0)
+    fi_db.mark_agent_gone(conn, "dummy-1")
+    _evaluate_past_decisions(conn, grace_seconds=0)
+
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["observed_result"] == "established"
 
 
 def test_coo_work_does_not_raise_and_prints_status(conn, capsys):

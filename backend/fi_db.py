@@ -77,7 +77,9 @@ CREATE TABLE IF NOT EXISTS coo_directives_completed (
     completed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
     detail TEXT,
-    schema_version INTEGER NOT NULL DEFAULT 1
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    observed_result TEXT,
+    observed_at TEXT
 );
 
 CREATE TRIGGER IF NOT EXISTS coo_directives_archive
@@ -198,9 +200,10 @@ def enqueue_directive(
     """reason: why this directive was raised (e.g. "baseline role has zero
     active agents"), addressing addendum_10 Phase B's "record every COO
     decision with reason... so operational decisions can also be graded" -
-    see Gap 2 in the project brief. Grading itself (the "later observed
-    result" half of that requirement) is not yet designed; this only
-    covers the reason-capture half."""
+    see Gap 2 in the project brief. The other half of that requirement (the
+    "later observed result") is recorded after the fact via
+    record_observed_result, once list_directives_needing_observation says
+    enough time has passed to check what actually happened."""
     cursor = conn.execute(
         "INSERT INTO coo_directives (timestamp, directive_type, target_role, target_identity, params, requested_by, reason, schema_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -228,6 +231,43 @@ def complete_directive(conn: sqlite3.Connection, directive_id: int, outcome: str
 def list_completed_directives(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM coo_directives_completed ORDER BY completed_at").fetchall()
     return [dict(r) for r in rows]
+
+
+def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds: float = 5.0) -> list[dict]:
+    """Completed spawn directives whose outcome only proves the Coordinator's
+    subprocess.Popen call didn't raise (see coordinator.py's _handle_spawn) -
+    not that the decision panned out. Once grace_seconds has elapsed since
+    completion (long enough for a real agent to have registered and sent at
+    least one heartbeat), these are ready for agents/coo.py's
+    _evaluate_past_decisions to check against the actual registry state.
+    Filtering by elapsed time happens here in Python rather than in the SQL
+    WHERE clause because completed_at is written by the archive trigger
+    using SQLite's own strftime (a differently-formatted timestamp than this
+    module's _now()) - comparing them as raw strings would be fragile."""
+    rows = conn.execute(
+        "SELECT * FROM coo_directives_completed "
+        "WHERE directive_type = 'spawn' AND outcome = 'success' AND observed_result IS NULL "
+        "ORDER BY completed_at"
+    ).fetchall()
+    now = datetime.now(timezone.utc)
+    ready = []
+    for row in rows:
+        completed_at = datetime.fromisoformat(row["completed_at"].replace("Z", "+00:00"))
+        if (now - completed_at).total_seconds() >= grace_seconds:
+            ready.append(dict(row))
+    return ready
+
+
+def record_observed_result(conn: sqlite3.Connection, directive_id: int, observed_result: str) -> None:
+    """The "later observed result" half of addendum_10 Phase B's decision-
+    grading requirement (Gap 2's other half - reason-capture already shipped
+    in enqueue_directive). Written once, after the fact, by agents/coo.py's
+    _evaluate_past_decisions."""
+    conn.execute(
+        "UPDATE coo_directives_completed SET observed_result = ?, observed_at = ? WHERE id = ?",
+        (observed_result, _now(), directive_id),
+    )
+    conn.commit()
 
 
 # --- Performance card (objective fields only - see plan for the deferred recognition/commendation split) ---

@@ -191,6 +191,47 @@ def test_enqueue_directive_reason_is_captured_and_survives_archival(conn):
     assert completed[0]["reason"] == "baseline role 'dummy' has zero active agents - respawning to maintain baseline"
 
 
+def test_directives_needing_observation_excludes_non_spawn_and_failures(conn):
+    spawn_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, spawn_id, "success", detail="dummy-1")
+
+    failed_spawn_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, failed_spawn_id, "failure", detail="boom")
+
+    retire_id = fi_db.enqueue_directive(conn, "retire", "coo", target_identity="dummy-1")
+    fi_db.complete_directive(conn, retire_id, "success", detail="retirement requested for dummy-1")
+
+    ready = fi_db.list_directives_needing_observation(conn, grace_seconds=0)
+    assert [r["id"] for r in ready] == [spawn_id]
+
+
+def test_directives_needing_observation_respects_grace_period(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+
+    assert fi_db.list_directives_needing_observation(conn, grace_seconds=999) == []
+    assert [r["id"] for r in fi_db.list_directives_needing_observation(conn, grace_seconds=0)] == [directive_id]
+
+
+def test_directives_needing_observation_excludes_already_observed(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    fi_db.record_observed_result(conn, directive_id, "established")
+
+    assert fi_db.list_directives_needing_observation(conn, grace_seconds=0) == []
+
+
+def test_record_observed_result_is_visible_on_completed_directive(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+
+    fi_db.record_observed_result(conn, directive_id, "established")
+
+    completed = fi_db.list_completed_directives(conn)
+    assert completed[0]["observed_result"] == "established"
+    assert completed[0]["observed_at"] is not None
+
+
 def test_performance_card_reflects_multiple_agents(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     fi_db.register_agent(conn, "coo-1", "coo", 222)
