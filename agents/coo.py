@@ -60,27 +60,33 @@ def _role_spawn_in_flight(conn, role: str) -> bool:
     "COO asked for it" and "the agent is registered and active": either the
     directive itself hasn't been picked up by the Coordinator yet (still
     pending), or the Coordinator has processed it but the target identity
-    hasn't shown up in agent_registry yet.
+    hasn't (re-)registered for *this* attempt yet.
 
-    Both halves were caught by manual end-to-end verification, not the unit
-    suite. The registered-but-not-yet-active half: the Coordinator marks a
-    spawn directive completed as soon as subprocess.Popen returns, but the
-    child doesn't call register_agent until it's actually running - a real
-    gap, not instant. The still-pending half (added alongside Gap 3's crash
-    detection): COO's ~1s cycle and the Coordinator's ~1s poll loop
-    (backend/main.py) are close enough in period that it's routine for
-    COO's next cycle to run before the previous cycle's directive has even
-    been picked up - list_completed_directives alone is blind to that,
-    since the directive isn't there yet."""
+    Agent identity is a permanent role-slot (addendum_5 §4 - see
+    backend/coordinator.py's _slot_identity), so "does this identity exist
+    in agent_registry" stopped being a usable signal for the second half:
+    once a role has been spawned even once, its identity exists forever,
+    reused across every later respawn. The real question is whether the
+    registry row's spawned_at reflects *this* spawn attempt specifically -
+    compared against the directive's own completed_at, not just presence.
+    An older spawned_at means the row is still showing a previous life;
+    this attempt's process hasn't registered yet (or never will).
+
+    Both this half and the still-pending half were caught by manual end-to-
+    end verification, not the unit suite - see the project memory for both
+    incidents. The still-pending half: COO's ~1s cycle and the
+    Coordinator's ~1s poll loop (backend/main.py) are close enough in
+    period that it's routine for COO's next cycle to run before the
+    previous cycle's directive has even been picked up."""
     if fi_db.has_pending_spawn_directive(conn, role):
         return True
-    for directive in reversed(fi_db.list_completed_directives(conn)):
-        if directive["directive_type"] != "spawn" or directive["target_role"] != role:
-            continue
-        if directive["outcome"] != "success":
-            continue
-        return fi_db.get_agent(conn, directive["detail"]) is None
-    return False
+    directive = fi_db.most_recent_completed_spawn(conn, role)
+    if directive is None or directive["outcome"] != "success":
+        return False
+    agent = fi_db.get_agent(conn, directive["detail"])
+    if agent is None:
+        return True
+    return fi_db.parse_timestamp(agent["spawned_at"]) < fi_db.parse_timestamp(directive["completed_at"])
 
 
 def _ensure_baseline_population(conn) -> None:
@@ -137,11 +143,20 @@ def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECO
 
     grace_seconds is overridable (default OBSERVATION_GRACE_SECONDS) so
     tests can evaluate immediately instead of waiting out the real grace
-    period."""
+    period.
+
+    Identity is a permanent role-slot (addendum_5 §4), so agent_registry's
+    row for directive["detail"] may reflect a *later* life than the one
+    this directive spawned (e.g. it registered, crashed, and got respawned
+    again before this directive got observed). Comparing spawned_at against
+    the directive's own completed_at (same check _role_spawn_in_flight
+    uses) keeps a directive from being graded off a different spawn
+    attempt's outcome - if the row still predates this attempt, this
+    attempt itself never registered, regardless of what a later life's
+    status is."""
     for directive in fi_db.list_directives_needing_observation(conn, grace_seconds):
-        identity = directive["detail"]
-        agent = fi_db.get_agent(conn, identity)
-        if agent is None:
+        agent = fi_db.get_agent(conn, directive["detail"])
+        if agent is None or fi_db.parse_timestamp(agent["spawned_at"]) < fi_db.parse_timestamp(directive["completed_at"]):
             result = "never_registered"
         elif agent["status"] == "active":
             result = "established"

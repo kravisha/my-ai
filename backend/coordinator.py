@@ -17,12 +17,25 @@ agent finishing on its own terms.
 import os
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 
 from backend import fi_db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _slot_identity(role: str) -> str:
+    """Permanent, role-slot agent identity (addendum_5 §4: "each role or
+    agent identity maintains a durable performance record independent of
+    any one process instance") - replaces the disposable {role}-{uuid4}
+    scheme, under which every respawn started that role's performance
+    history over from zero. Phase A/B's baseline population is exactly one
+    instance per role (BASELINE_ROLES in agents/coo.py), so slot numbering
+    is trivial for now - always slot 1. Real multi-instance-per-role
+    scaling, and the slot-allocation policy that would need, is deferred to
+    Phase C+ along with the rest of the agent lifecycle states (reserve/
+    retraining/quarantine)."""
+    return f"{role}-1"
 
 
 class Coordinator:
@@ -43,7 +56,7 @@ class Coordinator:
         the first managed process"). Every other agent, including the
         baseline population COO itself will ask for once running, goes
         through the normal directive queue in process_next_directive."""
-        identity = f"coo-{uuid.uuid4().hex[:8]}"
+        identity = _slot_identity("coo")
         env = {**os.environ, "FI_DB_PATH": self.db_path}
         process = subprocess.Popen(
             [sys.executable, "-m", "agents.coo", identity],
@@ -75,7 +88,7 @@ class Coordinator:
 
     def _handle_spawn(self, directive: dict) -> None:
         role = directive["target_role"]
-        identity = f"{role}-{uuid.uuid4().hex[:8]}"
+        identity = _slot_identity(role)
         env = {**os.environ, "FI_DB_PATH": self.db_path}
         try:
             process = subprocess.Popen(

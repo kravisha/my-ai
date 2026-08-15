@@ -3,6 +3,8 @@ process needed here (the real bootstrap->baseline flow is covered as an
 integration test in test_coordinator.py alongside the rest of the genuine
 subprocess tests)."""
 
+import time
+
 import pytest
 
 from agents.coo import (
@@ -90,6 +92,47 @@ def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pen
 
     count = conn.execute("SELECT COUNT(*) AS n FROM coo_directives WHERE target_role = 'dummy'").fetchone()["n"]
     assert count == 1
+
+
+def test_role_spawn_in_flight_true_when_directive_reuses_identity_of_a_dead_prior_life(conn):
+    """Core regression test for the permanent-identity redesign (addendum_5
+    §4): identity is now a role-slot reused across every respawn, so a
+    fresh spawn directive for 'dummy' names the *same* identity a previous,
+    now-dead life already used. Before the new process registers again
+    (bumping spawned_at), the registry row still shows the old life - this
+    must read as "in flight", not "already resolved", or COO would treat a
+    still-starting-up respawn as a silent success/failure."""
+    old_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, old_directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_crashed(conn, "dummy-1")
+    # completed_at is SQL-trigger-written at millisecond precision; a real
+    # respawn always has tens of milliseconds of real subprocess startup
+    # between "directive completed" and "agent registered" - this sleep
+    # reflects that gap rather than an artificial same-instant collision.
+    time.sleep(0.02)
+
+    new_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")  # same permanent identity
+
+    assert _role_spawn_in_flight(conn, "dummy") is True
+
+
+def test_role_spawn_in_flight_false_once_reused_identity_reregisters(conn):
+    """Continuation of the above: once the new process actually registers
+    (register_agent bumps spawned_at past the new directive's completed_at),
+    the same identity that was 'in flight' a moment ago should no longer
+    read that way."""
+    old_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, old_directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_crashed(conn, "dummy-1")
+
+    new_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222)  # the new life actually registers
+
+    assert _role_spawn_in_flight(conn, "dummy") is False
 
 
 def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(conn):
@@ -191,6 +234,33 @@ def test_evaluate_past_decisions_marks_died_before_establishing(conn):
 
     completed = fi_db.list_completed_directives(conn)
     assert completed[0]["observed_result"] == "died_before_establishing"
+
+
+def test_evaluate_past_decisions_does_not_credit_a_newer_directive_with_an_older_lifes_status(conn):
+    """Permanent-identity regression test: a directive's grading must
+    reflect *its own* spawn attempt, not whatever agent_registry currently
+    shows for that identity. Here the identity ('dummy-1') is still
+    'active' from an earlier, unrelated life at the moment this newer
+    directive's grace period expires - without the spawned_at comparison,
+    this would wrongly grade the newer directive 'established' even though
+    its own respawn attempt hasn't registered anything yet."""
+    old_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, old_directive_id, "success", detail="dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)  # older life, still 'active'
+    # completed_at is SQL-trigger-written at millisecond precision; a real
+    # respawn always has tens of milliseconds of real subprocess startup in
+    # between - this sleep reflects that gap rather than an artificial
+    # same-instant collision with the registration above.
+    time.sleep(0.02)
+
+    new_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+    fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")
+    # the new life never actually registers in this test
+
+    _evaluate_past_decisions(conn, grace_seconds=0)
+
+    completed = {d["id"]: d for d in fi_db.list_completed_directives(conn)}
+    assert completed[new_directive_id]["observed_result"] == "never_registered"
 
 
 def test_evaluate_past_decisions_is_idempotent(conn):

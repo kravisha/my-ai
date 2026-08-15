@@ -119,6 +119,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def parse_timestamp(value: str) -> datetime:
+    """Normalizes the two timestamp shapes this module produces: Python's
+    own _now() (e.g. '...+00:00') and the SQL archive trigger's strftime
+    (e.g. '...Z'). Comparing them as raw strings is fragile - this is the
+    one place that difference gets handled, instead of every call site
+    reimplementing the same .replace("Z", "+00:00") fix."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=5.0)
     conn.row_factory = sqlite3.Row
@@ -136,12 +145,21 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def register_agent(conn: sqlite3.Connection, identity: str, role: str, pid: int) -> None:
+    """identity is a permanent role-slot ID (addendum_5 §4: durable
+    performance record independent of any one process instance - see
+    backend/coordinator.py's _slot_identity), so this INSERT...ON CONFLICT
+    path is the normal case for a respawn, not an edge case: the same
+    identity comes back to life under a new pid. last_heartbeat_at is
+    explicitly reset to NULL on that path - without it, a respawned agent
+    would inherit its *previous* life's last heartbeat, which could already
+    be well past agents/coo.py's staleness threshold and get the freshly-
+    registered agent marked 'crashed' before it ever got a chance."""
     now = _now()
     conn.execute(
         "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version) "
-        "VALUES (?, ?, ?, 'active', 0, ?, ?, ?) "
-        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, schema_version=excluded.schema_version",
-        (identity, role, pid, now, now, SCHEMA_VERSION),
+        "VALUES (?, ?, ?, 'active', 0, ?, NULL, ?) "
+        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, last_heartbeat_at=NULL, schema_version=excluded.schema_version",
+        (identity, role, pid, now, SCHEMA_VERSION),
     )
     conn.commit()
 
@@ -200,8 +218,7 @@ def list_stale_active_agents(conn: sqlite3.Connection, stale_seconds: float) -> 
     stale = []
     for row in rows:
         reference = row["last_heartbeat_at"] or row["spawned_at"]
-        reference_dt = datetime.fromisoformat(reference)
-        if (now - reference_dt).total_seconds() >= stale_seconds:
+        if (now - parse_timestamp(reference)).total_seconds() >= stale_seconds:
             stale.append(dict(row))
     return stale
 
@@ -283,6 +300,31 @@ def list_completed_directives(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def most_recent_completed_spawn(conn: sqlite3.Connection, role: str) -> dict | None:
+    """The latest completed spawn directive for a role, or None if it's
+    never had one. Agent identity is now a permanent role-slot (addendum_5
+    §4 - see backend/coordinator.py's _slot_identity), so every spawn
+    directive for a role names the *same* target identity across the
+    role's whole history - this is what lets agents/coo.py's
+    _role_spawn_in_flight ask "did the most recent spawn attempt
+    specifically register yet", not just "does this identity exist".
+
+    Orders by id, not completed_at: id is the original coo_directives
+    AUTOINCREMENT id, carried through by the archive trigger, so it's a
+    precision-independent, strictly-increasing "most recent" signal.
+    completed_at is SQL-trigger-written at millisecond precision (SQLite's
+    strftime has no finer fractional-second format) and can tie between two
+    directives that complete faster than that - not a real risk against the
+    Coordinator's own ~1s poll loop, but a real one in tests exercising this
+    logic without a real subprocess in between."""
+    row = conn.execute(
+        "SELECT * FROM coo_directives_completed WHERE directive_type = 'spawn' AND target_role = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (role,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds: float = 5.0) -> list[dict]:
     """Completed spawn directives whose outcome only proves the Coordinator's
     subprocess.Popen call didn't raise (see coordinator.py's _handle_spawn) -
@@ -293,7 +335,7 @@ def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds:
     Filtering by elapsed time happens here in Python rather than in the SQL
     WHERE clause because completed_at is written by the archive trigger
     using SQLite's own strftime (a differently-formatted timestamp than this
-    module's _now()) - comparing them as raw strings would be fragile."""
+    module's _now()) - see parse_timestamp."""
     rows = conn.execute(
         "SELECT * FROM coo_directives_completed "
         "WHERE directive_type = 'spawn' AND outcome = 'success' AND observed_result IS NULL "
@@ -302,8 +344,7 @@ def list_directives_needing_observation(conn: sqlite3.Connection, grace_seconds:
     now = datetime.now(timezone.utc)
     ready = []
     for row in rows:
-        completed_at = datetime.fromisoformat(row["completed_at"].replace("Z", "+00:00"))
-        if (now - completed_at).total_seconds() >= grace_seconds:
+        if (now - parse_timestamp(row["completed_at"])).total_seconds() >= grace_seconds:
             ready.append(dict(row))
     return ready
 

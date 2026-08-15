@@ -44,6 +44,20 @@ def test_register_agent_upserts_rather_than_duplicating(conn):
     assert agents[0]["status"] == "active"
 
 
+def test_register_agent_resets_last_heartbeat_on_reregistration(conn):
+    """Identity is now a permanent role-slot, so re-registration (a real
+    respawn wearing the same identity, not a rare edge case) must not let a
+    fresh life inherit its previous life's last_heartbeat_at - that stale
+    timestamp could already be past agents/coo.py's staleness threshold and
+    get the freshly-registered agent marked 'crashed' immediately."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+    assert fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"] is not None
+
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222)  # respawned under the same permanent identity
+    assert fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"] is None
+
+
 def test_get_agent_returns_none_for_unknown_identity(conn):
     assert fi_db.get_agent(conn, "nobody") is None
 
@@ -56,10 +70,10 @@ def test_get_agent_returns_registered_agent(conn):
 
 def test_record_heartbeat_updates_last_heartbeat_and_logs_metric(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    before = fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"]
+    assert fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"] is None
+
     fi_db.record_heartbeat(conn, "dummy-1")
-    after = fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"]
-    assert after >= before
+    assert fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"] is not None
 
     card = fi_db.get_performance_card(conn)
     assert card[0]["heartbeat_count"] == 1
