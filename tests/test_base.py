@@ -1,7 +1,7 @@
 """Unit tests for agents/base.py's shared AgentProcess contract - just the
 work_fn exception-containment behavior added for Phase C (see agents/
 base.py's run_agent docstring). The rest of run_agent (register -> heartbeat
--> retire) is already exercised indirectly by test_coordinator.py's real-
+-> retire) is already exercised indirectly by test_controller.py's real-
 subprocess tests and test_coo.py."""
 
 import agents.base

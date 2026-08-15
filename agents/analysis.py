@@ -13,7 +13,7 @@ addendum_7 §6 steps 4-5 treat "perform deep reasoning" and "grade the
 upstream report" as one handoff, not two separate passes.
 
 Run directly as: python -m agents.analysis <identity>
-Normally launched by backend/coordinator.py as a subprocess, not by hand.
+Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import json

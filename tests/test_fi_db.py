@@ -1,7 +1,7 @@
 """Unit tests for backend/fi_db.py - the SQLite coordination substrate for
 the Financial Intelligence system. Pure DB logic, fully hermetic (in-memory
 SQLite, no real processes) - the real-subprocess integration test lives
-separately in tests/test_coordinator.py, per the plan's deliberate testing
+separately in tests/test_controller.py, per the plan's deliberate testing
 split.
 """
 
@@ -481,3 +481,126 @@ def test_list_grades_for_identity_attributes_to_producer_not_grader(conn):
 
     assert fi_db.list_grades_for_identity(conn, "explorer-1") != []
     assert fi_db.list_grades_for_identity(conn, "analysis-1") == []
+
+
+# --- Pre-Alpha static metadata: Agent Name Repository (Consolidated §10/§21) ---
+
+
+def test_register_agent_assigns_a_name_automatically(conn):
+    """Agents get named without any agent-side code doing anything - the
+    hook lives in register_agent, which every agent already calls."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    assert fi_db.get_agent_name(conn, "dummy-1") is not None
+
+
+def test_agent_keeps_the_same_name_across_respawns(conn):
+    """The point of tying names to the permanent role-slot identity: a name
+    is a durable organizational record, not a per-process label."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    original = fi_db.get_agent_name(conn, "dummy-1")
+
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222)  # respawn, same identity
+
+    assert fi_db.get_agent_name(conn, "dummy-1") == original
+
+
+def test_two_identities_never_share_a_name(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.register_agent(conn, "explorer-1", "explorer", 222)
+    assert fi_db.get_agent_name(conn, "dummy-1") != fi_db.get_agent_name(conn, "explorer-1")
+
+
+def test_assign_agent_name_is_idempotent(conn):
+    first = fi_db.assign_agent_name(conn, "dummy-1")
+    second = fi_db.assign_agent_name(conn, "dummy-1")
+    assert first == second
+
+
+def test_reserved_ceo_name_is_never_auto_assigned(conn):
+    """FI_CEO_DISPLAY_NAME (default "Bob") is seeded reserved so no ordinary
+    agent can be handed it - the whole of the "Bob must not be hard-coded"
+    requirement is this one setting plus this one reserved row."""
+    for i in range(len(fi_db.AGENT_NAME_POOL) + 5):
+        fi_db.assign_agent_name(conn, f"agent-{i}")
+
+    reserved = conn.fetchone("SELECT * FROM agent_names WHERE name = ?", (fi_db.CEO_DISPLAY_NAME,))
+    assert reserved["reserved"] == 1
+    assert reserved["assigned_to_identity"] is None
+
+
+def test_assign_agent_name_returns_none_when_pool_exhausted_without_raising(conn):
+    """A name is a display concern - an empty pool must never be able to stop
+    an agent from registering and doing real work."""
+    # drain the pool down to a single remaining name (each row needs its own
+    # identity - assigned_to_identity is UNIQUE, which is itself correct)
+    for i, row in enumerate(fi_db.list_agent_names(conn)):
+        if row["reserved"] == 0 and row["name"] != "Amara":
+            conn.execute(
+                "UPDATE agent_names SET assigned_to_identity = ? WHERE name = ?",
+                (f"filler-{i}", row["name"]),
+            )
+
+    assert fi_db.assign_agent_name(conn, "first-1") == "Amara"
+    assert fi_db.assign_agent_name(conn, "second-1") is None
+    # and registering still works fine despite no name being available
+    fi_db.register_agent(conn, "second-1", "dummy", 111)
+    assert fi_db.get_agent(conn, "second-1")["status"] == "active"
+
+
+def test_list_agent_names_assigned_only_filter(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    assigned = fi_db.list_agent_names(conn, assigned_only=True)
+    assert [n["assigned_to_identity"] for n in assigned] == ["dummy-1"]
+    assert len(fi_db.list_agent_names(conn)) == len(fi_db.AGENT_NAME_POOL) + 1  # + reserved CEO name
+
+
+# --- Pre-Alpha static metadata: Security Universe (Consolidated §10/§21) ---
+
+
+def test_security_universe_is_seeded(conn):
+    symbols = [s["symbol"] for s in fi_db.list_security_universe(conn)]
+    assert symbols == sorted(fi_db.SECURITY_UNIVERSE_SEED)
+
+
+def test_security_universe_rows_are_versioned(conn):
+    row = fi_db.list_security_universe(conn)[0]
+    assert row["universe_version"] == fi_db.SECURITY_UNIVERSE_VERSION
+
+
+def test_add_security_expands_the_universe(conn):
+    fi_db.add_security(conn, "NEWCO", note="added at runtime")
+    symbols = [s["symbol"] for s in fi_db.list_security_universe(conn)]
+    assert "NEWCO" in symbols
+
+
+def test_deactivate_security_is_non_destructive(conn):
+    """Deactivation removes a symbol from active monitoring without deleting
+    its row - matches this project's additive-only conventions."""
+    target = fi_db.SECURITY_UNIVERSE_SEED[0]
+    fi_db.deactivate_security(conn, target)
+
+    assert target not in [s["symbol"] for s in fi_db.list_security_universe(conn)]
+    all_rows = {s["symbol"]: s for s in fi_db.list_security_universe(conn, active_only=False)}
+    assert all_rows[target]["active"] == 0
+
+
+def test_re_adding_a_deactivated_security_reactivates_it(conn):
+    target = fi_db.SECURITY_UNIVERSE_SEED[0]
+    fi_db.deactivate_security(conn, target)
+    fi_db.add_security(conn, target, note="back under monitoring")
+
+    assert target in [s["symbol"] for s in fi_db.list_security_universe(conn)]
+
+
+def test_seeding_is_idempotent_across_repeated_init(conn):
+    """init_schema runs in every agent process, not just the server, so
+    re-seeding must never duplicate rows or disturb existing assignments."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    name_before = fi_db.get_agent_name(conn, "dummy-1")
+
+    fi_db.init_schema(conn)
+    fi_db.init_schema(conn)
+
+    assert fi_db.get_agent_name(conn, "dummy-1") == name_before
+    assert len(fi_db.list_agent_names(conn)) == len(fi_db.AGENT_NAME_POOL) + 1
+    assert len(fi_db.list_security_universe(conn)) == len(fi_db.SECURITY_UNIVERSE_SEED)

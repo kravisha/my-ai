@@ -1,10 +1,10 @@
-"""Trivial agent for proving the control plane (Coordinator spawn/retire
+"""Trivial agent for proving the control plane (Controller spawn/retire
 mechanics) actually works, before any real Explorer/Speculator/Analysis
 logic exists (addendum 10 Phase A+B). Does nothing but heartbeat and wait
 to be retired - the only agent built in this first increment.
 
 Run directly as: python -m agents.dummy <identity>
-Normally launched by backend/coordinator.py as a subprocess, not by hand.
+Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import sys

@@ -1,13 +1,13 @@
 """COO: the privileged client that decides what agents should exist and
-directs the Coordinator to spawn/retire them - never does domain work
+directs the Controller to spawn/retire them - never does domain work
 itself (addendum 6 §1; confirmed this session: COO "will not be doing the
 usual stuff that the client does, like portfolio management or act on
 trade ideas... but it will only be creating processes or agents as
 necessary and sort of managing them like a real manager").
 
 COO never spawns or retires anything directly - per the confirmed rule
-that the Coordinator is the *sole* spawner, COO only ever enqueues
-directives (fi_db.enqueue_directive) for the Coordinator to pick up and
+that the Controller is the *sole* spawner, COO only ever enqueues
+directives (fi_db.enqueue_directive) for the Controller to pick up and
 execute. This module implements the AgentProcess contract exactly like any
 other agent (agents/base.py) - COO is architecturally just a privileged
 client, not a special kind of process.
@@ -23,14 +23,14 @@ there's no real task queue yet for anything to back up on, so "backlog"
 has no meaning until a real Explorer/Speculator/Analysis pipeline exists
 to actually scale against.
 
-COO's own observability interface (distinct from the Coordinator-produced
+COO's own observability interface (distinct from the Controller-produced
 server dashboard, per addendum 6 §1) is deliberately minimal for this
 increment too - a printed status line each cycle. A real dashboard for it
 is future work, same as monitor/app.py was for the conversation transcript
 system.
 
 Run directly as: python -m agents.coo <identity>
-Normally launched by backend/coordinator.py's bootstrap_coo(), not by hand.
+Normally launched by backend/controller.py's bootstrap_coo(), not by hand.
 """
 
 import sys
@@ -77,12 +77,12 @@ HEALTH_STALE_THRESHOLD_SECONDS = 45.0
 def _role_spawn_in_flight(conn, role: str) -> bool:
     """True if a spawn for this role is still in progress somewhere between
     "COO asked for it" and "the agent is registered and active": either the
-    directive itself hasn't been picked up by the Coordinator yet (still
-    pending), or the Coordinator has processed it but the target identity
+    directive itself hasn't been picked up by the Controller yet (still
+    pending), or the Controller has processed it but the target identity
     hasn't (re-)registered for *this* attempt yet.
 
     Agent identity is a permanent role-slot (addendum_5 §4 - see
-    backend/coordinator.py's _slot_identity), so "does this identity exist
+    backend/controller.py's _slot_identity), so "does this identity exist
     in agent_registry" stopped being a usable signal for the second half:
     once a role has been spawned even once, its identity exists forever,
     reused across every later respawn. The real question is whether the
@@ -94,7 +94,7 @@ def _role_spawn_in_flight(conn, role: str) -> bool:
     Both this half and the still-pending half were caught by manual end-to-
     end verification, not the unit suite - see the project memory for both
     incidents. The still-pending half: COO's ~1s cycle and the
-    Coordinator's ~1s poll loop (backend/main.py) are close enough in
+    Controller's ~1s poll loop (backend/main.py) are close enough in
     period that it's routine for COO's next cycle to run before the
     previous cycle's directive has even been picked up."""
     if fi_db.has_pending_spawn_directive(conn, role):
@@ -153,8 +153,8 @@ def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_S
 
 def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECONDS) -> None:
     """The "later observed result" half of Gap 2 (project brief): the
-    Coordinator's 'success' outcome on a spawn directive only proves
-    subprocess.Popen didn't raise (backend/coordinator.py's _handle_spawn) -
+    Controller's 'success' outcome on a spawn directive only proves
+    subprocess.Popen didn't raise (backend/controller.py's _handle_spawn) -
     not that the decision panned out. Once the grace period has passed,
     check the registry for what actually happened and record it, so COO's
     baseline-population decisions become gradeable against reality rather

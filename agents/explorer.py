@@ -13,11 +13,11 @@ LLM judgment gate run before filing a report (addendum_7 §2 last bullet).
 One Explorer process loops over the whole peer group rather than one
 process per security - multi-instance-per-role scaling is explicitly
 deferred project-wide (see agents/coo.py's BASELINE_ROLES /
-backend/coordinator.py's _slot_identity, both hard-assume exactly one
+backend/controller.py's _slot_identity, both hard-assume exactly one
 identity per role).
 
 Run directly as: python -m agents.explorer <identity>
-Normally launched by backend/coordinator.py as a subprocess, not by hand.
+Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import json

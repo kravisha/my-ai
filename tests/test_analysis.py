@@ -15,7 +15,7 @@ from dotenv import dotenv_values
 
 from agents.analysis import _analysis_work, _assemble_context
 from backend import fi_db
-from backend.coordinator import PROJECT_ROOT
+from backend.controller import PROJECT_ROOT
 
 
 class FakeBlock:
@@ -188,7 +188,7 @@ def test_assemble_context_includes_detector_event_and_evidence(conn):
 @pytest.mark.real_llm
 def test_real_analysis_agent_consumes_report_and_produces_result(tmp_path):
     """Pre-seeds a pending report directly via fi_db, spawns a real
-    agents.analysis subprocess (not through Coordinator - scoped to
+    agents.analysis subprocess (not through Controller - scoped to
     Analysis alone), and confirms it makes a real Anthropic call and
     produces a real analysis_results row plus a grade for the upstream
     report - proving the queue-consume -> LLM -> persist path works end to

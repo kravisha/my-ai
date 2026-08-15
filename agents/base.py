@@ -3,7 +3,7 @@ Phase A). Every agent: registers itself in fi_db on startup, runs a
 heartbeat + retire-poll loop, and exits itself cleanly when told to retire.
 
 Nothing ever forcibly kills an agent process - retirement works by the
-Coordinator setting a flag (fi_db.request_retirement) that the agent's own
+Controller setting a flag (fi_db.request_retirement) that the agent's own
 loop notices and acts on. This is the concrete mechanism behind "graceful
 retire": the agent retires itself, on its own terms, once it sees the
 signal - matching the no-direct-IPC rule (the flag is a database row, not a
@@ -27,7 +27,7 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
     dummy agent passes nothing and just idles, which is the point of it.
 
     db_path defaults to the FI_DB_PATH environment variable if set, falling
-    back to the real project database - lets the Coordinator (or a test)
+    back to the real project database - lets the Controller (or a test)
     point a spawned subprocess at an isolated database without needing a
     CLI flag on every agent.
 

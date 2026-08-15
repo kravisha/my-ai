@@ -4,7 +4,7 @@ threshold gating, and cursor-based dedup. No LLM call in this agent
 canned posts for deterministic control over what "recent" returns. The one
 real-subprocess test at the bottom needs no @pytest.mark.real_llm marker
 for the same reason - it makes no network call, just proves the process/
-provider/DB mechanics actually work, matching test_coordinator.py's
+provider/DB mechanics actually work, matching test_controller.py's
 real-subprocess-proves-the-mechanics pattern."""
 
 import os
@@ -14,7 +14,7 @@ import time
 
 from agents.speculator import _speculator_work
 from backend import fi_db
-from backend.coordinator import PROJECT_ROOT
+from backend.controller import PROJECT_ROOT
 from providers.social_data import SocialPost
 
 

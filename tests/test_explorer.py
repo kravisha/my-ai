@@ -16,7 +16,7 @@ from dotenv import dotenv_values
 
 from agents.explorer import _explorer_work, _local_baseline, scan_for_anomaly
 from backend import fi_db
-from backend.coordinator import PROJECT_ROOT
+from backend.controller import PROJECT_ROOT
 from providers.market_data import SyntheticMarketDataProvider
 
 
@@ -179,9 +179,9 @@ def test_explorer_work_isolated_security_is_scoped_individual_with_flat_peers(co
 
 @pytest.mark.real_llm
 def test_real_explorer_agent_detects_and_files_report(tmp_path):
-    """Spawns a real agents.explorer subprocess (not through Coordinator -
-    this test is scoped to Explorer alone, COO/Coordinator orchestration
-    is covered separately in test_coordinator.py) against a forced anomaly,
+    """Spawns a real agents.explorer subprocess (not through Controller -
+    this test is scoped to Explorer alone, COO/Controller orchestration
+    is covered separately in test_controller.py) against a forced anomaly,
     and confirms it makes a real Anthropic call for the judgment gate and
     files a real report - proving the whole detector -> LLM gate -> queue
     path works end to end, not just each mocked piece in isolation."""

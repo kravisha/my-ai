@@ -19,7 +19,7 @@ later increment (more securities, a real Reddit provider) would want to
 design properly, so left alone rather than guessed at now.
 
 Run directly as: python -m agents.speculator <identity>
-Normally launched by backend/coordinator.py as a subprocess, not by hand.
+Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import sys

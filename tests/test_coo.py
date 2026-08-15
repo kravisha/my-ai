@@ -1,6 +1,6 @@
 """Unit tests for agents/coo.py's decision logic - pure DB logic, no real
 process needed here (the real bootstrap->baseline flow is covered as an
-integration test in test_coordinator.py alongside the rest of the genuine
+integration test in test_controller.py alongside the rest of the genuine
 subprocess tests)."""
 
 import time
@@ -52,7 +52,7 @@ def test_ensure_baseline_population_respawns_role_after_it_goes_gone(conn):
 
 def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn):
     """Regression test for a race caught during manual end-to-end
-    verification: the Coordinator marks a spawn directive completed as
+    verification: the Controller marks a spawn directive completed as
     soon as subprocess.Popen returns, before the child has actually called
     register_agent. COO must not enqueue a second spawn for the same role
     while that gap is still open."""
@@ -75,11 +75,11 @@ def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn
 def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pending(conn):
     """Regression test for a bug found via manual verification of Gap 3: the
     old _role_spawn_in_flight only checked coo_directives_completed, which
-    is blind to a directive the Coordinator hasn't picked up yet. COO's
-    ~1s cycle and the Coordinator's ~1s poll are close enough in period
+    is blind to a directive the Controller hasn't picked up yet. COO's
+    ~1s cycle and the Controller's ~1s poll are close enough in period
     that this was routine, not rare - simulated here by enqueuing a spawn
     and calling _ensure_baseline_population again before anything completes
-    it, exactly as COO's next cycle would if the Coordinator hadn't caught
+    it, exactly as COO's next cycle would if the Controller hadn't caught
     up yet."""
     fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
 

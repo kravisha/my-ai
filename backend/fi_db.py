@@ -44,6 +44,7 @@ carries... schema version" requirement without contradicting it.
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +56,39 @@ DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 # future reader/grader needs to distinguish from older rows - not on every
 # column addition (see the additive-only-columns rule above).
 SCHEMA_VERSION = 1
+
+# --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
+# These are organization-level constants, deliberately kept here rather than
+# in agents/discovery_config.py: this module has to read them to seed the
+# tables below, and backend/ importing from agents/ would invert the
+# dependency direction (agents depend on backend, never the reverse).
+
+# "The CEO display name is a configurable reserved-name setting whose
+# initial/default value is Bob. Bob must not be hard-coded throughout
+# application logic." This one setting, plus the reserved row it seeds, is
+# the entirety of that requirement - the literal string appears nowhere else.
+CEO_DISPLAY_NAME = os.environ.get("FI_CEO_DISPLAY_NAME", "Bob")
+
+# "Create a diverse global Agent Name Repository." Deliberately spans many
+# languages/regions rather than one culture's name list. Names are a display
+# layer over the permanent role-slot identity (explorer-1, ...), which stays
+# the immutable internal identifier everything else joins on - §10 asks for
+# both ("every active agent *also* has an immutable internal identifier").
+AGENT_NAME_POOL = (
+    "Amara", "Aiko", "Anand", "Ana", "Bilal", "Chen", "Dmitri", "Elena",
+    "Ewa", "Fatima", "Gabriel", "Hana", "Hugo", "Ibrahim", "Ines", "Jamal",
+    "Jin", "Kavya", "Kwame", "Lars", "Leila", "Mateo", "Mei", "Nadia",
+    "Niko", "Oluwaseun", "Omar", "Priya", "Qing", "Rafael", "Ravi", "Rosa",
+    "Sanjay", "Sofia", "Tariq", "Thandiwe", "Yuki", "Yusuf", "Zara", "Zheng",
+)
+
+# "Create a configurable, expandable, versioned Security Universe of assets
+# the organization may monitor." Inclusion means an asset MAY be monitored -
+# it implies nothing about whether it is attractive or investable.
+SECURITY_UNIVERSE_VERSION = 1
+SECURITY_UNIVERSE_SEED = [
+    s.strip() for s in os.environ.get("FI_SECURITY_UNIVERSE", "SYN1,SYN2,SYN3,SYN4").split(",") if s.strip()
+]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_registry (
@@ -248,6 +282,25 @@ CREATE TABLE IF NOT EXISTS grades (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Pre-Alpha static metadata (Consolidated spec §10/§21).
+
+CREATE TABLE IF NOT EXISTS agent_names (
+    name TEXT PRIMARY KEY,
+    assigned_to_identity TEXT UNIQUE,
+    assigned_at TEXT,
+    reserved INTEGER NOT NULL DEFAULT 0,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS security_universe (
+    symbol TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    note TEXT,
+    universe_version INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE VIEW IF NOT EXISTS performance_card AS
 SELECT
     r.identity,
@@ -279,6 +332,35 @@ def get_connection(db_path: str | Path = DB_PATH) -> Database:
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+    _seed_static_metadata(conn)
+
+
+def _seed_static_metadata(conn: Database) -> None:
+    """Idempotent seeding of the Pre-Alpha static metadata tables - safe to
+    re-run on every startup (init_schema is called by every agent process,
+    not just the server). Uses INSERT OR IGNORE so existing rows, including
+    already-assigned names and any securities added at runtime, are never
+    disturbed."""
+    for name in AGENT_NAME_POOL:
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_names (name, reserved, schema_version) VALUES (?, 0, ?)",
+            (name, SCHEMA_VERSION),
+        )
+    # The CEO name is seeded reserved, and re-asserted as reserved on every
+    # startup in case FI_CEO_DISPLAY_NAME changed to a name already in the
+    # ordinary pool - reserving it late is still correct, it just means the
+    # name stops being handed out from that point on.
+    conn.execute(
+        "INSERT INTO agent_names (name, reserved, schema_version) VALUES (?, 1, ?) "
+        "ON CONFLICT(name) DO UPDATE SET reserved = 1",
+        (CEO_DISPLAY_NAME, SCHEMA_VERSION),
+    )
+    for symbol in SECURITY_UNIVERSE_SEED:
+        conn.execute(
+            "INSERT OR IGNORE INTO security_universe (symbol, added_at, active, note, universe_version, schema_version) "
+            "VALUES (?, ?, 1, ?, ?, ?)",
+            (symbol, _now(), "seeded synthetic universe", SECURITY_UNIVERSE_VERSION, SCHEMA_VERSION),
+        )
 
 
 # --- Agent registry ---
@@ -287,7 +369,7 @@ def init_schema(conn: Database) -> None:
 def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     """identity is a permanent role-slot ID (addendum_5 §4: durable
     performance record independent of any one process instance - see
-    backend/coordinator.py's _slot_identity), so this INSERT...ON CONFLICT
+    backend/controller.py's _slot_identity), so this INSERT...ON CONFLICT
     path is the normal case for a respawn, not an edge case: the same
     identity comes back to life under a new pid. last_heartbeat_at is
     explicitly reset to NULL on that path - without it, a respawned agent
@@ -301,10 +383,17 @@ def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
         "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, last_heartbeat_at=NULL, schema_version=excluded.schema_version",
         (identity, role, pid, now, SCHEMA_VERSION),
     )
+    # Every agent gets a name from the repository on first registration and
+    # keeps it for life - assign_agent_name is idempotent, so a respawn under
+    # the same permanent identity returns the existing name rather than
+    # burning a second one. Deliberately best-effort: a name is a display
+    # concern, and an exhausted pool must never be able to stop an agent from
+    # registering (see assign_agent_name).
+    assign_agent_name(conn, identity)
 
 
 def request_retirement(conn: Database, identity: str) -> None:
-    """The Coordinator calls this when processing a 'retire' directive - it
+    """The Controller calls this when processing a 'retire' directive - it
     only ever sets a flag. The target agent's own run loop (see
     agents/base.py) polls for this and exits itself; nothing forcibly kills
     the process. This *is* what "graceful retire" means concretely."""
@@ -366,7 +455,7 @@ def list_agents(conn: Database) -> list[dict]:
     return conn.fetchall("SELECT * FROM agent_registry ORDER BY spawned_at")
 
 
-# --- COO -> Coordinator directive queue ---
+# --- COO -> Controller directive queue ---
 
 
 def enqueue_directive(
@@ -400,11 +489,11 @@ def fetch_next_pending_directive(conn: Database) -> dict | None:
 
 def has_pending_spawn_directive(conn: Database, role: str) -> bool:
     """True if a spawn directive for this role is sitting in the pending
-    queue, not yet picked up by the Coordinator. Found via manual
+    queue, not yet picked up by the Controller. Found via manual
     verification of Gap 3 (project brief): agents/coo.py's
     _role_spawn_in_flight only ever checked coo_directives_completed, which
     is blind to a directive that's still pending - COO's ~1s cycle and the
-    Coordinator's ~1s poll (backend/main.py) are the same order of
+    Controller's ~1s poll (backend/main.py) are the same order of
     magnitude, so it's routine, not rare, for COO's next cycle to run
     before the previous cycle's spawn directive has even been picked up,
     let alone completed. Without this check, that cycle sees no completed
@@ -431,7 +520,7 @@ def list_completed_directives(conn: Database) -> list[dict]:
 def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
     """The latest completed spawn directive for a role, or None if it's
     never had one. Agent identity is now a permanent role-slot (addendum_5
-    §4 - see backend/coordinator.py's _slot_identity), so every spawn
+    §4 - see backend/controller.py's _slot_identity), so every spawn
     directive for a role names the *same* target identity across the
     role's whole history - this is what lets agents/coo.py's
     _role_spawn_in_flight ask "did the most recent spawn attempt
@@ -443,7 +532,7 @@ def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
     completed_at is SQL-trigger-written at millisecond precision (SQLite's
     strftime has no finer fractional-second format) and can tie between two
     directives that complete faster than that - not a real risk against the
-    Coordinator's own ~1s poll loop, but a real one in tests exercising this
+    Controller's own ~1s poll loop, but a real one in tests exercising this
     logic without a real subprocess in between."""
     return conn.fetchone(
         "SELECT * FROM coo_directives_completed WHERE directive_type = 'spawn' AND target_role = ? "
@@ -453,8 +542,8 @@ def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
 
 
 def list_directives_needing_observation(conn: Database, grace_seconds: float = 5.0) -> list[dict]:
-    """Completed spawn directives whose outcome only proves the Coordinator's
-    subprocess.Popen call didn't raise (see coordinator.py's _handle_spawn) -
+    """Completed spawn directives whose outcome only proves the Controller's
+    subprocess.Popen call didn't raise (see controller.py's _handle_spawn) -
     not that the decision panned out. Once grace_seconds has elapsed since
     completion (long enough for a real agent to have registered and sent at
     least one heartbeat), these are ready for agents/coo.py's
@@ -492,6 +581,80 @@ def record_observed_result(conn: Database, directive_id: int, observed_result: s
 
 def get_performance_card(conn: Database) -> list[dict]:
     return conn.fetchall("SELECT * FROM performance_card ORDER BY identity")
+
+
+# --- Pre-Alpha static metadata: Agent Name Repository + Security Universe ---
+
+
+def assign_agent_name(conn: Database, identity: str) -> str | None:
+    """Claims the next available non-reserved name for this identity, or
+    returns the name it already holds. Idempotent by design: identity is a
+    permanent role-slot (see backend/controller.py's _slot_identity), so an
+    agent respawning under the same identity must get the same name back
+    rather than consuming another one - that continuity is the whole point
+    of a name as a durable organizational record.
+
+    Returns None if the pool is exhausted, and never raises: a name is a
+    display concern, and running out of them must not be able to stop an
+    agent from registering and doing real work."""
+    existing = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
+    if existing is not None:
+        return existing["name"]
+
+    available = conn.fetchone(
+        "SELECT name FROM agent_names WHERE assigned_to_identity IS NULL AND reserved = 0 ORDER BY name LIMIT 1"
+    )
+    if available is None:
+        return None
+
+    conn.execute(
+        "UPDATE agent_names SET assigned_to_identity = ?, assigned_at = ? WHERE name = ? AND assigned_to_identity IS NULL",
+        (identity, _now(), available["name"]),
+    )
+    # Re-read rather than trusting the UPDATE: two processes registering at
+    # once could race for the same row, and the WHERE ... IS NULL guard means
+    # the loser silently updated nothing. Reading back returns whichever name
+    # this identity actually ended up with (None if it lost and the pool has
+    # since emptied).
+    confirmed = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
+    return confirmed["name"] if confirmed else None
+
+
+def get_agent_name(conn: Database, identity: str) -> str | None:
+    row = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
+    return row["name"] if row else None
+
+
+def list_agent_names(conn: Database, assigned_only: bool = False) -> list[dict]:
+    if assigned_only:
+        return conn.fetchall("SELECT * FROM agent_names WHERE assigned_to_identity IS NOT NULL ORDER BY name")
+    return conn.fetchall("SELECT * FROM agent_names ORDER BY name")
+
+
+def add_security(conn: Database, symbol: str, note: str | None = None) -> None:
+    """Expands the Security Universe (Consolidated §10: "configurable,
+    expandable, versioned"). Inclusion means the asset MAY be monitored - it
+    implies nothing about whether it is attractive or investable. Re-adding
+    an existing symbol reactivates it rather than duplicating or erroring."""
+    conn.execute(
+        "INSERT INTO security_universe (symbol, added_at, active, note, universe_version, schema_version) "
+        "VALUES (?, ?, 1, ?, ?, ?) "
+        "ON CONFLICT(symbol) DO UPDATE SET active = 1, note = excluded.note",
+        (symbol, _now(), note, SECURITY_UNIVERSE_VERSION, SCHEMA_VERSION),
+    )
+
+
+def deactivate_security(conn: Database, symbol: str) -> None:
+    """Removes a symbol from active monitoring without deleting its row -
+    matches this project's additive-only, non-destructive conventions (and
+    the new docs' "retirement is dormancy, not destruction" principle)."""
+    conn.execute("UPDATE security_universe SET active = 0 WHERE symbol = ?", (symbol,))
+
+
+def list_security_universe(conn: Database, active_only: bool = True) -> list[dict]:
+    if active_only:
+        return conn.fetchall("SELECT * FROM security_universe WHERE active = 1 ORDER BY symbol")
+    return conn.fetchall("SELECT * FROM security_universe ORDER BY symbol")
 
 
 # --- Phase C: detector events, evidence, discovery report queue, analysis, grading ---
