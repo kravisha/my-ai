@@ -14,10 +14,14 @@ client, not a special kind of process.
 
 This first increment's policy is deliberately minimal: the baseline
 population is "one dummy agent" (addendum 6 §2 step 6 - "Initial baseline
-is one instance of each required role") and COO otherwise just watches
-health. Richer scaling policy (starvation/backlog-driven scaling per
-addendum 6 §5) is Phase C+ work, once there's a real Explorer/Speculator/
-Analysis pipeline to actually scale.
+is one instance of each required role"), and COO's health watching covers
+only what Phase A/B actually has data for - detecting a heartbeat that's
+stopped moving (_evaluate_agent_health) and distinguishing that from a
+clean exit (crashed vs. gone). Richer scaling policy (starvation/backlog-
+driven scaling per addendum 6 §5) is deliberately still Phase C+ work:
+there's no real task queue yet for anything to back up on, so "backlog"
+has no meaning until a real Explorer/Speculator/Analysis pipeline exists
+to actually scale against.
 
 COO's own observability interface (distinct from the Coordinator-produced
 server dashboard, per addendum 6 §1) is deliberately minimal for this
@@ -44,17 +48,32 @@ BASELINE_ROLES = ["dummy"]
 # register and send at least one heartbeat.
 OBSERVATION_GRACE_SECONDS = 5.0
 
+# How long an 'active' agent's heartbeat can go stale before COO's health
+# evaluation treats it as crashed rather than merely slow. Comfortably
+# longer than agents/base.py's HEARTBEAT_INTERVAL_SECONDS (normal cycle-to-
+# cycle jitter shouldn't false-positive as a crash).
+HEALTH_STALE_THRESHOLD_SECONDS = 10.0
+
 
 def _role_spawn_in_flight(conn, role: str) -> bool:
-    """True if the most recent successful spawn directive for this role
-    named a target identity that hasn't shown up in agent_registry yet.
+    """True if a spawn for this role is still in progress somewhere between
+    "COO asked for it" and "the agent is registered and active": either the
+    directive itself hasn't been picked up by the Coordinator yet (still
+    pending), or the Coordinator has processed it but the target identity
+    hasn't shown up in agent_registry yet.
 
-    Caught by manual end-to-end verification: the Coordinator marks a spawn
-    directive completed as soon as subprocess.Popen returns, but the child
-    doesn't call register_agent until it's actually running - a real gap,
-    not instant. Without this check, _ensure_baseline_population's next
-    ~1s cycle (running before that registration write lands) sees no
-    active agent yet and enqueues a duplicate spawn."""
+    Both halves were caught by manual end-to-end verification, not the unit
+    suite. The registered-but-not-yet-active half: the Coordinator marks a
+    spawn directive completed as soon as subprocess.Popen returns, but the
+    child doesn't call register_agent until it's actually running - a real
+    gap, not instant. The still-pending half (added alongside Gap 3's crash
+    detection): COO's ~1s cycle and the Coordinator's ~1s poll loop
+    (backend/main.py) are close enough in period that it's routine for
+    COO's next cycle to run before the previous cycle's directive has even
+    been picked up - list_completed_directives alone is blind to that,
+    since the directive isn't there yet."""
+    if fi_db.has_pending_spawn_directive(conn, role):
+        return True
     for directive in reversed(fi_db.list_completed_directives(conn)):
         if directive["directive_type"] != "spawn" or directive["target_role"] != role:
             continue
@@ -88,6 +107,25 @@ def _ensure_baseline_population(conn) -> None:
         fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role, reason=reason)
 
 
+def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_SECONDS) -> None:
+    """Health evaluation + restart-vs-crash distinction (Gap 3, project
+    brief): an agent that exits cleanly marks itself 'gone' via agents/
+    base.py's finally block, but a hard crash (SIGKILL, OOM, hung process)
+    never reaches that code at all - the row stays 'active' forever unless
+    something else notices the heartbeat stopped moving. This is that
+    something else: any 'active' agent stale beyond stale_seconds is marked
+    'crashed', which drops it out of _ensure_baseline_population's active-
+    role count so a replacement gets spawned, the same as a clean 'gone'
+    would trigger. Runs before _ensure_baseline_population in _coo_work so
+    a crash detected this cycle is already reflected in this cycle's
+    respawn check, not one cycle later.
+
+    stale_seconds is overridable (default HEALTH_STALE_THRESHOLD_SECONDS)
+    so tests can evaluate without waiting out the real threshold."""
+    for agent in fi_db.list_stale_active_agents(conn, stale_seconds):
+        fi_db.mark_agent_crashed(conn, agent["identity"])
+
+
 def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECONDS) -> None:
     """The "later observed result" half of Gap 2 (project brief): the
     Coordinator's 'success' outcome on a spawn directive only proves
@@ -113,6 +151,7 @@ def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECO
 
 
 def _coo_work(conn) -> None:
+    _evaluate_agent_health(conn)
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     print(f"[COO] ecosystem: {fi_db.get_performance_card(conn)}")

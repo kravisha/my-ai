@@ -5,7 +5,14 @@ subprocess tests)."""
 
 import pytest
 
-from agents.coo import BASELINE_ROLES, _coo_work, _ensure_baseline_population, _evaluate_past_decisions, _role_spawn_in_flight
+from agents.coo import (
+    BASELINE_ROLES,
+    _coo_work,
+    _ensure_baseline_population,
+    _evaluate_agent_health,
+    _evaluate_past_decisions,
+    _role_spawn_in_flight,
+)
 from backend import fi_db
 
 
@@ -66,6 +73,25 @@ def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn
     assert fi_db.fetch_next_pending_directive(conn) is None
 
 
+def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pending(conn):
+    """Regression test for a bug found via manual verification of Gap 3: the
+    old _role_spawn_in_flight only checked coo_directives_completed, which
+    is blind to a directive the Coordinator hasn't picked up yet. COO's
+    ~1s cycle and the Coordinator's ~1s poll are close enough in period
+    that this was routine, not rare - simulated here by enqueuing a spawn
+    and calling _ensure_baseline_population again before anything completes
+    it, exactly as COO's next cycle would if the Coordinator hadn't caught
+    up yet."""
+    fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
+
+    assert _role_spawn_in_flight(conn, "dummy") is True
+
+    _ensure_baseline_population(conn)
+
+    count = conn.execute("SELECT COUNT(*) AS n FROM coo_directives WHERE target_role = 'dummy'").fetchone()["n"]
+    assert count == 1
+
+
 def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(conn):
     """Once the previously in-flight agent shows up in the registry and
     then goes gone, it's no longer "in flight" - COO should treat this as
@@ -80,6 +106,52 @@ def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(
 
     _ensure_baseline_population(conn)
 
+    pending = fi_db.fetch_next_pending_directive(conn)
+    assert pending is not None
+    assert pending["target_role"] == "dummy"
+
+
+def test_evaluate_agent_health_marks_stale_agent_crashed(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+
+    _evaluate_agent_health(conn, stale_seconds=0)
+
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+
+
+def test_evaluate_agent_health_leaves_fresh_agent_active(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+
+    _evaluate_agent_health(conn, stale_seconds=999)
+
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "active"
+
+
+def test_evaluate_agent_health_does_not_touch_gracefully_gone_agents(conn):
+    """A clean exit already set status='gone' itself - health evaluation
+    should leave that alone rather than overwriting it with 'crashed'."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_gone(conn, "dummy-1")
+
+    _evaluate_agent_health(conn, stale_seconds=0)
+
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "gone"
+
+
+def test_coo_work_respawns_crashed_agent_within_same_cycle(conn):
+    """Integration of Gap 3 with the existing baseline-population logic:
+    a crashed agent (health evaluation runs before baseline population in
+    _coo_work) should trigger a respawn in the very same cycle it was
+    detected, not one cycle later."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+
+    _evaluate_agent_health(conn, stale_seconds=0)
+    _ensure_baseline_population(conn)
+
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
     pending = fi_db.fetch_next_pending_directive(conn)
     assert pending is not None
     assert pending["target_role"] == "dummy"

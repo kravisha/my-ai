@@ -175,6 +175,37 @@ def mark_agent_gone(conn: sqlite3.Connection, identity: str) -> None:
     conn.commit()
 
 
+def mark_agent_crashed(conn: sqlite3.Connection, identity: str) -> None:
+    """Distinct from mark_agent_gone: 'gone' means the agent's own run loop
+    exited cleanly and marked itself on its way out (agents/base.py's
+    finally block). 'crashed' means agents/coo.py's health evaluation
+    detected a heartbeat that stopped moving without that clean exit ever
+    happening - addendum_10 Phase B's restart-vs-crash distinction (Gap 3
+    in the project brief)."""
+    conn.execute("UPDATE agent_registry SET status = 'crashed' WHERE identity = ?", (identity,))
+    conn.commit()
+
+
+def list_stale_active_agents(conn: sqlite3.Connection, stale_seconds: float) -> list[dict]:
+    """'active' agents whose most recent signal of life (last heartbeat, or
+    spawn time if it never got as far as a first heartbeat) is older than
+    stale_seconds - candidates for agents/coo.py's _evaluate_agent_health to
+    mark as crashed. An agent that exits cleanly calls mark_agent_gone
+    itself; one that's killed outright (SIGKILL, OOM, host crash) never
+    reaches that code at all, so its row would stay 'active' forever with a
+    heartbeat that's stopped advancing unless something else notices - this
+    is that something else."""
+    rows = conn.execute("SELECT * FROM agent_registry WHERE status = 'active'").fetchall()
+    now = datetime.now(timezone.utc)
+    stale = []
+    for row in rows:
+        reference = row["last_heartbeat_at"] or row["spawned_at"]
+        reference_dt = datetime.fromisoformat(reference)
+        if (now - reference_dt).total_seconds() >= stale_seconds:
+            stale.append(dict(row))
+    return stale
+
+
 def get_agent(conn: sqlite3.Connection, identity: str) -> dict | None:
     row = conn.execute("SELECT * FROM agent_registry WHERE identity = ?", (identity,)).fetchone()
     return dict(row) if row else None
@@ -218,6 +249,25 @@ def fetch_next_pending_directive(conn: sqlite3.Connection) -> dict | None:
         "SELECT * FROM coo_directives WHERE status = 'pending' ORDER BY timestamp ASC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
+
+
+def has_pending_spawn_directive(conn: sqlite3.Connection, role: str) -> bool:
+    """True if a spawn directive for this role is sitting in the pending
+    queue, not yet picked up by the Coordinator. Found via manual
+    verification of Gap 3 (project brief): agents/coo.py's
+    _role_spawn_in_flight only ever checked coo_directives_completed, which
+    is blind to a directive that's still pending - COO's ~1s cycle and the
+    Coordinator's ~1s poll (backend/main.py) are the same order of
+    magnitude, so it's routine, not rare, for COO's next cycle to run
+    before the previous cycle's spawn directive has even been picked up,
+    let alone completed. Without this check, that cycle sees no completed
+    directive to call "in flight" and enqueues a second, genuinely
+    duplicate spawn for the same role."""
+    row = conn.execute(
+        "SELECT 1 FROM coo_directives WHERE directive_type = 'spawn' AND target_role = ? AND status = 'pending' LIMIT 1",
+        (role,),
+    ).fetchone()
+    return row is not None
 
 
 def complete_directive(conn: sqlite3.Connection, directive_id: int, outcome: str, detail: str | None = None) -> None:

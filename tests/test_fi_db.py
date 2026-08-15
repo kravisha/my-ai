@@ -232,6 +232,59 @@ def test_record_observed_result_is_visible_on_completed_directive(conn):
     assert completed[0]["observed_at"] is not None
 
 
+def test_has_pending_spawn_directive_true_while_unprocessed(conn):
+    fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    assert fi_db.has_pending_spawn_directive(conn, "dummy") is True
+
+
+def test_has_pending_spawn_directive_false_once_completed(conn):
+    directive_id = fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
+    assert fi_db.has_pending_spawn_directive(conn, "dummy") is False
+
+
+def test_has_pending_spawn_directive_false_for_different_role(conn):
+    fi_db.enqueue_directive(conn, "spawn", "coo", target_role="dummy")
+    assert fi_db.has_pending_spawn_directive(conn, "explorer") is False
+
+
+def test_mark_agent_crashed_is_distinct_from_gone(conn):
+    """Gap 3 (project brief): restart-vs-crash distinction - 'crashed'
+    (detected by COO's health evaluation) must be a different status from
+    'gone' (the agent's own clean exit), not collapsed into the same value."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_crashed(conn, "dummy-1")
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+
+
+def test_list_stale_active_agents_excludes_fresh_heartbeat(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+    assert fi_db.list_stale_active_agents(conn, stale_seconds=999) == []
+
+
+def test_list_stale_active_agents_includes_agent_past_threshold(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+    stale = fi_db.list_stale_active_agents(conn, stale_seconds=0)
+    assert [a["identity"] for a in stale] == ["dummy-1"]
+
+
+def test_list_stale_active_agents_uses_spawn_time_when_no_heartbeat_yet(conn):
+    """An agent that registered but crashed before its first heartbeat has
+    no last_heartbeat_at to check - fall back to spawned_at rather than
+    treating a null heartbeat as 'never stale'."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    stale = fi_db.list_stale_active_agents(conn, stale_seconds=0)
+    assert [a["identity"] for a in stale] == ["dummy-1"]
+
+
+def test_list_stale_active_agents_excludes_non_active_status(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.mark_agent_gone(conn, "dummy-1")
+    assert fi_db.list_stale_active_agents(conn, stale_seconds=0) == []
+
+
 def test_performance_card_reflects_multiple_agents(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     fi_db.register_agent(conn, "coo-1", "coo", 222)
