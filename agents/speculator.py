@@ -11,12 +11,17 @@ Analysis") is written entirely in surface/spike language, Explorer's
 domain. Speculator's reports never carry a detector_event_id, so there's no
 row for peer/scope fields to attach to even if the spec asked for it.
 
-Deliberately no LLM call here - normalization and the report-filing gate
-stay deterministic (Explorer/Speculator stay procedural; deep reasoning is
-Analysis's job alone, addendum_7 §6). "Corroboration" beyond a single
-post's own confidence isn't built this increment - narrower than what a
-later increment (more securities, a real Reddit provider) would want to
-design properly, so left alone rather than guessed at now.
+Normalization and the report-filing gate stay deterministic. There is now
+one small LLM call, `_read_stance`, used only when answering a cross-check -
+the same shape and spirit as agents/explorer.py's `_judgment_gate`, and for
+the same reason. A message board is a verbal medium: post counts invert the
+answer outright, since a crowd loudly explaining a move away generates more
+traffic than a quiet crowd confirming it. Reading is the only way to tell
+those apart, and no amount of counting substitutes for it.
+
+Speculator still does not reason. It reports what the crowd appears to be
+saying and how broadly it is sourced; whether that corroborates a
+quantitative dislocation is Analysis's judgment alone (addendum_7 §6).
 
 Run directly as: python -m agents.speculator <identity>
 Normally launched by backend/controller.py as a subprocess, not by hand.
@@ -27,15 +32,183 @@ import sys
 
 from agents import discovery_config as config
 from agents.base import run_agent
+from app.model_gateway import call_reasoning_model
 from backend import fi_db
 from providers.social_data import SyntheticSocialDataProvider
 
 ROLE = "speculator"
 
+# How many posts the stance read is shown. Batched into one call covering the
+# highest-engagement posts rather than one call per post: Speculator sees up to
+# a few posts per security per cycle across the whole peer group, and
+# classifying every one of them individually would be thousands of calls for a
+# question that a handful of representative posts answers.
+STANCE_SAMPLE_SIZE = 8
+STANCE_MAX_TOKENS = 300
 
-def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_state: dict) -> None:
+# How many recently observed posts to retain per security for answering
+# cross-checks. Bounded so a long-lived process cannot grow without limit.
+SEEN_WINDOW = 40
+
+
+def _extract_text(response) -> str:
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    return ""
+
+
+def _file_cross_checked_reports(conn, identity: str, spawned_at: str, lens_artifact_id) -> None:
+    """File Speculator-originated leads once Explorer has answered.
+
+    Filed whatever the answer says, for the same reason Explorer does: dropping
+    a lead because the other side disagreed would let the originator adjudicate
+    its own case, and the dissent is exactly what Analysis needs to see."""
+    for request in fi_db.fetch_resolved_cross_checks(conn, identity):
+        finding = json.loads(request["requester_finding"])
+        security = request["security"]
+
+        if not fi_db.has_pending_report(conn, identity, security):
+            fi_db.enqueue_report(
+                conn, identity, spawned_at, "speculator", security,
+                summary=(
+                    f"Social evidence on {security}: max confidence "
+                    f"{finding['max_confidence']:.2f} across {finding.get('posts', 0)} post(s) "
+                    f"from {finding.get('distinct_authors', 0)} author(s); "
+                    f"cross-check {request['outcome']}"
+                ),
+                detector_event_id=None,
+                evidence_ids=finding.get("evidence_ids", []),
+                judgment_confidence=finding["max_confidence"],
+                lens_artifact_id=finding.get("lens_artifact_id", lens_artifact_id),
+                cross_check_id=request["id"],
+            )
+        fi_db.consume_cross_check(conn, request["id"])
+
+
+def _source_dispersion(posts: list) -> dict:
+    """How many distinct voices the chatter actually came from.
+
+    This is the frame language cannot supply. Ten enthusiastic posts from three
+    accounts read exactly like ten from ten - the text is identical - but one is
+    a crowd and the other is coordinated noise (addendum 12 §13's "coordinated
+    noise" and "popularity without substance"). Telling them apart is counting,
+    not comprehension, so it stays deterministic and needs no model."""
+    if not posts:
+        return {"posts": 0, "distinct_authors": 0, "posts_per_author": 0.0}
+    authors = len(set(post.author for post in posts))
+    return {
+        "posts": len(posts),
+        "distinct_authors": authors,
+        "posts_per_author": round(len(posts) / authors, 2),
+    }
+
+
+def _read_stance(security: str, posts: list, question: str) -> dict:
+    """Read what the chatter is actually saying about the security.
+
+    A message board is a verbal medium, so the information is in the words. Post
+    counts invert the answer outright: a crowd loudly explaining a move away
+    generates *more* traffic than a quiet crowd confirming it, so ranking by
+    volume promotes exactly the wrong lead. Only reading resolves that.
+
+    Mirrors agents/explorer.py's `_judgment_gate` in shape and spirit - one
+    small, cheap, tightly-scoped call inside an otherwise procedural agent, not
+    deep reasoning. Speculator reports what the crowd appears to be saying; what
+    that *means* alongside quantitative evidence stays with Analysis.
+
+    A parse failure degrades to 'unclear' rather than raising: an unreadable
+    stance must still let the cross-check be answered from the deterministic
+    signals, never stall the requester."""
+    sample = sorted(posts, key=lambda p: p.engagement_score, reverse=True)[:STANCE_SAMPLE_SIZE]
+    system = (
+        "You read retail investor message-board chatter about one security and "
+        "report what the crowd appears to be claiming. You are not judging "
+        "whether they are right, and not producing an investment view. Reply "
+        "with strict JSON only, no other text: "
+        '{"stance": "supports" or "undercuts" or "unclear", '
+        '"summary": "one short sentence", "strength": <0.0-1.0>}. '
+        '"supports" means the chatter is consistent with something genuinely '
+        'unusual happening; "undercuts" means it explains the activity away as '
+        'ordinary, mistaken, or already resolved; "unclear" means the posts do '
+        "not settle it. strength is how clearly the posts point that way."
+    )
+    user_content = "\n".join(
+        [f"Security: {security}", f"Question being answered: {question}", "", "Posts:"]
+        + [f"- ({post.engagement_score:.2f}) {post.text}" for post in sample]
+    )
+    try:
+        response = call_reasoning_model(
+            system=system,
+            messages=[{"role": "user", "content": user_content}],
+            tools=[],
+            max_tokens=STANCE_MAX_TOKENS,
+        )
+        parsed = json.loads(_extract_text(response))
+        stance = parsed.get("stance")
+        if stance not in ("supports", "undercuts", "unclear"):
+            return {"stance": "unclear", "summary": f"unexpected stance {stance!r}", "strength": None}
+        return {
+            "stance": stance,
+            "summary": parsed.get("summary"),
+            "strength": parsed.get("strength"),
+        }
+    except Exception as exc:
+        return {"stance": "unclear", "summary": f"stance read unavailable: {exc}", "strength": None}
+
+
+def _answer_pending_cross_checks(conn, identity: str, spawned_at: str, seen: dict) -> None:
+    """Answer Explorer's request for contextual corroboration.
+
+    Answers from evidence already recorded in the database rather than from a
+    fresh provider fetch, so the response describes what Speculator genuinely
+    observed on its own schedule - the independent investigation §14 asks for,
+    rather than a lookup performed on Explorer's behalf.
+
+    Reports both frames and reconciles neither. Whether 'a quiet, broadly
+    sourced crowd saying supports' corroborates an IV dislocation is a reasoning
+    judgment, and Speculator is procedural."""
+    request = fi_db.fetch_next_pending_cross_check(conn, ROLE)
+    if request is None:
+        return
+
+    security = request["security"]
+    posts = seen.get(security, [])
+    if not posts:
+        # Looked and found nothing. A real answer, and a different finding from
+        # disagreement - which is why 'no_evidence' is its own outcome.
+        fi_db.answer_cross_check(
+            conn, request["id"], identity, spawned_at, fi_db.CROSS_CHECK_NO_EVIDENCE,
+            {"posts": 0, "note": "no social evidence observed for this security"},
+        )
+        return
+
+    fi_db.record_heartbeat(conn, identity)
+    dispersion = _source_dispersion(posts)
+    stance = _read_stance(security, posts, request["question"])
+    fi_db.answer_cross_check(
+        conn, request["id"], identity, spawned_at, fi_db.CROSS_CHECK_EVIDENCE,
+        {
+            **dispersion,
+            "max_confidence": round(max(p.engagement_score for p in posts), 3),
+            "stance": stance["stance"],
+            "stance_summary": stance["summary"],
+            "stance_strength": stance["strength"],
+            "sample": [p.text for p in sorted(posts, key=lambda p: p.engagement_score, reverse=True)[:3]],
+        },
+        responder_confidence=stance["strength"],
+    )
+
+
+def _speculator_work(
+    conn, identity: str, spawned_at: str, provider, cursor_state: dict, seen: dict | None = None,
+) -> None:
     """cursor_state is a flat dict keyed by security (not nested) - each
-    security in the peer group tracks its own "since" cursor independently."""
+    security in the peer group tracks its own "since" cursor independently.
+
+    seen is the same shape: the rolling window of posts this process has
+    observed per security, which is what cross-check answers are drawn from."""
+    seen = {} if seen is None else seen
     # Resolved from the intelligence store rather than a constant, for the
     # same reasons as agents/explorer.py's threshold - see that comment. The
     # confidence bar is what decides which social evidence is worth escalating,
@@ -44,10 +217,21 @@ def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_stat
     lens_artifact_id = lens["id"] if lens else None
     confidence_threshold = json.loads(lens["value"]) if lens else fi_db.LENS_SPECULATOR_CONFIDENCE_SEED
 
+    fi_db.expire_stale_cross_checks(conn)
+    _file_cross_checked_reports(conn, identity, spawned_at, lens_artifact_id)
+
     for security in config.PEER_GROUP_SECURITIES:
         posts = provider.fetch_recent(security, since=cursor_state.get(security))
         if not posts:
             continue
+
+        # A bounded rolling window of what this process has actually observed,
+        # used to answer cross-checks. Process-local like cursor_state, and
+        # resets on respawn for the same reason: it represents what *this life*
+        # of the agent has seen. A freshly respawned Speculator answers
+        # 'no_evidence' until it has observed a cycle or two, which is honest -
+        # it genuinely has not looked yet.
+        seen[security] = (seen.get(security, []) + posts)[-SEEN_WINDOW:]
 
         new_evidence_ids = []
         max_confidence = 0.0
@@ -66,13 +250,30 @@ def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_stat
             continue
         if fi_db.has_pending_report(conn, identity, security):
             continue
+        if fi_db.has_open_cross_check(conn, identity, security):
+            continue
 
-        fi_db.enqueue_report(
-            conn, identity, spawned_at, "speculator", security,
-            summary=f"Social evidence on {security}: {len(new_evidence_ids)} new post(s), max confidence {max_confidence:.2f}",
-            detector_event_id=None, evidence_ids=new_evidence_ids, judgment_confidence=max_confidence,
-            lens_artifact_id=lens_artifact_id,
+        # Speculator originates too (§14: "Speculator may originate a lead from
+        # contextual evidence and ask Explorer for quantitative corroboration").
+        # Its own finding is captured now, before Explorer answers.
+        fi_db.open_cross_check(
+            conn, identity, spawned_at, ROLE, "explorer", security,
+            question=(
+                f"Speculator observed social evidence on {security} clearing its confidence "
+                f"bar ({max_confidence:.2f} against {confidence_threshold}). "
+                "Is there quantitative evidence of an IV surface dislocation on this security?"
+            ),
+            requester_finding={
+                "max_confidence": round(max_confidence, 3),
+                "threshold": confidence_threshold,
+                "evidence_ids": new_evidence_ids,
+                **_source_dispersion(seen.get(security, [])),
+                "lens_artifact_id": lens_artifact_id,
+            },
+            requester_confidence=max_confidence,
         )
+
+    _answer_pending_cross_checks(conn, identity, spawned_at, seen)
 
 
 def main() -> None:
@@ -80,15 +281,18 @@ def main() -> None:
         print("usage: python -m agents.speculator <identity>", file=sys.stderr)
         raise SystemExit(1)
     identity = sys.argv[1]
-    provider = SyntheticSocialDataProvider(seed=config.SOCIAL_PROVIDER_SEED)
+    provider = SyntheticSocialDataProvider(
+        seed=config.SOCIAL_PROVIDER_SEED, narratives=config.SOCIAL_NARRATIVES,
+    )
     spawned_at_cache: dict = {}
     cursor_state: dict = {}
+    seen: dict = {}
 
     def work_fn(conn) -> None:
         if "value" not in spawned_at_cache:
             agent = fi_db.get_agent(conn, identity)
             spawned_at_cache["value"] = agent["spawned_at"] if agent else None
-        _speculator_work(conn, identity, spawned_at_cache["value"], provider, cursor_state)
+        _speculator_work(conn, identity, spawned_at_cache["value"], provider, cursor_state, seen)
 
     run_agent(identity=identity, role=ROLE, work_fn=work_fn)
 

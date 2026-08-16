@@ -76,11 +76,23 @@ def test_explorer_work_no_report_below_threshold(conn, monkeypatch):
 
 
 def test_explorer_work_files_report_when_judgment_passes(conn, monkeypatch):
-    """Single security, no co-triggering peer -> scope='individual'."""
+    """Single security, no co-triggering peer -> scope='individual'.
+
+    Two cycles now, not one: a candidate that passes the judgment gate becomes
+    a *cross-check request* rather than a report (addendum 12 section 14 -
+    investigate independently, then cross-check). The report is filed on a
+    later cycle once an answer or a timeout comes back."""
     monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
     monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True, "coherent")))
     provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
 
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+    assert fi_db.fetch_next_pending_report(conn) is None  # still awaiting corroboration
+
+    fi_db.answer_cross_check(
+        conn, 1, "speculator-1", "2026-01-01T00:00:00+00:00",
+        fi_db.CROSS_CHECK_EVIDENCE, {"posts": 6, "distinct_authors": 6, "stance": "supports"},
+    )
     _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
 
     report = fi_db.fetch_next_pending_report(conn)
@@ -120,7 +132,9 @@ def test_explorer_work_skips_judgment_call_while_report_pending(conn, monkeypatc
     assert call_model.call_count == 1
 
     _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
-    assert call_model.call_count == 1  # not called again - report still pending
+    # not called again - an unconsumed cross-check on this security now guards
+    # the gate as well as an unconsumed report does
+    assert call_model.call_count == 1
 
     # but a new detector_events row was still logged the second cycle - a
     # genuine repeated detection is a real fact even if we don't re-file
@@ -297,8 +311,12 @@ def test_explorer_stamps_the_lens_on_detections_and_reports(conn, monkeypatch):
     lens_id = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["id"]
 
     _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
-
     assert fi_db.get_detector_event(conn, 1)["lens_artifact_id"] == lens_id
+
+    # the lens must survive the cross-check round trip onto the eventual report
+    fi_db.answer_cross_check(conn, 1, "speculator-1", "2026-01-01T00:00:00+00:00",
+                             fi_db.CROSS_CHECK_NO_EVIDENCE, {"posts": 0})
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
     assert fi_db.fetch_next_pending_report(conn)["lens_artifact_id"] == lens_id
 
 

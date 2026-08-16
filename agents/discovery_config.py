@@ -81,3 +81,16 @@ FORCE_ANOMALY_SECURITIES = [
 # history - a different thing from peer analysis (which compares across
 # securities in the same cycle, see agents/explorer.py's classification).
 ANALYSIS_RECENCY_WINDOW_SECONDS = float(os.environ.get("FI_ANALYSIS_RECENCY_WINDOW_SECONDS", "300"))
+
+# Per-security social narratives the synthetic stream generates under - ground
+# truth the system is never told, exactly like MARKET_REGIME above. Set as
+# comma-separated security:narrative pairs, e.g.
+# FI_SOCIAL_NARRATIVES="SYN1:corroborating,SYN2:contradicting,SYN3:coordinated".
+# Valid narratives are the keys of providers/social_data.py's NARRATIVES.
+# Without these the social stream is uncorrelated with the option surface, so a
+# cross-check could never meaningfully corroborate or contradict anything.
+SOCIAL_NARRATIVES = {}
+for _pair in os.environ.get("FI_SOCIAL_NARRATIVES", "").split(","):
+    if ":" in _pair:
+        _security, _narrative = _pair.split(":", 1)
+        SOCIAL_NARRATIVES[_security.strip()] = _narrative.strip()

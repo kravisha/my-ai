@@ -114,6 +114,79 @@ def _judgment_gate(security: str, ratio: float, peak_iv: float, baseline_iv: flo
         return False, f"judgment parse failure: {text[:200]}"
 
 
+def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
+    """Turn answered cross-checks into reports, carrying **both** findings.
+
+    The report deliberately does not say whether the two agree. Explorer is
+    procedural and Speculator is procedural; whether a quiet, broadly-sourced
+    crowd corroborates an IV dislocation - or whether a loud crowd from three
+    accounts undercuts it - is a reasoning judgment, and reasoning is Analysis's
+    job alone. What is preserved here is the disagreement itself: two findings,
+    unreconciled, both attributable (addendum 12 §14).
+
+    Escalation is unconditional on the *content* of the answer for the same
+    reason. A contradicting answer is not grounds for silently dropping the
+    lead - that would be the gatekeeper reasoning about its own gate, the
+    suppression failure mode the gap analysis §4.2 already flags. It is filed
+    with the dissent attached, and Analysis decides what it is worth."""
+    for request in fi_db.fetch_resolved_cross_checks(conn, identity):
+        finding = json.loads(request["requester_finding"])
+        responder_finding = json.loads(request["responder_finding"]) if request["responder_finding"] else None
+        security = request["security"]
+
+        if not fi_db.has_pending_report(conn, identity, security):
+            fi_db.enqueue_report(
+                conn, identity, spawned_at, "explorer", security,
+                summary=(
+                    f"IV surface anomaly on {security}: ratio {finding['ratio']:.2f} "
+                    f"(peak {finding['peak_iv']:.4f} vs baseline {finding['baseline_iv']:.4f}), "
+                    f"scope={finding['scope']}; cross-check {request['outcome']}"
+                ),
+                detector_event_id=finding.get("detector_event_id"),
+                evidence_ids=[], judgment_confidence=None,
+                lens_artifact_id=finding.get("lens_artifact_id"),
+                cross_check_id=request["id"],
+            )
+        # Consumed either way - a duplicate-suppressed lead must not leave the
+        # request open forever, or this security could never be asked about again.
+        fi_db.consume_cross_check(conn, request["id"])
+
+
+def _answer_pending_cross_checks(conn, identity: str, spawned_at: str, provider, threshold: float) -> None:
+    """Answer Speculator's request for quantitative corroboration.
+
+    Deterministic - Explorer reports what its detector saw on that security and
+    nothing more. It does not judge whether that supports Speculator's social
+    evidence, for the same reason Speculator does not judge the converse."""
+    request = fi_db.fetch_next_pending_cross_check(conn, ROLE)
+    if request is None:
+        return
+
+    security = request["security"]
+    best = scan_for_anomaly(provider.get_option_surface(security))
+    if best is None:
+        fi_db.answer_cross_check(
+            conn, request["id"], identity, spawned_at, fi_db.CROSS_CHECK_NO_EVIDENCE,
+            {"detector": DETECTOR_TYPE, "reason": "no usable surface for this security"},
+        )
+        return
+
+    ratio, _si, _ei, peak_iv, baseline_iv = best
+    fi_db.answer_cross_check(
+        conn, request["id"], identity, spawned_at, fi_db.CROSS_CHECK_EVIDENCE,
+        {
+            "detector": DETECTOR_TYPE,
+            "ratio": round(ratio, 4),
+            "peak_iv": round(peak_iv, 4),
+            "baseline_iv": round(baseline_iv, 4),
+            "threshold": threshold,
+            # The bare fact, not an opinion about what it means for the asker.
+            "cleared_threshold": ratio >= threshold,
+        },
+        responder_confidence=None,
+    )
+
+
 def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     neighborhood_desc = f"strike idx ±{config.NEIGHBORHOOD_STRIKE_RADIUS}, expiry idx ±{config.NEIGHBORHOOD_EXPIRY_RADIUS}"
 
@@ -129,6 +202,14 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
     lens_artifact_id = lens["id"] if lens else None
     threshold = json.loads(lens["value"]) if lens else fi_db.LENS_IV_RATIO_SEED
+
+    # Stop waiting on questions nobody answered, before collecting answers -
+    # so a request that just timed out is picked up in the same cycle rather
+    # than the next one. Silence becomes an 'unanswered' outcome that reaches
+    # Analysis, not a lead that quietly evaporates.
+    fi_db.expire_stale_cross_checks(conn)
+    _file_cross_checked_reports(conn, identity, spawned_at)
+    _answer_pending_cross_checks(conn, identity, spawned_at, provider, threshold)
 
     # Scan every peer-group security independently first, so classification
     # (below) can ask "how many others also triggered this same cycle"
@@ -181,6 +262,12 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
             # A report from this producer+security is still unconsumed -
             # don't spend an LLM call on the judgment gate for nothing.
             continue
+        if fi_db.has_open_cross_check(conn, identity, security):
+            # Likewise for a question already out on this security. Checked
+            # *before* the judgment gate, not after: a static forced-anomaly
+            # surface re-triggers every cycle, so guarding after the call would
+            # burn an LLM call per cycle for a lead already in flight.
+            continue
 
         # A fresh heartbeat immediately before *each* judgment-gate call,
         # not just once at the start of this cycle - with a peer group,
@@ -195,11 +282,34 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
         if not passed:
             continue
 
-        fi_db.enqueue_report(
-            conn, identity, spawned_at, "explorer", security,
-            summary=f"IV surface anomaly on {security}: ratio {ratio:.2f} (peak {peak_iv:.4f} vs baseline {baseline_iv:.4f}), scope={scope}",
-            detector_event_id=event_id, evidence_ids=[], judgment_confidence=None,
-            lens_artifact_id=lens_artifact_id,
+        # The candidate does not become a report here. Addendum 12 §14 requires
+        # a lead to be cross-checked before escalation, so Explorer asks
+        # Speculator for contextual corroboration and files on a later cycle
+        # once an answer (or a timeout) comes back - see _file_cross_checked_reports.
+        #
+        # The finding recorded here is Explorer's own, formed with no knowledge
+        # of what Speculator will say. That ordering is the point: "investigate
+        # independently first, then cross-check."
+        fi_db.open_cross_check(
+            conn, identity, spawned_at, ROLE, "speculator", security,
+            question=(
+                f"Explorer detected an IV surface dislocation on {security} "
+                f"(peak/local-baseline ratio {ratio:.2f} against threshold {threshold}). "
+                "Is there contextual evidence of unusual attention on this security, "
+                "and how broadly is it sourced?"
+            ),
+            requester_finding={
+                "detector": DETECTOR_TYPE,
+                "ratio": round(ratio, 4),
+                "peak_iv": round(peak_iv, 4),
+                "baseline_iv": round(baseline_iv, 4),
+                "threshold": threshold,
+                "scope": scope,
+                "co_triggering": co_triggering,
+                "detector_event_id": event_id,
+                "lens_artifact_id": lens_artifact_id,
+            },
+            requester_confidence=None,
         )
 
 

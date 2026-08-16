@@ -367,6 +367,10 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     -- putting it on the report makes attribution from grades a single join
     -- for both agents rather than two different paths.
     lens_artifact_id INTEGER,
+    -- The cross-check contract backing this lead, if any. Lets Analysis read
+    -- both parties' findings unreconciled instead of a summary that has
+    -- already picked a winner (addendum 12 §14, "disagreement is preserved").
+    cross_check_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -387,21 +391,35 @@ CREATE TABLE IF NOT EXISTS discovery_reports_completed (
     completed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
     lens_artifact_id INTEGER,
+    -- The cross-check contract backing this lead, if any. Lets Analysis read
+    -- both parties' findings unreconciled instead of a summary that has
+    -- already picked a winner (addendum 12 §14, "disagreement is preserved").
+    cross_check_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TRIGGER IF NOT EXISTS discovery_reports_archive
+-- DROP first, deliberately, rather than CREATE TRIGGER IF NOT EXISTS.
+--
+-- This trigger names its columns explicitly, so it has to be reissued whenever
+-- discovery_reports gains one. With IF NOT EXISTS, a database created before a
+-- column existed would keep the older trigger forever and silently stop
+-- carrying that column into the archive - the row would look complete, just
+-- quietly missing a field, which is the worst shape a data-loss bug can take.
+-- Recreating it on every init_schema keeps the trigger in step with the table
+-- by construction. Dropping a trigger destroys no data.
+DROP TRIGGER IF EXISTS discovery_reports_archive;
+CREATE TRIGGER discovery_reports_archive
 AFTER UPDATE OF status ON discovery_reports
 WHEN NEW.status IN ('analyzed', 'failed')
 BEGIN
     INSERT INTO discovery_reports_completed
         (id, created_at, producer_identity, producer_spawned_at, report_type, security, summary,
          detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at,
-         detail, completed_at, outcome, lens_artifact_id, schema_version)
+         detail, completed_at, outcome, lens_artifact_id, cross_check_id, schema_version)
     VALUES
         (NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary,
          NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at,
-         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.schema_version);
+         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.schema_version);
     DELETE FROM discovery_reports WHERE id = NEW.id;
 END;
 
@@ -1456,16 +1474,21 @@ def enqueue_report(
     evidence_ids: list[int] | None = None,
     judgment_confidence: float | None = None,
     lens_artifact_id: int | None = None,
+    cross_check_id: int | None = None,
 ) -> int:
     """lens_artifact_id: which intelligence artifact's threshold decided this
     was worth filing. Recorded on the report itself rather than only on the
     detector event, so that grades attribute back to the lens identically for
-    Explorer (which has a detector event) and Speculator (which does not)."""
+    Explorer (which has a detector event) and Speculator (which does not).
+
+    cross_check_id: the contract whose two findings back this lead. Null for a
+    report filed without one. Analysis follows it to read both sides of any
+    disagreement rather than a summary that has already resolved it."""
     return conn.execute_returning_id(
         "INSERT INTO discovery_reports "
-        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, cross_check_id, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, cross_check_id, SCHEMA_VERSION),
     )
 
 

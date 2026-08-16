@@ -58,8 +58,17 @@ def test_speculator_work_no_report_below_threshold(conn):
 
 
 def test_speculator_work_files_report_when_confidence_clears_threshold(conn):
+    """Two cycles now: clearing the confidence bar opens a cross-check asking
+    Explorer for quantitative corroboration (addendum 12 section 14), and the
+    report is filed once that resolves."""
     provider = FakeProvider({"SYN1": [[post("large block trade just printed", 0.75)]]})
-    _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, {})
+    seen = {}
+    _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, {}, seen)
+    assert fi_db.fetch_next_pending_report(conn) is None
+
+    fi_db.answer_cross_check(conn, 1, "explorer-1", "2026-01-01T00:00:00+00:00",
+                             fi_db.CROSS_CHECK_EVIDENCE, {"ratio": 2.2, "cleared_threshold": True})
+    _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, {}, seen)
 
     report = fi_db.fetch_next_pending_report(conn)
     assert report is not None
@@ -99,6 +108,9 @@ def test_speculator_work_skips_new_report_while_one_still_pending(conn):
     ]})
     cursor_state = {}
 
+    _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, cursor_state)
+    fi_db.answer_cross_check(conn, 1, "explorer-1", "2026-01-01T00:00:00+00:00",
+                             fi_db.CROSS_CHECK_EVIDENCE, {"ratio": 2.2})
     _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, cursor_state)
     first_report = fi_db.fetch_next_pending_report(conn)
     assert first_report is not None

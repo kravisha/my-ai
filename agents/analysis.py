@@ -43,6 +43,57 @@ def _extract_text(response) -> str:
     return ""
 
 
+def _cross_check_lines(conn, report: dict) -> list[str]:
+    """Both sides of the cross-check, unreconciled.
+
+    This is where "disagreement is preserved rather than erased" (addendum 12
+    §14) actually pays off. Neither discovery agent decided whether the two
+    findings agree - Explorer reported a ratio, Speculator reported what the
+    crowd said and how broadly it was sourced, and both are handed over as
+    stated. Analysis is the first place in the pipeline where a judgment about
+    *compatibility* is legitimate, because it is the only role that reasons.
+
+    Deliberately presented as two claims rather than a resolved summary. A
+    context that said "corroborated" would have made the decision upstream, in
+    a procedural agent, and hidden the evidence that might contradict it."""
+    if report.get("cross_check_id") is None:
+        return []
+    request = fi_db.get_cross_check(conn, report["cross_check_id"])
+    if request is None:
+        return []
+
+    lines = [
+        "",
+        "Cross-check (independent second opinion, addendum_12 §14):",
+        f"  Question asked: {request['question']}",
+        f"  Asked by {request['requester_role']}, answered by {request['responder_role'] } "
+        f"- outcome: {request['outcome']}",
+        f"  {request['requester_role']} found: {request['requester_finding']}",
+    ]
+    if request["responder_finding"]:
+        lines.append(f"  {request['responder_role']} found: {request['responder_finding']}")
+
+    if request["outcome"] == fi_db.CROSS_CHECK_UNANSWERED:
+        lines.append(
+            "  NOTE: nobody answered before the request timed out. Absence of a second opinion is "
+            "not evidence either way - treat this lead as uncorroborated rather than contradicted."
+        )
+    elif request["outcome"] == fi_db.CROSS_CHECK_NO_EVIDENCE:
+        lines.append(
+            "  NOTE: the responder looked and found nothing. That is a real finding, distinct from "
+            "disagreement, and distinct from never having been asked."
+        )
+
+    lines.append(
+        "  These two findings have NOT been reconciled by anyone. Neither agent judged whether they "
+        "agree - that judgment is yours. Weigh them against each other explicitly, and say so in "
+        "thesis and uncertainty if they point in different directions. Note especially that a high "
+        "post count from very few distinct authors is coordinated noise rather than a crowd, and "
+        "that loud chatter explaining an anomaly away is evidence against it, not for it."
+    )
+    return lines
+
+
 def _assemble_context(conn, report: dict) -> str:
     """Detector event (Explorer's quantitative evidence, including its
     addendum_7 §5 peer-vs-individual classification and peer_context) if
@@ -51,6 +102,7 @@ def _assemble_context(conn, report: dict) -> str:
     novelty signal distinct from peer analysis (which compares across
     securities in the same cycle, not across time for the same security)."""
     lines = [f"Security: {report['security']}", f"Report type: {report['report_type']}", f"Summary: {report['summary']}"]
+    lines += _cross_check_lines(conn, report)
 
     if report["detector_event_id"] is not None:
         event = fi_db.get_detector_event(conn, report["detector_event_id"])
