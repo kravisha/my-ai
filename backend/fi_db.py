@@ -60,7 +60,11 @@ DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 # liveness (lifecycle_state + process_state). `status` still exists and is
 # still written, but is now a *derived* legacy value rather than the primary
 # fact - a grader reading old rows needs to know which model produced them.
-SCHEMA_VERSION = 2
+# v3 (2026-08-16): detections and reports now reference the intelligence
+# artifact (lens) that produced them. A v2 detector_event records only the
+# threshold *value* used; a v3 one records *which lens* it came from, so its
+# grades can be attributed back to that lens.
+SCHEMA_VERSION = 3
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -94,6 +98,42 @@ SECURITY_UNIVERSE_VERSION = 1
 SECURITY_UNIVERSE_SEED = [
     s.strip() for s in os.environ.get("FI_SECURITY_UNIVERSE", "SYN1,SYN2,SYN3,SYN4").split(",") if s.strip()
 ]
+
+# --- Intelligence artifacts (JARVIS Constitution §3, gap analysis §4.11) ---
+# "Intelligence is about defining how to look at things, using pattern
+# recognition as the key guiding principle to differentiate things"
+# (owner, 2026-08-16). A detection threshold is therefore not configuration -
+# it IS the system's intelligence, and it needs the properties intelligence
+# has: provenance, a rationale, validity conditions, and the ability to go
+# stale when the market conditions it was derived for change.
+#
+# These names are the lookup keys for the seeded lenses. The seed *values*
+# live in agents/discovery_config.py, which is where they have always been;
+# after seeding, agents read the artifact rather than the constant, so the
+# config is the starting point rather than the runtime source of truth.
+LENS_KIND = "detection_lens"
+LENS_IV_RATIO_NAME = "iv_ratio_threshold"
+LENS_SPECULATOR_CONFIDENCE_NAME = "speculator_confidence_threshold"
+
+# Seed values. These live here rather than in agents/discovery_config.py for
+# the same reason CEO_DISPLAY_NAME and SECURITY_UNIVERSE_SEED do: this module
+# must read them to seed the table, and backend/ importing from agents/ would
+# invert the dependency direction. They are *seeds* - once seeded, agents read
+# the artifact, so changing the env var only affects a fresh database.
+LENS_IV_RATIO_SEED = float(os.environ.get("FI_IV_RATIO_THRESHOLD", "2.0"))
+LENS_SPECULATOR_CONFIDENCE_SEED = float(os.environ.get("FI_SPECULATOR_CONFIDENCE_THRESHOLD", "0.6"))
+
+# Default validity conditions attached to a seeded lens. Only the first three
+# keys are evaluated (see agents/coo.py's _evaluate_intelligence_health);
+# `regime` is recorded deliberately un-evaluated so that the unbuilt half of
+# "intelligence expires with market conditions" is visible in the data rather
+# than silently omitted.
+DEFAULT_LENS_VALIDITY_CONDITIONS = {
+    "min_graded_reports": 10,
+    "min_mean_overall_score": 0.35,
+    "min_worth_the_compute_rate": 0.4,
+    "regime": "not yet evaluable - no regime detection exists (JARVIS gap analysis §4.12)",
+}
 
 SCHEMA = """
 -- lifecycle_state and process_state are deliberately two ORTHOGONAL axes
@@ -208,6 +248,10 @@ CREATE TABLE IF NOT EXISTS detector_events (
     peer_context TEXT,
     judgment_passed INTEGER,
     judgment_note TEXT,
+    -- which intelligence artifact produced this detection. `threshold` above
+    -- records the value that was used; this records which lens it came from,
+    -- so grades on the resulting report can be attributed back to the lens.
+    lens_artifact_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -241,6 +285,11 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     handled_by_identity TEXT,
     handled_by_spawned_at TEXT,
     detail TEXT,
+    -- The lens that produced this report. Carried here, not only on
+    -- detector_events, because Speculator reports have no detector event -
+    -- putting it on the report makes attribution from grades a single join
+    -- for both agents rather than two different paths.
+    lens_artifact_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -260,6 +309,7 @@ CREATE TABLE IF NOT EXISTS discovery_reports_completed (
     detail TEXT,
     completed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
+    lens_artifact_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -270,11 +320,11 @@ BEGIN
     INSERT INTO discovery_reports_completed
         (id, created_at, producer_identity, producer_spawned_at, report_type, security, summary,
          detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at,
-         detail, completed_at, outcome, schema_version)
+         detail, completed_at, outcome, lens_artifact_id, schema_version)
     VALUES
         (NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary,
          NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at,
-         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.schema_version);
+         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.schema_version);
     DELETE FROM discovery_reports WHERE id = NEW.id;
 END;
 
@@ -317,6 +367,42 @@ CREATE TABLE IF NOT EXISTS agent_names (
     assigned_at TEXT,
     reserved INTEGER NOT NULL DEFAULT 0,
     schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+-- The seed of the knowledge store (JARVIS Constitution §3). Holds
+-- *intelligence* - ways of seeing - rather than data or observations. The
+-- distinction is load-bearing: an IV surface is data, a detected anomaly is
+-- an observation, but the threshold and neighborhood that decide what counts
+-- as an anomaly at all are the intelligence, and only intelligence has a
+-- preservation claim.
+--
+-- artifact_kind is deliberately general so this table can grow into the
+-- knowledge store: source reliability and validated lessons become other
+-- kinds without a schema change. 'detection_lens' is the only kind built.
+--
+-- Lifecycle mirrors the agent one for the same reason - intelligence, like
+-- an agent, is retired rather than destroyed:
+--   'active'     - in use
+--   'stale'      - evidence says it no longer holds; still readable, and its
+--                  value is NOT changed automatically (see coo.py)
+--   'superseded' - replaced by another artifact, linked via superseded_by
+CREATE TABLE IF NOT EXISTS intelligence_artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    artifact_kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    value TEXT NOT NULL,
+    rationale TEXT,
+    validity_conditions TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    staleness_reason TEXT,
+    stale_at TEXT,
+    superseded_by INTEGER,
+    producer_identity TEXT,
+    producer_spawned_at TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(name, version)
 );
 
 CREATE TABLE IF NOT EXISTS security_universe (
@@ -389,6 +475,34 @@ def _seed_static_metadata(conn: Database) -> None:
             "INSERT OR IGNORE INTO security_universe (symbol, added_at, active, note, universe_version, schema_version) "
             "VALUES (?, ?, 1, ?, ?, ?)",
             (symbol, _now(), "seeded synthetic universe", SECURITY_UNIVERSE_VERSION, SCHEMA_VERSION),
+        )
+    # The starting lenses. INSERT OR IGNORE on UNIQUE(name, version) makes this
+    # idempotent *and* non-destructive: once a lens exists - including one that
+    # has since been marked stale or had its value revised - re-seeding can
+    # never overwrite it or resurrect a superseded value.
+    for name, seed_value, rationale in (
+        (
+            LENS_IV_RATIO_NAME,
+            LENS_IV_RATIO_SEED,
+            "Initial peak-IV / local-baseline-IV ratio from addendum_7 §4, which specifies >= 2.0 as "
+            "the initial strong trigger and states the threshold is configurable. Asserted by the "
+            "specification, not yet derived from or validated against evidence.",
+        ),
+        (
+            LENS_SPECULATOR_CONFIDENCE_NAME,
+            LENS_SPECULATOR_CONFIDENCE_SEED,
+            "Initial aggregate-confidence bar for filing social evidence. Chosen as a starting point "
+            "during the Phase C build; not derived from evidence.",
+        ),
+    ):
+        conn.execute(
+            "INSERT OR IGNORE INTO intelligence_artifacts "
+            "(created_at, artifact_kind, name, version, value, rationale, validity_conditions, status, schema_version) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, 'active', ?)",
+            (
+                _now(), LENS_KIND, name, json.dumps(seed_value), rationale,
+                json.dumps(DEFAULT_LENS_VALIDITY_CONDITIONS), SCHEMA_VERSION,
+            ),
         )
 
 
@@ -771,6 +885,130 @@ def list_agent_names(conn: Database, assigned_only: bool = False) -> list[dict]:
     return conn.fetchall("SELECT * FROM agent_names ORDER BY name")
 
 
+def record_intelligence_artifact(
+    conn: Database,
+    artifact_kind: str,
+    name: str,
+    value,
+    rationale: str | None = None,
+    validity_conditions: dict | None = None,
+    version: int = 1,
+    producer_identity: str | None = None,
+    producer_spawned_at: str | None = None,
+) -> int:
+    """Creates an intelligence artifact - a way of seeing, not an observation.
+
+    value is JSON-encoded so a lens may be a scalar threshold now and a
+    structured rule later without a schema change. validity_conditions states
+    what would invalidate it (JARVIS Constitution §7: "a decision should state
+    the assumptions and information changes that are sufficient to reopen
+    it"), applied here to intelligence rather than to decisions."""
+    return conn.execute_returning_id(
+        "INSERT INTO intelligence_artifacts "
+        "(created_at, artifact_kind, name, version, value, rationale, validity_conditions, status, "
+        "producer_identity, producer_spawned_at, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+        (
+            _now(), artifact_kind, name, version, json.dumps(value), rationale,
+            json.dumps(validity_conditions) if validity_conditions is not None else None,
+            producer_identity, producer_spawned_at, SCHEMA_VERSION,
+        ),
+    )
+
+
+def get_active_artifact(conn: Database, name: str) -> dict | None:
+    """The currently-in-force artifact for this name, or None if it has never
+    existed or its only versions are stale/superseded.
+
+    Returning None for a stale lens is deliberate: a lens that evidence says
+    no longer holds should not silently keep being applied as though nothing
+    happened. Callers decide what to do about that - agents/explorer.py falls
+    back to the seed value and keeps working, because a stale lens is a
+    signal for review, not a reason to stop detecting."""
+    return conn.fetchone(
+        "SELECT * FROM intelligence_artifacts WHERE name = ? AND status = 'active' "
+        "ORDER BY version DESC LIMIT 1",
+        (name,),
+    )
+
+
+def get_active_artifact_value(conn: Database, name: str, default=None):
+    """Convenience for the common case: the decoded value of the active
+    artifact, or `default` when there is no active one."""
+    artifact = get_active_artifact(conn, name)
+    if artifact is None:
+        return default
+    return json.loads(artifact["value"])
+
+
+def list_intelligence_artifacts(conn: Database, artifact_kind: str | None = None, status: str | None = None) -> list[dict]:
+    clauses, params = [], []
+    if artifact_kind is not None:
+        clauses.append("artifact_kind = ?")
+        params.append(artifact_kind)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.fetchall(f"SELECT * FROM intelligence_artifacts {where} ORDER BY name, version", tuple(params))
+
+
+def mark_artifact_stale(conn: Database, artifact_id: int, reason: str) -> None:
+    """Records that evidence says this intelligence no longer holds.
+
+    Deliberately does **not** change the artifact's value. Addendum 13 §14:
+    "production behavior changes remain gated by validation. Continuous
+    learning does not mean uncontrolled self-modification." Flagging is
+    evidence-gathering; replacing a lens is an explicit act via
+    supersede_artifact. Nothing is deleted - the stale artifact remains
+    readable with the reason it was retired."""
+    conn.execute(
+        "UPDATE intelligence_artifacts SET status = 'stale', staleness_reason = ?, stale_at = ? WHERE id = ?",
+        (reason, _now(), artifact_id),
+    )
+
+
+def supersede_artifact(conn: Database, old_artifact_id: int, new_artifact_id: int) -> None:
+    """Links an artifact forward to its replacement. The old row is never
+    deleted - "track intellectual evolution" (Constitution §8) requires
+    preserving what changed and why, which is impossible if superseded
+    intelligence is thrown away."""
+    conn.execute(
+        "UPDATE intelligence_artifacts SET status = 'superseded', superseded_by = ? WHERE id = ?",
+        (new_artifact_id, old_artifact_id),
+    )
+
+
+def lens_performance(conn: Database, artifact_id: int) -> dict:
+    """How the reports produced by this lens have actually been graded.
+
+    This is the join that closes a loop which was previously severed: grades
+    already measured whether a report was relevant, novel, well-evidenced and
+    worth the compute, and that evidence reached nothing. Attribution runs
+    grades -> discovery_reports_completed -> lens_artifact_id, which works
+    uniformly for Explorer and Speculator because the lens reference lives on
+    the report itself (Speculator reports have no detector event).
+
+    Returns zero counts rather than None when a lens has produced nothing
+    gradeable yet - callers must distinguish "no evidence" from "bad
+    evidence", and agents/coo.py refuses to judge a lens below its
+    min_graded_reports threshold precisely for that reason."""
+    row = conn.fetchone(
+        "SELECT COUNT(*) AS graded_reports, "
+        "       AVG(g.overall_score) AS mean_overall_score, "
+        "       AVG(CAST(g.worth_the_compute AS REAL)) AS worth_the_compute_rate "
+        "FROM grades g "
+        "JOIN discovery_reports_completed r ON g.report_id = r.id "
+        "WHERE r.lens_artifact_id = ?",
+        (artifact_id,),
+    )
+    return {
+        "graded_reports": row["graded_reports"] if row else 0,
+        "mean_overall_score": row["mean_overall_score"] if row else None,
+        "worth_the_compute_rate": row["worth_the_compute_rate"] if row else None,
+    }
+
+
 def add_security(conn: Database, symbol: str, note: str | None = None) -> None:
     """Expands the Security Universe (Consolidated §10: "configurable,
     expandable, versioned"). Inclusion means the asset MAY be monitored - it
@@ -816,6 +1054,7 @@ def record_detector_event(
     peer_group_name: str | None = None,
     peer_group_version: int | None = None,
     peer_context: str | None = None,
+    lens_artifact_id: int | None = None,
 ) -> int:
     """Only meaningful to call when ratio >= threshold (a real candidate,
     addendum_7 §4) - agents/explorer.py doesn't call this for a
@@ -828,9 +1067,9 @@ def record_detector_event(
     'individual'. All None for a scan that had no peer group in play."""
     return conn.execute_returning_id(
         "INSERT INTO detector_events "
-        "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, lens_artifact_id, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, security, detector_type, peak_iv, baseline_iv, ratio, threshold, neighborhood_desc, surface_seed, scope, peer_group_name, peer_group_version, peer_context, lens_artifact_id, SCHEMA_VERSION),
     )
 
 
@@ -885,12 +1124,17 @@ def enqueue_report(
     detector_event_id: int | None = None,
     evidence_ids: list[int] | None = None,
     judgment_confidence: float | None = None,
+    lens_artifact_id: int | None = None,
 ) -> int:
+    """lens_artifact_id: which intelligence artifact's threshold decided this
+    was worth filing. Recorded on the report itself rather than only on the
+    detector event, so that grades attribute back to the lens identically for
+    Explorer (which has a detector event) and Speculator (which does not)."""
     return conn.execute_returning_id(
         "INSERT INTO discovery_reports "
-        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, SCHEMA_VERSION),
     )
 
 

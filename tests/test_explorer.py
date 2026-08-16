@@ -263,3 +263,58 @@ def test_real_explorer_agent_classifies_cotriggering_securities_as_peer(tmp_path
         fi_db.request_retirement(conn, "explorer-1")
         process.wait(timeout=10)
         conn.close()
+
+
+# --- the lens comes from the intelligence store, not a constant ---
+
+
+def test_explorer_uses_the_artifact_value_not_a_constant(conn, monkeypatch):
+    """The point of the whole increment: raising the lens's stored threshold
+    above the anomaly's ratio must suppress detection. If Explorer were still
+    reading a config constant this would detect anyway."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    fi_db.supersede_artifact(
+        conn, lens["id"],
+        fi_db.record_intelligence_artifact(
+            conn, fi_db.LENS_KIND, fi_db.LENS_IV_RATIO_NAME, 99.0,
+            rationale="test: unreachably high", version=2,
+        ),
+    )
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert fi_db.get_detector_event(conn, 1) is None, "a threshold of 99.0 must suppress the detection"
+
+
+def test_explorer_stamps_the_lens_on_detections_and_reports(conn, monkeypatch):
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+    lens_id = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["id"]
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert fi_db.get_detector_event(conn, 1)["lens_artifact_id"] == lens_id
+    assert fi_db.fetch_next_pending_report(conn)["lens_artifact_id"] == lens_id
+
+
+def test_explorer_falls_back_to_the_seed_when_the_lens_is_stale(conn, monkeypatch):
+    """A stale lens is a signal for review, not a reason to stop detecting -
+    Explorer keeps working on the seed value and lets COO's flag stand."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    fi_db.mark_artifact_stale(conn, lens["id"], "test")
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    event = fi_db.get_detector_event(conn, 1)
+    assert event is not None, "detection must continue despite the lens being flagged stale"
+    assert event["threshold"] == fi_db.LENS_IV_RATIO_SEED
+    assert event["lens_artifact_id"] is None

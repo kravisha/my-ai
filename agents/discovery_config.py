@@ -24,9 +24,15 @@ PEER_GROUP_SECURITIES = [
     s.strip() for s in os.environ.get("FI_PEER_GROUP_SECURITIES", "SYN1,SYN2,SYN3,SYN4").split(",") if s.strip()
 ]
 
-# Peak IV / Local Baseline IV >= this is a candidate (addendum_7 §4,
-# configurable per the spec's own wording).
-IV_RATIO_THRESHOLD = float(os.environ.get("FI_IV_RATIO_THRESHOLD", "2.0"))
+# NOTE: the detection thresholds are no longer here. Peak IV / Local Baseline
+# IV (addendum_7 §4) and Speculator's confidence bar are the system's
+# *intelligence*, not its configuration - "intelligence is about defining how
+# to look at things" (owner, 2026-08-16) - so they live in the
+# intelligence_artifacts table where they carry provenance, a rationale, and
+# validity conditions, and can be marked stale on evidence. Their seed values
+# are backend/fi_db.py's LENS_IV_RATIO_SEED / LENS_SPECULATOR_CONFIDENCE_SEED
+# (kept there so fi_db can seed them without backend/ importing agents/).
+# Agents resolve them per cycle via fi_db.get_active_artifact_value.
 
 # Local baseline neighborhood radius, in grid-index units (see
 # providers/market_data.py's STRIKES/EXPIRIES_DAYS grids).
@@ -42,10 +48,6 @@ NEIGHBORHOOD_EXPIRY_RADIUS = int(os.environ.get("FI_NEIGHBORHOOD_EXPIRY_RADIUS",
 # threshold - the later ten-security increment changes this default, not
 # the classification function.
 PEER_MIN_COOCCURRING = int(os.environ.get("FI_PEER_MIN_COOCCURRING", "1"))
-
-# Aggregate confidence over newly-seen evidence above which Speculator files
-# a report.
-SPECULATOR_CONFIDENCE_THRESHOLD = float(os.environ.get("FI_SPECULATOR_CONFIDENCE_THRESHOLD", "0.6"))
 
 MARKET_PROVIDER_SEED = int(os.environ.get("FI_MARKET_PROVIDER_SEED", "42"))
 SOCIAL_PROVIDER_SEED = int(os.environ.get("FI_SOCIAL_PROVIDER_SEED", "7"))

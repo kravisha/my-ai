@@ -22,6 +22,7 @@ Run directly as: python -m agents.speculator <identity>
 Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
+import json
 import sys
 
 from agents import discovery_config as config
@@ -35,6 +36,14 @@ ROLE = "speculator"
 def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_state: dict) -> None:
     """cursor_state is a flat dict keyed by security (not nested) - each
     security in the peer group tracks its own "since" cursor independently."""
+    # Resolved from the intelligence store rather than a constant, for the
+    # same reasons as agents/explorer.py's threshold - see that comment. The
+    # confidence bar is what decides which social evidence is worth escalating,
+    # so it is intelligence and needs to be attributable and expirable.
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)
+    lens_artifact_id = lens["id"] if lens else None
+    confidence_threshold = json.loads(lens["value"]) if lens else fi_db.LENS_SPECULATOR_CONFIDENCE_SEED
+
     for security in config.PEER_GROUP_SECURITIES:
         posts = provider.fetch_recent(security, since=cursor_state.get(security))
         if not posts:
@@ -53,7 +62,7 @@ def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_stat
 
         cursor_state[security] = posts[-1].posted_at
 
-        if max_confidence < config.SPECULATOR_CONFIDENCE_THRESHOLD:
+        if max_confidence < confidence_threshold:
             continue
         if fi_db.has_pending_report(conn, identity, security):
             continue
@@ -62,6 +71,7 @@ def _speculator_work(conn, identity: str, spawned_at: str, provider, cursor_stat
             conn, identity, spawned_at, "speculator", security,
             summary=f"Social evidence on {security}: {len(new_evidence_ids)} new post(s), max confidence {max_confidence:.2f}",
             detector_event_id=None, evidence_ids=new_evidence_ids, judgment_confidence=max_confidence,
+            lens_artifact_id=lens_artifact_id,
         )
 
 

@@ -7,6 +7,8 @@ split.
 
 import json
 
+import pytest
+
 from backend import fi_db
 
 
@@ -724,3 +726,165 @@ def test_derived_status_stays_coherent_with_both_axes(conn):
 
     fi_db.resume_agent(conn, "dummy-1")
     assert fi_db.get_agent(conn, "dummy-1")["status"] == "gone"  # active but no process
+
+
+# --- Intelligence artifacts: lenses that can be attributed and can expire ---
+# (JARVIS Constitution §3/§7; gap analysis §4.11)
+
+
+def _graded_report(conn, lens_artifact_id, overall_score, worth_the_compute,
+                   producer="explorer-1", detector_event_id=None):
+    """A report produced by a lens, consumed and graded - the full chain the
+    attribution query has to traverse."""
+    report_id = fi_db.enqueue_report(
+        conn, producer, "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        detector_event_id=detector_event_id, lens_artifact_id=lens_artifact_id,
+    )
+    fi_db.complete_report(conn, report_id, "analyzed",
+                          handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    fi_db.record_grade(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, result_id,
+        relevance_score=overall_score, novelty_score=overall_score,
+        evidence_quality_score=overall_score, worth_the_compute=worth_the_compute,
+        overall_score=overall_score, rationale="r",
+    )
+    return report_id
+
+
+def test_both_lenses_are_seeded_active(conn):
+    lenses = fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND)
+    names = {a["name"]: a for a in lenses}
+    assert set(names) == {fi_db.LENS_IV_RATIO_NAME, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME}
+    assert all(a["status"] == "active" for a in lenses)
+
+
+def test_seeded_lens_carries_rationale_and_validity_conditions(conn):
+    """A lens is intelligence, not configuration - it has to say where it came
+    from and what would invalidate it (Constitution §7)."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    assert lens["rationale"]
+    conditions = json.loads(lens["validity_conditions"])
+    assert conditions["min_graded_reports"] > 0
+    # the unbuilt half of "intelligence expires" is recorded, not omitted
+    assert "regime" in conditions
+
+
+def test_get_active_artifact_value_decodes_the_seed(conn):
+    assert fi_db.get_active_artifact_value(conn, fi_db.LENS_IV_RATIO_NAME) == fi_db.LENS_IV_RATIO_SEED
+
+
+def test_get_active_artifact_returns_none_for_unknown_name(conn):
+    assert fi_db.get_active_artifact(conn, "no-such-lens") is None
+    assert fi_db.get_active_artifact_value(conn, "no-such-lens", default=1.5) == 1.5
+
+
+def test_artifact_seeding_is_idempotent_and_non_destructive(conn):
+    """init_schema runs in every agent process. Re-seeding must never
+    resurrect or overwrite a lens that has since been marked stale."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    fi_db.mark_artifact_stale(conn, lens["id"], "test")
+
+    fi_db.init_schema(conn)
+    fi_db.init_schema(conn)
+
+    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND)) == 2
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is None  # stayed stale
+
+
+def test_mark_artifact_stale_records_evidence_without_changing_the_value(conn):
+    """The central constraint: flagging is evidence-gathering, not
+    self-modification (addendum 13 §14)."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    original_value = lens["value"]
+
+    fi_db.mark_artifact_stale(conn, lens["id"], "grades say otherwise")
+
+    row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (lens["id"],))
+    assert row["status"] == "stale"
+    assert row["staleness_reason"] == "grades say otherwise"
+    assert row["stale_at"] is not None
+    assert row["value"] == original_value
+
+
+def test_supersede_artifact_links_forward_without_deleting(conn):
+    """"Track intellectual evolution" (§8) is impossible if superseded
+    intelligence is thrown away."""
+    old = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    new_id = fi_db.record_intelligence_artifact(
+        conn, fi_db.LENS_KIND, fi_db.LENS_IV_RATIO_NAME, 2.5,
+        rationale="revised after evidence", version=2,
+    )
+    fi_db.supersede_artifact(conn, old["id"], new_id)
+
+    old_row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (old["id"],))
+    assert old_row is not None, "superseded intelligence must never be deleted"
+    assert old_row["status"] == "superseded"
+    assert old_row["superseded_by"] == new_id
+    assert fi_db.get_active_artifact_value(conn, fi_db.LENS_IV_RATIO_NAME) == 2.5
+
+
+def test_lens_performance_reports_zero_evidence_cleanly(conn):
+    """"No evidence" must be distinguishable from "bad evidence" - COO relies
+    on this to refuse judging a lens on thin data."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    performance = fi_db.lens_performance(conn, lens["id"])
+    assert performance["graded_reports"] == 0
+    assert performance["mean_overall_score"] is None
+
+
+def test_lens_performance_attributes_grades_back_to_the_lens(conn):
+    """The join that closes the previously-severed loop."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    _graded_report(conn, lens["id"], 0.8, True)
+    _graded_report(conn, lens["id"], 0.4, False)
+
+    performance = fi_db.lens_performance(conn, lens["id"])
+    assert performance["graded_reports"] == 2
+    assert performance["mean_overall_score"] == pytest.approx(0.6)
+    assert performance["worth_the_compute_rate"] == pytest.approx(0.5)
+
+
+def test_lens_performance_works_for_speculator_reports_with_no_detector_event(conn):
+    """The case that decided where lens_artifact_id lives: Speculator reports
+    carry no detector event, so attribution had to hang off the report itself
+    or it would need two different paths."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)
+    report_id = fi_db.enqueue_report(
+        conn, "speculator-1", "2026-01-01T00:00:00+00:00", "speculator", "SYN1",
+        detector_event_id=None, evidence_ids=[1], lens_artifact_id=lens["id"],
+    )
+    fi_db.complete_report(conn, report_id, "analyzed",
+                          handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    fi_db.record_grade(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, result_id,
+        relevance_score=0.7, novelty_score=0.7, evidence_quality_score=0.7,
+        worth_the_compute=True, overall_score=0.7, rationale="r",
+    )
+
+    performance = fi_db.lens_performance(conn, lens["id"])
+    assert performance["graded_reports"] == 1
+    assert performance["mean_overall_score"] == pytest.approx(0.7)
+
+
+def test_lens_artifact_id_survives_report_archival(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    _graded_report(conn, lens["id"], 0.6, True)
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["lens_artifact_id"] == lens["id"]
+
+
+def test_detector_event_records_the_lens_that_produced_it(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0, lens_artifact_id=lens["id"],
+    )
+    assert fi_db.get_detector_event(conn, event_id)["lens_artifact_id"] == lens["id"]

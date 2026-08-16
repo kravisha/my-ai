@@ -3,6 +3,7 @@ process needed here (the real bootstrap->baseline flow is covered as an
 integration test in test_controller.py alongside the rest of the genuine
 subprocess tests)."""
 
+import json
 import time
 
 from agents.coo import (
@@ -10,6 +11,7 @@ from agents.coo import (
     _coo_work,
     _ensure_baseline_population,
     _evaluate_agent_health,
+    _evaluate_intelligence_health,
     _evaluate_past_decisions,
     _role_spawn_in_flight,
 )
@@ -339,3 +341,85 @@ def test_coo_work_does_not_raise_and_prints_status(conn, capsys):
     assert "[COO]" in out
     # also has the real side effect of ensuring baseline population
     assert fi_db.fetch_next_pending_directive(conn) is not None
+
+
+# --- intelligence health: lenses go stale on evidence (gap analysis §4.11) ---
+
+
+def _graded_report_for_lens(conn, lens_artifact_id, overall_score, worth_the_compute):
+    report_id = fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        lens_artifact_id=lens_artifact_id,
+    )
+    fi_db.complete_report(conn, report_id, "analyzed",
+                          handled_by_identity="analysis-1", handled_by_spawned_at="2026-01-01T00:01:00+00:00")
+    result_id = fi_db.record_analysis_result(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    fi_db.record_grade(
+        conn, "analysis-1", "2026-01-01T00:01:00+00:00", report_id, result_id,
+        relevance_score=overall_score, novelty_score=overall_score,
+        evidence_quality_score=overall_score, worth_the_compute=worth_the_compute,
+        overall_score=overall_score, rationale="r",
+    )
+
+
+def test_intelligence_health_refuses_to_judge_on_thin_evidence(conn):
+    """Below min_graded_reports it does nothing at all, however bad the few
+    grades look - the same guard that led to declining performance-ranked
+    agent selection while there was nothing real to rank on."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    minimum = json.loads(lens["validity_conditions"])["min_graded_reports"]
+    for _ in range(minimum - 1):
+        _graded_report_for_lens(conn, lens["id"], 0.01, False)
+
+    _evaluate_intelligence_health(conn)
+
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is not None
+
+
+def test_intelligence_health_marks_lens_stale_once_evidence_is_sufficient(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    minimum = json.loads(lens["validity_conditions"])["min_graded_reports"]
+    for _ in range(minimum):
+        _graded_report_for_lens(conn, lens["id"], 0.01, False)
+
+    _evaluate_intelligence_health(conn)
+
+    row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (lens["id"],))
+    assert row["status"] == "stale"
+    # the evidence is recorded, not just the verdict
+    assert str(minimum) in row["staleness_reason"]
+    assert "mean overall score" in row["staleness_reason"]
+
+
+def test_intelligence_health_flags_but_never_changes_the_lens_value(conn):
+    """The constitutional constraint: continuous learning does not mean
+    uncontrolled self-modification (addendum 13 §14)."""
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    original_value = lens["value"]
+    minimum = json.loads(lens["validity_conditions"])["min_graded_reports"]
+    for _ in range(minimum):
+        _graded_report_for_lens(conn, lens["id"], 0.01, False)
+
+    _evaluate_intelligence_health(conn)
+
+    assert conn.fetchone("SELECT value FROM intelligence_artifacts WHERE id = ?", (lens["id"],))["value"] == original_value
+
+
+def test_intelligence_health_leaves_a_well_performing_lens_active(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    minimum = json.loads(lens["validity_conditions"])["min_graded_reports"]
+    for _ in range(minimum + 3):
+        _graded_report_for_lens(conn, lens["id"], 0.9, True)
+
+    _evaluate_intelligence_health(conn)
+
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is not None
+
+
+def test_intelligence_health_is_a_noop_with_no_reports_at_all(conn):
+    """Startup state: seeded lenses, nothing graded yet."""
+    _evaluate_intelligence_health(conn)
+    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND, status="active")) == 2

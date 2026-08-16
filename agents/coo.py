@@ -33,6 +33,7 @@ Run directly as: python -m agents.coo <identity>
 Normally launched by backend/controller.py's bootstrap_coo(), not by hand.
 """
 
+import json
 import sys
 
 from agents.base import run_agent
@@ -201,10 +202,68 @@ def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECO
         fi_db.record_observed_result(conn, directive["id"], result)
 
 
+def _evaluate_intelligence_health(conn) -> None:
+    """Checks each active detection lens against the evidence its own reports
+    generated, and marks it stale when its stated validity conditions fail.
+
+    This closes a loop that was previously severed. `grades` already recorded
+    whether each report was relevant, novel, well-evidenced and worth the
+    compute - and that evidence reached nothing, so the system could
+    accumulate overwhelming proof that a lens was wrong and remain
+    structurally incapable of noticing. Attribution now runs
+    grades -> discovery_reports_completed -> lens_artifact_id
+    (fi_db.lens_performance).
+
+    Three deliberate constraints:
+
+    1. **Deterministic, no LLM.** This is statistics over grades that already
+       exist. Using a model to judge a gate another model passed would add
+       cost and opacity for nothing.
+    2. **Flags, never fixes.** It records staleness with the evidence; it does
+       not touch the lens value. Addendum 13 §14: "production behavior changes
+       remain gated by validation. Continuous learning does not mean
+       uncontrolled self-modification."
+    3. **Refuses to judge on thin evidence.** Below min_graded_reports it does
+       nothing at all, however bad the few grades look - the same guard that
+       led to declining performance-ranked agent selection while there was
+       nothing real to rank on.
+
+    Lives in COO because COO already owns the health cycle and, critically,
+    is *not* the producer - Explorer judging the lens it detects with would be
+    exactly the self-certification addendum 11 §8 forbids. This belongs to HR
+    once HR exists (addendum 11 §5: capability, quality, drift); move it then."""
+    for artifact in fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND, status="active"):
+        conditions = json.loads(artifact["validity_conditions"] or "{}")
+        performance = fi_db.lens_performance(conn, artifact["id"])
+
+        minimum = conditions.get("min_graded_reports")
+        if minimum is None or performance["graded_reports"] < minimum:
+            continue
+
+        failures = []
+        floor = conditions.get("min_mean_overall_score")
+        mean_score = performance["mean_overall_score"]
+        if floor is not None and mean_score is not None and mean_score < floor:
+            failures.append(f"mean overall score {mean_score:.3f} < {floor}")
+
+        worth_floor = conditions.get("min_worth_the_compute_rate")
+        worth_rate = performance["worth_the_compute_rate"]
+        if worth_floor is not None and worth_rate is not None and worth_rate < worth_floor:
+            failures.append(f"worth-the-compute rate {worth_rate:.3f} < {worth_floor}")
+
+        if failures:
+            fi_db.mark_artifact_stale(
+                conn, artifact["id"],
+                f"validity conditions failed over {performance['graded_reports']} graded reports: "
+                + "; ".join(failures),
+            )
+
+
 def _coo_work(conn) -> None:
     _evaluate_agent_health(conn)
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
+    _evaluate_intelligence_health(conn)
     print(f"[COO] ecosystem: {fi_db.get_performance_card(conn)}")
 
 

@@ -206,9 +206,15 @@ be designed before, not after, execution capability arrives.
 
 ### 4.11 The system's intelligence is static, externally imposed, and cannot expire
 
-**The most serious gap in this document.** Directly implied by §1.1: if intelligence is the lens, then
-the question is not what data the system keeps — it is whether its lenses can be evaluated, learned, or
-retired. They cannot.
+> **PARTIALLY CLOSED (2026-08-16).** The two detection thresholds are now intelligence artifacts with
+> provenance, rationale, and validity conditions; grades attribute back to the lens that produced the
+> report; and COO marks a lens stale when its own stated conditions fail. **Still open:** lenses remain
+> externally *originated* (nothing proposes a better value), and the regime half of expiry is unbuilt
+> since no regime detection exists. See the closing note at the end of this section.
+
+**Was the most serious gap in this document.** Directly implied by §1.1: if intelligence is the lens,
+then the question is not what data the system keeps — it is whether its lenses can be evaluated,
+learned, or retired. They could not.
 
 Every lens the system owns is a hardcoded constant in `agents/discovery_config.py`:
 
@@ -248,6 +254,48 @@ Constitutional bearing:
 - **Axiom 2** — "recognize patterns, explain them, **test them**." The patterns are asserted, never
   tested against whether they still hold.
 - **§4 "Detect — explain — exploit"** — the detect stage uses a rule nobody validated.
+
+#### What was built (2026-08-16)
+
+`intelligence_artifacts` — the seed of the knowledge store, holding *ways of seeing* rather than
+observations. `artifact_kind` is general so source reliability (§4.4) and validated lessons become
+other kinds without a schema change; `detection_lens` is the only kind built.
+
+- Both thresholds are now artifacts carrying **value, rationale, and validity conditions** — the latter
+  being §7's "conditionally stable decisions" applied to intelligence rather than to decisions.
+- Agents resolve their lens from the store each cycle. Config is now only the *seed*.
+- `detector_events` and `discovery_reports` carry `lens_artifact_id`, so grades attribute back through
+  `grades → discovery_reports_completed → lens_artifact_id`. The reference lives on the *report* so
+  Explorer and Speculator attribute identically — Speculator reports have no detector event.
+- COO's `_evaluate_intelligence_health` marks a lens stale when its conditions fail. Deterministic
+  statistics over grades that already existed; no LLM. Runs in COO, not the producer — Explorer judging
+  its own lens is the self-certification addendum 11 §8 forbids. Moves to HR when HR exists.
+- Lifecycle `active → stale → superseded`, nothing ever deleted, mirroring agent dormancy and §8's
+  "track intellectual evolution".
+
+**Flags, never fixes.** Staleness records evidence; it does not change the value. Addendum 13 §14:
+"continuous learning does not mean uncontrolled self-modification." A stale lens also does not stop
+detection — agents fall back to the seed and keep working, because a flag is a signal for review.
+
+**Refuses to judge on thin evidence.** Below `min_graded_reports` it does nothing however bad the few
+grades look — the same guard that led to declining performance-ranked agent selection earlier.
+
+Verified against a real running backend, and the loop produced a genuine finding on first contact:
+Analysis graded four real Speculator reports at mean 0.267 with a **0.0** worth-the-compute rate, and
+COO correctly marked that lens stale on that real evidence, recording the numbers, while leaving its
+value at 0.6 and leaving Speculator running. That is exactly the signal the system previously
+discarded — evidence that a lens is miscalibrated, now surfaced instead of lost.
+
+#### Still open
+
+- **Lenses are still externally originated.** The system can now notice a lens is wrong; it cannot
+  propose a better one. Doing so is Trainer/HR territory (Phase D) and stays validation-gated.
+- **The regime half of expiry is unbuilt.** `validity_conditions` carries a `regime` key that is
+  deliberately recorded un-evaluated, because no regime detection exists (§4.12). "Intelligence depends
+  on market conditions" is therefore only half-implemented: it can expire on *performance*, not yet on
+  *conditions*.
+- Only the two thresholds are artifacts. The neighborhood radii and `PEER_MIN_COOCCURRING` are still
+  constants; they can follow the same pattern now that it is proven.
 
 ### 4.12 Raw data retention — *demoted* to opportunistic
 

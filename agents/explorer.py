@@ -116,6 +116,19 @@ def _judgment_gate(security: str, ratio: float, peak_iv: float, baseline_iv: flo
 def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     neighborhood_desc = f"strike idx ±{config.NEIGHBORHOOD_STRIKE_RADIUS}, expiry idx ±{config.NEIGHBORHOOD_EXPIRY_RADIUS}"
 
+    # The threshold is intelligence, not configuration - it is resolved from
+    # the intelligence_artifacts store each cycle rather than read from a
+    # constant, so that it carries provenance, can be attributed from the
+    # grades of the reports it produces, and can be marked stale on evidence.
+    #
+    # Falling back to the seed when there is no active artifact is deliberate:
+    # get_active_artifact returns None for a lens that has been marked stale,
+    # and a stale lens is a signal for review, not a reason to stop detecting.
+    # Explorer keeps working with the seed value and lets COO's flag stand.
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    lens_artifact_id = lens["id"] if lens else None
+    threshold = json.loads(lens["value"]) if lens else fi_db.LENS_IV_RATIO_SEED
+
     # Scan every peer-group security independently first, so classification
     # (below) can ask "how many others also triggered this same cycle"
     # without re-scanning anything.
@@ -126,7 +139,7 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
 
     triggering = {
         security: best for security, best in results.items()
-        if best is not None and best[0] >= config.IV_RATIO_THRESHOLD
+        if best is not None and best[0] >= threshold
     }
 
     for security, (ratio, _si, _ei, peak_iv, baseline_iv) in triggering.items():
@@ -142,10 +155,11 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
 
         event_id = fi_db.record_detector_event(
             conn, identity, spawned_at, security, DETECTOR_TYPE,
-            peak_iv, baseline_iv, ratio, config.IV_RATIO_THRESHOLD,
+            peak_iv, baseline_iv, ratio, threshold,
             neighborhood_desc=neighborhood_desc, surface_seed=str(config.MARKET_PROVIDER_SEED),
             scope=scope, peer_group_name=config.PEER_GROUP_NAME,
             peer_group_version=config.PEER_GROUP_VERSION, peer_context=peer_context,
+            lens_artifact_id=lens_artifact_id,
         )
 
         if fi_db.has_pending_report(conn, identity, security):
@@ -170,6 +184,7 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
             conn, identity, spawned_at, "explorer", security,
             summary=f"IV surface anomaly on {security}: ratio {ratio:.2f} (peak {peak_iv:.4f} vs baseline {baseline_iv:.4f}), scope={scope}",
             detector_event_id=event_id, evidence_ids=[], judgment_confidence=None,
+            lens_artifact_id=lens_artifact_id,
         )
 
 
