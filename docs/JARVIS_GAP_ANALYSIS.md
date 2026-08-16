@@ -32,6 +32,41 @@ away.** Two very different kinds of gap:
 
 Put plainly: we have built a disciplined organism. We have not yet built its mind.
 
+### 1.1 What counts as intelligence — the core distinction
+
+**Owner clarification, 2026-08-16.** This governs everything below and corrects an earlier version of
+this document that had it wrong:
+
+> Not all data is intelligence. **Only intelligence needs to be preserved; data does not.** Intelligence
+> is *extracted from* data. Intelligence has an expiry date — it depends on market conditions, and when
+> conditions change, intelligence changes. Intelligence is about **defining how to look at things,
+> using pattern recognition as the key guiding principle to differentiate things.** Knowledge retention
+> is imperative; data retention is not imperative and is done on an as-possible basis.
+
+Three consequences, each of which changes a conclusion elsewhere in this file:
+
+**1. Intelligence is the lens, not the observation.** The IV surface is data. A detected anomaly is an
+observation. The *threshold, neighborhood definition, and peer-grouping that decide what counts as an
+anomaly at all* — those are the intelligence. So is a validated lesson about when such a signal is
+misleading. This sharpens what the knowledge store (§4.1) is for: it holds **ways of seeing**, not
+piles of facts.
+
+**2. Intelligence expires; data has no preservation claim.** Since a lens is only valid under the
+market conditions it was derived for, intelligence carries validity conditions and goes stale. Data,
+by contrast, has served its purpose once its intelligence is extracted. This reverses the earlier
+recommendation to prioritize raw-data retention — see §4.11.
+
+**3. Reconciling with "intelligence is distributed amongst agents, knowledge base, and raw data yet to
+be processed" (§5.2).** No contradiction: unprocessed data holds intelligence in *latent* form. It is a
+transient **source**, not a store. Distribution describes where intelligence can be *found*; the
+preservation obligation attaches to the **extract**, not the source.
+
+One narrow exception, recorded so it is not lost: §16 auditability requires preserving "sufficient logs
+to reconstruct what information was available" at decision time. That is a claim about *provenance and
+reference*, satisfiable by recording what was seen — not a mandate for bulk retention. Likewise,
+regression fixtures (addendum 8 §5, 13 §14) need reproducible inputs, which for seeded generation means
+preserving the **seed**, not the data.
+
 A third category matters for honesty: **several axioms are currently vacuous.** The system has no
 execution capability whatsoever — no trades, no external actions, informational output only
 (confirmed by inspection). Axioms 11 and 13, and §12/§14/§16's execution governance, therefore cannot
@@ -169,34 +204,75 @@ attention."
 Absent, and currently unexercisable — they govern *consequential action*, and no action exists. Should
 be designed before, not after, execution capability arrives.
 
-### 4.11 Raw unprocessed data is not retained (§2 as clarified — the third substrate)
+### 4.11 The system's intelligence is static, externally imposed, and cannot expire
 
-Since intelligence lives partly in raw data not yet processed (§5.2), whether raw data survives is a
-question about how much intelligence the system holds. Inspection shows a **sharp asymmetry**:
+**The most serious gap in this document.** Directly implied by §1.1: if intelligence is the lens, then
+the question is not what data the system keeps — it is whether its lenses can be evaluated, learned, or
+retired. They cannot.
 
-- **Social data — retained.** `agents/speculator.py` writes an `evidence_items` row for *every* post
-  in a batch, regardless of confidence or whether it ever contributes to a report. Raw observations
-  survive independently of whether they proved useful. This is the correct shape.
-- **Market data — discarded.** `agents/explorer.py` fetches a surface, scans it, and persists only a
-  `detector_events` row *when the ratio clears the threshold*. The surface itself — every IV grid point
-  — is never stored, and a non-triggering scan leaves **no trace whatsoever**. The overwhelming
-  majority of what Explorer observes is destroyed immediately after being looked at once, through a
-  single fixed lens.
+Every lens the system owns is a hardcoded constant in `agents/discovery_config.py`:
 
-**Currently masked by synthetic data, and will bite at Phase E.** `detector_events.surface_seed`
-records the seed, so a synthetic surface is *reproducible* on demand — retention is effectively
-achieved by replay, which is why this has cost nothing so far. Real market data (Phase E) has no seed
-to replay from. The moment the provider becomes real, every unstored observation is gone permanently.
+| Lens | Value | What it decides |
+|---|---|---|
+| `IV_RATIO_THRESHOLD` | `2.0` | What counts as an anomaly at all |
+| `NEIGHBORHOOD_STRIKE_RADIUS` / `_EXPIRY_RADIUS` | `1` / `1` | What "local" means — the comparison frame |
+| `PEER_MIN_COOCCURRING` | `1` | Common-factor vs idiosyncratic |
+| `SPECULATOR_CONFIDENCE_THRESHOLD` | `0.6` | What social evidence is worth filing |
 
-Three things this forecloses, all constitutional:
+Confirmed by inspection: there is **no regime detection, no expiry, no recalibration, and no
+revalidation anywhere in the codebase.** Every match for "expir" is the *option* expiry dimension, an
+unrelated domain concept. So the system's intelligence is:
 
-- **Novelty detection (§8)** cannot run against data that was thrown away. Novelty is precisely the
-  thing a fixed threshold was not built to notice.
-- **Re-processing with improved models (§5.2, addendum 13 §14)** is impossible without the raw inputs.
-- **Axiom 4 (separate ingestion from judgment)** is undercut in a second way beyond §4.2: the
-  threshold is not merely a judgment gate, it is an *ingestion filter applied by the judging party*.
-  Data that fails Explorer's current lens never enters the knowledge environment at all, so no other
-  process — and no future, better model — can ever reconsider it.
+- **Static** — a lens cannot change, ever, except by a human editing an env var.
+- **Externally imposed** — not derived from evidence, not learned. Addendum 7 §4 calls the 2.0
+  threshold "configurable," which it is; it is not *self-adjusting*, and nothing proposes a new value.
+- **Non-expiring** — carries no validity conditions, despite intelligence being regime-dependent by
+  definition. A threshold derived for a low-volatility regime keeps firing identically in a
+  high-volatility one, with no signal that it has gone stale.
+- **Regime-blind** — nothing characterizes current market conditions, so nothing could notice the
+  conditions its intelligence depends on had changed.
+
+**The learning loop grades outputs but never updates the apparatus.** `grades` measures whether a
+*report* was relevant, novel, well-evidenced, worth the compute. That feedback is persisted and
+attributable — and it never reaches the threshold that generated the report. The system can therefore
+accumulate overwhelming evidence that its lens is wrong and remain structurally incapable of changing
+it. This is the sharpest form of the "every meaningful work unit is graded" shortfall in §6.3 of the
+reconciliation record.
+
+Constitutional bearing:
+
+- **§7 "Conditionally stable decisions"** — "a decision should state the assumptions and information
+  changes that are sufficient to reopen it." Applied to intelligence: every lens should carry the
+  conditions under which it stops being valid. None do.
+- **Axiom 8** — "expected new information follows defined triggers." No lens defines a trigger.
+- **Axiom 2** — "recognize patterns, explain them, **test them**." The patterns are asserted, never
+  tested against whether they still hold.
+- **§4 "Detect — explain — exploit"** — the detect stage uses a rule nobody validated.
+
+### 4.12 Raw data retention — *demoted* to opportunistic
+
+An earlier version of this file ranked this first. **That was wrong** (see §1.1): it treated data as
+having a preservation claim of its own. Data does not; only extracted intelligence does, and retention
+is "not imperative, done on an as-possible basis."
+
+The factual asymmetry still stands and is worth knowing, but is no longer a priority:
+
+- **Social data is retained** — `speculator.py` writes an `evidence_items` row for every post it sees,
+  regardless of confidence.
+- **Market data is not** — `explorer.py` persists only threshold-clearing detections; the surface is
+  never stored and a non-triggering scan leaves no trace. `detector_events.surface_seed` makes
+  synthetic surfaces reproducible by replay; real data at Phase E would not be.
+
+The Phase E urgency argument previously made here **does not survive §1.1**: if intelligence expires
+with market conditions, re-processing old observations under a new lens has limited value, because
+those observations came from a regime where different intelligence applied. What is worth preserving
+from a discarded observation is not the observation — it is any *evidence about whether the lens was
+right*, which is intelligence and belongs in the knowledge store.
+
+What may still be worth doing opportunistically, and cheaply: retain **aggregate characterizations**
+rather than raw observations — distributional summaries sufficient to detect that the regime has
+shifted. That is extracted intelligence, not data retention, and it is the natural input to §4.11's
+expiry conditions.
 
 ---
 
@@ -233,22 +309,20 @@ See §7 for what the sentience gate actually requires.
 Distribution is across **substrates**, not across process count. This resolves the apparent conflict
 with `_slot_identity`'s one-instance-per-role model: multiplying processes was never the point.
 
-| Substrate | What the intelligence *is* there | Built? |
-|---|---|---|
-| **Agents** | Active reasoning capability — the ability to detect, interpret, judge, grade | ● Yes — Explorer/Speculator/Analysis/COO/Controller |
-| **Knowledge base** | Accumulated, validated understanding: beliefs, models, assumptions, confidence | ○ **No** — see §4.1, the central gap |
-| **Raw unprocessed data** | *Latent* intelligence — what the system could know but has not yet extracted | ◐ Partial — see §4.11 |
+| Substrate | What the intelligence *is* there | Preservation | Built? |
+|---|---|---|---|
+| **Agents** | Active reasoning capability — the lenses they apply, and the ability to detect, interpret, judge, grade | Imperative | ◐ Agents exist; their lenses are frozen constants — §4.11 |
+| **Knowledge base** | Accumulated, validated understanding: models, assumptions, ways of seeing, confidence, validity conditions | **Imperative** | ○ **No** — §4.1, the central gap |
+| **Raw unprocessed data** | *Latent*, unextracted intelligence — a transient **source**, not a store | As-possible only | ◐ Asymmetric — §4.12 |
 
-Three consequences worth stating, because they are not obvious:
+Two consequences, corrected per §1.1:
 
 1. **The knowledge base is a locus of intelligence, not a passive store.** This raises §4.1 from "a
    useful component" to "one of the three places intelligence actually lives." Building it is not
    plumbing; it is building a third of the mind.
-2. **Discarding unprocessed raw data destroys intelligence.** If latent potential counts as
-   intelligence, throwing away unprocessed data is not housekeeping — it is lobotomy. See §4.11.
-3. **Re-processing old data is a first-class operation.** Old raw data plus an improved model yields
-   new knowledge without any new observation. This is the same loop addendum 13 §14 describes, and it
-   is only possible if the raw data was kept.
+2. **Raw data is a source, not a holding.** Its intelligence is realised by *extraction*, not by
+   retention. An earlier version of this file inferred a preservation duty from this substrate and was
+   wrong — see §1.1 and §4.12.
 
 Axiom 9's "important conclusions should survive internal challenge" remains genuinely unmet — but it is
 a *separate* gap (§4.3, preserved disagreement), not a process-count problem. Internal challenge is
@@ -264,30 +338,36 @@ records), but needs a decision on whether to formalize it now or once the CEO la
 
 ## 6. Recommended sequence
 
-Ranked by *foundation-laying × double-mandate × tractability*. The three-substrate clarification
-(§5.2) reshaped this: two of the three substrates where intelligence lives are the top two items.
+Reordered after §1.1. The previous ranking led with raw-data retention; that rested on treating data
+as intelligence and is withdrawn.
 
-1. **Raw data retention (§4.11).** Promoted to first. Small, concrete, and *time-sensitive in a way
-   nothing else here is*: it is the only gap that gets permanently worse with delay. Every scan that
-   runs before it is built is an observation destroyed. Currently masked by synthetic replay-by-seed,
-   so the cost is near-zero today and becomes unrecoverable at Phase E. It also unblocks novelty
-   detection, model re-processing, and closes half of the Axiom 4 breach. Cheapest item on this list
-   with the highest cost of deferral.
-2. **Knowledge store (§4.1).** The central organ and a full third of where intelligence lives. Blocks
-   novelty detection, transformation, source reliability, reflection, and the CEO layer — plus four of
-   the seven sentience capabilities (§7). Already a Pre-Alpha task with a concrete two-layer model
-   specified (addenda 12 §8, 13 §10). **The main event.**
-3. **Explorer↔Speculator cross-check with preserved disagreement (§4.3).** Fully specified in addendum
-   12 §14, on the Pre-Alpha list, required for Alpha (addendum 14 §10), delivers Axioms 5 and 9.
-4. **Source reliability (§4.4).** Self-contained; learns from the grading loop that already exists.
-5. **Reopening triggers on decisions (§4.6).** Small extension of existing decision records.
-6. **Novelty detection and transformation (§4.7).** Needs 1 and 2 first.
-7. **Governance mechanisms (§4.10).** Design before execution capability exists, not after.
+1. **The knowledge store, holding intelligence artifacts that carry their own validity conditions
+   (§4.1 + §4.11 together).** These are one piece of work, not two: a store of "ways of seeing" is
+   incomplete without the expiry conditions that make each way of seeing *conditionally* valid, and
+   expiry conditions have nowhere to live without the store. Together they:
+   - build a full third of where intelligence lives (§5.2);
+   - make the system's lenses first-class, inspectable objects instead of frozen constants — today
+     `IV_RATIO_THRESHOLD = 2.0` is the single most consequential piece of intelligence in the system
+     and it is a literal in a config file;
+   - implement §7's "conditionally stable decisions" at the level that matters, and give Axiom 8 its
+     triggers;
+   - close the loop where `grades` already produce evidence about lens quality that currently reaches
+     nothing;
+   - unblock novelty detection (§4.7), source reliability (§4.4), reflection, and the CEO layer — plus
+     four of the seven sentience capabilities (§7).
 
-A note on sequencing 1 before 2: retention is *not* a subset of the knowledge store. Raw data and the
-knowledge base are distinct substrates (§5.2) — one holds latent potential, the other holds validated
-belief. Building retention first also means the knowledge store gets built with real accumulated data
-to reason over rather than an empty schema.
+   Already a Pre-Alpha task, with a concrete two-layer resident/database model specified (addenda 12
+   §8, 13 §10). **Recommended.**
+
+2. **Explorer↔Speculator cross-check with preserved disagreement (§4.3).** The sharper, smaller
+   alternative: fully specified in addendum 12 §14, on the Pre-Alpha list, required for Alpha
+   (addendum 14 §10), delivers Axioms 5 and 9.
+3. **Source reliability (§4.4).** A form of intelligence about sources; sits naturally in the store
+   once it exists, and learns from the grading loop already built.
+4. **Novelty detection and transformation (§4.7).** Needs the store.
+5. **Governance mechanisms (§4.10).** Design before execution capability exists, not after.
+6. **Opportunistic regime characterization (§4.12).** Aggregate summaries sufficient to detect a regime
+   shift — the natural input to expiry conditions. Extraction, not retention. Cheap, non-urgent.
 
 Deferred by the documents themselves and not recommended yet: CEO layer/Bob, exploration mode,
 persistent thought threads, human modeling.
