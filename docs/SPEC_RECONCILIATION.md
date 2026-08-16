@@ -23,9 +23,15 @@ Last updated: 2026-08-16.
 | Architectural | First FI set, addenda 2–4 | **Superseded** by addenda 5–10 (per addendum 5's header). Historical only. |
 | Architectural | Second FI set (2026-08-14), addenda 5–10 | Canonical, except where addenda 11–14 explicitly clarify — see §2. |
 | Architectural | Third FI set (2026-08-15), addenda 11–14 | Canonical. Where these conflict with 5–10, these win. |
+| Derived | Addendum 15 (2026-08-16), rationality monitoring | Canonical for its subject, but **not a verbatim import** — derived from owner rulings in discussion, and editable as the design evolves. Nothing in it is built. |
 
 Within the newest set: addendum 11 is the organizational constitution, 12 the integration spec
 (its §21 Pre-Alpha task list drives current work), 13 the training design, 14 the acceptance criteria.
+
+Addendum 15 differs in kind from 11–14: those are verbatim user-supplied specifications marked "do
+not edit," whereas 15 was written here from owner decisions given in conversation on 2026-08-16 plus
+the owner-supplied `Sentinel_Argument_for_Claude.txt`. It is therefore amendable in place rather than
+reconciled against.
 
 **Not saved as an addendum:** `Financial Intelligence Gap1 Redesign Notes.pdf` and
 `agent-identity-redesign.pdf` (both in `C:\Users\Krish\Downloads\`). These are voice-session working
@@ -112,6 +118,45 @@ Consequences worth knowing:
 Serializing *process memory* is deliberately not built, and arguably shouldn't be: addendum 13 §9
 requires durable knowledge to live in the database as organizational property rather than inside an
 agent's transient context, so a correctly-built agent should have little worth serializing.
+
+#### Sleep is dormancy — not a third state (owner decision, 2026-08-16)
+
+Addendum 11 §9's phrase "a dormant/**sleep** state" left it open whether *sleep* named something
+distinct from dormancy. It does not. **Owner ruling: sleep and dormancy are the same concept, two
+words for one state.** The `lifecycle_state` axis stays two-valued.
+
+This was considered and rejected on the merits, not on effort. The candidate distinction was that
+dormancy is an organizational standing decision that waits for someone to reverse it, whereas sleep
+is temporary and expected to end on its own. But COO's behaviour is *identical* for both — don't
+respawn, don't count the role as understaffed — so the only real difference is **why it stopped and
+when it should resume**. That is data, not a state: a reason and a wake condition, both expressible
+as fields on a row that already exists. Adding a third value to a tested lifecycle model to carry
+one nullable column's worth of meaning is structure for its own sake.
+
+The one consequence to hold onto: **a sleeping agent does not wake itself.** Dormancy waits for an
+external `resume_agent`, and COO deliberately will not respawn a dormant agent — that is the entire
+point of separating the axes. So something must hold the alarm clock.
+
+#### Who wakes a sleeping agent (owner decision, 2026-08-16)
+
+**The agent that put another agent to work owns waking it.** Whoever commissioned an agent is
+responsible for resuming it from dormancy.
+
+Two readings had to be separated before the rule means anything. The Controller is the *exclusive
+executor* of every lifecycle action (addendum 11 §15), so read literally the answer would always be
+"the Controller," which says nothing. The rule attributes to the **requester**: COO asks, Controller
+acts, COO owns the wake. That is already recorded — `coo_directives.requested_by` is `NOT NULL` and
+survives into `coo_directives_completed`, for spawn and retire alike. **No schema change is needed**;
+the supervisory link is a query against the most recent completed directive for that identity, the
+same shape as `most_recent_completed_spawn` (and with the same ordering caution — order by `id`, not
+by timestamp, per the millisecond-tie bug fixed earlier).
+
+**The duty attaches to the role slot, not the process.** Because identities are permanent role slots,
+a supervisor that crashes returns as the same identity with its history intact and still owes the
+wake. This is the permanent-identity decision paying off somewhere it was not designed for. Only if
+the *role itself* is dissolved does the obligation dangle, and that case escalates to the owner —
+consistent with how concerns about Bob are handled. A sleeping agent nobody can wake is the same
+class of defect as the pre-2026-08-16 retirement that silently did nothing.
 
 ### 2.3 Portfolio Analysis — no conflict, just note
 
