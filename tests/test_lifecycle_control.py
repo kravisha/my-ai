@@ -32,16 +32,19 @@ def test_retiring_files_a_directive_rather_than_changing_state(panel_client, pan
 
 
 def test_the_directive_records_who_asked_and_why(panel_client, panel_conn):
-    """Auditability comes free from routing through the directive queue."""
+    """Auditability comes free from routing through the directive queue - and
+    the requester comes from the authenticated session, never the request body.
+    A caller that can name itself anything makes the audit trail decorative, so
+    supplying requested_by is not merely ignored, it is not a field."""
     _register(panel_conn)
 
     body = panel_client.post(
         "/admin/agents/explorer-1/retire",
-        json={"reason": "suspected drift", "requested_by": "krish"},
+        json={"reason": "suspected drift", "requested_by": "somebody-else"},
     ).json()
 
     directive = fi_db.get_directive(panel_conn, body["directive_id"])
-    assert directive["requested_by"] == "krish"
+    assert directive["requested_by"] == "test-admin"  # the session identity
     assert directive["reason"] == "suspected drift"
 
 

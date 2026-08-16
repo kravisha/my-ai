@@ -1,14 +1,16 @@
-"""My AI server monitor: a standalone operator tool, not a user client - no
-login, since it watches every account's conversation via the backend's
-unauthenticated /admin/* routes (see backend/main.py). Run as
+"""My AI server monitor: a standalone operator tool, not a user client. It
+watches every account's conversation, so it now signs in as a superuser and
+sends a bearer token - those routes were open until admin auth existed, and
+transcripts of every user's chat are the most sensitive thing the backend
+serves. Run as
 `python -m monitor.app` from the my-ai/ project root, alongside a running
 backend (`uvicorn backend.main:app`).
 
 Polls rather than pushes (see the plan behind this feature): a Listbox of
 client usernames on the left, a read-only transcript on the right, both
 refreshed every couple seconds via root.after(...). Uses `requests` directly
-rather than api_client.APIClient, since none of APIClient's bearer-token
-machinery applies to these two unauthenticated routes.
+rather than api_client.APIClient - it needs only login plus two GETs, and the
+credential is prompted for and held in memory, never stored.
 """
 
 import tkinter as tk
@@ -21,7 +23,8 @@ POLL_INTERVAL_MS = 2000
 
 
 class MonitorApp:
-    def __init__(self):
+    def __init__(self, token: str | None = None):
+        self.token = token
         self.root = tk.Tk()
         self.root.title("My AI - Server Monitor")
         self.root.geometry("900x600")
@@ -46,6 +49,9 @@ class MonitorApp:
 
         self.root.after(0, self._poll)
 
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
     def _on_select_client(self, event):
         selection = self.client_listbox.curselection()
         if not selection:
@@ -62,7 +68,7 @@ class MonitorApp:
 
     def _refresh_client_list(self):
         try:
-            response = requests.get(f"{BASE_URL}/admin/clients", timeout=5)
+            response = requests.get(f"{BASE_URL}/admin/clients", headers=self._headers(), timeout=5)
             response.raise_for_status()
             clients = response.json()["clients"]
         except requests.RequestException:
@@ -80,7 +86,7 @@ class MonitorApp:
 
     def _refresh_transcript(self, force_redraw=False):
         try:
-            response = requests.get(f"{BASE_URL}/admin/clients/{self.selected_client}/transcript", timeout=5)
+            response = requests.get(f"{BASE_URL}/admin/clients/{self.selected_client}/transcript", headers=self._headers(), timeout=5)
             response.raise_for_status()
             entries = response.json()["entries"]
         except requests.RequestException:
@@ -102,5 +108,27 @@ class MonitorApp:
         self.root.mainloop()
 
 
+def main() -> None:
+    """Sign in first, then open the window. The monitor is useless without a
+    token now, so prompting up front is clearer than opening an empty window
+    that silently fails to poll."""
+    from panel.app import prompt_for_credentials
+
+    bootstrap = tk.Tk()
+    bootstrap.withdraw()
+    credentials = prompt_for_credentials(bootstrap, BASE_URL)
+    token = None
+    if credentials is not None:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"username": credentials[0], "password": credentials[1]},
+            timeout=5,
+        )
+        if response.status_code == 200:
+            token = response.json()["token"]
+    bootstrap.destroy()
+    MonitorApp(token=token).run()
+
+
 if __name__ == "__main__":
-    MonitorApp().run()
+    main()

@@ -133,6 +133,11 @@ def panel_client(panel_conn, tmp_path):
             connection.close()
 
     backend_main.app.dependency_overrides[backend_main.panel_db] = _panel_db
+    # Stand in for an authenticated superuser. The gate itself is tested
+    # directly in tests/test_admin_auth.py against an un-overridden client -
+    # overriding it here would otherwise mean no test ever exercised the real
+    # thing, which is the classic way an auth check rots unnoticed.
+    backend_main.app.dependency_overrides[backend_main.require_admin] = lambda: "test-admin"
     try:
         yield TestClient(backend_main.app)
     finally:

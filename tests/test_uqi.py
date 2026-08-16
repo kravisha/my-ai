@@ -162,9 +162,13 @@ def test_polling_an_unknown_request_is_404(panel_client):
 
 
 def test_history_route_exposes_the_audit_trail(panel_client, panel_conn):
+    """asked_by is taken from the authenticated session, not the request body.
+    An audit trail whose author field the caller can set is not an audit
+    trail - so the field is absent from the request model entirely rather than
+    accepted and quietly overridden."""
     fi_db.register_agent(panel_conn, "coo-1", "coo", 1)
-    panel_client.post("/admin/agents/coo-1/uqi", json={"question": "q1", "asked_by": "krish"})
+    panel_client.post("/admin/agents/coo-1/uqi", json={"question": "q1", "asked_by": "somebody-else"})
 
     row = panel_client.get("/admin/uqi").json()["requests"][0]
-    assert row["asked_by"] == "krish"
+    assert row["asked_by"] == "test-admin"  # the session identity
     assert row["question"] == "q1"

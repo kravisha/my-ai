@@ -1,6 +1,7 @@
 """Regression tests for the server monitor's admin routes (GET /admin/clients,
-GET /admin/clients/{username}/transcript) - unauthenticated by design, see
-backend/main.py's comment on why. Also covers the /chat integration: does a
+GET /admin/clients/{username}/transcript) - now behind require_admin, since
+those routes expose every account's conversations and leaving them open while
+gating the newer agent routes would have been incoherent. Also covers the /chat integration: does a
 real chat call actually populate the transcript, does a consent pause/resume
 round-trip record the user's question only once, and do two users' logged
 conversations stay isolated.
@@ -52,33 +53,43 @@ def _register_and_auth_header(backend_client, username="alice", password="hunter
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_list_clients_starts_empty(backend_client):
-    response = backend_client.get("/admin/clients")
+def _admin_header(backend_client, monkeypatch, username="root"):
+    """A real superuser session, not a bypassed dependency. These tests are the
+    natural place to exercise the actual gate: they were the routes that were
+    open before it existed."""
+    monkeypatch.setenv("MY_AI_ADMIN_USERS", username)
+    return _register_and_auth_header(backend_client, username=username)
+
+
+def test_list_clients_starts_empty(backend_client, monkeypatch):
+    response = backend_client.get("/admin/clients", headers=_admin_header(backend_client, monkeypatch))
     assert response.status_code == 200
     assert response.json()["clients"] == []
 
 
-def test_transcript_for_unknown_client_returns_empty_entries(backend_client):
-    response = backend_client.get("/admin/clients/nobody/transcript")
+def test_transcript_for_unknown_client_returns_empty_entries(backend_client, monkeypatch):
+    response = backend_client.get("/admin/clients/nobody/transcript", headers=_admin_header(backend_client, monkeypatch))
     assert response.status_code == 200
     assert response.json() == {"username": "nobody", "entries": []}
 
 
 def test_chat_call_populates_the_transcript(backend_client, monkeypatch):
+    admin = _admin_header(backend_client, monkeypatch)
     headers = _register_and_auth_header(backend_client)
     monkeypatch.setattr("backend.main.call_reasoning_model", MagicMock(return_value=text_response("Hello!")))
 
     backend_client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]}, headers=headers)
 
-    clients = backend_client.get("/admin/clients").json()["clients"]
+    clients = backend_client.get("/admin/clients", headers=admin).json()["clients"]
     assert clients == ["alice"]
-    entries = backend_client.get("/admin/clients/alice/transcript").json()["entries"]
+    entries = backend_client.get("/admin/clients/alice/transcript", headers=admin).json()["entries"]
     assert [e["role"] for e in entries] == ["user", "assistant"]
     assert entries[0]["text"] == "hi"
     assert entries[1]["text"] == "Hello!"
 
 
 def test_consent_pause_resume_records_the_question_only_once(backend_client, monkeypatch, mock_portfolio_path):
+    admin = _admin_header(backend_client, monkeypatch)
     headers = _register_and_auth_header(backend_client)
     backend_client.post("/permissions/grant", json={"resource": "portfolio"}, headers=headers)
     call_model = MagicMock(side_effect=[tool_use_response(), text_response("Here you go.")])
@@ -93,7 +104,7 @@ def test_consent_pause_resume_records_the_question_only_once(backend_client, mon
         headers=headers,
     )
 
-    entries = backend_client.get("/admin/clients/alice/transcript").json()["entries"]
+    entries = backend_client.get("/admin/clients/alice/transcript", headers=admin).json()["entries"]
     user_entries = [e for e in entries if e["role"] == "user"]
     assistant_entries = [e for e in entries if e["role"] == "assistant"]
     assert len(user_entries) == 1
@@ -103,12 +114,13 @@ def test_consent_pause_resume_records_the_question_only_once(backend_client, mon
 
 
 def test_two_users_transcripts_stay_isolated(backend_client, monkeypatch):
+    admin = _admin_header(backend_client, monkeypatch)
     headers_a = _register_and_auth_header(backend_client, "alice")
     headers_b = _register_and_auth_header(backend_client, "bob")
     monkeypatch.setattr("backend.main.call_reasoning_model", MagicMock(return_value=text_response("Hi alice")))
 
     backend_client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]}, headers=headers_a)
 
-    clients = backend_client.get("/admin/clients").json()["clients"]
+    clients = backend_client.get("/admin/clients", headers=admin).json()["clients"]
     assert clients == ["alice"]
-    assert backend_client.get("/admin/clients/bob/transcript").json()["entries"] == []
+    assert backend_client.get("/admin/clients/bob/transcript", headers=admin).json()["entries"] == []

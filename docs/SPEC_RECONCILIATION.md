@@ -158,6 +158,34 @@ the *role itself* is dissolved does the obligation dangle, and that case escalat
 consistent with how concerns about Bob are handled. A sleeping agent nobody can wake is the same
 class of defect as the pre-2026-08-16 retirement that silently did nothing.
 
+#### Superuser access to /admin (owner decision, 2026-08-16)
+
+Addendum 14 §7 requires UQI access to be "privilege-controlled and auditable", and §7 adds that
+"ordinary external clients do not receive unrestricted UQI access to internal agents." Auditable was
+satisfied from the start; privilege-controlled was not, and is now.
+
+- **Admin status is configuration, not data.** `MY_AI_ADMIN_USERS`, comma-separated, read at call
+  time. Deliberately not a flag in `users.json`: granting it would need a route, and a
+  grant-admin route is a privilege-escalation surface better not built than carefully guarded.
+  Whoever controls the process already controls the database file, so the process environment is
+  no weaker a source of authority — and it keeps the grant visible at startup.
+- **Unset means closed, not open.** With no admins configured every `/admin` route returns 403,
+  including for an account that was an admin before a restart. An auth feature that defaults open
+  is worse than none, because it looks protected. The refusal names the variable to set.
+- **Built on the existing session auth**, not a parallel shared secret — bcrypt passwords and
+  `secrets.token_urlsafe(32)` sessions already existed and were tested. No second credential type
+  to store, rotate, or leak.
+- **The audit identity now comes from the session.** `asked_by` and `requested_by` were previously
+  client-supplied strings; an audit trail whose author field the caller sets is decorative. They
+  are no longer fields on the request models at all, rather than accepted and silently overridden.
+- **The monitor's routes are gated too.** `/admin/clients/{username}/transcript` exposes every
+  account's conversations — more sensitive than anything the agent panel serves. Gating the newer
+  routes while leaving that open would have been incoherent.
+
+**Still open:** there is one privilege level, not a role model. Addendum 11 §5's HR and the
+evaluation functions may eventually want distinct scopes; a single superuser flag is the honest
+shape while the system has exactly one operator.
+
 ### 2.3 Portfolio Analysis — no conflict, just note
 
 Addendum 9 (on-demand portfolio analysis) remains canonical for the analysis content itself. Addendum

@@ -41,6 +41,9 @@ class ControlPanel:
         self.base_url = base_url
         self.selected_identity: str | None = None
         self._offline = False
+        self._denied = False
+        self.token: str | None = None
+        self.username: str | None = None
 
         self.root = tk.Tk()
         self.root.title("My AI - Controller Control Panel")
@@ -126,7 +129,8 @@ class ControlPanel:
         try:
             response = requests.post(
                 f"{self.base_url}/admin/agents/{self.selected_identity}/uqi",
-                json={"question": question, "asked_by": "panel"},
+                json={"question": question},
+                headers=self._headers(),
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
@@ -150,7 +154,8 @@ class ControlPanel:
         try:
             response = requests.post(
                 f"{self.base_url}/admin/agents/{self.selected_identity}/{action}",
-                json={"reason": f"operator {action} via control panel", "requested_by": "panel"},
+                json={"reason": f"operator {action} via control panel"},
+                headers=self._headers(),
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             if response.status_code >= 400:
@@ -176,13 +181,50 @@ class ControlPanel:
 
     # --- HTTP ---
 
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
+    def sign_in(self, username: str, password: str) -> str | None:
+        """Exchange credentials for a session token. Returns an error message,
+        or None on success.
+
+        The panel holds a token in memory and never a password. Nothing is
+        written to disk: an operator tool that cached a superuser credential
+        would turn "someone opened the panel once" into standing access."""
+        try:
+            response = requests.post(
+                f"{self.base_url}/auth/login",
+                json={"username": username, "password": password},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            return f"Could not reach the backend: {exc}"
+        if response.status_code != 200:
+            try:
+                return response.json().get("detail", response.text)
+            except ValueError:
+                return response.text
+        self.token = response.json()["token"]
+        self.username = username
+        return None
+
     def _get(self, path: str):
         """Returns None on any failure. A panel that raised when the backend
         was restarting would be useless precisely when an operator most wants
-        to be watching."""
+        to be watching.
+
+        A 403 is surfaced rather than swallowed, though - silently showing
+        empty panes to an unauthorized operator would look like a dead system
+        instead of a refused one."""
         try:
-            response = requests.get(f"{self.base_url}{path}", timeout=REQUEST_TIMEOUT_SECONDS)
+            response = requests.get(
+                f"{self.base_url}{path}", headers=self._headers(), timeout=REQUEST_TIMEOUT_SECONDS
+            )
+            if response.status_code in (401, 403):
+                self._denied = True
+                return None
             response.raise_for_status()
+            self._denied = False
             return response.json()
         except requests.RequestException:
             return None
@@ -200,11 +242,18 @@ class ControlPanel:
         self.root.after(POLL_INTERVAL_MS, self._poll)
 
     def _set_offline(self, offline: bool):
+        """Three states, not two. "Refused" and "unreachable" need different
+        fixes - one is a credential problem, the other a process problem - and
+        an operator staring at empty panes deserves to know which."""
         self._offline = offline
-        if offline:
+        if offline and self._denied:
+            self.status.configure(
+                text=f"signed in as {self.username or '(nobody)'} but refused: this account is not a "
+                     f"configured superuser (MY_AI_ADMIN_USERS)", fg="#b00")
+        elif offline:
             self.status.configure(text=f"backend unreachable at {self.base_url} - retrying", fg="#b00")
         else:
-            self.status.configure(text=f"connected to {self.base_url}", fg="#060")
+            self.status.configure(text=f"connected to {self.base_url} as {self.username}", fg="#060")
 
     def _refresh_agents(self, agents: list[dict]):
         rows = [render.agent_row(a) for a in agents]
@@ -272,5 +321,53 @@ class ControlPanel:
         self.root.mainloop()
 
 
+def prompt_for_credentials(root: tk.Tk, base_url: str) -> tuple[str, str] | None:
+    """A modal sign-in, so no superuser credential is ever stored anywhere.
+
+    Read from the operator each time rather than from an environment variable
+    or a config file: a cached admin password turns "someone opened the panel
+    once" into standing access to retire agents and read every conversation."""
+    dialog = tk.Toplevel(root)
+    dialog.title("Sign in")
+    dialog.transient(root)
+    dialog.grab_set()
+    result: dict = {}
+
+    tk.Label(dialog, text=f"Superuser sign-in for {base_url}").grid(row=0, column=0, columnspan=2, padx=12, pady=(12, 8))
+    tk.Label(dialog, text="Username").grid(row=1, column=0, sticky="e", padx=(12, 4), pady=4)
+    tk.Label(dialog, text="Password").grid(row=2, column=0, sticky="e", padx=(12, 4), pady=4)
+    username_entry = tk.Entry(dialog, width=28)
+    password_entry = tk.Entry(dialog, width=28, show="*")
+    username_entry.grid(row=1, column=1, padx=(0, 12), pady=4)
+    password_entry.grid(row=2, column=1, padx=(0, 12), pady=4)
+    username_entry.focus_set()
+
+    def submit(_event=None):
+        result["credentials"] = (username_entry.get().strip(), password_entry.get())
+        dialog.destroy()
+
+    tk.Button(dialog, text="Sign in", command=submit).grid(row=3, column=0, columnspan=2, pady=(8, 12))
+    dialog.bind("<Return>", submit)
+    root.wait_window(dialog)
+    return result.get("credentials")
+
+
+def main() -> None:
+    panel = ControlPanel()
+    panel.root.withdraw()
+    credentials = prompt_for_credentials(panel.root, panel.base_url)
+    if credentials is None:
+        panel.root.destroy()
+        return
+    error = panel.sign_in(*credentials)
+    panel.root.deiconify()
+    if error:
+        # Not fatal. The panel still opens and its status line explains the
+        # refusal - an operator who mistyped a password should see why, not a
+        # window that vanishes.
+        panel.status.configure(text=f"sign-in failed: {error}", fg="#b00")
+    panel.run()
+
+
 if __name__ == "__main__":
-    ControlPanel().run()
+    main()

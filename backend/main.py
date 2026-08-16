@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from app import admin_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
 from app.model_gateway import call_reasoning_model
@@ -97,6 +98,24 @@ def get_current_user(authorization: str | None = Header(default=None)) -> str:
     username = sessions.validate(token)
     if username is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return username
+
+
+def require_admin(username: str = Depends(get_current_user)) -> str:
+    """Gate for every /admin route (addendum 14 §7).
+
+    Built on the existing session auth rather than a parallel shared secret, so
+    there is no second credential type to store, rotate, or leak - and so the
+    audit trail records *which person* acted rather than a role name any client
+    could type.
+
+    Two distinct refusals, because they need different fixes: nobody is
+    configured as an admin, versus this account is not one of them. Collapsing
+    them into a single message would leave an operator guessing which."""
+    if not admin_auth.admin_usernames():
+        raise HTTPException(status_code=403, detail=admin_auth.NO_ADMINS_CONFIGURED)
+    if not admin_auth.is_admin(username):
+        raise HTTPException(status_code=403, detail=admin_auth.NOT_AN_ADMIN)
     return username
 
 
@@ -329,12 +348,12 @@ def list_activity(username: str = Depends(get_current_user)):
 
 
 @app.get("/admin/clients")
-def list_clients():
+def list_clients(admin: str = Depends(require_admin)):
     return {"clients": transcripts.list_clients()}
 
 
 @app.get("/admin/clients/{username}/transcript")
-def get_client_transcript(username: str):
+def get_client_transcript(username: str, admin: str = Depends(require_admin)):
     return {"username": username, "entries": transcripts.get_transcript(username)}
 
 
@@ -382,7 +401,7 @@ def _parse_json_field(value, default=None):
 
 
 @app.get("/admin/agents")
-def list_agents(conn=Depends(panel_db)):
+def list_agents(conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """The organization as it currently stands, on both axes.
 
     lifecycle_state and process_state are reported separately and never
@@ -409,7 +428,7 @@ def list_agents(conn=Depends(panel_db)):
 
 
 @app.get("/admin/agents/{identity}")
-def describe_agent(identity: str, conn=Depends(panel_db)):
+def describe_agent(identity: str, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Addendum 14 §6's fifteen self-awareness questions for one agent.
 
     Sourced from the organizational record and the role's charter, so it is
@@ -423,7 +442,7 @@ def describe_agent(identity: str, conn=Depends(panel_db)):
 
 
 @app.get("/admin/intelligence")
-def list_intelligence(conn=Depends(panel_db)):
+def list_intelligence(conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Every lens, active or stale, with the evidence behind its standing.
 
     Stale artifacts are included deliberately. A lens that expired is the most
@@ -451,7 +470,7 @@ def list_intelligence(conn=Depends(panel_db)):
 
 
 @app.get("/admin/regime")
-def market_regime(conn=Depends(panel_db)):
+def market_regime(conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """The system's current estimate of market conditions, per security and
     aggregated. This is an estimate the system inferred from observation - it
     was never told the regime the provider generates under."""
@@ -462,7 +481,7 @@ def market_regime(conn=Depends(panel_db)):
 
 
 @app.get("/admin/cross-checks")
-def list_cross_checks(limit: int = 25, conn=Depends(panel_db)):
+def list_cross_checks(limit: int = 25, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Recent Explorer<->Speculator contracts, both findings intact.
 
     Returned unreconciled, exactly as stored. The panel must show two claims
@@ -490,7 +509,7 @@ def list_cross_checks(limit: int = 25, conn=Depends(panel_db)):
 
 
 @app.get("/admin/discovery")
-def discovery_activity(limit: int = 25, conn=Depends(panel_db)):
+def discovery_activity(limit: int = 25, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """What the discovery slice has actually produced: the pending queue, and
     the most recent analyses with their grades."""
     results = conn.fetchall(
@@ -522,11 +541,10 @@ def discovery_activity(limit: int = 25, conn=Depends(panel_db)):
 
 class AskRequest(BaseModel):
     question: str
-    asked_by: str = "operator"
 
 
 @app.post("/admin/agents/{identity}/uqi")
-def ask_agent(identity: str, request: AskRequest, conn=Depends(panel_db)):
+def ask_agent(identity: str, request: AskRequest, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Put a question to a specific running agent.
 
     Returns immediately with a request id rather than blocking. The agent
@@ -539,12 +557,12 @@ def ask_agent(identity: str, request: AskRequest, conn=Depends(panel_db)):
     operator error worth surfacing, not a question left to time out."""
     if fi_db.get_agent(conn, identity) is None:
         raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
-    request_id = fi_db.ask_agent(conn, request.asked_by, identity, request.question)
+    request_id = fi_db.ask_agent(conn, admin, identity, request.question)
     return {"request_id": request_id, "status": fi_db.UQI_PENDING}
 
 
 @app.get("/admin/uqi/{request_id}")
-def get_uqi_answer(request_id: int, conn=Depends(panel_db)):
+def get_uqi_answer(request_id: int, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Poll one question for its answer.
 
     Expiry runs here rather than on a timer: the asker is the only party that
@@ -571,7 +589,7 @@ def get_uqi_answer(request_id: int, conn=Depends(panel_db)):
 
 
 @app.get("/admin/uqi")
-def list_uqi_history(limit: int = 25, conn=Depends(panel_db)):
+def list_uqi_history(limit: int = 25, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """The audit trail §7 requires: every question asked and how it was
     answered, newest first."""
     return {"requests": fi_db.list_uqi_requests(conn, limit=limit)}
@@ -592,16 +610,12 @@ def list_uqi_history(limit: int = 25, conn=Depends(panel_db)):
 # Filing a directive also buys auditability for free. Every action lands in
 # coo_directives with who asked, why, and what outcome the Controller recorded.
 
-OPERATOR_REQUESTER = "operator"
-
-
 class LifecycleRequest(BaseModel):
     reason: str
-    requested_by: str = OPERATOR_REQUESTER
 
 
 @app.post("/admin/agents/{identity}/retire")
-def retire_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db)):
+def retire_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Ask the Controller to stand this agent down.
 
     Non-destructive and reversible: the agent keeps its permanent identity,
@@ -618,14 +632,14 @@ def retire_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db
         raise HTTPException(status_code=409, detail=f"{identity} is already dormant")
 
     directive_id = fi_db.enqueue_directive(
-        conn, "retire", requested_by=request.requested_by,
+        conn, "retire", requested_by=admin,
         target_role=agent["role"], target_identity=identity, reason=request.reason,
     )
     return {"directive_id": directive_id, "status": "pending", "executed_by": "controller"}
 
 
 @app.post("/admin/agents/{identity}/resume")
-def resume_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db)):
+def resume_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Ask the Controller to return this agent to service.
 
     Restores organizational standing only. The process comes back because COO's
@@ -636,7 +650,7 @@ def resume_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db
         raise HTTPException(status_code=409, detail=f"{identity} is not dormant")
 
     directive_id = fi_db.enqueue_directive(
-        conn, "resume", requested_by=request.requested_by,
+        conn, "resume", requested_by=admin,
         target_role=agent["role"], target_identity=identity, reason=request.reason,
     )
     return {"directive_id": directive_id, "status": "pending", "executed_by": "controller"}
@@ -650,7 +664,7 @@ def _require_agent(conn, identity: str) -> dict:
 
 
 @app.get("/admin/directives")
-def list_directives(limit: int = 25, conn=Depends(panel_db)):
+def list_directives(limit: int = 25, conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """Pending and recently completed lifecycle actions - who asked, why, and
     what the Controller made of it. The audit trail for everything the panel
     can cause."""
