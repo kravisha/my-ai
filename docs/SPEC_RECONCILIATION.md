@@ -16,12 +16,13 @@ Last updated: 2026-08-16.
 
 ## 1. Document precedence
 
-| Set | Addenda | Status |
+| Layer | Document | Status |
 |---|---|---|
-| Original | 1 | Base My AI product (voice/universal-agent). Unrelated to Financial Intelligence; historical. |
-| First FI set | 2–4 | **Superseded** by addenda 5–10 (per addendum 5's header). Historical only. |
-| Second FI set (2026-08-14) | 5–10 | Canonical, except where addenda 11–14 explicitly clarify — see §2. |
-| Third FI set (2026-08-15) | 11–14 | Canonical. Where these conflict with 5–10, these win. |
+| **Constitutional** | `docs/JARVIS_CONSTITUTION.md` (2026-08-16) | **Supreme.** "The constitution is the durable design authority." Governs principles; the addenda describe construction. Where they conflict, the constitution governs and the addendum is reconciled to it. Gaps tracked in `docs/JARVIS_GAP_ANALYSIS.md` |
+| Architectural | Original addendum 1 | Base My AI product (voice/universal-agent). Unrelated to Financial Intelligence; historical. |
+| Architectural | First FI set, addenda 2–4 | **Superseded** by addenda 5–10 (per addendum 5's header). Historical only. |
+| Architectural | Second FI set (2026-08-14), addenda 5–10 | Canonical, except where addenda 11–14 explicitly clarify — see §2. |
+| Architectural | Third FI set (2026-08-15), addenda 11–14 | Canonical. Where these conflict with 5–10, these win. |
 
 Within the newest set: addendum 11 is the organizational constitution, 12 the integration spec
 (its §21 Pre-Alpha task list drives current work), 13 the training design, 14 the acceptance criteria.
