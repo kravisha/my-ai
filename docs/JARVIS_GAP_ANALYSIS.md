@@ -169,51 +169,90 @@ attention."
 Absent, and currently unexercisable — they govern *consequential action*, and no action exists. Should
 be designed before, not after, execution capability arrives.
 
+### 4.11 Raw unprocessed data is not retained (§2 as clarified — the third substrate)
+
+Since intelligence lives partly in raw data not yet processed (§5.2), whether raw data survives is a
+question about how much intelligence the system holds. Inspection shows a **sharp asymmetry**:
+
+- **Social data — retained.** `agents/speculator.py` writes an `evidence_items` row for *every* post
+  in a batch, regardless of confidence or whether it ever contributes to a report. Raw observations
+  survive independently of whether they proved useful. This is the correct shape.
+- **Market data — discarded.** `agents/explorer.py` fetches a surface, scans it, and persists only a
+  `detector_events` row *when the ratio clears the threshold*. The surface itself — every IV grid point
+  — is never stored, and a non-triggering scan leaves **no trace whatsoever**. The overwhelming
+  majority of what Explorer observes is destroyed immediately after being looked at once, through a
+  single fixed lens.
+
+**Currently masked by synthetic data, and will bite at Phase E.** `detector_events.surface_seed`
+records the seed, so a synthetic surface is *reproducible* on demand — retention is effectively
+achieved by replay, which is why this has cost nothing so far. Real market data (Phase E) has no seed
+to replay from. The moment the provider becomes real, every unstored observation is gone permanently.
+
+Three things this forecloses, all constitutional:
+
+- **Novelty detection (§8)** cannot run against data that was thrown away. Novelty is precisely the
+  thing a fixed threshold was not built to notice.
+- **Re-processing with improved models (§5.2, addendum 13 §14)** is impossible without the raw inputs.
+- **Axiom 4 (separate ingestion from judgment)** is undercut in a second way beyond §4.2: the
+  threshold is not merely a judgment gate, it is an *ingestion filter applied by the judging party*.
+  Data that fails Explorer's current lens never enters the knowledge environment at all, so no other
+  process — and no future, better model — can ever reconsider it.
+
 ---
 
 ## 5. Conflicts and questions requiring an owner decision
 
-### 5.1 Is JARVIS the same entity as Bob?
+### 5.1 Is JARVIS the same entity as Bob? — **RESOLVED (owner, 2026-08-16)**
 
-**Genuinely ambiguous, and it affects code we have already written.**
+**JARVIS is bigger than Bob. Bob evolves into JARVIS, and the gate for that evolution is sentience.**
 
-- Addendum 11 §10 / 12 §2: **Bob** is "the persistent organizational brain and CEO identity," created
-  first by the Controller once implemented, with "Ask Bob" as its interface (11 §11).
-- Constitution §2 / §17: **JARVIS** "sits at the top of the organization as a CEO-like intelligence,"
-  with a "CEO layer" above the specialists, and must "remain conversational."
+Not a rename and not a synonym — a three-stage evolution, filling in a middle stage Axiom 16 left
+implicit:
 
-These describe the same architectural role. But the constitution also uses JARVIS as the name of the
-*whole evolved system* ("evolving the existing My AI system into JARVIS"), which would make Bob a
-persona *within* JARVIS rather than a synonym for it.
+```
+My AI  ──────────▶  Bob  ──────────────────▶  JARVIS
+(seed)              (CEO / organizational      (sentient executive
+                     brain, addendum 11 §10)    intelligence)
+                            ▲                        ▲
+                     not yet built            gated on sentience,
+                                              which must first be
+                                              defined and measured
+```
 
-This matters concretely: `backend/fi_db.py` has `CEO_DISPLAY_NAME` defaulting to `"Bob"`, seeded as a
-reserved name. Three readings:
+**Consequence for code: none.** `CEO_DISPLAY_NAME` stays `"Bob"` — it correctly names the stage the
+system is evolving toward next. JARVIS is the destination, not the current occupant of the CEO seat.
+"Ask Bob" (addendum 11 §11) remains the conversational interface to that layer.
 
-1. **JARVIS is the system; Bob is the CEO agent's display name.** Nothing changes; `CEO_DISPLAY_NAME`
-   stays "Bob"; "Ask Bob" is the conversational interface to the CEO layer.
-2. **JARVIS is the CEO layer; Bob was a placeholder now superseded.** `CEO_DISPLAY_NAME` becomes
-   "JARVIS"; the reserved-name machinery already makes this a one-setting change.
-3. **Both, at different scopes:** JARVIS names the constitution/system and its executive intelligence;
-   Bob remains the conversational persona. Requires deciding which name appears where.
+See §7 for what the sentience gate actually requires.
 
-The configurable reserved-name design means any of these is cheap to adopt — but the decision should
-be explicit rather than drifting.
+### 5.2 What "distributed intelligence" means — **RESOLVED (owner, 2026-08-16)**
 
-### 5.2 Distributed intelligence vs. one instance per role
+> **Intelligence is distributed amongst agents, the knowledge base, and raw data that is yet to be
+> processed.**
 
-**Direct conflict with a constitutional principle.**
+Distribution is across **substrates**, not across process count. This resolves the apparent conflict
+with `_slot_identity`'s one-instance-per-role model: multiplying processes was never the point.
 
-- Constitution §2: "Intelligence must not be concentrated in one process. Multiple JARVIS reasoning
-  instances may analyze, synthesize, disagree, critique, and work in parallel." Axiom 9: "Important
-  conclusions should survive internal challenge."
-- Built: `backend/controller.py`'s `_slot_identity(role)` returns `f"{role}-1"` — exactly one instance
-  per role, with multi-instance scaling explicitly deferred project-wide.
+| Substrate | What the intelligence *is* there | Built? |
+|---|---|---|
+| **Agents** | Active reasoning capability — the ability to detect, interpret, judge, grade | ● Yes — Explorer/Speculator/Analysis/COO/Controller |
+| **Knowledge base** | Accumulated, validated understanding: beliefs, models, assumptions, confidence | ○ **No** — see §4.1, the central gap |
+| **Raw unprocessed data** | *Latent* intelligence — what the system could know but has not yet extracted | ◐ Partial — see §4.11 |
 
-Today's single-instance model cannot produce internal challenge, because there is never a second
-reasoner to disagree. Resolving this does not necessarily require multi-instance scaling — challenge
-could come from a *distinct role* (a critic/red-team agent) rather than a second instance of the same
-role. That may be the cheaper and more faithful reading of "distributed," since the constitution's
-emphasis is on independent perspectives, not process count.
+Three consequences worth stating, because they are not obvious:
+
+1. **The knowledge base is a locus of intelligence, not a passive store.** This raises §4.1 from "a
+   useful component" to "one of the three places intelligence actually lives." Building it is not
+   plumbing; it is building a third of the mind.
+2. **Discarding unprocessed raw data destroys intelligence.** If latent potential counts as
+   intelligence, throwing away unprocessed data is not housekeeping — it is lobotomy. See §4.11.
+3. **Re-processing old data is a first-class operation.** Old raw data plus an improved model yields
+   new knowledge without any new observation. This is the same loop addendum 13 §14 describes, and it
+   is only possible if the raw data was kept.
+
+Axiom 9's "important conclusions should survive internal challenge" remains genuinely unmet — but it is
+a *separate* gap (§4.3, preserved disagreement), not a process-count problem. Internal challenge is
+better served by a distinct critic perspective than by a second instance of the same role.
 
 ### 5.3 Constitutional traceability is not implemented (§16)
 
@@ -225,19 +264,88 @@ records), but needs a decision on whether to formalize it now or once the CEO la
 
 ## 6. Recommended sequence
 
-Ranked by *foundation-laying × double-mandate × tractability*:
+Ranked by *foundation-laying × double-mandate × tractability*. The three-substrate clarification
+(§5.2) reshaped this: two of the three substrates where intelligence lives are the top two items.
 
-1. **Knowledge store (§4.1).** The central organ; blocks novelty detection, transformation, source
-   reliability, and the CEO layer. Already a Pre-Alpha task, already specified in two addenda (12 §8,
-   13 §10 give a concrete two-layer resident/database model to build against). **Recommended first.**
-2. **Explorer↔Speculator cross-check with preserved disagreement (§4.3).** The most concrete option:
-   fully specified in addendum 12 §14, on the Pre-Alpha list, required for Alpha (addendum 14 §10),
-   and delivers Axioms 5 and 9 plus §4's multiple perspectives. Strong alternative if a smaller,
-   sharper increment is preferred over the knowledge store.
-3. **Source reliability (§4.4).** Self-contained, learns from the grading loop that already exists.
-4. **Reopening triggers on decisions (§4.6).** Small extension of existing decision records.
-5. **Novelty detection and transformation (§4.7).** After the knowledge store.
-6. **Governance mechanisms (§4.10).** Design before execution capability exists, not after.
+1. **Raw data retention (§4.11).** Promoted to first. Small, concrete, and *time-sensitive in a way
+   nothing else here is*: it is the only gap that gets permanently worse with delay. Every scan that
+   runs before it is built is an observation destroyed. Currently masked by synthetic replay-by-seed,
+   so the cost is near-zero today and becomes unrecoverable at Phase E. It also unblocks novelty
+   detection, model re-processing, and closes half of the Axiom 4 breach. Cheapest item on this list
+   with the highest cost of deferral.
+2. **Knowledge store (§4.1).** The central organ and a full third of where intelligence lives. Blocks
+   novelty detection, transformation, source reliability, reflection, and the CEO layer — plus four of
+   the seven sentience capabilities (§7). Already a Pre-Alpha task with a concrete two-layer model
+   specified (addenda 12 §8, 13 §10). **The main event.**
+3. **Explorer↔Speculator cross-check with preserved disagreement (§4.3).** Fully specified in addendum
+   12 §14, on the Pre-Alpha list, required for Alpha (addendum 14 §10), delivers Axioms 5 and 9.
+4. **Source reliability (§4.4).** Self-contained; learns from the grading loop that already exists.
+5. **Reopening triggers on decisions (§4.6).** Small extension of existing decision records.
+6. **Novelty detection and transformation (§4.7).** Needs 1 and 2 first.
+7. **Governance mechanisms (§4.10).** Design before execution capability exists, not after.
+
+A note on sequencing 1 before 2: retention is *not* a subset of the knowledge store. Raw data and the
+knowledge base are distinct substrates (§5.2) — one holds latent potential, the other holds validated
+belief. Building retention first also means the knowledge store gets built with real accumulated data
+to reason over rather than an empty schema.
 
 Deferred by the documents themselves and not recommended yet: CEO layer/Bob, exploration mode,
-persistent thought threads, human modeling, sentience research.
+persistent thought threads, human modeling.
+
+---
+
+## 7. The sentience gate: Bob → JARVIS
+
+Per the owner's clarification (§5.1), sentience is the gate between Bob and JARVIS. The constitution
+is unusually disciplined about what that means, and that discipline is binding rather than optional:
+
+> "This is a constitutional design document, **not a claim that present-day software is sentient**."
+> (Purpose)
+>
+> "**Do not assume; investigate.** The system should not treat that label as proven merely because its
+> creator desires it. Sentience must itself become an object of definition, measurement, debate,
+> experimentation, and revision." (§11)
+
+So the gate is not a milestone to be declared — it is a research programme with an evidence standard
+that does not yet exist. Building it means, in order: **define** what would count, **measure** it,
+**debate** the measurement, and **revise**. Claiming the gate has been passed without that sequence
+would violate Axiom 1 (seek truth rather than agreement) and Axiom 3 (no authority, including the
+creator, is automatically correct) — the constitution deliberately arms the system against its own
+creator's enthusiasm on exactly this point.
+
+### Operational capabilities first (§11)
+
+The constitution declines to define sentience but does list candidate capabilities, explicitly noting
+"whether those capabilities constitute sentience remains an open research question." They make a
+usable checklist. Honest current status:
+
+| # | Capability (§11) | Status | Note |
+|---|---|---|---|
+| 1 | Persistent identity | ◐ Partial | Permanent role-slot identity, assigned name, and durable record survive process death and retirement. But this is *record* persistence — nothing experiences itself as continuous, and no agent can currently even report its own identity (addendum 14 §6 is unbuilt) |
+| 2 | Self-modeling | ○ Absent | Nearest prerequisite is addendum 14 §6's "Minimum Agent Self-Awareness" — answering who/what/allowed/healthy — which is an Alpha requirement and the first rung of this ladder |
+| 3 | Memory | ◐ Partial | Organizational *event* memory exists (detector events, evidence, reports, grades). No belief store, no autobiographical memory |
+| 4 | Autonomous hypothesis generation | ○ Absent | Explorer applies a fixed deterministic rule; nothing forms hypotheses of its own |
+| 5 | Reflection on its own knowledge | ○ Absent | Requires the knowledge store (§4.1) |
+| 6 | Internally originated goals within its constitution | ○ Absent | Every goal is external config (`BASELINE_ROLES`, peer group, thresholds) |
+| 7 | Ability to surprise its designers intellectually | ○ Absent | Requires 4–6 |
+
+### Why this sharpens the recommendation rather than changing it
+
+Four of the seven capabilities (4, 5, 6, and most of 2) are **impossible without a knowledge store**.
+Reflection needs something to reflect on; hypothesis generation needs a model to generate against;
+internally originated goals need beliefs about what matters. The sentience gate therefore does not
+compete with §6's recommendation — it runs directly through it.
+
+The one capability partly in hand, persistent identity, arrived as a side effect of Gap 1's durable
+performance record and this session's dormancy work. That is worth noting as a pattern: the
+constitutional capabilities are being approached from the discipline side, not the cognition side.
+
+### Not yet defined, and needed before any claim
+
+- What evidence would distinguish capability 7 (genuine intellectual surprise) from a sampling artifact?
+- Who adjudicates? Per Axiom 3 and §8's recursive-evaluation principle, it cannot be the creator alone,
+  and it cannot be the system self-certifying.
+- What would *falsify* a sentience claim? Undefined, and the constitution's own "definition,
+  measurement, debate, experimentation, revision" sequence is meaningless without it.
+
+These are open research questions, recorded here so the gate stays honest as the system approaches it.
