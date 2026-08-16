@@ -75,7 +75,7 @@ a spawned subprocess.
 - **New (addendum 11 §9, addendum 12 §4):** "Retire means serialize the agent's state and place it
   into a dormant/sleep state. Retirement is non-destructive and reversible." Plus a **resume** path,
   and "destructive deletion is a separate, exceptional, rare maintenance operation."
-- **Resolution (owner decision, 2026-08-16): adopted.** Implemented in commit `b45697a`.
+- **Resolution (owner decision, 2026-08-16): adopted.** Implemented in commit `7dfc55f`.
 
 The owner's framing, which is sharper than the documents' own wording: **implement lifecycle states
 separate from process liveness. Let processes exit, but preserve agent identity, status, and history
@@ -133,8 +133,8 @@ Addendum 9 (on-demand portfolio analysis) remains canonical for the analysis con
 | CEO display name configurable, default Bob, not hard-coded | 12 §10, §21 | **Done** — `CEO_DISPLAY_NAME`, seeded reserved |
 | Versioned, expandable Security Universe | 12 §10, §21 | **Done (metadata only)** — `security_universe`; no consumer yet, see §5 |
 | Durable performance record independent of process instance | 5 §4 | **Done** — permanent identity, commit `38273a6` |
-| Retirement is non-destructive, reversible dormancy | 11 §9, 12 §4 | **Done** — commit `b45697a`, see §2.2 |
-| Lifecycle state separate from process liveness | owner, 11 §2 | **Done** — commit `b45697a` |
+| Retirement is non-destructive, reversible dormancy | 11 §9, 12 §4 | **Done** — commit `7dfc55f`, see §2.2 |
+| Lifecycle state separate from process liveness | owner, 11 §2 | **Done** — commit `7dfc55f` |
 | Resume path restores a retired agent | 11 §9 | **Done** — `resume_agent` + `resume` directive |
 | Destructive deletion is separate/exceptional | 11 §9, 12 §4 | **Done** — nothing in the codebase deletes an agent record |
 | Provenance from evidence → event → report → analysis → grade | 5 §3 | **Done** — Phase C tables, commit `2512b2f` |
