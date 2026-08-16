@@ -6,6 +6,8 @@ subprocess tests)."""
 import json
 import time
 
+import pytest
+
 from agents.coo import (
     BASELINE_ROLES,
     _coo_work,
@@ -423,3 +425,140 @@ def test_intelligence_health_is_a_noop_with_no_reports_at_all(conn):
     """Startup state: seeded lenses, nothing graded yet."""
     _evaluate_intelligence_health(conn)
     assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND, status="active")) == 2
+
+
+# --- intelligence health: the conditions half (regime) ---
+
+
+def _observe_regime(conn, mean_iv, dispersion, cycles):
+    for _ in range(cycles):
+        fi_db.update_market_regime(conn, "SYN1", mean_iv, dispersion)
+
+
+def _regime_of(conn):
+    lens = conn.fetchone(
+        "SELECT * FROM intelligence_artifacts WHERE name = ?", (fi_db.LENS_IV_RATIO_NAME,)
+    )
+    return json.loads(lens["validity_conditions"])["regime"]
+
+
+def _make_lens_perform_well(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    minimum = json.loads(lens["validity_conditions"])["min_graded_reports"]
+    for _ in range(minimum):
+        _graded_report_for_lens(conn, lens["id"], 0.9, True)
+
+
+def test_regime_does_not_bind_below_min_observations(conn):
+    """An estimate built from a handful of surfaces would flag drift that is
+    really just the estimate still converging."""
+    _make_lens_perform_well(conn)
+    minimum = fi_db.DEFAULT_MARKET_REGIME_CONDITIONS["min_observations"]
+    _observe_regime(conn, 0.2855, 0.0116, minimum - 1)
+
+    _evaluate_intelligence_health(conn)
+
+    assert _regime_of(conn)["observed_under"] is None
+
+
+def test_regime_does_not_bind_while_performance_is_unproven(conn):
+    """A lens earns its baseline by being observed *working*. Binding one that
+    has never been graded would record 'these are the conditions it works
+    under' on no evidence that it works at all."""
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+
+    _evaluate_intelligence_health(conn)
+
+    assert _regime_of(conn)["observed_under"] is None
+
+
+def test_regime_binds_once_observations_and_performance_both_hold(conn):
+    _make_lens_perform_well(conn)
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+
+    _evaluate_intelligence_health(conn)
+
+    regime = _regime_of(conn)
+    assert regime["observed_under"]["mean_iv"] == pytest.approx(0.2855)
+    assert regime["bound_at"] is not None
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is not None
+
+
+def test_regime_within_tolerance_leaves_the_lens_active(conn):
+    _make_lens_perform_well(conn)
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+    _evaluate_intelligence_health(conn)  # binds
+
+    _observe_regime(conn, 0.2900, 0.0120, 40)  # ordinary jitter
+    _evaluate_intelligence_health(conn)
+
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is not None
+
+
+def test_regime_level_shift_marks_the_lens_stale_with_the_numbers(conn):
+    """A lens invalidated by conditions changing, not by bad grades - the
+    grades here are excellent throughout."""
+    _make_lens_perform_well(conn)
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+    _evaluate_intelligence_health(conn)
+
+    _observe_regime(conn, 0.4850, 0.0116, 200)  # sustained level shift
+    _evaluate_intelligence_health(conn)
+
+    row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE name = ?", (fi_db.LENS_IV_RATIO_NAME,))
+    assert row["status"] == "stale"
+    assert "mean IV moved" in row["staleness_reason"]
+    assert "0.2855" in row["staleness_reason"]  # the before, not just the verdict
+
+
+def test_regime_dispersion_shift_alone_marks_the_lens_stale(conn):
+    """Dispersion is why *this* lens is regime-dependent: when the surface
+    gets noisier, peak/baseline ratios rise generally and a fixed threshold
+    starts firing on noise - even with the level unchanged."""
+    _make_lens_perform_well(conn)
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+    _evaluate_intelligence_health(conn)
+
+    _observe_regime(conn, 0.2855, 0.0800, 200)
+    _evaluate_intelligence_health(conn)
+
+    row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE name = ?", (fi_db.LENS_IV_RATIO_NAME,))
+    assert row["status"] == "stale"
+    assert "IV dispersion moved" in row["staleness_reason"]
+
+
+def test_regime_staleness_never_changes_the_lens_value(conn):
+    """Flags, never fixes - proposing a corrected threshold for the new regime
+    is a Trainer's job behind validation (addendum 13 §14)."""
+    _make_lens_perform_well(conn)
+    original_value = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["value"]
+    _observe_regime(conn, 0.2855, 0.0116, 40)
+    _evaluate_intelligence_health(conn)
+    _observe_regime(conn, 0.4850, 0.0116, 200)
+    _evaluate_intelligence_health(conn)
+
+    row = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE name = ?", (fi_db.LENS_IV_RATIO_NAME,))
+    assert row["status"] == "stale"
+    assert row["value"] == original_value
+
+
+def test_an_unbound_lens_is_never_marked_stale_for_regime_reasons(conn):
+    """With no baseline there is nothing to diverge *from*. Wild conditions
+    plus an unbound lens must be a no-op, not a staleness verdict."""
+    _observe_regime(conn, 0.9000, 0.2000, 300)
+
+    _evaluate_intelligence_health(conn)
+
+    assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is not None
+
+
+def test_a_lens_without_regime_conditions_is_untouched_by_market_drift(conn):
+    """The speculator's social lens must not expire because the option
+    surface moved."""
+    _observe_regime(conn, 0.9000, 0.2000, 300)
+
+    _evaluate_intelligence_health(conn)
+
+    social = fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)
+    assert social is not None
+    assert "regime" not in json.loads(social["validity_conditions"])

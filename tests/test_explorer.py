@@ -318,3 +318,58 @@ def test_explorer_falls_back_to_the_seed_when_the_lens_is_stale(conn, monkeypatc
     assert event is not None, "detection must continue despite the lens being flagged stale"
     assert event["threshold"] == fi_db.LENS_IV_RATIO_SEED
     assert event["lens_artifact_id"] is None
+
+
+# --- regime observation: Explorer observes, it does not judge ---
+
+
+def test_explorer_observes_regime_for_every_security_including_quiet_ones(conn, monkeypatch):
+    """Regime is a property of the whole market. Sampling only the securities
+    that tripped the detector would characterize anomalies, not conditions."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1", "SYN2", "SYN3"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    observed = {row["security"] for row in fi_db.list_market_regime(conn)}
+    assert observed == {"SYN1", "SYN2", "SYN3"}
+
+
+def test_explorer_regime_observation_tracks_the_provider_regime(conn, monkeypatch):
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock())
+    provider = SyntheticMarketDataProvider(seed=42, regime={"base_level": 0.45})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    # ~0.45 base + skew/term contributions, nowhere near the 0.25 default
+    assert fi_db.get_market_regime(conn, "SYN1")["mean_iv"] > 0.44
+
+
+def test_explorer_accumulates_regime_observations_across_cycles(conn, monkeypatch):
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock())
+    provider = SyntheticMarketDataProvider(seed=42)
+
+    for _ in range(5):
+        _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert fi_db.get_market_regime(conn, "SYN1")["observation_count"] == 5
+
+
+def test_explorer_never_binds_or_marks_a_lens_stale_itself(conn, monkeypatch):
+    """Axiom 4: Explorer observes a deterministic statistic. The judgment
+    'these conditions invalidate the lens' belongs to COO - Explorer judging
+    the lens it detects with would be the self-certification addendum 11 §8
+    forbids."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    for _ in range(60):
+        _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    assert lens is not None  # still active
+    assert json.loads(lens["validity_conditions"])["regime"]["observed_under"] is None  # still unbound

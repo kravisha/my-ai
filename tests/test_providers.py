@@ -1,7 +1,17 @@
 """Unit tests for providers/market_data.py and providers/social_data.py -
 pure logic, no DB or network involved."""
 
-from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataProvider
+import statistics
+
+import pytest
+
+from providers.market_data import (
+    BASE_LEVEL,
+    EXPIRIES_DAYS,
+    NOISE_AMPLITUDE,
+    STRIKES,
+    SyntheticMarketDataProvider,
+)
 from providers.social_data import SyntheticSocialDataProvider
 
 
@@ -112,3 +122,38 @@ def test_social_posts_scoped_to_requested_security():
     p = SyntheticSocialDataProvider(seed=7)
     posts = p.fetch_recent("SYN1")
     assert all(post.security == "SYN1" for post in posts)
+
+
+# --- market regime: the provider must be able to change conditions at all ---
+
+
+def test_market_provider_honours_a_regime_override():
+    """Without this the whole regime-detection feature would be a detector for
+    a phenomenon that cannot occur - BASE_LEVEL/NOISE_AMPLITUDE were module
+    constants and surfaces are cached permanently."""
+    default = SyntheticMarketDataProvider(seed=42)
+    shifted = SyntheticMarketDataProvider(seed=42, regime={"base_level": 0.45})
+    default_mean = statistics.mean(p.iv for p in default.get_option_surface("SYN1").points)
+    shifted_mean = statistics.mean(p.iv for p in shifted.get_option_surface("SYN1").points)
+    assert shifted_mean - default_mean == pytest.approx(0.20, abs=0.01)
+
+
+def test_market_provider_regime_changes_dispersion_independently_of_level():
+    calm = SyntheticMarketDataProvider(seed=42, regime={"noise_amplitude": 0.005})
+    choppy = SyntheticMarketDataProvider(seed=42, regime={"noise_amplitude": 0.08})
+    calm_points = [p.iv for p in calm.get_option_surface("SYN1").points]
+    choppy_points = [p.iv for p in choppy.get_option_surface("SYN1").points]
+    assert statistics.stdev(choppy_points) > statistics.stdev(calm_points)
+    # level is essentially untouched - the two statistics move independently,
+    # which is what lets a drift check say *which* condition changed
+    assert statistics.mean(choppy_points) == pytest.approx(statistics.mean(calm_points), abs=0.02)
+
+
+def test_market_provider_defaults_match_the_module_constants():
+    """An omitted regime must be exactly the old behaviour - every existing
+    test and calibrated tolerance depends on it."""
+    explicit = SyntheticMarketDataProvider(seed=42, regime={"base_level": BASE_LEVEL, "noise_amplitude": NOISE_AMPLITUDE})
+    implicit = SyntheticMarketDataProvider(seed=42)
+    assert [p.iv for p in explicit.get_option_surface("SYN1").points] == [
+        p.iv for p in implicit.get_option_surface("SYN1").points
+    ]

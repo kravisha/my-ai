@@ -208,9 +208,11 @@ be designed before, not after, execution capability arrives.
 
 > **PARTIALLY CLOSED (2026-08-16).** The two detection thresholds are now intelligence artifacts with
 > provenance, rationale, and validity conditions; grades attribute back to the lens that produced the
-> report; and COO marks a lens stale when its own stated conditions fail. **Still open:** lenses remain
-> externally *originated* (nothing proposes a better value), and the regime half of expiry is unbuilt
-> since no regime detection exists. See the closing note at the end of this section.
+> report; and COO marks a lens stale when its own stated conditions fail. **Both halves of expiry now
+> exist:** performance *and* conditions — the market is characterized from observation, a lens earns a
+> regime baseline by working under it, and COO invalidates it when the market leaves those conditions.
+> **Still open:** lenses remain externally *originated* — nothing proposes a better value. See the two
+> closing notes at the end of this section.
 
 **Was the most serious gap in this document.** Directly implied by §1.1: if intelligence is the lens,
 then the question is not what data the system keeps — it is whether its lenses can be evaluated,
@@ -290,12 +292,72 @@ discarded — evidence that a lens is miscalibrated, now surfaced instead of los
 
 - **Lenses are still externally originated.** The system can now notice a lens is wrong; it cannot
   propose a better one. Doing so is Trainer/HR territory (Phase D) and stays validation-gated.
-- **The regime half of expiry is unbuilt.** `validity_conditions` carries a `regime` key that is
-  deliberately recorded un-evaluated, because no regime detection exists (§4.12). "Intelligence depends
-  on market conditions" is therefore only half-implemented: it can expire on *performance*, not yet on
-  *conditions*.
 - Only the two thresholds are artifacts. The neighborhood radii and `PEER_MIN_COOCCURRING` are still
   constants; they can follow the same pattern now that it is proven.
+
+#### The conditions half — *closed*
+
+"Intelligence depends on market conditions. Market conditions change, and when they change,
+intelligence changes" is now implemented, not just recorded.
+
+The first thing this required was making the change *possible*. `BASE_LEVEL` and `NOISE_AMPLITUDE`
+were module constants and surfaces were cached permanently, so the synthetic market could not change
+regime at all — a regime detector built against it would have been a detector for a phenomenon that
+could never occur, worse than no detector. `SyntheticMarketDataProvider` now takes a `regime`.
+
+The mechanism:
+
+- **Explorer observes, COO judges.** Explorer computes the mean and standard deviation of every
+  surface it scans — including non-triggering ones, since a regime is a property of the whole market
+  and sampling only anomalies would characterize anomalies. It records nothing but the statistic.
+- **`market_regime` is a current estimate, not a log.** One EWMA row per security, revised in place.
+  Storing an observation per security per cycle would be ~4 rows/second of *data*, precisely what
+  "data retention is not imperative" rules out. Deliberately outside `intelligence_artifacts`, whose
+  update semantics are the opposite: artifacts are immutable and superseded, an estimate is revised.
+- **A lens earns its baseline rather than being assigned one.** A seeded lens came from the
+  specification, so the regime it was *derived* under is genuinely unknown and asserting one would be
+  a fabrication. COO instead binds it to the conditions it has been observed *performing acceptably*
+  under. Below `min_observations`, nothing happens at all — the same thin-evidence refusal as the
+  performance arm.
+- **Flags, never fixes.** Divergence marks the lens stale with the before/after numbers; the value is
+  untouched. Proposing a corrected threshold for the new regime is Trainer work behind validation.
+
+Verified end to end against a real running backend across a restart (six agents, real subprocesses,
+real market observation). Bound at `mean_iv=0.2999`; the environment was then changed to a 0.45 base
+level and the backend restarted against the same database. The EWMA migrated 0.2999 → 0.3802 and COO
+marked the lens stale on its own:
+
+> market regime diverged from the conditions this lens was observed working under (468 observations
+> across 4 securities): mean IV moved 0.0803 (from 0.2999 to 0.3802, tolerance 0.08)
+
+Its graded performance at that moment was **fine** — mean overall 0.72, worth-the-compute rate 0.70.
+This is a lens invalidated by *conditions changing*, which the performance arm structurally could not
+have caught.
+
+And the flag was not academic. Measured directly: the identical dislocation that produced a
+peak/baseline ratio of **2.22** under the old regime produces **1.74** under the new one. The fixed
+2.0 threshold stops firing entirely — the lens is not merely degraded, it is blind. COO reached the
+right verdict from conditions alone, without ever seeing that detection had collapsed.
+
+#### Still open after the conditions half
+
+- **The regime arm can be pre-empted by the performance arm.** A lens must pass performance to earn a
+  regime baseline, and a lens marked stale is never regime-evaluated again. Observed live: real
+  Analysis grades the repeated synthetic anomaly at 0.20–0.35 overall with `worth_the_compute=0` every
+  time — correctly, since it is the same bump every cycle — so in the current fixture the performance
+  arm always wins the race and the regime path is unreachable through the unmodified pipeline. The
+  verification above therefore injected passing grades; every other element (observation, EWMA,
+  binding, drift verdict) was the real system's own work. This is a fixture-realism limit rather than
+  a logic error, but a market with genuinely varied dislocations is a prerequisite for the regime arm
+  to matter in practice.
+- **The statistics are crude and meant to be.** Level and dispersion were chosen because they are the
+  specific mechanism by which *this* peak/baseline lens goes wrong. A real characterization would use
+  vol-of-vol, term-structure change, clustering. The mechanism is the contribution; the statistic is
+  replaceable.
+- **No social regime.** Speculator's confidence bar deliberately carries no regime conditions, because
+  nothing here characterizes a social regime — attaching market conditions to a social lens would let
+  option volatility invalidate it on no evidence. That is the same "no detector for a phenomenon we
+  cannot observe" trap avoided above.
 
 ### 4.12 Raw data retention — *demoted* to opportunistic
 

@@ -52,6 +52,19 @@ PEER_MIN_COOCCURRING = int(os.environ.get("FI_PEER_MIN_COOCCURRING", "1"))
 MARKET_PROVIDER_SEED = int(os.environ.get("FI_MARKET_PROVIDER_SEED", "42"))
 SOCIAL_PROVIDER_SEED = int(os.environ.get("FI_SOCIAL_PROVIDER_SEED", "7"))
 
+# The market regime the synthetic provider generates under - *ground truth*
+# the system is never told. Explorer infers a characterization from the
+# surfaces it observes instead (fi_db.market_regime), which is what makes
+# "intelligence depends on market conditions" testable: change these, restart
+# against the same database, and the system should notice the conditions its
+# lens was bound to no longer hold. Both default to providers/market_data.py's
+# module constants when unset.
+MARKET_REGIME = {}
+if os.environ.get("FI_MARKET_BASE_LEVEL"):
+    MARKET_REGIME["base_level"] = float(os.environ["FI_MARKET_BASE_LEVEL"])
+if os.environ.get("FI_MARKET_NOISE_AMPLITUDE"):
+    MARKET_REGIME["noise_amplitude"] = float(os.environ["FI_MARKET_NOISE_AMPLITUDE"])
+
 # Which peer-group securities get a guaranteed detectable dislocation
 # forced onto their synthetic surface (providers/market_data.py's
 # SyntheticMarketDataProvider `anomalies` param) - default empty means a

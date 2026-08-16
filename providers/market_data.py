@@ -34,6 +34,10 @@ from typing import Protocol
 STRIKES = (-0.20, -0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.15, 0.20)
 EXPIRIES_DAYS = (7, 14, 30, 60, 90)
 
+# Defaults describing one market regime. base_level and noise_amplitude are
+# overridable per provider instance (see `regime` below) because a market that
+# cannot change conditions makes regime detection untestable - and a detector
+# for a phenomenon that cannot occur is worse than no detector.
 BASE_LEVEL = 0.25
 SKEW_COEF = 0.15
 TERM_COEF = 0.01
@@ -63,7 +67,7 @@ class MarketDataProvider(Protocol):
 
 
 class SyntheticMarketDataProvider:
-    def __init__(self, seed: int, anomalies: dict[str, dict] | None = None):
+    def __init__(self, seed: int, anomalies: dict[str, dict] | None = None, regime: dict | None = None):
         """anomalies: maps security -> per-security bump config overrides
         (strike_idx/expiry_idx/height/width, each optional - see _generate's
         defaults). Only securities present in this dict get a forced bump;
@@ -71,9 +75,24 @@ class SyntheticMarketDataProvider:
         that security at the default center cell with default height/width -
         two securities both given {} bump at the *same* grid cell, which is
         a genuine "same shape/spike" co-movement fixture, not two unrelated
-        anomalies that happen to coexist."""
+        anomalies that happen to coexist.
+
+        regime: optional {"base_level": float, "noise_amplitude": float}
+        describing the market conditions this provider generates under. This
+        is *ground truth* the provider generates from - the system never sees
+        it, and instead infers a characterization from the surfaces it
+        observes (see agents/explorer.py and fi_db.market_regime). Keeping
+        those separate is the point: the system estimates conditions, it is
+        not told them.
+
+        A regime change means a new provider instance; the per-security cache
+        deliberately stays, since a surface still represents "the market as it
+        currently is" within one regime."""
         self._seed = seed
         self._anomalies = anomalies or {}
+        regime = regime or {}
+        self._base_level = regime.get("base_level", BASE_LEVEL)
+        self._noise_amplitude = regime.get("noise_amplitude", NOISE_AMPLITUDE)
         self._cache: dict[str, OptionSurface] = {}
 
     def get_option_surface(self, security: str, as_of: str | None = None) -> OptionSurface:
@@ -97,8 +116,8 @@ class SyntheticMarketDataProvider:
             for expiry_idx, expiry_days in enumerate(EXPIRIES_DAYS):
                 skew = SKEW_COEF * (strike ** 2)
                 term = TERM_COEF * math.log(expiry_days)
-                noise = rng.uniform(-NOISE_AMPLITUDE, NOISE_AMPLITUDE)
-                iv = BASE_LEVEL + skew + term + noise
+                noise = rng.uniform(-self._noise_amplitude, self._noise_amplitude)
+                iv = self._base_level + skew + term + noise
                 if anomaly_config is not None:
                     dist_sq = (strike_idx - anomaly_strike_idx) ** 2 + (expiry_idx - anomaly_expiry_idx) ** 2
                     iv += height * math.exp(-dist_sq / (2 * width ** 2))

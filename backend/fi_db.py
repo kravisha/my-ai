@@ -50,7 +50,12 @@ from pathlib import Path
 
 from backend.db import Database
 
-DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
+# FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
+# already *sets* this variable for every child process it spawns, so without
+# this the Controller would read one database while claiming to have pointed its
+# agents at another - an externally-set FI_DB_PATH was silently discarded by the
+# one process that owns the registry.
+DB_PATH = Path(os.environ.get("FI_DB_PATH") or (Path(__file__).resolve().parent.parent / "financial_intelligence.db"))
 
 # Bump only when the *meaning* of newly-written rows changes in a way a
 # future reader/grader needs to distinguish from older rows - not on every
@@ -64,7 +69,11 @@ DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 # artifact (lens) that produced them. A v2 detector_event records only the
 # threshold *value* used; a v3 one records *which lens* it came from, so its
 # grades can be attributed back to that lens.
-SCHEMA_VERSION = 3
+# v4 (2026-08-16): market conditions are characterized (market_regime), and a
+# lens can be bound to the regime it was observed working under - so a lens
+# can now expire because *conditions changed*, not only because its grades
+# were poor.
+SCHEMA_VERSION = 4
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -123,17 +132,42 @@ LENS_SPECULATOR_CONFIDENCE_NAME = "speculator_confidence_threshold"
 LENS_IV_RATIO_SEED = float(os.environ.get("FI_IV_RATIO_THRESHOLD", "2.0"))
 LENS_SPECULATOR_CONFIDENCE_SEED = float(os.environ.get("FI_SPECULATOR_CONFIDENCE_THRESHOLD", "0.6"))
 
-# Default validity conditions attached to a seeded lens. Only the first three
-# keys are evaluated (see agents/coo.py's _evaluate_intelligence_health);
-# `regime` is recorded deliberately un-evaluated so that the unbuilt half of
-# "intelligence expires with market conditions" is visible in the data rather
-# than silently omitted.
+# Default validity conditions attached to a seeded lens - the performance half
+# of "intelligence expires", evaluated by agents/coo.py's
+# _evaluate_intelligence_health.
 DEFAULT_LENS_VALIDITY_CONDITIONS = {
     "min_graded_reports": 10,
     "min_mean_overall_score": 0.35,
     "min_worth_the_compute_rate": 0.4,
-    "regime": "not yet evaluable - no regime detection exists (JARVIS gap analysis §4.12)",
 }
+
+# The conditions half, added only to lenses that look at the *market* - see
+# MARKET_LENS_VALIDITY_CONDITIONS below for why that qualifier matters.
+#
+# observed_under is null until earned: a seeded lens came from the
+# specification, so the regime it was *derived* under is genuinely unknown and
+# claiming one would be a fabrication. Instead COO binds the lens to the regime
+# it has been observed *performing acceptably* under, and divergence from that
+# is what invalidates it. Drift tolerances are sized against the synthetic
+# surface (base 0.25, noise +/-0.01, term structure spreading ~0.03) so ordinary
+# jitter cannot trip them but a genuine level or noise shift does.
+DEFAULT_MARKET_REGIME_CONDITIONS = {
+    "observed_under": None,
+    "bound_at": None,
+    "max_mean_iv_drift": 0.08,
+    "max_dispersion_drift": 0.02,
+    "min_observations": 30,
+}
+
+MARKET_LENS_VALIDITY_CONDITIONS = {
+    **DEFAULT_LENS_VALIDITY_CONDITIONS,
+    "regime": DEFAULT_MARKET_REGIME_CONDITIONS,
+}
+
+# EWMA weight for each new regime observation. 0.05 means the estimate follows
+# a sustained shift over a few dozen observations rather than jumping on one
+# surface - regime is a persistent condition, not a tick.
+REGIME_EWMA_ALPHA = float(os.environ.get("FI_REGIME_EWMA_ALPHA", "0.05"))
 
 SCHEMA = """
 -- lifecycle_state and process_state are deliberately two ORTHOGONAL axes
@@ -405,6 +439,25 @@ CREATE TABLE IF NOT EXISTS intelligence_artifacts (
     UNIQUE(name, version)
 );
 
+-- The system's *estimate* of current market conditions, inferred from the
+-- surfaces Explorer observes. Deliberately a current-state table (one row per
+-- security, revised in place) rather than a log: an observation per security
+-- per cycle would be several rows a second of pure data, and "data retention
+-- is not imperative" - only the extracted characterization is intelligence.
+-- An EWMA gives that with no history and no growth.
+--
+-- Kept out of intelligence_artifacts despite being intelligence, because the
+-- update semantics are the opposite: artifacts are immutable and superseded,
+-- a live estimate is continuously revised.
+CREATE TABLE IF NOT EXISTS market_regime (
+    security TEXT PRIMARY KEY,
+    mean_iv REAL NOT NULL,
+    iv_dispersion REAL NOT NULL,
+    observation_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS security_universe (
     symbol TEXT PRIMARY KEY,
     added_at TEXT NOT NULL,
@@ -480,10 +533,18 @@ def _seed_static_metadata(conn: Database) -> None:
     # idempotent *and* non-destructive: once a lens exists - including one that
     # has since been marked stale or had its value revised - re-seeding can
     # never overwrite it or resurrect a superseded value.
-    for name, seed_value, rationale in (
+    #
+    # Only the IV lens carries regime conditions. The speculator's bar looks at
+    # *social* confidence, and nothing in the system characterizes a social
+    # regime - attaching market conditions to it would make market volatility
+    # invalidate a social lens, which is not a claim the evidence supports.
+    # Characterizing a social regime is future work; until then this lens
+    # legitimately expires on performance alone.
+    for name, seed_value, conditions, rationale in (
         (
             LENS_IV_RATIO_NAME,
             LENS_IV_RATIO_SEED,
+            MARKET_LENS_VALIDITY_CONDITIONS,
             "Initial peak-IV / local-baseline-IV ratio from addendum_7 §4, which specifies >= 2.0 as "
             "the initial strong trigger and states the threshold is configurable. Asserted by the "
             "specification, not yet derived from or validated against evidence.",
@@ -491,6 +552,7 @@ def _seed_static_metadata(conn: Database) -> None:
         (
             LENS_SPECULATOR_CONFIDENCE_NAME,
             LENS_SPECULATOR_CONFIDENCE_SEED,
+            DEFAULT_LENS_VALIDITY_CONDITIONS,
             "Initial aggregate-confidence bar for filing social evidence. Chosen as a starting point "
             "during the Phase C build; not derived from evidence.",
         ),
@@ -501,7 +563,7 @@ def _seed_static_metadata(conn: Database) -> None:
             "VALUES (?, ?, ?, 1, ?, ?, ?, 'active', ?)",
             (
                 _now(), LENS_KIND, name, json.dumps(seed_value), rationale,
-                json.dumps(DEFAULT_LENS_VALIDITY_CONDITIONS), SCHEMA_VERSION,
+                json.dumps(conditions), SCHEMA_VERSION,
             ),
         )
 
@@ -1007,6 +1069,91 @@ def lens_performance(conn: Database, artifact_id: int) -> dict:
         "mean_overall_score": row["mean_overall_score"] if row else None,
         "worth_the_compute_rate": row["worth_the_compute_rate"] if row else None,
     }
+
+
+def update_market_regime(
+    conn: Database,
+    security: str,
+    mean_iv: float,
+    iv_dispersion: float,
+    alpha: float = REGIME_EWMA_ALPHA,
+) -> None:
+    """Folds one observation into this security's running characterization.
+
+    The first observation *seeds* the average rather than blending against a
+    zero that was never observed - otherwise the estimate would start wrong
+    and take dozens of cycles to recover, and any early divergence check would
+    be measuring the seeding artifact rather than the market."""
+    existing = conn.fetchone("SELECT * FROM market_regime WHERE security = ?", (security,))
+    if existing is None:
+        conn.execute(
+            "INSERT INTO market_regime (security, mean_iv, iv_dispersion, observation_count, updated_at, schema_version) "
+            "VALUES (?, ?, ?, 1, ?, ?)",
+            (security, mean_iv, iv_dispersion, _now(), SCHEMA_VERSION),
+        )
+        return
+
+    blended_mean = (alpha * mean_iv) + ((1 - alpha) * existing["mean_iv"])
+    blended_dispersion = (alpha * iv_dispersion) + ((1 - alpha) * existing["iv_dispersion"])
+    conn.execute(
+        "UPDATE market_regime SET mean_iv = ?, iv_dispersion = ?, "
+        "observation_count = observation_count + 1, updated_at = ? WHERE security = ?",
+        (blended_mean, blended_dispersion, _now(), security),
+    )
+
+
+def get_market_regime(conn: Database, security: str) -> dict | None:
+    return conn.fetchone("SELECT * FROM market_regime WHERE security = ?", (security,))
+
+
+def list_market_regime(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM market_regime ORDER BY security")
+
+
+def current_market_characterization(conn: Database, securities: list[str] | None = None) -> dict:
+    """The market-wide view a lens is judged against.
+
+    Per-security rows aggregate up to this because the lens is market-wide -
+    one threshold applies to every security, so it has to be evaluated against
+    overall conditions rather than any single name's. observation_count is
+    summed, so the thin-data guard reflects total evidence gathered."""
+    rows = list_market_regime(conn)
+    if securities is not None:
+        rows = [r for r in rows if r["security"] in securities]
+    if not rows:
+        return {"mean_iv": None, "iv_dispersion": None, "observation_count": 0, "securities": 0}
+    return {
+        "mean_iv": sum(r["mean_iv"] for r in rows) / len(rows),
+        "iv_dispersion": sum(r["iv_dispersion"] for r in rows) / len(rows),
+        "observation_count": sum(r["observation_count"] for r in rows),
+        "securities": len(rows),
+    }
+
+
+def bind_lens_to_regime(conn: Database, artifact_id: int, characterization: dict) -> None:
+    """Records the conditions a lens has been observed performing acceptably
+    under, so later divergence from them is meaningful.
+
+    This is deliberately *not* "the regime it was derived under" - the seeded
+    lenses came from the specification and that is genuinely unknown. What the
+    system can honestly say is "it worked while conditions looked like this",
+    which is the useful claim anyway: it learns the conditions its intelligence
+    holds in, then notices when the market leaves them."""
+    artifact = conn.fetchone("SELECT validity_conditions FROM intelligence_artifacts WHERE id = ?", (artifact_id,))
+    if artifact is None:
+        return
+    conditions = json.loads(artifact["validity_conditions"] or "{}")
+    regime = dict(conditions.get("regime") or {})
+    regime["observed_under"] = {
+        "mean_iv": characterization["mean_iv"],
+        "iv_dispersion": characterization["iv_dispersion"],
+    }
+    regime["bound_at"] = _now()
+    conditions["regime"] = regime
+    conn.execute(
+        "UPDATE intelligence_artifacts SET validity_conditions = ? WHERE id = ?",
+        (json.dumps(conditions), artifact_id),
+    )
 
 
 def add_security(conn: Database, symbol: str, note: str | None = None) -> None:

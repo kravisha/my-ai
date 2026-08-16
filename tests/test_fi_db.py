@@ -888,3 +888,95 @@ def test_detector_event_records_the_lens_that_produced_it(conn):
         0.6, 0.25, 2.4, 2.0, lens_artifact_id=lens["id"],
     )
     assert fi_db.get_detector_event(conn, event_id)["lens_artifact_id"] == lens["id"]
+
+
+# --- market regime: a current-state estimate, not a log ---
+
+
+def test_first_regime_observation_seeds_rather_than_blending(conn):
+    """Blending the first observation against a zero that was never observed
+    would start the estimate wrong and take dozens of cycles to recover -
+    and any early drift check would be measuring the seeding artifact."""
+    fi_db.update_market_regime(conn, "SYN1", 0.2855, 0.0116)
+    row = fi_db.get_market_regime(conn, "SYN1")
+    assert row["mean_iv"] == pytest.approx(0.2855)
+    assert row["iv_dispersion"] == pytest.approx(0.0116)
+    assert row["observation_count"] == 1
+
+
+def test_regime_observations_blend_and_never_add_rows(conn):
+    for _ in range(50):
+        fi_db.update_market_regime(conn, "SYN1", 0.30, 0.01)
+    assert len(fi_db.list_market_regime(conn)) == 1  # bounded: one row per security
+    assert fi_db.get_market_regime(conn, "SYN1")["observation_count"] == 50
+
+
+def test_regime_ewma_migrates_toward_a_sustained_shift_without_jumping(conn):
+    fi_db.update_market_regime(conn, "SYN1", 0.2855, 0.0116)
+    fi_db.update_market_regime(conn, "SYN1", 0.4850, 0.0263)
+    after_one = fi_db.get_market_regime(conn, "SYN1")["mean_iv"]
+    assert after_one < 0.31  # one high reading barely moves it
+
+    for _ in range(40):
+        fi_db.update_market_regime(conn, "SYN1", 0.4850, 0.0263)
+    after_many = fi_db.get_market_regime(conn, "SYN1")["mean_iv"]
+    assert after_many > 0.44  # a sustained shift does move it
+
+
+def test_current_market_characterization_averages_across_securities(conn):
+    fi_db.update_market_regime(conn, "SYN1", 0.20, 0.010)
+    fi_db.update_market_regime(conn, "SYN2", 0.40, 0.030)
+    characterization = fi_db.current_market_characterization(conn)
+    assert characterization["mean_iv"] == pytest.approx(0.30)
+    assert characterization["iv_dispersion"] == pytest.approx(0.020)
+    # total evidence, so the thin-data guard reflects everything gathered
+    assert characterization["observation_count"] == 2
+    assert characterization["securities"] == 2
+
+
+def test_current_market_characterization_can_be_scoped_to_securities(conn):
+    fi_db.update_market_regime(conn, "SYN1", 0.20, 0.010)
+    fi_db.update_market_regime(conn, "SYN2", 0.40, 0.030)
+    scoped = fi_db.current_market_characterization(conn, ["SYN1"])
+    assert scoped["mean_iv"] == pytest.approx(0.20)
+    assert scoped["securities"] == 1
+
+
+def test_current_market_characterization_with_no_observations(conn):
+    characterization = fi_db.current_market_characterization(conn)
+    assert characterization["mean_iv"] is None
+    assert characterization["observation_count"] == 0
+
+
+def test_bind_lens_to_regime_records_conditions_and_when(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    assert json.loads(lens["validity_conditions"])["regime"]["observed_under"] is None
+
+    fi_db.update_market_regime(conn, "SYN1", 0.2855, 0.0116)
+    fi_db.bind_lens_to_regime(conn, lens["id"], fi_db.current_market_characterization(conn))
+
+    regime = json.loads(fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["validity_conditions"])["regime"]
+    assert regime["observed_under"]["mean_iv"] == pytest.approx(0.2855)
+    assert regime["observed_under"]["iv_dispersion"] == pytest.approx(0.0116)
+    assert regime["bound_at"] is not None
+    # binding must not disturb the tolerances it will later be judged against
+    assert regime["max_mean_iv_drift"] == fi_db.DEFAULT_MARKET_REGIME_CONDITIONS["max_mean_iv_drift"]
+
+
+def test_bind_lens_to_regime_leaves_performance_conditions_intact(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
+    fi_db.update_market_regime(conn, "SYN1", 0.2855, 0.0116)
+    fi_db.bind_lens_to_regime(conn, lens["id"], fi_db.current_market_characterization(conn))
+
+    conditions = json.loads(fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["validity_conditions"])
+    assert conditions["min_graded_reports"] == fi_db.DEFAULT_LENS_VALIDITY_CONDITIONS["min_graded_reports"]
+
+
+def test_only_the_market_lens_carries_regime_conditions(conn):
+    """The speculator's bar looks at social confidence, and nothing here
+    characterizes a social regime - attaching market conditions to it would
+    let market volatility invalidate a social lens on no evidence."""
+    market = json.loads(fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)["validity_conditions"])
+    social = json.loads(fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)["validity_conditions"])
+    assert "regime" in market
+    assert "regime" not in social

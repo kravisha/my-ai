@@ -21,6 +21,7 @@ Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import json
+import statistics
 import sys
 
 from agents import discovery_config as config
@@ -137,6 +138,20 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
         surface = provider.get_option_surface(security)
         results[security] = scan_for_anomaly(surface)
 
+        # Observe market conditions from every surface, triggering or not -
+        # the regime is a property of the whole market, so sampling only the
+        # anomalous names would characterize anomalies rather than conditions.
+        # This is pure observation; whether the conditions have drifted far
+        # enough to invalidate a lens is COO's judgment, not Explorer's.
+        #
+        # A forced anomaly does inflate both statistics slightly (a +0.40 bump
+        # across 45 cells adds ~0.009 to the mean, more to dispersion). That is
+        # correct - an anomalous market genuinely is different - but it is
+        # visible in the numbers and is not a bug.
+        ivs = [point.iv for point in surface.points]
+        if len(ivs) > 1:
+            fi_db.update_market_regime(conn, security, statistics.mean(ivs), statistics.stdev(ivs))
+
     triggering = {
         security: best for security, best in results.items()
         if best is not None and best[0] >= threshold
@@ -194,7 +209,9 @@ def main() -> None:
         raise SystemExit(1)
     identity = sys.argv[1]
     anomalies = {security: {} for security in config.FORCE_ANOMALY_SECURITIES}
-    provider = SyntheticMarketDataProvider(seed=config.MARKET_PROVIDER_SEED, anomalies=anomalies)
+    provider = SyntheticMarketDataProvider(
+        seed=config.MARKET_PROVIDER_SEED, anomalies=anomalies, regime=config.MARKET_REGIME,
+    )
     spawned_at_cache: dict = {}
 
     def work_fn(conn) -> None:

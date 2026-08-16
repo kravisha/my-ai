@@ -237,19 +237,19 @@ def _evaluate_intelligence_health(conn) -> None:
         performance = fi_db.lens_performance(conn, artifact["id"])
 
         minimum = conditions.get("min_graded_reports")
-        if minimum is None or performance["graded_reports"] < minimum:
-            continue
+        judged_on_performance = minimum is not None and performance["graded_reports"] >= minimum
 
         failures = []
-        floor = conditions.get("min_mean_overall_score")
-        mean_score = performance["mean_overall_score"]
-        if floor is not None and mean_score is not None and mean_score < floor:
-            failures.append(f"mean overall score {mean_score:.3f} < {floor}")
+        if judged_on_performance:
+            floor = conditions.get("min_mean_overall_score")
+            mean_score = performance["mean_overall_score"]
+            if floor is not None and mean_score is not None and mean_score < floor:
+                failures.append(f"mean overall score {mean_score:.3f} < {floor}")
 
-        worth_floor = conditions.get("min_worth_the_compute_rate")
-        worth_rate = performance["worth_the_compute_rate"]
-        if worth_floor is not None and worth_rate is not None and worth_rate < worth_floor:
-            failures.append(f"worth-the-compute rate {worth_rate:.3f} < {worth_floor}")
+            worth_floor = conditions.get("min_worth_the_compute_rate")
+            worth_rate = performance["worth_the_compute_rate"]
+            if worth_floor is not None and worth_rate is not None and worth_rate < worth_floor:
+                failures.append(f"worth-the-compute rate {worth_rate:.3f} < {worth_floor}")
 
         if failures:
             fi_db.mark_artifact_stale(
@@ -257,6 +257,82 @@ def _evaluate_intelligence_health(conn) -> None:
                 f"validity conditions failed over {performance['graded_reports']} graded reports: "
                 + "; ".join(failures),
             )
+            continue
+
+        # Performance is only half of expiry. A lens can be scoring perfectly
+        # well and still be about to stop working, because the conditions it
+        # works under are leaving.
+        _evaluate_lens_regime(conn, artifact, conditions, performing_acceptably=judged_on_performance)
+
+
+def _evaluate_lens_regime(conn, artifact: dict, conditions: dict, performing_acceptably: bool) -> None:
+    """The conditions half of expiry: "intelligence depends on market
+    conditions. Market conditions change, and when they change, intelligence
+    changes" (owner, 2026-08-16).
+
+    Two states, in order:
+
+    - **Unbound** - the lens has no recorded baseline conditions. Seeded
+      lenses arrive this way and always will: they came from the
+      specification, so what regime they were *derived* under is genuinely
+      unknown and claiming otherwise would be a fabrication. Instead a lens
+      earns its baseline by being observed working: once enough market has
+      been observed *and* its performance conditions currently pass, bind it
+      to the conditions it demonstrably worked under.
+    - **Bound** - compare current conditions to that baseline and mark stale
+      on drift beyond either tolerance, with the actual numbers as evidence.
+
+    Below min_observations, neither happens. An estimate built from a handful
+    of surfaces would flag drift that is really just the estimate still
+    converging - the same thin-evidence refusal as the performance arm.
+
+    Like that arm, this flags and never fixes: proposing a corrected threshold
+    for the new regime is a Trainer's job behind validation (addendum 13 §14),
+    not a health check's."""
+    regime = conditions.get("regime") or {}
+    minimum_observations = regime.get("min_observations")
+    if minimum_observations is None:
+        return
+
+    characterization = fi_db.current_market_characterization(conn)
+    if characterization["observation_count"] < minimum_observations:
+        return
+
+    observed_under = regime.get("observed_under")
+    if observed_under is None:
+        if performing_acceptably:
+            fi_db.bind_lens_to_regime(conn, artifact["id"], characterization)
+            print(
+                f"[COO] bound lens '{artifact['name']}' to observed regime "
+                f"mean_iv={characterization['mean_iv']:.4f} "
+                f"dispersion={characterization['iv_dispersion']:.4f}"
+            )
+        return
+
+    drifts = []
+    mean_tolerance = regime.get("max_mean_iv_drift")
+    mean_drift = abs(characterization["mean_iv"] - observed_under["mean_iv"])
+    if mean_tolerance is not None and mean_drift > mean_tolerance:
+        drifts.append(
+            f"mean IV moved {mean_drift:.4f} (from {observed_under['mean_iv']:.4f} "
+            f"to {characterization['mean_iv']:.4f}, tolerance {mean_tolerance})"
+        )
+
+    dispersion_tolerance = regime.get("max_dispersion_drift")
+    dispersion_drift = abs(characterization["iv_dispersion"] - observed_under["iv_dispersion"])
+    if dispersion_tolerance is not None and dispersion_drift > dispersion_tolerance:
+        drifts.append(
+            f"IV dispersion moved {dispersion_drift:.4f} (from {observed_under['iv_dispersion']:.4f} "
+            f"to {characterization['iv_dispersion']:.4f}, tolerance {dispersion_tolerance})"
+        )
+
+    if drifts:
+        fi_db.mark_artifact_stale(
+            conn, artifact["id"],
+            f"market regime diverged from the conditions this lens was observed working under "
+            f"({characterization['observation_count']} observations across "
+            f"{characterization['securities']} securities): " + "; ".join(drifts),
+        )
 
 
 def _coo_work(conn) -> None:
