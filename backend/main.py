@@ -575,3 +575,87 @@ def list_uqi_history(limit: int = 25, conn=Depends(panel_db)):
     """The audit trail §7 requires: every question asked and how it was
     answered, newest first."""
     return {"requests": fi_db.list_uqi_requests(conn, limit=limit)}
+
+
+# --- Lifecycle control (addendum 11 §15, addendum 14 §7) ---
+#
+# The panel does NOT change lifecycle state. It files a directive, and the
+# Controller's poll loop executes it - the same path COO's requests take.
+#
+# This is not ceremony. Addendum 11 §15 makes the Controller the *exclusive*
+# executor of lifecycle actions, and a route that wrote lifecycle_state itself
+# would make the backend a second executor, quietly ending that guarantee. It
+# also happens to be the only correct option mechanically: Controller.conn
+# belongs to the event-loop thread, so a request handler cannot drive it
+# directly anyway.
+#
+# Filing a directive also buys auditability for free. Every action lands in
+# coo_directives with who asked, why, and what outcome the Controller recorded.
+
+OPERATOR_REQUESTER = "operator"
+
+
+class LifecycleRequest(BaseModel):
+    reason: str
+    requested_by: str = OPERATOR_REQUESTER
+
+
+@app.post("/admin/agents/{identity}/retire")
+def retire_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db)):
+    """Ask the Controller to stand this agent down.
+
+    Non-destructive and reversible: the agent keeps its permanent identity,
+    name, and entire history, and `resume` is the exact inverse. What stops is
+    the process; what persists is the agent."""
+    agent = _require_agent(conn, identity)
+    if identity == controller.identity:
+        # The Controller *is* this server process. Retiring it would have the
+        # backend ask its own poll loop to shut itself down - a genuinely
+        # reachable footgun, since controller-1 appears in the roster like any
+        # other agent and the panel offers the same button for every row.
+        raise HTTPException(status_code=400, detail="The Controller cannot retire itself; stop the server instead")
+    if agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT:
+        raise HTTPException(status_code=409, detail=f"{identity} is already dormant")
+
+    directive_id = fi_db.enqueue_directive(
+        conn, "retire", requested_by=request.requested_by,
+        target_role=agent["role"], target_identity=identity, reason=request.reason,
+    )
+    return {"directive_id": directive_id, "status": "pending", "executed_by": "controller"}
+
+
+@app.post("/admin/agents/{identity}/resume")
+def resume_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db)):
+    """Ask the Controller to return this agent to service.
+
+    Restores organizational standing only. The process comes back because COO's
+    baseline check then sees an in-service role with nothing running and
+    requests the spawn - the agent returns under the same permanent identity."""
+    agent = _require_agent(conn, identity)
+    if agent["lifecycle_state"] != fi_db.LIFECYCLE_DORMANT:
+        raise HTTPException(status_code=409, detail=f"{identity} is not dormant")
+
+    directive_id = fi_db.enqueue_directive(
+        conn, "resume", requested_by=request.requested_by,
+        target_role=agent["role"], target_identity=identity, reason=request.reason,
+    )
+    return {"directive_id": directive_id, "status": "pending", "executed_by": "controller"}
+
+
+def _require_agent(conn, identity: str) -> dict:
+    agent = fi_db.get_agent(conn, identity)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
+    return agent
+
+
+@app.get("/admin/directives")
+def list_directives(limit: int = 25, conn=Depends(panel_db)):
+    """Pending and recently completed lifecycle actions - who asked, why, and
+    what the Controller made of it. The audit trail for everything the panel
+    can cause."""
+    pending = conn.fetchall("SELECT * FROM coo_directives ORDER BY id DESC LIMIT ?", (limit,))
+    completed = conn.fetchall(
+        "SELECT * FROM coo_directives_completed ORDER BY id DESC LIMIT ?", (limit,)
+    )
+    return {"pending": pending, "completed": completed}

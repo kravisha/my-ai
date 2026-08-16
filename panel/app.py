@@ -9,9 +9,12 @@ like, and where Explorer and Speculator disagreed.
 Run as `python -m panel.app` from the my-ai/ project root, alongside a running
 backend (`uvicorn backend.main:app`).
 
-Read-only, deliberately. Lifecycle actions belong to the Controller alone
-(addendum 11 §15), so spawn/retire/resume controls are a separate, audited
-increment rather than something an observability window quietly acquires.
+The panel can retire and resume agents, but it never changes lifecycle state
+itself. It files a directive and the Controller executes it, because addendum
+11 §15 makes the Controller the *exclusive* executor of lifecycle actions - a
+panel that wrote lifecycle_state directly would become a second executor and
+quietly end that guarantee. The buttons say "Ask Controller to..." for the same
+reason. Spawning new agents is not offered yet; only the reversible pair is.
 
 Polls rather than pushes, like monitor/app.py, and for the same reason: the
 whole system is built on polling a database, and a panel that needed pushes
@@ -53,8 +56,22 @@ class ControlPanel:
         tk.Label(left, text="Agents", font=("", 10, "bold")).pack(anchor="w", padx=8, pady=(8, 2))
         tk.Label(left, text=render.AGENT_HEADER, font=("Courier New", 8), fg="#666").pack(anchor="w", padx=8)
         self.agent_list = tk.Listbox(left, font=("Courier New", 9), exportselection=False)
-        self.agent_list.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self.agent_list.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 4))
         self.agent_list.bind("<<ListboxSelect>>", self._on_select_agent)
+
+        # The panel never changes lifecycle state itself. These file a
+        # directive; the Controller executes it (addendum 11 §15). The button
+        # labels say "Ask Controller to..." because that is literally what
+        # happens, and an operator should not be led to believe the window in
+        # front of them is the thing with the authority.
+        controls = tk.Frame(left)
+        controls.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Button(controls, text="Ask Controller to retire",
+                  command=lambda: self._request_lifecycle("retire")).pack(side=tk.LEFT)
+        tk.Button(controls, text="Ask Controller to resume",
+                  command=lambda: self._request_lifecycle("resume")).pack(side=tk.LEFT, padx=6)
+        self.lifecycle_status = tk.Label(left, text="", anchor="w", fg="#666", wraplength=490, justify="left")
+        self.lifecycle_status.pack(fill=tk.X, padx=8, pady=(0, 8))
         paned.add(left, width=520)
 
         right = tk.Frame(paned)
@@ -69,6 +86,7 @@ class ControlPanel:
                 ("regime", "Market Regime"),
                 ("cross_checks", "Disagreement"),
                 ("discovery", "Discovery"),
+                ("directives", "Lifecycle Log"),
             )
         }
         # The ask box lives under the UQI tab, not beside the roster: it acts on
@@ -118,6 +136,36 @@ class ControlPanel:
             return
         self.question_entry.delete(0, tk.END)
         self._write("uqi", f"Asked {self.selected_identity}: {question}\n\n(waiting for the agent to answer)")
+
+    def _request_lifecycle(self, action: str):
+        """File a retire/resume directive for the selected agent.
+
+        Reports the directive id rather than claiming the action happened. The
+        Controller executes it on its own poll cycle, and the roster will show
+        the change a moment later - saying "retired" here would assert an
+        outcome this window does not control and cannot confirm."""
+        if self.selected_identity is None:
+            self.lifecycle_status.configure(text="Select an agent first.", fg="#b00")
+            return
+        try:
+            response = requests.post(
+                f"{self.base_url}/admin/agents/{self.selected_identity}/{action}",
+                json={"reason": f"operator {action} via control panel", "requested_by": "panel"},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            if response.status_code >= 400:
+                detail = response.json().get("detail", response.text)
+                self.lifecycle_status.configure(text=f"Refused: {detail}", fg="#b00")
+                return
+            directive_id = response.json()["directive_id"]
+        except requests.RequestException as exc:
+            self.lifecycle_status.configure(text=f"Could not reach the backend: {exc}", fg="#b00")
+            return
+        self.lifecycle_status.configure(
+            text=f"Directive #{directive_id} filed: {action} {self.selected_identity}. "
+                 "The Controller executes it on its next cycle.",
+            fg="#060",
+        )
 
     def _refresh_uqi(self):
         if self._uqi_request_id is None:
@@ -196,6 +244,10 @@ class ControlPanel:
         discovery = self._get("/admin/discovery")
         if discovery is not None:
             self._write("discovery", render.format_discovery(discovery))
+
+        directives = self._get("/admin/directives")
+        if directives is not None:
+            self._write("directives", render.format_directives(directives))
 
     def _refresh_agent_detail(self):
         if self.selected_identity is None:

@@ -1082,6 +1082,17 @@ def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
     )
 
 
+def get_directive(conn: Database, directive_id: int) -> dict | None:
+    """A pending directive by id. Returns None once it completes - the archive
+    trigger moves the row to coo_directives_completed, so absence here means
+    "already executed", not "never existed"."""
+    return conn.fetchone("SELECT * FROM coo_directives WHERE id = ?", (directive_id,))
+
+
+def get_completed_directive(conn: Database, directive_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM coo_directives_completed WHERE id = ?", (directive_id,))
+
+
 def list_directives_needing_observation(conn: Database, grace_seconds: float = 5.0) -> list[dict]:
     """Completed spawn directives whose outcome only proves the Controller's
     subprocess.Popen call didn't raise (see controller.py's _handle_spawn) -
@@ -1093,9 +1104,16 @@ def list_directives_needing_observation(conn: Database, grace_seconds: float = 5
     WHERE clause because completed_at is written by the archive trigger
     using SQLite's own strftime (a differently-formatted timestamp than this
     module's _now()) - see parse_timestamp."""
+    # Scoped to requested_by='coo' as well as to spawns. COO evaluates *its
+    # own* decisions; an operator-issued directive is not one, and grading it
+    # as though it were would put someone else's choice on COO's record. A
+    # no-op today, since COO is the only requester of spawns - but the UQI and
+    # control panel opened the door to other requesters, and this is the guard
+    # that keeps that door from quietly corrupting the decision history.
     rows = conn.fetchall(
         "SELECT * FROM coo_directives_completed "
-        "WHERE directive_type = 'spawn' AND outcome = 'success' AND observed_result IS NULL "
+        "WHERE directive_type = 'spawn' AND requested_by = 'coo' "
+        "AND outcome = 'success' AND observed_result IS NULL "
         "ORDER BY completed_at"
     )
     now = datetime.now(timezone.utc)

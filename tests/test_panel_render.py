@@ -231,3 +231,19 @@ def test_an_unanswered_question_is_framed_as_a_diagnostic_not_a_bug():
     text = render.format_uqi_exchange(_exchange(status="unanswered", answer=None, answered_by_pid=None))
     assert "diagnostic result" in text
     assert "dormant or crashed" in text
+
+
+def test_lifecycle_log_shows_who_asked_for_each_action():
+    """Requester is the interesting column: panel, COO and any future requester
+    file into the same queue and the Controller executes all of them."""
+    text = render.format_directives({
+        "pending": [],
+        "completed": [
+            {"id": 6, "directive_type": "resume", "target_identity": "explorer-1", "target_role": "explorer",
+             "requested_by": "panel", "outcome": "success", "reason": "operator resume via control panel"},
+            {"id": 7, "directive_type": "spawn", "target_identity": None, "target_role": "explorer",
+             "requested_by": "coo", "outcome": "success", "reason": "baseline role has zero active agents"},
+        ],
+    })
+    assert "by panel" in text and "by coo" in text
+    assert "(none)" in text  # the empty pending queue says so rather than rendering blank

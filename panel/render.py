@@ -197,6 +197,32 @@ def format_uqi_exchange(body: dict) -> str:
     return "\n".join(lines)
 
 
+def format_directives(body: dict) -> str:
+    """Every lifecycle action, who asked, and what the Controller made of it.
+
+    Requester is shown on every line because it is the interesting column: the
+    panel, COO, and any future requester all file into the same queue, and the
+    Controller executes all of them. Reading this log is how you see that the
+    operator restored an agent's standing while COO separately decided to staff
+    it - three authorities, one audit trail."""
+    pending = body.get("pending", [])
+    completed = body.get("completed", [])
+    lines = [f"Pending ({len(pending)}):"]
+    lines += [
+        f"  #{d['id']:<4} {d['directive_type']:<7} {(d['target_identity'] or d['target_role'] or ''):<13}"
+        f" by {d['requested_by']:<9} {d['reason'] or ''}"
+        for d in pending
+    ] or ["  (none)"]
+
+    lines += ["", f"Completed ({len(completed)}), newest first:"]
+    lines += [
+        f"  #{d['id']:<4} {d['directive_type']:<7} {(d['target_identity'] or d['target_role'] or ''):<13}"
+        f" by {d['requested_by']:<9} -> {d['outcome']:<8} {d['reason'] or ''}"
+        for d in completed
+    ] or ["  (none)"]
+    return "\n".join(lines)
+
+
 def format_discovery(body: dict) -> str:
     pending = body.get("pending_reports", [])
     analyses = body.get("recent_analyses", [])
