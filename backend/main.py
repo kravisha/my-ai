@@ -28,6 +28,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
+from backend import fi_db
 from backend.controller import Controller
 from backend.transcripts import TranscriptStore
 
@@ -335,3 +336,173 @@ def list_clients():
 @app.get("/admin/clients/{username}/transcript")
 def get_client_transcript(username: str):
     return {"username": username, "entries": transcripts.get_transcript(username)}
+
+
+# --- Admin (Controller control panel) ---
+#
+# Read-only observability over the agent organization, for the operator panel
+# (addendum 14 §7). Unauthenticated for the same flagged reason as the routes
+# above: there is no admin-auth concept yet and the system is local-only.
+#
+# Nothing here mutates. Lifecycle actions belong to the Controller alone
+# (addendum 11 §15), so they are a separate, audited increment rather than
+# something the observability layer quietly acquires.
+
+
+def panel_db():
+    """A short-lived read connection per request, deliberately *not*
+    conn.
+
+    Two reasons, one forced and one chosen. Forced: sqlite3 connections are
+    bound to the thread that opened them, and FastAPI runs sync handlers in a
+    worker threadpool, so reusing the Controller's connection raises
+    ProgrammingError at request time - an error no import check catches, only a
+    real request does.
+
+    Chosen: even with that solved, the panel should not share the handle the
+    Controller uses to execute lifecycle actions. The database is in WAL mode,
+    so additional readers are safe and concurrent, and this way a slow panel
+    query can never stall the directive poll loop."""
+    conn = fi_db.get_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _parse_json_field(value, default=None):
+    """Several tables store JSON in TEXT columns. Parsed here so the panel
+    receives structured data rather than re-parsing strings."""
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
+@app.get("/admin/agents")
+def list_agents(conn=Depends(panel_db)):
+    """The organization as it currently stands, on both axes.
+
+    lifecycle_state and process_state are reported separately and never
+    collapsed - that separation is the whole point of the two-axis model, and a
+    panel that showed one merged status would reintroduce the confusion the
+    model exists to remove. `status` is included only because historical rows
+    carry it; nothing should decide from it."""
+    agents = []
+    for agent in fi_db.list_agents(conn):
+        age = fi_db.heartbeat_age_seconds(agent)
+        agents.append({
+            "identity": agent["identity"],
+            "role": agent["role"],
+            "pid": agent["pid"],
+            "lifecycle_state": agent["lifecycle_state"],
+            "process_state": agent["process_state"],
+            "status": agent["status"],
+            "retire_requested": bool(agent["retire_requested"]),
+            "spawned_at": agent["spawned_at"],
+            "last_heartbeat_at": agent["last_heartbeat_at"],
+            "heartbeat_age_seconds": None if age is None else round(age, 2),
+        })
+    return {"agents": agents}
+
+
+@app.get("/admin/agents/{identity}")
+def describe_agent(identity: str, conn=Depends(panel_db)):
+    """Addendum 14 §6's fifteen self-awareness questions for one agent.
+
+    Sourced from the organizational record and the role's charter, so it is
+    accurate but it is not the agent *speaking* - a live-answered version is
+    what the UQI adds. Flagged in the payload as `answered_by` so the panel can
+    never present a database read as an agent's own reply."""
+    description = fi_db.describe_agent(conn, identity)
+    if description is None:
+        raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
+    return {"answered_by": "organizational_record", **description}
+
+
+@app.get("/admin/intelligence")
+def list_intelligence(conn=Depends(panel_db)):
+    """Every lens, active or stale, with the evidence behind its standing.
+
+    Stale artifacts are included deliberately. A lens that expired is the most
+    informative thing in this table - it is the system having noticed something
+    - and hiding it would leave the panel showing only what still looks fine."""
+    artifacts = []
+    for artifact in fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND):
+        conditions = _parse_json_field(artifact["validity_conditions"], {})
+        regime = conditions.get("regime") or {}
+        artifacts.append({
+            "id": artifact["id"],
+            "name": artifact["name"],
+            "version": artifact["version"],
+            "value": _parse_json_field(artifact["value"]),
+            "status": artifact["status"],
+            "rationale": artifact["rationale"],
+            "staleness_reason": artifact["staleness_reason"],
+            "validity_conditions": conditions,
+            "observed_under_regime": regime.get("observed_under"),
+            "regime_bound_at": regime.get("bound_at"),
+            "performance": fi_db.lens_performance(conn, artifact["id"]),
+            "created_at": artifact["created_at"],
+        })
+    return {"artifacts": artifacts}
+
+
+@app.get("/admin/regime")
+def market_regime(conn=Depends(panel_db)):
+    """The system's current estimate of market conditions, per security and
+    aggregated. This is an estimate the system inferred from observation - it
+    was never told the regime the provider generates under."""
+    return {
+        "securities": fi_db.list_market_regime(conn),
+        "market_wide": fi_db.current_market_characterization(conn),
+    }
+
+
+@app.get("/admin/cross-checks")
+def list_cross_checks(limit: int = 25, conn=Depends(panel_db)):
+    """Recent Explorer<->Speculator contracts, both findings intact.
+
+    Returned unreconciled, exactly as stored. The panel must show two claims
+    and no verdict - collapsing them into "agreed"/"disagreed" here would erase
+    the disagreement this table exists to preserve (addendum 12 §14)."""
+    rows = conn.fetchall(
+        "SELECT * FROM cross_check_requests ORDER BY id DESC LIMIT ?", (limit,)
+    )
+    return {"cross_checks": [
+        {
+            "id": row["id"],
+            "security": row["security"],
+            "requester_role": row["requester_role"],
+            "responder_role": row["responder_role"],
+            "question": row["question"],
+            "requester_finding": _parse_json_field(row["requester_finding"], {}),
+            "responder_finding": _parse_json_field(row["responder_finding"]),
+            "status": row["status"],
+            "outcome": row["outcome"],
+            "created_at": row["created_at"],
+            "answered_at": row["answered_at"],
+        }
+        for row in rows
+    ]}
+
+
+@app.get("/admin/discovery")
+def discovery_activity(limit: int = 25, conn=Depends(panel_db)):
+    """What the discovery slice has actually produced: the pending queue, and
+    the most recent analyses with their grades."""
+    results = conn.fetchall(
+        "SELECT a.*, g.overall_score, g.worth_the_compute, g.rationale AS grade_rationale "
+        "FROM analysis_results a LEFT JOIN grades g ON g.analysis_result_id = a.id "
+        "ORDER BY a.id DESC LIMIT ?", (limit,)
+    )
+    return {
+        "pending_reports": conn.fetchall(
+            "SELECT id, created_at, producer_identity, report_type, security, summary, cross_check_id "
+            "FROM discovery_reports ORDER BY id"
+        ),
+        "recent_analyses": results,
+        "performance_card": fi_db.get_performance_card(conn),
+    }

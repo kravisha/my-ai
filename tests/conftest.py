@@ -93,6 +93,53 @@ def conn():
 
 
 @pytest.fixture
+def panel_conn(tmp_path):
+    """File-backed rather than in-memory, unlike `conn`.
+
+    The control-panel routes run in FastAPI's worker threadpool, and sqlite3
+    connections are bound to the thread that opened them. Handing a test's own
+    connection to a route therefore raises ProgrammingError - so the panel
+    tests give the route a *path* and let it open its own connection, exactly
+    as production does. An in-memory database cannot be shared that way, since
+    a second connection to ":memory:" gets a different, empty database."""
+    connection = fi_db.get_connection(tmp_path / "panel.db")
+    fi_db.init_schema(connection)
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+def panel_client(panel_conn, tmp_path):
+    """TestClient for the Controller control-panel routes, with panel_db
+    overridden onto the temp database.
+
+    The override matters. panel_db calls fi_db.get_connection() with no
+    argument, which resolves to the real project database - so without this,
+    panel tests would read the developer's actual financial_intelligence.db,
+    and any later control routes would write to it.
+
+    Opening per request mirrors production rather than approximating it, which
+    means these tests also exercise the WAL cross-connection visibility the
+    panel depends on."""
+    from fastapi.testclient import TestClient
+
+    import backend.main as backend_main
+
+    def _panel_db():
+        connection = fi_db.get_connection(tmp_path / "panel.db")
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    backend_main.app.dependency_overrides[backend_main.panel_db] = _panel_db
+    try:
+        yield TestClient(backend_main.app)
+    finally:
+        backend_main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
 def mock_portfolio_path(tmp_path, monkeypatch):
     """Writes a small real .xlsx with known rows and redirects
     permissions.RESOURCE_PATHS["portfolio"] to it, so tools/portfolio.py

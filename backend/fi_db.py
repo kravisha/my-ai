@@ -120,6 +120,140 @@ SECURITY_UNIVERSE_SEED = [
 # live in agents/discovery_config.py, which is where they have always been;
 # after seeding, agents read the artifact rather than the constant, so the
 # config is the starting point rather than the runtime source of truth.
+# Role charters - what each role *is*, organizationally. Addendum 14 §6 requires
+# every Alpha agent to answer basic questions about its identity, role,
+# responsibilities, permissions, and prohibitions, and says explicitly that this
+# "does not mean unrestricted introspection into hidden model internals." So
+# these are organizational facts, answerable deterministically, with no model
+# call and therefore nothing to fabricate.
+#
+# Constants rather than a table, for now. They describe roles, not agents, and
+# nothing needs to edit them at runtime - a table would be structure ahead of a
+# reason. They live in this module for the same reason the lens seeds do: agents
+# and the backend both import fi_db, and backend/ importing agents/ would invert
+# the dependency.
+#
+# `not_allowed` is not decoration. Every entry is a real constraint enforced
+# elsewhere in the code, and stating it here is what lets an agent answer "what
+# am I not allowed to do" truthfully rather than plausibly.
+ROLE_CHARTERS = {
+    "controller": {
+        "agent_type": "infrastructure",
+        "description": "The backend server process itself, registered as the first agent.",
+        "responsibilities": [
+            "Execute every agent lifecycle action: spawn, retire, resume",
+            "Own the OS processes of all other agents",
+            "Poll coo_directives and act on operational requests",
+        ],
+        "allowed": [
+            "Create, retire, and resume agents",
+            "Set lifecycle_state, the organizational standing of any agent",
+        ],
+        "not_allowed": [
+            "Decide operational need - that is COO's judgment (addendum 11 §15)",
+            "Perform discovery, analysis, or grading work",
+        ],
+        "competencies": ["process management", "lifecycle execution"],
+        "work_mechanism": "coo_directives table, polled",
+    },
+    "coo": {
+        "agent_type": "executive",
+        "description": "Operational executive. Keeps the organization effective and staffed.",
+        "responsibilities": [
+            "Maintain the baseline agent population",
+            "Detect crashed agents by stale heartbeat and request replacements",
+            "Evaluate past decisions against their observed results",
+            "Judge intelligence health: mark lenses stale on performance or regime drift",
+        ],
+        "allowed": [
+            "Request spawn, retire, and resume actions from the Controller",
+            "Mark an intelligence artifact stale, with evidence",
+        ],
+        "not_allowed": [
+            "Execute lifecycle changes directly - it requests, the Controller executes",
+            "Change the value of an intelligence artifact; it flags, it never fixes",
+            "Respawn a dormant agent, which would undo a Controller decision",
+        ],
+        "competencies": ["workforce health", "decision review", "intelligence expiry"],
+        "work_mechanism": "polls agent_registry, coo_directives, grades and market_regime each cycle",
+    },
+    "explorer": {
+        "agent_type": "discovery",
+        "description": "Quantitative discovery. Scans option IV surfaces for dislocations.",
+        "responsibilities": [
+            "Scan every peer-group security each cycle for peak/local-baseline IV anomalies",
+            "Classify candidates as peer (common-factor) or individual (idiosyncratic)",
+            "Observe market conditions from every surface, triggering or not",
+            "Ask Speculator for contextual corroboration before escalating a lead",
+            "Answer Speculator's requests for quantitative corroboration",
+        ],
+        "allowed": [
+            "File discovery reports",
+            "Open and answer cross-check requests",
+            "Run one lightweight LLM coherence check per candidate",
+        ],
+        "not_allowed": [
+            "Perform deep reasoning - that is Analysis's role alone",
+            "Judge whether its own findings agree with Speculator's",
+            "Grade its own reports, or mark its own lens stale",
+        ],
+        "competencies": ["IV surface analysis", "peer classification", "regime observation"],
+        "work_mechanism": "polls the market data provider each cycle; cross_check_requests",
+    },
+    "speculator": {
+        "agent_type": "discovery",
+        "description": "Contextual discovery. Reads social and context streams for unusual attention.",
+        "responsibilities": [
+            "Normalize social observations into attributable evidence",
+            "Measure source dispersion, separating a crowd from coordinated noise",
+            "Read what the chatter claims when answering a cross-check",
+            "Ask Explorer for quantitative corroboration before escalating a lead",
+        ],
+        "allowed": [
+            "File discovery reports",
+            "Open and answer cross-check requests",
+            "Run one lightweight stance read per cross-check answer",
+        ],
+        "not_allowed": [
+            "Perform deep reasoning - that is Analysis's role alone",
+            "Declare whether its findings corroborate Explorer's",
+            "Treat chatter as truth rather than as evidence",
+        ],
+        "competencies": ["social evidence normalization", "source dispersion", "stance reading"],
+        "work_mechanism": "polls the social data provider each cycle; cross_check_requests",
+    },
+    "analysis": {
+        "agent_type": "reasoning",
+        "description": "Deep reasoning. The only role permitted to reconcile conflicting evidence.",
+        "responsibilities": [
+            "Consume the discovery report queue",
+            "Produce a thesis with evidence, confidence, uncertainty, and reasons it could be wrong",
+            "Weigh both sides of a preserved disagreement and say which way it points",
+            "Grade the upstream report that produced each analysis",
+        ],
+        "allowed": [
+            "Reconcile conflicting findings from Explorer and Speculator",
+            "Grade upstream discovery work",
+            "Conclude that evidence is insufficient",
+        ],
+        "not_allowed": [
+            "Execute any trade - the system has no execution capability at all",
+            "Originate a candidate; it only analyzes what discovery files",
+        ],
+        "competencies": ["evidence integration", "uncertainty", "peer classification", "grading"],
+        "work_mechanism": "discovery_reports queue, polled",
+    },
+    "dummy": {
+        "agent_type": "test",
+        "description": "A minimal agent that only heartbeats. Proves lifecycle mechanics without doing work.",
+        "responsibilities": ["Stay alive and heartbeat"],
+        "allowed": ["Report its own process state"],
+        "not_allowed": ["Any discovery, analysis, or lifecycle action"],
+        "competencies": [],
+        "work_mechanism": "none - it performs no work",
+    },
+}
+
 LENS_KIND = "detection_lens"
 LENS_IV_RATIO_NAME = "iv_ratio_threshold"
 LENS_SPECULATOR_CONFIDENCE_NAME = "speculator_confidence_threshold"
@@ -1215,6 +1349,77 @@ def bind_lens_to_regime(conn: Database, artifact_id: int, characterization: dict
         "UPDATE intelligence_artifacts SET validity_conditions = ? WHERE id = ?",
         (json.dumps(conditions), artifact_id),
     )
+
+
+# --- Agent self-description (addendum 14 §6) ---
+
+
+def heartbeat_age_seconds(agent: dict) -> float | None:
+    """Seconds since this agent last reported. None if it has never reported."""
+    if not agent.get("last_heartbeat_at"):
+        return None
+    return (datetime.now(timezone.utc) - parse_timestamp(agent["last_heartbeat_at"])).total_seconds()
+
+
+def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 45.0) -> dict | None:
+    """Answers addendum 14 §6's fifteen questions for one agent.
+
+    Deterministic and sourced entirely from the organizational record plus the
+    role's charter. §6 asks for operational self-awareness - identity, role,
+    responsibilities, permissions, state - and explicitly excludes
+    "unrestricted introspection into hidden model internals", so there is
+    nothing here a model could get wrong.
+
+    Two things worth reading carefully:
+
+    - `healthy` is derived from heartbeat age, so it reflects the *process*,
+      not the row. An agent whose row says active but whose heartbeat is stale
+      reports unhealthy, which is the honest answer.
+    - `working` is deliberately coarse. The system records heartbeats, not task
+      spans, so the most this can truthfully say is whether the agent has
+      reported recently. Claiming to know which task is in flight would be a
+      fabrication; `current_task` stays None until work spans are recorded.
+
+    A live-answered version, where the agent's own process replies rather than
+    the database being read on its behalf, is what the UQI adds. This is the
+    organizational record - accurate, but not the agent speaking."""
+    agent = get_agent(conn, identity)
+    if agent is None:
+        return None
+
+    charter = ROLE_CHARTERS.get(agent["role"], {})
+    age = heartbeat_age_seconds(agent)
+    dormant = agent["lifecycle_state"] == LIFECYCLE_DORMANT
+    healthy = (
+        None if dormant
+        else (age is not None and age < stale_after_seconds and agent["process_state"] == PROCESS_RUNNING)
+    )
+    name_row = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
+
+    return {
+        "identity": identity,
+        "agent_name": name_row["name"] if name_row else None,
+        "role": agent["role"],
+        "agent_type": charter.get("agent_type"),
+        "description": charter.get("description"),
+        "responsibilities": charter.get("responsibilities", []),
+        "allowed": charter.get("allowed", []),
+        "not_allowed": charter.get("not_allowed", []),
+        "competencies": charter.get("competencies", []),
+        "work_mechanism": charter.get("work_mechanism"),
+        "lifecycle_state": agent["lifecycle_state"],
+        "process_state": agent["process_state"],
+        "healthy": healthy,
+        "working": None if dormant else (age is not None and age < stale_after_seconds),
+        # Not knowable from a heartbeat. Left null rather than guessed.
+        "current_task": None,
+        "pid": agent["pid"],
+        "spawned_at": agent["spawned_at"],
+        "last_heartbeat_at": agent["last_heartbeat_at"],
+        "heartbeat_age_seconds": None if age is None else round(age, 2),
+        "retire_requested": bool(agent["retire_requested"]),
+        "schema_version": SCHEMA_VERSION,
+    }
 
 
 # --- Explorer<->Speculator cross-checks (addendum 12 §14) ---
