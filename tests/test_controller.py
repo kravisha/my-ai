@@ -176,14 +176,20 @@ def test_real_dummy_agent_spawn_and_graceful_retire(controller):
     assert retire_result["outcome"] == "success"
 
     deadline = time.time() + 10
-    gone = False
+    retired = False
     while time.time() < deadline:
         agent = fi_db.get_agent(controller.conn, identity)
-        if agent["status"] == "gone":
-            gone = True
+        if agent["process_state"] == fi_db.PROCESS_STOPPED:
+            retired = True
             break
         time.sleep(0.2)
-    assert gone, "dummy agent never marked itself gone after retirement was requested"
+    assert retired, "dummy agent never stopped its process after retirement was requested"
+
+    # retirement is non-destructive: the agent is dormant, not deleted, and
+    # its identity and name are preserved for a later resume
+    agent = fi_db.get_agent(controller.conn, identity)
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT
+    assert fi_db.get_agent_name(controller.conn, identity) is not None
 
     process = controller._processes[identity]
     process.wait(timeout=5)
@@ -261,7 +267,7 @@ def test_real_coo_bootstrap_establishes_baseline_population(controller, monkeypa
     deadline = time.time() + 10
     while time.time() < deadline:
         agents = {a["identity"]: a for a in fi_db.list_agents(controller.conn)}
-        if all(agents[identity]["status"] == "gone" for identity in to_retire):
+        if all(agents[identity]["process_state"] == fi_db.PROCESS_STOPPED for identity in to_retire):
             break
         time.sleep(0.2)
     else:
@@ -317,13 +323,17 @@ def test_bootstrap_self_is_idempotent_across_a_server_restart(controller):
     assert fi_db.get_agent_name(controller.conn, identity) == name_before
 
 
-def test_shutdown_self_marks_gone_not_crashed(controller):
-    """A clean server shutdown must read as a clean agent exit, the same
-    distinction Gap 3 built the gone/crashed split for."""
+def test_shutdown_self_stops_process_without_retiring_the_controller(controller):
+    """A clean server shutdown must read as a clean process stop, not a
+    crash - and crucially not as a retirement. The Controller stays
+    organizationally in service so restarting the server brings it straight
+    back rather than needing an explicit resume."""
     identity = controller.bootstrap_self()
     controller.shutdown_self()
 
-    assert fi_db.get_agent(controller.conn, identity)["status"] == "gone"
+    agent = fi_db.get_agent(controller.conn, identity)
+    assert agent["process_state"] == fi_db.PROCESS_STOPPED
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
 
 
 def test_record_self_heartbeat_advances_the_heartbeat(controller):

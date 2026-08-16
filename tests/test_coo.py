@@ -40,7 +40,7 @@ def test_ensure_baseline_population_respawns_role_after_it_goes_gone(conn):
     for a replacement - a small real instance of maintaining ecosystem
     health, not just a one-time bootstrap check."""
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
 
     _ensure_baseline_population(conn)
 
@@ -102,7 +102,7 @@ def test_role_spawn_in_flight_true_when_directive_reuses_identity_of_a_dead_prio
     old_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, old_directive_id, "success", detail="dummy-1")
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_crashed(conn, "dummy-1")
+    fi_db.mark_process_crashed(conn, "dummy-1")
     # completed_at is SQL-trigger-written at millisecond precision; a real
     # respawn always has tens of milliseconds of real subprocess startup
     # between "directive completed" and "agent registered" - this sleep
@@ -123,7 +123,7 @@ def test_role_spawn_in_flight_false_once_reused_identity_reregisters(conn):
     old_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, old_directive_id, "success", detail="dummy-1")
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_crashed(conn, "dummy-1")
+    fi_db.mark_process_crashed(conn, "dummy-1")
 
     new_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")
@@ -140,7 +140,7 @@ def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(
     directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
 
     assert _role_spawn_in_flight(conn, "dummy") is False
 
@@ -157,27 +157,46 @@ def test_evaluate_agent_health_marks_stale_agent_crashed(conn):
 
     _evaluate_agent_health(conn, stale_seconds=0)
 
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["process_state"] == fi_db.PROCESS_CRASHED
+    # crash detection is a process observation - it must never retire the
+    # agent, which is the Controller's decision alone
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
 
 
-def test_evaluate_agent_health_leaves_fresh_agent_active(conn):
+def test_evaluate_agent_health_leaves_fresh_agent_running(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     fi_db.record_heartbeat(conn, "dummy-1")
 
     _evaluate_agent_health(conn, stale_seconds=999)
 
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "active"
+    assert fi_db.get_agent(conn, "dummy-1")["process_state"] == fi_db.PROCESS_RUNNING
 
 
-def test_evaluate_agent_health_does_not_touch_gracefully_gone_agents(conn):
-    """A clean exit already set status='gone' itself - health evaluation
-    should leave that alone rather than overwriting it with 'crashed'."""
+def test_evaluate_agent_health_does_not_touch_cleanly_stopped_agents(conn):
+    """A clean exit already reported process_state='stopped' - health
+    evaluation should leave that alone rather than overwriting it with
+    'crashed'."""
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
 
     _evaluate_agent_health(conn, stale_seconds=0)
 
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "gone"
+    assert fi_db.get_agent(conn, "dummy-1")["process_state"] == fi_db.PROCESS_STOPPED
+
+
+def test_evaluate_agent_health_does_not_touch_dormant_agents(conn):
+    """A retired agent is not a crashed one. Health evaluation must leave
+    dormant agents entirely alone, however long they sit stopped."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    _evaluate_agent_health(conn, stale_seconds=0)
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT
+    assert agent["process_state"] == fi_db.PROCESS_STOPPED
 
 
 def test_coo_work_respawns_crashed_agent_within_same_cycle(conn):
@@ -191,7 +210,44 @@ def test_coo_work_respawns_crashed_agent_within_same_cycle(conn):
     _evaluate_agent_health(conn, stale_seconds=0)
     _ensure_baseline_population(conn)
 
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+    assert fi_db.get_agent(conn, "dummy-1")["process_state"] == fi_db.PROCESS_CRASHED
+    pending = fi_db.fetch_next_pending_directive(conn)
+    assert pending is not None
+    assert pending["target_role"] == "dummy"
+
+
+# --- dormancy: retirement is non-destructive and reversible ---
+
+
+def test_coo_does_not_respawn_a_dormant_agent(conn):
+    """The whole point of separating lifecycle from process liveness.
+    Retirement is a deliberate Controller decision; COO must not undo it by
+    respawning. Before the split, a retired agent was indistinguishable from
+    a dead one and got respawned within a cycle, so retirement silently did
+    nothing."""
+    for i, role in enumerate(BASELINE_ROLES):
+        fi_db.register_agent(conn, f"{role}-1", role, 111 + i)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    _ensure_baseline_population(conn)
+
+    assert fi_db.fetch_next_pending_directive(conn) is None
+
+
+def test_coo_respawns_once_a_dormant_agent_is_resumed(conn):
+    """Resume restores organizational standing only; COO's next cycle then
+    sees an in-service role with no process and requests the spawn."""
+    for i, role in enumerate(BASELINE_ROLES):
+        fi_db.register_agent(conn, f"{role}-1", role, 111 + i)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+    _ensure_baseline_population(conn)
+    assert fi_db.fetch_next_pending_directive(conn) is None  # dormant, left alone
+
+    fi_db.resume_agent(conn, "dummy-1")
+    _ensure_baseline_population(conn)
+
     pending = fi_db.fetch_next_pending_directive(conn)
     assert pending is not None
     assert pending["target_role"] == "dummy"
@@ -225,7 +281,7 @@ def test_evaluate_past_decisions_marks_died_before_establishing(conn):
     directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, directive_id, "success", detail="dummy-1")
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
 
     _evaluate_past_decisions(conn, grace_seconds=0)
 
@@ -270,7 +326,7 @@ def test_evaluate_past_decisions_is_idempotent(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
 
     _evaluate_past_decisions(conn, grace_seconds=0)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
     _evaluate_past_decisions(conn, grace_seconds=0)
 
     completed = fi_db.list_completed_directives(conn)

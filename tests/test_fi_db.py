@@ -93,10 +93,17 @@ def test_reregistering_agent_resets_retire_flag(conn):
     assert fi_db.is_retirement_requested(conn, "dummy-1") is False
 
 
-def test_mark_agent_gone_updates_status(conn):
+def test_mark_process_stopped_leaves_lifecycle_untouched(conn):
+    """A process stopping says nothing about organizational standing: the
+    agent is still in service, it just has no process right now (which is
+    what COO refills)."""
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "gone"
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["process_state"] == fi_db.PROCESS_STOPPED
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+    assert agent["status"] == "gone"  # derived legacy value
 
 
 def test_enqueue_and_fetch_next_pending_directive(conn):
@@ -252,13 +259,18 @@ def test_has_pending_spawn_directive_false_for_different_role(conn):
     assert fi_db.has_pending_spawn_directive(conn, "explorer") is False
 
 
-def test_mark_agent_crashed_is_distinct_from_gone(conn):
+def test_mark_process_crashed_is_distinct_from_stopped(conn):
     """Gap 3 (project brief): restart-vs-crash distinction - 'crashed'
-    (detected by COO's health evaluation) must be a different status from
-    'gone' (the agent's own clean exit), not collapsed into the same value."""
+    (observed by COO's health evaluation) must stay distinct from 'stopped'
+    (the agent's own clean exit), not collapsed into one value. Like a clean
+    stop, it records process liveness only and never retires the agent."""
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_crashed(conn, "dummy-1")
-    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+    fi_db.mark_process_crashed(conn, "dummy-1")
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["process_state"] == fi_db.PROCESS_CRASHED
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+    assert agent["status"] == "crashed"  # derived legacy value
 
 
 def test_list_stale_active_agents_excludes_fresh_heartbeat(conn):
@@ -283,9 +295,19 @@ def test_list_stale_active_agents_uses_spawn_time_when_no_heartbeat_yet(conn):
     assert [a["identity"] for a in stale] == ["dummy-1"]
 
 
-def test_list_stale_active_agents_excludes_non_active_status(conn):
+def test_list_stale_active_agents_excludes_already_stopped_processes(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
-    fi_db.mark_agent_gone(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+    assert fi_db.list_stale_active_agents(conn, stale_seconds=0) == []
+
+
+def test_list_stale_active_agents_excludes_dormant_agents(conn):
+    """A dormant agent whose process already stopped is retired, not stale -
+    flagging it as crashed would be plainly wrong."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
     assert fi_db.list_stale_active_agents(conn, stale_seconds=0) == []
 
 
@@ -604,3 +626,101 @@ def test_seeding_is_idempotent_across_repeated_init(conn):
     assert fi_db.get_agent_name(conn, "dummy-1") == name_before
     assert len(fi_db.list_agent_names(conn)) == len(fi_db.AGENT_NAME_POOL) + 1
     assert len(fi_db.list_security_universe(conn)) == len(fi_db.SECURITY_UNIVERSE_SEED)
+
+
+# --- Dormancy: retirement is non-destructive and reversible (addendum 11 §9) ---
+
+
+def test_retirement_makes_agent_dormant_without_deleting_it(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.request_retirement(conn, "dummy-1")
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent is not None, "retirement must never delete the agent row"
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT
+    assert fi_db.is_retirement_requested(conn, "dummy-1") is True
+
+
+def test_retirement_preserves_identity_name_and_history(conn):
+    """The substance of "non-destructive": everything that makes the agent a
+    durable organizational record survives retirement untouched."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.record_heartbeat(conn, "dummy-1")
+    fi_db.record_heartbeat(conn, "dummy-1")
+    name_before = fi_db.get_agent_name(conn, "dummy-1")
+    spawned_before = fi_db.get_agent(conn, "dummy-1")["spawned_at"]
+
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["identity"] == "dummy-1"
+    assert agent["role"] == "dummy"
+    assert agent["spawned_at"] == spawned_before
+    assert fi_db.get_agent_name(conn, "dummy-1") == name_before
+    # health history is untouched
+    card = {row["identity"]: row for row in fi_db.get_performance_card(conn)}
+    assert card["dummy-1"]["heartbeat_count"] == 2
+
+
+def test_resume_restores_an_agent_to_active_service(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    fi_db.resume_agent(conn, "dummy-1")
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+    # resume clears the retire flag, or the next spawned process would
+    # immediately wind itself back down
+    assert fi_db.is_retirement_requested(conn, "dummy-1") is False
+    # resume restores standing only - it does not start a process
+    assert agent["process_state"] == fi_db.PROCESS_STOPPED
+
+
+def test_resumed_agent_keeps_its_original_name_and_identity(conn):
+    """Resume is a genuine restoration, not a fresh agent wearing the same
+    slot - which is the difference between reversible dormancy and deletion
+    plus recreation."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    name_before = fi_db.get_agent_name(conn, "dummy-1")
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    fi_db.resume_agent(conn, "dummy-1")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222)  # the resumed process comes up
+
+    assert fi_db.get_agent_name(conn, "dummy-1") == name_before
+    assert fi_db.get_agent(conn, "dummy-1")["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+
+
+def test_register_agent_does_not_silently_un_retire_a_dormant_agent(conn):
+    """Registration reports process liveness; it is not a lifecycle decision.
+    A dormant agent whose process somehow starts must stay dormant - only the
+    Controller (resume_agent) can put it back in service."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    fi_db.request_retirement(conn, "dummy-1")
+    fi_db.mark_process_stopped(conn, "dummy-1")
+
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222)
+
+    agent = fi_db.get_agent(conn, "dummy-1")
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT
+    assert agent["process_state"] == fi_db.PROCESS_RUNNING
+
+
+def test_derived_status_stays_coherent_with_both_axes(conn):
+    """`status` is legacy and derived - it must never drift from the two
+    real axes, whichever path wrote the row."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "active"
+
+    fi_db.mark_process_crashed(conn, "dummy-1")
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "crashed"
+
+    fi_db.request_retirement(conn, "dummy-1")
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "dormant"
+
+    fi_db.resume_agent(conn, "dummy-1")
+    assert fi_db.get_agent(conn, "dummy-1")["status"] == "gone"  # active but no process

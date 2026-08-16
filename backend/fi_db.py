@@ -55,7 +55,12 @@ DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 # Bump only when the *meaning* of newly-written rows changes in a way a
 # future reader/grader needs to distinguish from older rows - not on every
 # column addition (see the additive-only-columns rule above).
-SCHEMA_VERSION = 1
+#
+# v2 (2026-08-16): agent_registry split organizational lifecycle from process
+# liveness (lifecycle_state + process_state). `status` still exists and is
+# still written, but is now a *derived* legacy value rather than the primary
+# fact - a grader reading old rows needs to know which model produced them.
+SCHEMA_VERSION = 2
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -91,6 +96,26 @@ SECURITY_UNIVERSE_SEED = [
 ]
 
 SCHEMA = """
+-- lifecycle_state and process_state are deliberately two ORTHOGONAL axes
+-- (owner decision, 2026-08-16). lifecycle_state is the agent's standing in
+-- the organization; process_state is only whether an OS process is currently
+-- alive for it. Conflating them (as the single legacy `status` column did)
+-- made retirement indistinguishable from an ordinary exit, and made dormancy
+-- impossible to express at all: a retired agent looked exactly like a dead
+-- one, so COO would immediately respawn it.
+--
+--   lifecycle_state: 'active'  - in service, a process is expected to run
+--                    'dormant' - retired/suspended. Non-destructive and
+--                                reversible; the row, identity, name, and
+--                                full history are preserved. No process is
+--                                expected, and COO must not respawn it.
+--   process_state:   'running' - a live process is heartbeating
+--                    'stopped' - no process; it exited on its own terms
+--                    'crashed' - no process; it died without a clean exit
+--
+-- `status` is retained (never removed - additive-only rule) but is now a
+-- DERIVED legacy value, computed by _derive_status from the two axes above.
+-- Never make a decision from it; read the two axes instead.
 CREATE TABLE IF NOT EXISTS agent_registry (
     identity TEXT PRIMARY KEY,
     role TEXT NOT NULL,
@@ -99,7 +124,9 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     retire_requested INTEGER NOT NULL DEFAULT 0,
     spawned_at TEXT NOT NULL,
     last_heartbeat_at TEXT,
-    schema_version INTEGER NOT NULL DEFAULT 1
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active',
+    process_state TEXT NOT NULL DEFAULT 'running'
 );
 
 CREATE TABLE IF NOT EXISTS coo_directives (
@@ -306,6 +333,8 @@ SELECT
     r.identity,
     r.role,
     r.status,
+    r.lifecycle_state,
+    r.process_state,
     r.spawned_at,
     r.last_heartbeat_at,
     (SELECT COUNT(*) FROM health_metrics h WHERE h.identity = r.identity) AS heartbeat_count
@@ -365,6 +394,30 @@ def _seed_static_metadata(conn: Database) -> None:
 
 # --- Agent registry ---
 
+LIFECYCLE_ACTIVE = "active"
+LIFECYCLE_DORMANT = "dormant"
+
+PROCESS_RUNNING = "running"
+PROCESS_STOPPED = "stopped"
+PROCESS_CRASHED = "crashed"
+
+
+def _derive_status(lifecycle_state: str, process_state: str) -> str:
+    """The legacy single-axis `status` value, derived from the two real axes.
+
+    Kept only so historical rows and the pre-2026-08-16 vocabulary stay
+    coherent (the additive-only-columns rule means the column can never be
+    removed). Nothing should make a decision from it - read lifecycle_state
+    and process_state instead. Computed in exactly one place so the derived
+    column can never drift out of sync with the facts it's derived from."""
+    if lifecycle_state == LIFECYCLE_DORMANT:
+        return "dormant"
+    if process_state == PROCESS_RUNNING:
+        return "active"
+    if process_state == PROCESS_CRASHED:
+        return "crashed"
+    return "gone"
+
 
 def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     """identity is a permanent role-slot ID (addendum_5 §4: durable
@@ -375,13 +428,29 @@ def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     explicitly reset to NULL on that path - without it, a respawned agent
     would inherit its *previous* life's last heartbeat, which could already
     be well past agents/coo.py's staleness threshold and get the freshly-
-    registered agent marked 'crashed' before it ever got a chance."""
+    registered agent marked 'crashed' before it ever got a chance.
+
+    Deliberately does NOT touch lifecycle_state on the ON CONFLICT path.
+    Registration is a statement about *process* liveness ("a process for this
+    identity is now running"), not about organizational standing. Only the
+    Controller changes lifecycle_state (retire_agent/resume_agent), so a
+    dormant agent whose process somehow starts can never silently
+    un-retire itself. A brand-new agent gets 'active' from the column default
+    on INSERT."""
     now = _now()
     conn.execute(
-        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version) "
-        "VALUES (?, ?, ?, 'active', 0, ?, NULL, ?) "
-        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, status='active', retire_requested=0, spawned_at=excluded.spawned_at, last_heartbeat_at=NULL, schema_version=excluded.schema_version",
-        (identity, role, pid, now, SCHEMA_VERSION),
+        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version, lifecycle_state, process_state) "
+        "VALUES (?, ?, ?, ?, 0, ?, NULL, ?, ?, ?) "
+        "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, retire_requested=0, spawned_at=excluded.spawned_at, "
+        "last_heartbeat_at=NULL, schema_version=excluded.schema_version, process_state=excluded.process_state, "
+        "status=CASE WHEN agent_registry.lifecycle_state = ? THEN ? ELSE ? END",
+        (
+            identity, role, pid, _derive_status(LIFECYCLE_ACTIVE, PROCESS_RUNNING), now, SCHEMA_VERSION,
+            LIFECYCLE_ACTIVE, PROCESS_RUNNING,
+            LIFECYCLE_DORMANT,
+            _derive_status(LIFECYCLE_DORMANT, PROCESS_RUNNING),
+            _derive_status(LIFECYCLE_ACTIVE, PROCESS_RUNNING),
+        ),
     )
     # Every agent gets a name from the repository on first registration and
     # keeps it for life - assign_agent_name is idempotent, so a respawn under
@@ -393,11 +462,44 @@ def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
 
 
 def request_retirement(conn: Database, identity: str) -> None:
-    """The Controller calls this when processing a 'retire' directive - it
-    only ever sets a flag. The target agent's own run loop (see
-    agents/base.py) polls for this and exits itself; nothing forcibly kills
-    the process. This *is* what "graceful retire" means concretely."""
-    conn.execute("UPDATE agent_registry SET retire_requested = 1 WHERE identity = ?", (identity,))
+    """Retire an agent: move it to dormant and ask its process to wind down.
+
+    Retirement is **non-destructive and reversible** (addendum 11 §9,
+    addendum 12 §4). The row is never deleted - identity, name, performance
+    history, grades, and every record the agent produced are preserved
+    exactly as they were. Only two things change: lifecycle_state becomes
+    'dormant', and retire_requested asks the running process to stop.
+
+    Both are set here, by the Controller, because organizational standing is
+    the Controller's call alone (addendum 11 §15). The agent itself only ever
+    reports its own process_state; it never decides whether it is in service.
+
+    The trigger stays a flag the agent polls: agents/base.py checks it *after*
+    finishing the current work cycle, so the agent always completes what it
+    was doing and exits on its own terms. Nothing forcibly kills it.
+
+    resume_agent is the exact inverse."""
+    conn.execute(
+        "UPDATE agent_registry SET retire_requested = 1, lifecycle_state = ?, status = ? WHERE identity = ?",
+        (LIFECYCLE_DORMANT, _derive_status(LIFECYCLE_DORMANT, PROCESS_STOPPED), identity),
+    )
+
+
+def resume_agent(conn: Database, identity: str) -> None:
+    """Bring a dormant agent back into service - the 'resume' half of
+    addendum 11 §9's "retirement is always reversible."
+
+    Restores organizational standing only. It does not start a process:
+    once lifecycle_state is 'active' again with no process running, COO's
+    normal baseline check sees an understaffed role and requests a spawn
+    through the Controller, exactly as it would for any other missing agent.
+    The agent comes back under the *same* permanent identity, with the same
+    name and its entire history intact - which is what makes dormancy
+    genuinely non-destructive rather than a deletion with extra steps."""
+    conn.execute(
+        "UPDATE agent_registry SET retire_requested = 0, lifecycle_state = ?, status = ? WHERE identity = ?",
+        (LIFECYCLE_ACTIVE, _derive_status(LIFECYCLE_ACTIVE, PROCESS_STOPPED), identity),
+    )
 
 
 def is_retirement_requested(conn: Database, identity: str) -> bool:
@@ -414,30 +516,68 @@ def record_heartbeat(conn: Database, identity: str, metric: str = "heartbeat", v
     )
 
 
-def mark_agent_gone(conn: Database, identity: str) -> None:
-    conn.execute("UPDATE agent_registry SET status = 'gone' WHERE identity = ?", (identity,))
+def mark_process_stopped(conn: Database, identity: str) -> None:
+    """The agent's own run loop calls this on its way out (agents/base.py's
+    finally block) - it reports only that this identity's process is no
+    longer running.
+
+    Deliberately leaves lifecycle_state untouched. A process stopping says
+    nothing about whether the agent is still in service: an 'active' agent
+    whose process stopped is an understaffed role COO should refill, while a
+    'dormant' agent whose process stopped is simply retirement completing.
+    Same event, opposite correct responses - which is exactly why the two
+    axes are separate."""
+    conn.execute(
+        "UPDATE agent_registry SET process_state = ?, "
+        "status = CASE WHEN lifecycle_state = ? THEN ? ELSE ? END WHERE identity = ?",
+        (
+            PROCESS_STOPPED,
+            LIFECYCLE_DORMANT,
+            _derive_status(LIFECYCLE_DORMANT, PROCESS_STOPPED),
+            _derive_status(LIFECYCLE_ACTIVE, PROCESS_STOPPED),
+            identity,
+        ),
+    )
 
 
-def mark_agent_crashed(conn: Database, identity: str) -> None:
-    """Distinct from mark_agent_gone: 'gone' means the agent's own run loop
-    exited cleanly and marked itself on its way out (agents/base.py's
-    finally block). 'crashed' means agents/coo.py's health evaluation
-    detected a heartbeat that stopped moving without that clean exit ever
-    happening - addendum_10 Phase B's restart-vs-crash distinction (Gap 3
-    in the project brief)."""
-    conn.execute("UPDATE agent_registry SET status = 'crashed' WHERE identity = ?", (identity,))
+def mark_process_crashed(conn: Database, identity: str) -> None:
+    """Distinct from mark_process_stopped: 'stopped' means the agent's own
+    run loop exited cleanly and reported it (agents/base.py's finally block).
+    'crashed' means agents/coo.py's health evaluation observed a heartbeat
+    that stopped moving without that clean exit ever happening - addendum_10
+    Phase B's restart-vs-crash distinction (Gap 3 in the project brief).
+
+    Like mark_process_stopped, this records an observation about process
+    liveness only. COO observing a dead process does not retire the agent -
+    that would be COO taking a lifecycle decision, which belongs to the
+    Controller."""
+    conn.execute(
+        "UPDATE agent_registry SET process_state = ?, "
+        "status = CASE WHEN lifecycle_state = ? THEN ? ELSE ? END WHERE identity = ?",
+        (
+            PROCESS_CRASHED,
+            LIFECYCLE_DORMANT,
+            _derive_status(LIFECYCLE_DORMANT, PROCESS_CRASHED),
+            _derive_status(LIFECYCLE_ACTIVE, PROCESS_CRASHED),
+            identity,
+        ),
+    )
 
 
 def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
-    """'active' agents whose most recent signal of life (last heartbeat, or
-    spawn time if it never got as far as a first heartbeat) is older than
-    stale_seconds - candidates for agents/coo.py's _evaluate_agent_health to
-    mark as crashed. An agent that exits cleanly calls mark_agent_gone
-    itself; one that's killed outright (SIGKILL, OOM, host crash) never
-    reaches that code at all, so its row would stay 'active' forever with a
-    heartbeat that's stopped advancing unless something else notices - this
-    is that something else."""
-    rows = conn.fetchall("SELECT * FROM agent_registry WHERE status = 'active'")
+    """Agents believed to be running whose most recent signal of life (last
+    heartbeat, or spawn time if they never got as far as a first heartbeat)
+    is older than stale_seconds - candidates for agents/coo.py's
+    _evaluate_agent_health to mark as crashed. An agent that exits cleanly
+    calls mark_process_stopped itself; one that's killed outright (SIGKILL,
+    OOM, host crash) never reaches that code at all, so its row would claim
+    'running' forever with a heartbeat that's stopped advancing unless
+    something else notices - this is that something else.
+
+    Filters on process_state = 'running' rather than lifecycle: a dormant
+    agent that has already stopped is not stale, it is retired, and flagging
+    it as crashed would be plainly wrong."""
+    rows = conn.fetchall("SELECT * FROM agent_registry WHERE process_state = ?", (PROCESS_RUNNING,))
     now = datetime.now(timezone.utc)
     stale = []
     for row in rows:

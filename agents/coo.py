@@ -109,18 +109,31 @@ def _role_spawn_in_flight(conn, role: str) -> bool:
 
 
 def _ensure_baseline_population(conn) -> None:
-    """Idempotent: only enqueues a spawn directive for a role if no active
-    agent of that role currently exists, and no spawn for that role is
+    """Idempotent: only enqueues a spawn directive for a role if that role
+    has no agent both in service and running, and no spawn for that role is
     already in flight (see _role_spawn_in_flight). Runs every cycle rather
     than once at startup - cheap, and it means COO notices and re-spawns a
     baseline agent that unexpectedly died, a small real instance of
     "maintain ecosystem health" rather than just a one-time bootstrap
-    step."""
+    step.
+
+    **Dormant agents are deliberately left alone.** Retirement is an
+    explicit organizational decision taken by the Controller; COO must not
+    immediately undo it by respawning. That means retiring the only agent of
+    a baseline role genuinely leaves that role unstaffed until someone
+    resumes it (fi_db.resume_agent) - which is what retirement *means*.
+    Before lifecycle and process state were separated, this was impossible
+    to express: a retired agent was indistinguishable from a dead one, so
+    COO respawned it within a cycle and retirement silently did nothing."""
     agents = fi_db.list_agents(conn)
-    active_roles = {a["role"] for a in agents if a["status"] == "active"}
+    staffed_roles = {
+        a["role"] for a in agents
+        if a["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE and a["process_state"] == fi_db.PROCESS_RUNNING
+    }
+    dormant_roles = {a["role"] for a in agents if a["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT}
     known_roles = {a["role"] for a in agents}
     for role in BASELINE_ROLES:
-        if role in active_roles:
+        if role in staffed_roles or role in dormant_roles:
             continue
         if _role_spawn_in_flight(conn, role):
             continue
@@ -134,21 +147,25 @@ def _ensure_baseline_population(conn) -> None:
 
 def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_SECONDS) -> None:
     """Health evaluation + restart-vs-crash distinction (Gap 3, project
-    brief): an agent that exits cleanly marks itself 'gone' via agents/
-    base.py's finally block, but a hard crash (SIGKILL, OOM, hung process)
-    never reaches that code at all - the row stays 'active' forever unless
-    something else notices the heartbeat stopped moving. This is that
-    something else: any 'active' agent stale beyond stale_seconds is marked
-    'crashed', which drops it out of _ensure_baseline_population's active-
-    role count so a replacement gets spawned, the same as a clean 'gone'
-    would trigger. Runs before _ensure_baseline_population in _coo_work so
-    a crash detected this cycle is already reflected in this cycle's
-    respawn check, not one cycle later.
+    brief): an agent that exits cleanly reports process_state='stopped' via
+    agents/base.py's finally block, but a hard crash (SIGKILL, OOM, hung
+    process) never reaches that code at all - the row would claim 'running'
+    forever unless something else notices the heartbeat stopped moving. This
+    is that something else: any agent still claiming to run, stale beyond
+    stale_seconds, is marked process_state='crashed', which drops it out of
+    _ensure_baseline_population's staffed-role set so a replacement gets
+    spawned, the same as a clean stop would. Runs before
+    _ensure_baseline_population in _coo_work so a crash detected this cycle
+    is already reflected in this cycle's respawn check, not one cycle later.
+
+    Records a *process* observation only - it never changes lifecycle_state.
+    COO noticing a dead process is not COO retiring an agent; organizational
+    standing is the Controller's call alone (addendum 11 §15).
 
     stale_seconds is overridable (default HEALTH_STALE_THRESHOLD_SECONDS)
     so tests can evaluate without waiting out the real threshold."""
     for agent in fi_db.list_stale_active_agents(conn, stale_seconds):
-        fi_db.mark_agent_crashed(conn, agent["identity"])
+        fi_db.mark_process_crashed(conn, agent["identity"])
 
 
 def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECONDS) -> None:
@@ -172,12 +189,12 @@ def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECO
     uses) keeps a directive from being graded off a different spawn
     attempt's outcome - if the row still predates this attempt, this
     attempt itself never registered, regardless of what a later life's
-    status is."""
+    state is."""
     for directive in fi_db.list_directives_needing_observation(conn, grace_seconds):
         agent = fi_db.get_agent(conn, directive["detail"])
         if agent is None or fi_db.parse_timestamp(agent["spawned_at"]) < fi_db.parse_timestamp(directive["completed_at"]):
             result = "never_registered"
-        elif agent["status"] == "active":
+        elif agent["process_state"] == fi_db.PROCESS_RUNNING:
             result = "established"
         else:
             result = "died_before_establishing"

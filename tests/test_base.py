@@ -35,6 +35,9 @@ def test_work_fn_exception_does_not_crash_the_loop(tmp_path, monkeypatch):
     assert len(calls) == 2
 
     agent = fi_db.get_agent(conn, "flaky-1")
-    assert agent["status"] == "gone"
+    # the loop was ended by a retirement request, so the agent is dormant
+    # (the Controller's decision) with a stopped process (its own report)
+    assert agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT
+    assert agent["process_state"] == fi_db.PROCESS_STOPPED
     assert agent["last_heartbeat_at"] is not None
     conn.close()

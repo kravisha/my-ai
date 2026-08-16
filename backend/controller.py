@@ -102,11 +102,15 @@ class Controller:
         fi_db.record_heartbeat(self.conn, self.identity)
 
     def shutdown_self(self) -> None:
-        """Clean server shutdown reads as a clean agent exit ('gone'), not a
-        crash - the same distinction agents/base.py's finally block makes for
-        subprocess agents, and the one Gap 3 built the crashed/gone split
-        for."""
-        fi_db.mark_agent_gone(self.conn, self.identity)
+        """Clean server shutdown reads as a clean process stop, not a crash -
+        the same distinction agents/base.py's finally block makes for
+        subprocess agents.
+
+        Note it reports process_state only: a stopped server is *not* a
+        retired Controller. The Controller stays organizationally active, so
+        restarting the server brings it straight back into service rather
+        than requiring a resume."""
+        fi_db.mark_process_stopped(self.conn, self.identity)
 
     def bootstrap_coo(self) -> str:
         """The one spawn that bypasses the directive queue entirely -
@@ -139,6 +143,8 @@ class Controller:
             self._handle_spawn(directive)
         elif directive["directive_type"] == "retire":
             self._handle_retire(directive)
+        elif directive["directive_type"] == "resume":
+            self._handle_resume(directive)
         else:
             fi_db.complete_directive(
                 self.conn, directive["id"], "failure",
@@ -163,12 +169,30 @@ class Controller:
         fi_db.complete_directive(self.conn, directive["id"], "success", detail=identity)
 
     def _handle_retire(self, directive: dict) -> None:
+        """Retirement moves the agent to dormant and asks its process to wind
+        down. It never deletes anything: the identity, name, and full history
+        survive, and _handle_resume is the exact inverse (addendum 11 §9,
+        "retirement is non-destructive and reversible")."""
         identity = directive["target_identity"]
         if fi_db.get_agent(self.conn, identity) is None:
             fi_db.complete_directive(self.conn, directive["id"], "failure", detail=f"unknown identity: {identity}")
             return
         fi_db.request_retirement(self.conn, identity)
         fi_db.complete_directive(self.conn, directive["id"], "success", detail=f"retirement requested for {identity}")
+
+    def _handle_resume(self, directive: dict) -> None:
+        """Brings a dormant agent back into service. Only restores its
+        organizational standing - COO's normal baseline check then sees an
+        in-service role with no process running and requests the spawn, so
+        the agent returns under the same permanent identity with its name and
+        history intact."""
+        identity = directive["target_identity"]
+        agent = fi_db.get_agent(self.conn, identity)
+        if agent is None:
+            fi_db.complete_directive(self.conn, directive["id"], "failure", detail=f"unknown identity: {identity}")
+            return
+        fi_db.resume_agent(self.conn, identity)
+        fi_db.complete_directive(self.conn, directive["id"], "success", detail=f"resumed {identity}")
 
     def known_process_identities(self) -> list[str]:
         """Identities this Controller instance has itself spawned (has a

@@ -60,5 +60,10 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
                 break
             time.sleep(HEARTBEAT_INTERVAL_SECONDS)
     finally:
-        fi_db.mark_agent_gone(conn, identity)
+        # Reports only that this process is ending. Whether the agent is
+        # still in service is not its call - if it was retired, the
+        # Controller already set lifecycle_state='dormant', and this simply
+        # completes that; if it wasn't, the agent stays organizationally
+        # active with a stopped process, which COO will refill.
+        fi_db.mark_process_stopped(conn, identity)
         conn.close()

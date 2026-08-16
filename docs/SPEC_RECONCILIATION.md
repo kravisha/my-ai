@@ -10,7 +10,7 @@ both models — stop, resolve, and update the canonical specification so one int
 remains.* Since the addenda themselves are marked do-not-edit, **this file is where that resolution is
 recorded.**
 
-Last updated: 2026-08-15.
+Last updated: 2026-08-16.
 
 ---
 
@@ -66,7 +66,53 @@ entity*; COO is a *separate* agent. The Controller is the backend server's own a
 server comes up *as* Controller rather than containing one. It is therefore the one agent that is not
 a spawned subprocess.
 
-### 2.2 Portfolio Analysis — no conflict, just note
+### 2.2 Retirement is dormancy, and lifecycle is separate from process liveness
+
+- **Old (built until 2026-08-16):** a single `agent_registry.status` column held `active`/`gone`/
+  `crashed`. Retirement set a flag; the agent exited; the row read `gone` — indistinguishable from any
+  other clean exit. Nothing was reversible, and because COO treated any non-`active` agent as missing,
+  a retired agent was **respawned within a cycle**. Retirement silently did nothing.
+- **New (addendum 11 §9, addendum 12 §4):** "Retire means serialize the agent's state and place it
+  into a dormant/sleep state. Retirement is non-destructive and reversible." Plus a **resume** path,
+  and "destructive deletion is a separate, exceptional, rare maintenance operation."
+- **Resolution (owner decision, 2026-08-16): adopted.** Implemented in commit `b45697a`.
+
+The owner's framing, which is sharper than the documents' own wording: **implement lifecycle states
+separate from process liveness. Let processes exit, but preserve agent identity, status, and history
+in the database.** So `agent_registry` now carries two orthogonal axes:
+
+| Axis | Values | Who writes it |
+|---|---|---|
+| `lifecycle_state` | `active`, `dormant` | **Controller only** — organizational standing |
+| `process_state` | `running`, `stopped`, `crashed` | the agent itself (`stopped`), COO's health check (`crashed`) |
+
+Conflating them was what made dormancy inexpressible. The same event — "no process is running" — has
+opposite correct responses depending on standing: refill an `active` role, leave a `dormant` one alone.
+
+Consequences worth knowing:
+
+- **A dormant agent is never respawned by COO.** Retiring the only agent of a baseline role genuinely
+  leaves that role unstaffed until someone resumes it. That is what retirement *means*; COO must not
+  undo a Controller decision.
+- **Resume restores standing only.** `resume_agent` flips `lifecycle_state` back to `active`; COO's
+  normal baseline check then sees an in-service role with no process and requests the spawn. The agent
+  returns under the same permanent identity, same name, full history.
+- **`status` is retained but now derived** (`_derive_status`) from the two axes, so historical rows and
+  the old vocabulary stay coherent. Never make a decision from it. `SCHEMA_VERSION` bumped to **2**
+  because the meaning of newly-written rows genuinely changed.
+- **Registration never un-retires.** `register_agent` reports process liveness; it deliberately leaves
+  `lifecycle_state` alone on the ON CONFLICT path.
+- **Crash detection never retires.** COO marking a dead process `crashed` is an observation, not a
+  lifecycle decision.
+
+**Cognitive state serialization is explicitly deferred** (owner decision) — see §5. The literal phrase
+"serialize the agent's state" is satisfied today by preserving the durable organizational record
+(identity, name, performance history, grades, evidence), all of which already lives in the database.
+Serializing *process memory* is deliberately not built, and arguably shouldn't be: addendum 13 §9
+requires durable knowledge to live in the database as organizational property rather than inside an
+agent's transient context, so a correctly-built agent should have little worth serializing.
+
+### 2.3 Portfolio Analysis — no conflict, just note
 
 Addendum 9 (on-demand portfolio analysis) remains canonical for the analysis content itself. Addendum
 12 §18–20 adds that Banker mediates client access to it. Not a conflict; layered.
@@ -87,6 +133,10 @@ Addendum 9 (on-demand portfolio analysis) remains canonical for the analysis con
 | CEO display name configurable, default Bob, not hard-coded | 12 §10, §21 | **Done** — `CEO_DISPLAY_NAME`, seeded reserved |
 | Versioned, expandable Security Universe | 12 §10, §21 | **Done (metadata only)** — `security_universe`; no consumer yet, see §5 |
 | Durable performance record independent of process instance | 5 §4 | **Done** — permanent identity, commit `38273a6` |
+| Retirement is non-destructive, reversible dormancy | 11 §9, 12 §4 | **Done** — commit `b45697a`, see §2.2 |
+| Lifecycle state separate from process liveness | owner, 11 §2 | **Done** — commit `b45697a` |
+| Resume path restores a retired agent | 11 §9 | **Done** — `resume_agent` + `resume` directive |
+| Destructive deletion is separate/exceptional | 11 §9, 12 §4 | **Done** — nothing in the codebase deletes an agent record |
 | Provenance from evidence → event → report → analysis → grade | 5 §3 | **Done** — Phase C tables, commit `2512b2f` |
 | Peer groups explicit and versioned | 7 §5 | **Done** — commit `b65d04b` |
 | Deterministic detection; LLM for interpretation only | 12 §1 | **Done** — Explorer detector is deterministic; LLM is a gate |
@@ -131,7 +181,20 @@ therefore the sole agent that never appears in `BASELINE_ROLES` and is never spa
 > `agents/controller.py` that deliberately does not exist. Guarded by
 > `tests/test_controller.py::test_controller_is_never_in_baseline_roles`.
 
-### 4.3 Archive triggers as SQLite-specific behavior — **narrowed**
+### 4.3 Retirement as a queue-drain mechanism — **declined**
+
+Source: `Financial Intelligence Gap1 Redesign Notes.pdf` (not canonical). Proposed replacing the
+`retire_requested` flag with a per-agent pending-tasks queue: COO stops feeding tasks, the agent drains
+its queue and exits itself.
+
+**Declined (2026-08-16).** The goal — "finish what you're doing, retire when your plate is empty" — is
+already satisfied: `agents/base.py` checks the retirement flag *after* `work_fn(conn)` returns, so an
+agent always completes its current unit of work and exits on its own terms. Nothing forcibly kills it.
+Adopting the proposal would mean building per-agent task queues that do not exist (Explorer and
+Speculator self-schedule; Analysis pulls from a shared queue), and rewriting a mechanism that is
+tested, real-subprocess-tested, and manually verified — to obtain a property it already has.
+
+### 4.4 Archive triggers as SQLite-specific behavior — **narrowed**
 
 Addendum 12 §9 / 13 §11 require that "agents must not depend directly on SQLite-specific behavior."
 The two pending→completed archive triggers are SQLite trigger syntax, but they are invisible to every
@@ -156,7 +219,7 @@ an actual PostgreSQL migration happens (itself explicitly deferred, addendum 12 
 | Simulation Experiment Framework | 14 §9, 12 §11 | Not built — Phase D |
 | Competency/skill catalogs | 12 §6, §21, 13 §3 | Not built |
 | Two-layer resident/database knowledge model | 12 §8, 13 §10 | Not built |
-| Retirement as serialized dormancy | 11 §9, 12 §4 | **Not built** — see §6.1, this one is a live conflict |
+| Cognitive/process state serialization on retire | 11 §9, 12 §4 | **Deferred, future work** (owner decision, 2026-08-16). Dormancy itself is built — see §2.2. What is *not* built is serializing an agent's in-process cognitive state, because none meaningfully exists yet and addendum 13 §9 says durable knowledge belongs in the database rather than in agent context. Revisit when Phase D gives agents real trained state |
 | Explorer↔Speculator cross-check contracts + escalation policy | 12 §14, §21 | Not built — the two agents currently work independently |
 | COO starvation/backlog scaling | 6 §5, 11 §4 | Not built; now unblocked (a real queue exists) |
 | `run_id` on messages | 10 §3 | Not built; tied to the replay clock (addendum 8 §7) |
@@ -166,27 +229,6 @@ an actual PostgreSQL migration happens (itself explicitly deferred, addendum 12 
 ---
 
 ## 6. Open conflicts — unresolved, need an owner decision
-
-### 6.1 Retirement semantics: flag vs. serialized dormancy
-
-Three positions currently exist and **cannot all be true**:
-
-1. **Built today:** `retire_requested` is a boolean flag; the agent's own loop notices it and exits;
-   the row is marked `gone`. Nothing is serialized. Tested, and manually verified twice.
-2. **Canonical now (addendum 11 §9, addendum 12 §4):** "Retire means serialize the agent's state and
-   place it into a dormant/sleep state. Retirement is non-destructive and reversible." Also requires a
-   **resume** path ("restore a retired agent from preserved state").
-3. **Proposed (Gap 1 redesign notes, never signed off):** replace the flag with a per-agent
-   pending-tasks queue — COO stops feeding tasks, the agent drains and exits itself.
-
-Position 2 is now canonical and independently stated in two of the new documents, so it should
-probably win — but implementing it means designing what agent state actually *is* (nothing meaningful
-exists to serialize yet, which is the same reason the sleeping pool was declined). Position 3 remains
-un-adjudicated separately.
-
-**Recommendation:** treat "retirement is non-destructive and reversible" as adopted-in-principle now,
-and defer implementation until Phase D gives agents real state worth preserving. Do not implement
-position 3 without an explicit decision.
 
 ### 6.2 Multi-hop provenance
 
