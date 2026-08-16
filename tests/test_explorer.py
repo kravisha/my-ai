@@ -491,3 +491,95 @@ def test_explorer_does_not_re_ask_while_a_question_is_outstanding(conn, monkeypa
         _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
 
     assert len(conn.fetchall("SELECT id FROM cross_check_requests")) == 1
+
+
+# --- ten securities across explicit peer groups (addendum 8 §4 step 3) ---
+
+
+def _groups(monkeypatch, groups):
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUPS", groups)
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES",
+                        [s for members in groups.values() for s in members])
+    lookup = {s: name for name, members in groups.items() for s in members}
+    monkeypatch.setattr("agents.discovery_config.group_of", lookup.get)
+    monkeypatch.setattr("agents.discovery_config.group_members",
+                        lambda s: list(groups.get(lookup.get(s), [])))
+
+
+def test_co_movement_inside_a_group_is_peer(conn, monkeypatch):
+    _groups(monkeypatch, {"alpha": ["SYN1", "SYN2"], "beta": ["SYN3", "SYN4"]})
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}, "SYN2": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    event = fi_db.get_detector_event(conn, 1)
+    assert event["scope"] == "peer"
+    assert event["peer_group_name"] == "alpha"
+    assert json.loads(event["peer_context"])["co_triggering"] == ["SYN2"]
+
+
+def test_co_movement_across_unrelated_groups_is_not_peer(conn, monkeypatch):
+    """The reason grouping exists. Two names moving on two unrelated causes are
+    two idiosyncratic events that coincided, not a common factor - and a flat
+    single group would call them peers."""
+    _groups(monkeypatch, {"alpha": ["SYN1", "SYN2"], "beta": ["SYN3", "SYN4"]})
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}, "SYN3": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    events = {fi_db.get_detector_event(conn, i)["security"]: fi_db.get_detector_event(conn, i)
+              for i in (1, 2)}
+    assert events["SYN1"]["scope"] == "individual"
+    assert events["SYN3"]["scope"] == "individual"
+    # but the wider picture is still recorded, so a market-wide day stays visible
+    assert json.loads(events["SYN1"]["peer_context"])["triggering_across_all_groups"] == ["SYN1", "SYN3"]
+
+
+def test_peer_context_records_the_securitys_own_group_size(conn, monkeypatch):
+    """group_size must be the denominator co_triggering is measured against.
+    Reporting the total universe there would make one co-trigger out of three
+    look like one out of ten."""
+    _groups(monkeypatch, {"alpha": ["SYN1", "SYN2"], "beta": ["SYN3", "SYN4", "SYN5"]})
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert json.loads(fi_db.get_detector_event(conn, 1)["peer_context"])["group_size"] == 2
+
+
+def test_an_ungrouped_security_is_individual_not_a_guess(conn, monkeypatch):
+    """A security in no group has no basis for a peer relationship. Classifying
+    it 'individual' states that; inventing one would not."""
+    _groups(monkeypatch, {"alpha": ["SYN2"]})
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1", "SYN2"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}, "SYN2": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    ungrouped = [fi_db.get_detector_event(conn, i) for i in (1, 2)]
+    syn1 = [e for e in ungrouped if e["security"] == "SYN1"][0]
+    assert syn1["scope"] == "individual"
+    assert syn1["peer_group_name"] is None
+
+
+def test_the_default_universe_is_ten_securities_in_explicit_groups():
+    """Addendum 8 §4 step 3, literally: ten securities, groups plural."""
+    from agents import discovery_config
+
+    assert len(discovery_config.PEER_GROUP_SECURITIES) == 10
+    assert len(set(discovery_config.PEER_GROUP_SECURITIES)) == 10  # no duplicates
+    assert len(discovery_config.PEER_GROUPS) > 1
+    for security in discovery_config.PEER_GROUP_SECURITIES:
+        assert discovery_config.group_of(security) is not None
+
+
+def test_peer_groups_parse_from_the_environment():
+    from agents.discovery_config import _parse_peer_groups
+
+    assert _parse_peer_groups("a:S1,S2;b:S3") == {"a": ["S1", "S2"], "b": ["S3"]}
+    assert _parse_peer_groups("") == {}
+    assert _parse_peer_groups("malformed") == {}  # falls back to the default

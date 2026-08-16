@@ -18,11 +18,59 @@ import os
 # that should be distinguishable from earlier detector_events rows (same
 # spirit as fi_db.SCHEMA_VERSION - a producer/semantic version, not tied to
 # every tweak).
-PEER_GROUP_NAME = os.environ.get("FI_PEER_GROUP_NAME", "synthetic_peer_group_v1")
-PEER_GROUP_VERSION = int(os.environ.get("FI_PEER_GROUP_VERSION", "1"))
-PEER_GROUP_SECURITIES = [
-    s.strip() for s in os.environ.get("FI_PEER_GROUP_SECURITIES", "SYN1,SYN2,SYN3,SYN4").split(",") if s.strip()
-]
+PEER_GROUP_VERSION = int(os.environ.get("FI_PEER_GROUP_VERSION", "2"))
+
+# Ten securities across **explicit peer groups**, plural - addendum 8 §4 step 3.
+# The plural is the substance of that step, not decoration.
+#
+# With one flat group, "how many others triggered" has a denominator that means
+# very little: one co-trigger out of nine is close to noise, and nine out of
+# nine is a market-wide event nobody needed a detector to notice. Grouping gives
+# co-movement something to be relative to - three names moving together *inside
+# a sector* is a common-factor signal; the same three scattered across unrelated
+# groups is three idiosyncratic events that happened to coincide.
+#
+# Set FI_PEER_GROUPS as "group:SEC,SEC;group:SEC,SEC" to override.
+DEFAULT_PEER_GROUPS = {
+    "synthetic_alpha": ["SYN1", "SYN2", "SYN3", "SYN4"],
+    "synthetic_beta": ["SYN5", "SYN6", "SYN7"],
+    "synthetic_gamma": ["SYN8", "SYN9", "SYN10"],
+}
+
+
+def _parse_peer_groups(raw: str) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for chunk in raw.split(";"):
+        if ":" not in chunk:
+            continue
+        name, members = chunk.split(":", 1)
+        securities = [s.strip() for s in members.split(",") if s.strip()]
+        if name.strip() and securities:
+            groups[name.strip()] = securities
+    return groups
+
+
+PEER_GROUPS = _parse_peer_groups(os.environ.get("FI_PEER_GROUPS", "")) or DEFAULT_PEER_GROUPS
+
+# Every security under observation, flattened. Order is stable (group order,
+# then membership order) so runs stay reproducible.
+PEER_GROUP_SECURITIES = [s for members in PEER_GROUPS.values() for s in members]
+
+_GROUP_OF = {s: name for name, members in PEER_GROUPS.items() for s in members}
+
+
+def group_of(security: str) -> str | None:
+    """Which peer group a security belongs to, or None if it belongs to none.
+
+    A security with no group is not an error - it is simply one whose
+    co-movement cannot be assessed, and Explorer classifies it 'individual'
+    rather than guessing at a peer relationship it has no basis for."""
+    return _GROUP_OF.get(security)
+
+
+def group_members(security: str) -> list[str]:
+    group = group_of(security)
+    return list(PEER_GROUPS.get(group, [])) if group else []
 
 # NOTE: the detection thresholds are no longer here. Peak IV / Local Baseline
 # IV (addendum_7 §4) and Speculator's confidence bar are the system's

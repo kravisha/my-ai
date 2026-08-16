@@ -239,21 +239,32 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     }
 
     for security, (ratio, _si, _ei, peak_iv, baseline_iv) in triggering.items():
-        co_triggering = [s for s in triggering if s != security]
+        # Co-movement is judged **within the security's own peer group**
+        # (addendum 8 §4 step 3). Counting every triggering security across all
+        # groups would call three unrelated names moving on three unrelated
+        # causes a "common factor", which is the opposite of what the
+        # classification is for.
+        group_name = config.group_of(security)
+        members = set(config.group_members(security))
+        co_triggering = [s for s in triggering if s != security and s in members]
         scope = "peer" if len(co_triggering) >= config.PEER_MIN_COOCCURRING else "individual"
         peer_context = json.dumps({
-            "peer_group_name": config.PEER_GROUP_NAME,
+            "peer_group_name": group_name,
             "peer_group_version": config.PEER_GROUP_VERSION,
             "co_triggering": co_triggering,
-            "group_size": len(config.PEER_GROUP_SECURITIES),
+            "group_size": len(members),
+            # Across every group, for context. Deliberately separate from
+            # co_triggering: a market-wide day and a sector event look
+            # identical if you only record one of these numbers.
             "triggering_count": len(triggering),
+            "triggering_across_all_groups": sorted(triggering),
         })
 
         event_id = fi_db.record_detector_event(
             conn, identity, spawned_at, security, DETECTOR_TYPE,
             peak_iv, baseline_iv, ratio, threshold,
             neighborhood_desc=neighborhood_desc, surface_seed=str(config.MARKET_PROVIDER_SEED),
-            scope=scope, peer_group_name=config.PEER_GROUP_NAME,
+            scope=scope, peer_group_name=group_name,
             peer_group_version=config.PEER_GROUP_VERSION, peer_context=peer_context,
             lens_artifact_id=lens_artifact_id,
         )

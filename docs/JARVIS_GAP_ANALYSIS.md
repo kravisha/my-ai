@@ -223,6 +223,39 @@ this increment that ratio reached Analysis with nothing to weigh it against.
   alongside the classifier, so any score against them measures nothing. It gets tested against real
   text or not at all.
 
+### 4.3b Analysis is the throughput bottleneck at ten securities — *newly measured*
+
+Not a constitutional gap, but a capacity fact discovered while completing addendum 8 §4 step 3, and
+recorded here so the next increment is chosen on evidence rather than guesswork.
+
+At ten securities across three peer groups, against a real running backend:
+
+| | |
+|---|---|
+| Cross-checks | 17 opened, **17 consumed, 0 pending, 0 timed out** — the layer scales fine |
+| Reports | **13 pending against 9 analysed**, steady at 13 across a minute |
+| Regime | all 10 securities observed |
+| Agents | all six healthy, no duplicate spawns |
+
+**The backlog is bounded, not a leak.** `has_pending_report` dedups per producer *and* security, so
+the ceiling is one pending report per producer per security — 20 with two producers and ten
+securities. Observed 13 (explorer 4, speculator 9), holding steady rather than climbing. Nothing
+accumulates without limit.
+
+What it does mean is that **detection outpaces reasoning**. Explorer and Speculator are cheap per
+security; Analysis spends one deep-reasoning call per report and handles one per cycle, so at ten
+securities the latency from detection to analysis grows and some leads wait a long time. This is
+precisely addendum 8 §4 **step 7** ("resource and scaling behavior under starvation and backlog"),
+which the progression puts *after* step 3 — so it is the next step in that sequence rather than a
+defect in this one.
+
+Worth noting what the fix is *not*: draining more reports per Analysis cycle changes batching, not
+throughput, since each still costs a model call. The real options are multiple Analysis instances -
+deferred project-wide, since `_slot_identity` and `BASELINE_ROLES` both hard-assume one identity per
+role - or prioritising which reports get analysed rather than taking them FIFO. The second is
+cheaper and arguably more interesting: it would make "which lead is worth the compute" an explicit
+judgment rather than an accident of arrival order.
+
 ### 4.4 Source reliability is earned (§3, Axiom 3)
 
 Absent. `evidence_items.source` is a bare string; a Reddit post and a filing would be weighted
