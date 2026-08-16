@@ -304,6 +304,49 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Explorer<->Speculator cross-check contracts (addendum 12 §14, a Pre-Alpha
+-- task in §21). One row per question asked and, once answered, the answer.
+--
+-- Polled like everything else - the requester files a question and carries on
+-- with its own loop; the responder picks it up on its own cycle; the requester
+-- collects the answer on a later cycle. Nobody blocks. A synchronous call
+-- between two independent agent processes would be a new IPC channel, and
+-- SQLite is deliberately the only one.
+--
+-- The requester's own finding is recorded in requester_finding *before* the
+-- question is asked, because §14 says "investigate independently first, then
+-- cross-check." If the request went out first the two views would no longer be
+-- independent, and the pair would be one reference frame counted twice rather
+-- than two (addendum 15 §4-5).
+CREATE TABLE IF NOT EXISTS cross_check_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    requester_identity TEXT NOT NULL,
+    requester_spawned_at TEXT NOT NULL,
+    requester_role TEXT NOT NULL,
+    responder_role TEXT NOT NULL,
+    security TEXT NOT NULL,
+    -- The specific question being answered (§14, literal requirement) rather
+    -- than a bare "look at this" - so an answer can be read against what was
+    -- actually asked.
+    question TEXT NOT NULL,
+    -- The requester's independent finding, as JSON, captured before asking.
+    requester_finding TEXT NOT NULL,
+    requester_confidence REAL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    -- 'answered' | 'no_evidence' | 'unanswered'. Deliberately NOT
+    -- 'corroborated'/'contradicted': whether two findings agree is a reasoning
+    -- judgment, and Explorer and Speculator are procedural. Analysis reads both
+    -- findings and concludes. See agents/analysis.py.
+    outcome TEXT,
+    responder_identity TEXT,
+    responder_spawned_at TEXT,
+    responder_finding TEXT,
+    responder_confidence REAL,
+    answered_at TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS discovery_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -1154,6 +1197,147 @@ def bind_lens_to_regime(conn: Database, artifact_id: int, characterization: dict
         "UPDATE intelligence_artifacts SET validity_conditions = ? WHERE id = ?",
         (json.dumps(conditions), artifact_id),
     )
+
+
+# --- Explorer<->Speculator cross-checks (addendum 12 §14) ---
+
+CROSS_CHECK_PENDING = "pending"
+CROSS_CHECK_RESOLVED = "resolved"
+CROSS_CHECK_CONSUMED = "consumed"
+
+# Outcomes. 'evidence' and 'no_evidence' are both genuine answers - a responder
+# that looked and found nothing has said something informative, and that is a
+# different finding from disagreement. 'unanswered' means nobody ever replied.
+CROSS_CHECK_EVIDENCE = "evidence"
+CROSS_CHECK_NO_EVIDENCE = "no_evidence"
+CROSS_CHECK_UNANSWERED = "unanswered"
+
+# How long a request may sit unanswered before the requester stops waiting.
+# Without this a dormant or crashed responder would silently stall the other
+# agent's pipeline forever - the same class of defect as the pre-2026-08-16
+# retirement that quietly did nothing. Generous relative to an agent cycle so
+# a merely-busy responder is not written off.
+CROSS_CHECK_TIMEOUT_SECONDS = float(os.environ.get("FI_CROSS_CHECK_TIMEOUT_SECONDS", "30"))
+
+
+def open_cross_check(
+    conn: Database,
+    requester_identity: str,
+    requester_spawned_at: str,
+    requester_role: str,
+    responder_role: str,
+    security: str,
+    question: str,
+    requester_finding: dict,
+    requester_confidence: float | None = None,
+) -> int:
+    """File a question for the other discovery agent.
+
+    requester_finding is the requester's *own* conclusion, captured here rather
+    than after the answer arrives. Addendum 12 §14 requires agents to
+    "investigate independently first, then cross-check" - if the finding were
+    recorded after seeing the response it would no longer be independent, and
+    the pair would stop being two reference frames."""
+    return conn.execute_returning_id(
+        "INSERT INTO cross_check_requests "
+        "(created_at, requester_identity, requester_spawned_at, requester_role, responder_role, "
+        "security, question, requester_finding, requester_confidence, status, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            _now(), requester_identity, requester_spawned_at, requester_role, responder_role,
+            security, question, json.dumps(requester_finding), requester_confidence,
+            CROSS_CHECK_PENDING, SCHEMA_VERSION,
+        ),
+    )
+
+
+def has_open_cross_check(conn: Database, requester_identity: str, security: str) -> bool:
+    """True while this requester already has an unconsumed question out on this
+    security - the dedup guard that stops an agent re-asking every cycle."""
+    row = conn.fetchone(
+        "SELECT 1 FROM cross_check_requests WHERE requester_identity = ? AND security = ? "
+        "AND status != ?",
+        (requester_identity, security, CROSS_CHECK_CONSUMED),
+    )
+    return row is not None
+
+
+def fetch_next_pending_cross_check(conn: Database, responder_role: str) -> dict | None:
+    """Oldest unanswered question addressed to this role. Ordered by id rather
+    than created_at: timestamps can tie at millisecond resolution, which caused
+    a real bug in the spawn-directive path."""
+    return conn.fetchone(
+        "SELECT * FROM cross_check_requests WHERE responder_role = ? AND status = ? ORDER BY id LIMIT 1",
+        (responder_role, CROSS_CHECK_PENDING),
+    )
+
+
+def answer_cross_check(
+    conn: Database,
+    request_id: int,
+    responder_identity: str,
+    responder_spawned_at: str,
+    outcome: str,
+    responder_finding: dict,
+    responder_confidence: float | None = None,
+) -> None:
+    """Record the responder's independent finding. The responder states what it
+    observed; it does not declare whether that agrees with the requester. That
+    judgment is Analysis's - see the `outcome` column comment in SCHEMA."""
+    conn.execute(
+        "UPDATE cross_check_requests SET status = ?, outcome = ?, responder_identity = ?, "
+        "responder_spawned_at = ?, responder_finding = ?, responder_confidence = ?, answered_at = ? "
+        "WHERE id = ? AND status = ?",
+        (
+            CROSS_CHECK_RESOLVED, outcome, responder_identity, responder_spawned_at,
+            json.dumps(responder_finding), responder_confidence, _now(),
+            request_id, CROSS_CHECK_PENDING,
+        ),
+    )
+
+
+def expire_stale_cross_checks(conn: Database, timeout_seconds: float = CROSS_CHECK_TIMEOUT_SECONDS) -> int:
+    """Resolve long-unanswered requests as 'unanswered' so the requester can
+    proceed. Silence is itself recorded - a lead that went out for corroboration
+    and got none is a different thing from one never sent, and Analysis should
+    see which it was."""
+    now = datetime.now(timezone.utc)
+    expired = 0
+    for row in conn.fetchall(
+        "SELECT id, created_at FROM cross_check_requests WHERE status = ?", (CROSS_CHECK_PENDING,)
+    ):
+        # Compared in Python via parse_timestamp rather than as a SQL string
+        # comparison: this module writes two timestamp shapes (see that
+        # function's docstring), and lexical ordering is only correct for one.
+        if (now - parse_timestamp(row["created_at"])).total_seconds() < timeout_seconds:
+            continue
+        conn.execute(
+            "UPDATE cross_check_requests SET status = ?, outcome = ?, answered_at = ? WHERE id = ?",
+            (CROSS_CHECK_RESOLVED, CROSS_CHECK_UNANSWERED, _now(), row["id"]),
+        )
+        expired += 1
+    return expired
+
+
+def fetch_resolved_cross_checks(conn: Database, requester_identity: str) -> list[dict]:
+    """Answers this requester has not yet acted on."""
+    return conn.fetchall(
+        "SELECT * FROM cross_check_requests WHERE requester_identity = ? AND status = ? ORDER BY id",
+        (requester_identity, CROSS_CHECK_RESOLVED),
+    )
+
+
+def consume_cross_check(conn: Database, request_id: int) -> None:
+    """Mark an answer as acted upon, so it is not processed twice and the
+    security becomes askable again."""
+    conn.execute(
+        "UPDATE cross_check_requests SET status = ? WHERE id = ?",
+        (CROSS_CHECK_CONSUMED, request_id),
+    )
+
+
+def get_cross_check(conn: Database, request_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM cross_check_requests WHERE id = ?", (request_id,))
 
 
 def add_security(conn: Database, symbol: str, note: str | None = None) -> None:

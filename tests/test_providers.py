@@ -157,3 +157,67 @@ def test_market_provider_defaults_match_the_module_constants():
     assert [p.iv for p in explicit.get_option_surface("SYN1").points] == [
         p.iv for p in implicit.get_option_surface("SYN1").points
     ]
+
+
+# --- social narratives: the fixture must be able to produce disagreement ---
+
+
+def _drain(provider, security, cycles=10):
+    """Collect posts the way Speculator does - advancing a `since` cursor.
+    Calling fetch_recent without one returns everything accumulated so far,
+    which double-counts."""
+    posts, cursor = [], None
+    for _ in range(cycles):
+        new = provider.fetch_recent(security, since=cursor)
+        if new:
+            posts += new
+            cursor = new[-1].posted_at
+    return posts
+
+
+def test_silent_narrative_produces_no_posts_at_all():
+    """'No evidence available' is a distinct cross-check finding from
+    disagreement, so it has to be constructible rather than approximated by a
+    low post count."""
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "silent"})
+    assert _drain(p, "SYN1") == []
+
+
+def test_coordinated_narrative_is_high_volume_from_few_authors():
+    """The case that earns source dispersion its keep: the text reads as
+    enthusiastic agreement, but it comes from a handful of accounts."""
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "coordinated"})
+    posts = _drain(p, "SYN1")
+    assert len(posts) > 20
+    assert len(set(post.author for post in posts)) <= 3
+
+
+def test_broad_narratives_have_near_unique_authorship():
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "corroborating", "SYN2": "contradicting"})
+    for security in ("SYN1", "SYN2"):
+        posts = _drain(p, security)
+        assert posts
+        # a genuine crowd, not three accounts
+        assert len(set(post.author for post in posts)) / len(posts) > 0.8
+
+
+def test_volume_alone_ranks_the_securities_backwards():
+    """The fixture's central property. If loudest meant most credible, this
+    increment would have nothing to prove - so the corroborating stream is
+    deliberately the quietest of the three."""
+    p = SyntheticSocialDataProvider(seed=7, narratives={
+        "SYN1": "corroborating", "SYN2": "contradicting", "SYN3": "coordinated",
+    })
+    volumes = {s: len(_drain(p, s)) for s in ("SYN1", "SYN2", "SYN3")}
+    assert volumes["SYN3"] > volumes["SYN2"] > volumes["SYN1"]
+
+
+def test_unknown_narrative_is_rejected_loudly():
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "bullish"})
+    with pytest.raises(ValueError, match="unknown narrative"):
+        p.fetch_recent("SYN1")
+
+
+def test_securities_without_a_narrative_keep_the_default_stream():
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "silent"})
+    assert _drain(p, "SYN2")  # unassigned security still produces chatter

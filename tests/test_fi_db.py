@@ -980,3 +980,108 @@ def test_only_the_market_lens_carries_regime_conditions(conn):
     social = json.loads(fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)["validity_conditions"])
     assert "regime" in market
     assert "regime" not in social
+
+
+# --- Explorer<->Speculator cross-checks (addendum 12 section 14) ---
+
+
+def _open(conn, security="SYN1", requester="explorer-1", finding=None):
+    return fi_db.open_cross_check(
+        conn, requester, "2026-01-01T00:00:00+00:00", "explorer", "speculator", security,
+        question=f"Does social evidence corroborate an IV dislocation on {security}?",
+        requester_finding=finding or {"ratio": 2.21}, requester_confidence=0.8,
+    )
+
+
+def test_cross_check_records_the_requesters_own_finding_before_asking(conn):
+    """"Investigate independently first, then cross-check." The finding is
+    captured at open time - if it were recorded after the answer arrived the
+    two views would no longer be independent."""
+    request_id = _open(conn, finding={"ratio": 2.21, "peak_iv": 0.688})
+    row = fi_db.get_cross_check(conn, request_id)
+    assert json.loads(row["requester_finding"])["ratio"] == 2.21
+    assert row["responder_finding"] is None  # nothing from the other side yet
+
+
+def test_cross_check_is_routed_by_responder_role(conn):
+    _open(conn)
+    assert fi_db.fetch_next_pending_cross_check(conn, "speculator") is not None
+    assert fi_db.fetch_next_pending_cross_check(conn, "explorer") is None
+
+
+def test_open_cross_check_blocks_re_asking_the_same_security(conn):
+    _open(conn, security="SYN1")
+    assert fi_db.has_open_cross_check(conn, "explorer-1", "SYN1")
+    assert not fi_db.has_open_cross_check(conn, "explorer-1", "SYN2")
+
+
+def test_consuming_an_answer_makes_the_security_askable_again(conn):
+    request_id = _open(conn)
+    fi_db.answer_cross_check(conn, request_id, "speculator-1", "T1",
+                             fi_db.CROSS_CHECK_EVIDENCE, {"posts": 6})
+    assert fi_db.has_open_cross_check(conn, "explorer-1", "SYN1")  # answered but unacted
+    fi_db.consume_cross_check(conn, request_id)
+    assert not fi_db.has_open_cross_check(conn, "explorer-1", "SYN1")
+
+
+def test_answered_request_carries_both_findings_unreconciled(conn):
+    """Disagreement is preserved rather than erased - both sides survive as
+    stated, and nothing collapses them into a verdict."""
+    request_id = _open(conn, finding={"ratio": 2.21})
+    fi_db.answer_cross_check(conn, request_id, "speculator-1", "T1",
+                             fi_db.CROSS_CHECK_EVIDENCE,
+                             {"posts": 26, "authors": 25, "reads_as": "explains the move away"}, 0.8)
+    row = fi_db.get_cross_check(conn, request_id)
+    assert json.loads(row["requester_finding"])["ratio"] == 2.21
+    assert json.loads(row["responder_finding"])["reads_as"] == "explains the move away"
+    # the responder reports what it saw; it does not declare agreement
+    assert row["outcome"] == fi_db.CROSS_CHECK_EVIDENCE
+
+
+def test_no_evidence_is_a_real_answer_not_a_failure(conn):
+    """A responder that looked and found nothing has said something
+    informative, and it is a different finding from disagreement."""
+    request_id = _open(conn)
+    fi_db.answer_cross_check(conn, request_id, "speculator-1", "T1",
+                             fi_db.CROSS_CHECK_NO_EVIDENCE, {"posts": 0})
+    row = fi_db.get_cross_check(conn, request_id)
+    assert row["outcome"] == fi_db.CROSS_CHECK_NO_EVIDENCE
+    assert row["status"] == fi_db.CROSS_CHECK_RESOLVED  # resolved, not left pending
+
+
+def test_unanswered_request_expires_so_the_requester_is_never_stalled(conn):
+    """A dormant or crashed responder must not silently halt the other agent's
+    pipeline - the same class of defect as a retirement that quietly does
+    nothing."""
+    request_id = _open(conn)
+    assert fi_db.expire_stale_cross_checks(conn, timeout_seconds=0) == 1
+    row = fi_db.get_cross_check(conn, request_id)
+    assert row["outcome"] == fi_db.CROSS_CHECK_UNANSWERED
+    assert row["status"] == fi_db.CROSS_CHECK_RESOLVED
+
+
+def test_expiry_leaves_fresh_requests_alone(conn):
+    _open(conn)
+    assert fi_db.expire_stale_cross_checks(conn, timeout_seconds=3600) == 0
+    assert fi_db.fetch_next_pending_cross_check(conn, "speculator") is not None
+
+
+def test_answering_an_already_resolved_request_is_a_noop(conn):
+    """Two responder processes racing on the same question must not overwrite
+    each other - the guard is the status check in the UPDATE."""
+    request_id = _open(conn)
+    fi_db.answer_cross_check(conn, request_id, "speculator-1", "T1",
+                             fi_db.CROSS_CHECK_EVIDENCE, {"posts": 6})
+    fi_db.answer_cross_check(conn, request_id, "speculator-2", "T2",
+                             fi_db.CROSS_CHECK_NO_EVIDENCE, {"posts": 0})
+    row = fi_db.get_cross_check(conn, request_id)
+    assert row["responder_identity"] == "speculator-1"
+    assert row["outcome"] == fi_db.CROSS_CHECK_EVIDENCE
+
+
+def test_pending_cross_checks_are_served_oldest_first_by_id(conn):
+    """Ordered by id, not created_at - millisecond ties caused a real bug in
+    the spawn-directive path."""
+    first = _open(conn, security="SYN1")
+    _open(conn, security="SYN2")
+    assert fi_db.fetch_next_pending_cross_check(conn, "speculator")["id"] == first
