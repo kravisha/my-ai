@@ -438,6 +438,36 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Universal Human Query Interface (addendum 14 §7). A human asks one agent a
+-- question; that agent's own process answers.
+--
+-- **Human-to-agent only.** §8 is explicit that agents do not use this to talk
+-- to each other - inter-agent work goes through the queue/directive tables.
+-- The shape is borrowed from cross_check_requests because the mechanism is the
+-- same (polled request/response), but the participants are not.
+--
+-- What makes this different from reading the registry: the answer comes from
+-- the running process. answered_by_pid records which one, so an answer can be
+-- told apart from a database read after the fact. A crashed or dormant agent
+-- therefore *cannot* answer, and that silence is the honest result rather than
+-- a defect - a panel cheerfully reporting on a dead process from its stale row
+-- is exactly what this exists to avoid.
+--
+-- The table is also the audit trail §7 requires: every question, who asked,
+-- what was answered, and when, kept rather than discarded.
+CREATE TABLE IF NOT EXISTS uqi_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    asked_by TEXT NOT NULL,
+    target_identity TEXT NOT NULL,
+    question TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    answer TEXT,
+    answered_at TEXT,
+    answered_by_pid INTEGER,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 -- Explorer<->Speculator cross-check contracts (addendum 12 §14, a Pre-Alpha
 -- task in §21). One row per question asked and, once answered, the answer.
 --
@@ -1420,6 +1450,79 @@ def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 4
         "retire_requested": bool(agent["retire_requested"]),
         "schema_version": SCHEMA_VERSION,
     }
+
+
+# --- Universal Human Query Interface (addendum 14 §7) ---
+
+UQI_PENDING = "pending"
+UQI_ANSWERED = "answered"
+UQI_UNANSWERED = "unanswered"
+
+# How long a question waits before the asker is told nobody replied. Shorter
+# than the cross-check timeout because a human is sitting there: an operator
+# needs "this agent is not answering" quickly, and that verdict is itself
+# useful diagnostic output.
+UQI_TIMEOUT_SECONDS = float(os.environ.get("FI_UQI_TIMEOUT_SECONDS", "15"))
+
+
+def ask_agent(conn: Database, asked_by: str, target_identity: str, question: str) -> int:
+    """Put a question to one agent. Returns the request id to poll on."""
+    return conn.execute_returning_id(
+        "INSERT INTO uqi_requests (created_at, asked_by, target_identity, question, status, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (_now(), asked_by, target_identity, question, UQI_PENDING, SCHEMA_VERSION),
+    )
+
+
+def fetch_next_uqi_request(conn: Database, identity: str) -> dict | None:
+    """The oldest unanswered question addressed to *this* agent.
+
+    Scoped by target_identity, not by role: the UQI addresses one agent, and a
+    sibling in the same role answering on its behalf would defeat the point of
+    asking a specific process."""
+    return conn.fetchone(
+        "SELECT * FROM uqi_requests WHERE target_identity = ? AND status = ? ORDER BY id LIMIT 1",
+        (identity, UQI_PENDING),
+    )
+
+
+def answer_uqi_request(conn: Database, request_id: int, answer: str, pid: int) -> None:
+    conn.execute(
+        "UPDATE uqi_requests SET status = ?, answer = ?, answered_at = ?, answered_by_pid = ? "
+        "WHERE id = ? AND status = ?",
+        (UQI_ANSWERED, answer, _now(), pid, request_id, UQI_PENDING),
+    )
+
+
+def expire_stale_uqi_requests(conn: Database, timeout_seconds: float | None = None) -> int:
+    """Mark long-unanswered questions 'unanswered' so the asker stops waiting.
+
+    Resolved at call time rather than captured as a default argument - a
+    default binds once at import and would ignore any later change to the
+    constant, including the environment variable it exists to read."""
+    if timeout_seconds is None:
+        timeout_seconds = UQI_TIMEOUT_SECONDS
+
+    now = datetime.now(timezone.utc)
+    expired = 0
+    for row in conn.fetchall("SELECT id, created_at FROM uqi_requests WHERE status = ?", (UQI_PENDING,)):
+        if (now - parse_timestamp(row["created_at"])).total_seconds() < timeout_seconds:
+            continue
+        conn.execute(
+            "UPDATE uqi_requests SET status = ?, answered_at = ? WHERE id = ?",
+            (UQI_UNANSWERED, _now(), row["id"]),
+        )
+        expired += 1
+    return expired
+
+
+def get_uqi_request(conn: Database, request_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM uqi_requests WHERE id = ?", (request_id,))
+
+
+def list_uqi_requests(conn: Database, limit: int = 25) -> list[dict]:
+    """Newest first - the audit trail §7 asks for."""
+    return conn.fetchall("SELECT * FROM uqi_requests ORDER BY id DESC LIMIT ?", (limit,))
 
 
 # --- Explorer<->Speculator cross-checks (addendum 12 §14) ---

@@ -171,6 +171,32 @@ def _finding(finding) -> str:
     return ", ".join(f"{k}={v}" for k, v in finding.items())
 
 
+def format_uqi_exchange(body: dict) -> str:
+    """One question and its answer.
+
+    The source line is not decoration. A UQI answer comes from the agent's own
+    running process and a /admin/agents read does not, and once both are on
+    screen the operator must be able to tell which they are looking at. The pid
+    is printed for the same reason - it is the evidence that a live process
+    replied."""
+    status = body.get("status")
+    lines = [f"Q ({body.get('asked_by', '?')} -> {body.get('target_identity')}): {body.get('question')}", ""]
+
+    if status == "pending":
+        lines.append("(waiting - the agent answers on its own cycle)")
+    elif status == "unanswered":
+        lines.append(
+            "(no answer - the agent did not service its loop before the timeout. A dormant or "
+            "crashed agent cannot answer, and that silence is the diagnostic result, not a fault "
+            "in the interface.)"
+        )
+    else:
+        lines.append(f"A [answered by: agent, pid {body.get('answered_by_pid')}]:")
+        lines.append("")
+        lines.append(body.get("answer") or "")
+    return "\n".join(lines)
+
+
 def format_discovery(body: dict) -> str:
     pending = body.get("pending_reports", [])
     analyses = body.get("recent_analyses", [])

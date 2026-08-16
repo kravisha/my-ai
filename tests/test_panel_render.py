@@ -197,3 +197,37 @@ def test_discovery_marks_reports_that_had_no_cross_check():
     })
     assert "xcheck#7" in text
     assert "no cross-check" in text
+
+
+def _exchange(**overrides):
+    base = {
+        "asked_by": "panel",
+        "target_identity": "explorer-1",
+        "question": "Who are you?",
+        "status": "answered",
+        "answer": "I am Anand, an explorer agent.",
+        "answered_by_pid": 22892,
+    }
+    return {**base, **overrides}
+
+
+def test_a_uqi_answer_names_the_agent_and_the_process_that_replied():
+    """Once a live agent reply and a database read are both on screen, the
+    operator must be able to tell which they are looking at."""
+    text = render.format_uqi_exchange(_exchange())
+    assert "answered by: agent" in text
+    assert "pid 22892" in text
+
+
+def test_a_pending_question_says_it_is_waiting_on_the_agents_cycle():
+    text = render.format_uqi_exchange(_exchange(status="pending", answer=None, answered_by_pid=None))
+    assert "waiting" in text
+    assert "answered by" not in text
+
+
+def test_an_unanswered_question_is_framed_as_a_diagnostic_not_a_bug():
+    """A dormant or crashed agent cannot answer. That is the result, not a
+    failure of the interface - and the panel should say which."""
+    text = render.format_uqi_exchange(_exchange(status="unanswered", answer=None, answered_by_pid=None))
+    assert "diagnostic result" in text
+    assert "dormant or crashed" in text

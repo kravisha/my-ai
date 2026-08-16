@@ -64,23 +64,67 @@ class ControlPanel:
             name: self._add_tab(label)
             for name, label in (
                 ("agent", "Agent"),
+                ("uqi", "Ask Agent"),
                 ("intelligence", "Intelligence"),
                 ("regime", "Market Regime"),
                 ("cross_checks", "Disagreement"),
                 ("discovery", "Discovery"),
             )
         }
+        # The ask box lives under the UQI tab, not beside the roster: it acts on
+        # the currently selected agent, and putting it anywhere else would
+        # obscure which agent is about to be questioned.
+        ask_frame = tk.Frame(self.views["uqi"].master)
+        ask_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        self.question_entry = tk.Entry(ask_frame)
+        self.question_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), pady=6)
+        self.question_entry.bind("<Return>", lambda _e: self._ask_selected_agent())
+        tk.Button(ask_frame, text="Ask", command=self._ask_selected_agent).pack(side=tk.LEFT, pady=6)
+
         paned.add(right)
 
         self._identities: list[str] = []
+        self._uqi_request_id: int | None = None
         self.root.after(0, self._poll)
 
     def _add_tab(self, label: str) -> scrolledtext.ScrolledText:
         frame = tk.Frame(self.tabs)
-        area = scrolledtext.ScrolledText(frame, wrap=tk.NONE, state="disabled", font=("Courier New", 9))
+        area = scrolledtext.ScrolledText(frame, wrap=tk.WORD, state="disabled", font=("Courier New", 9))
         area.pack(fill=tk.BOTH, expand=True)
         self.tabs.add(frame, text=label)
         return area
+
+    def _ask_selected_agent(self):
+        """Put the typed question to the selected agent (addendum 14 §7).
+
+        Fire-and-poll rather than fire-and-wait: the answer arrives on the
+        agent's own cycle, and blocking the UI on another process's schedule
+        would freeze the panel exactly when an operator is diagnosing a system
+        that is already misbehaving."""
+        question = self.question_entry.get().strip()
+        if not question or self.selected_identity is None:
+            self._write("uqi", "Select an agent, then type a question.")
+            return
+        try:
+            response = requests.post(
+                f"{self.base_url}/admin/agents/{self.selected_identity}/uqi",
+                json={"question": question, "asked_by": "panel"},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            self._uqi_request_id = response.json()["request_id"]
+        except requests.RequestException as exc:
+            self._write("uqi", f"Could not ask {self.selected_identity}: {exc}")
+            return
+        self.question_entry.delete(0, tk.END)
+        self._write("uqi", f"Asked {self.selected_identity}: {question}\n\n(waiting for the agent to answer)")
+
+    def _refresh_uqi(self):
+        if self._uqi_request_id is None:
+            return
+        body = self._get(f"/admin/uqi/{self._uqi_request_id}")
+        if body is not None:
+            self._write("uqi", render.format_uqi_exchange(body))
 
     # --- HTTP ---
 
@@ -136,6 +180,7 @@ class ControlPanel:
 
     def _refresh_panels(self):
         self._refresh_agent_detail()
+        self._refresh_uqi()
         for name, path, formatter, key in (
             ("intelligence", "/admin/intelligence", render.format_intelligence, "artifacts"),
             ("cross_checks", "/admin/cross-checks", render.format_cross_checks, "cross_checks"),

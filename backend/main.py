@@ -506,3 +506,72 @@ def discovery_activity(limit: int = 25, conn=Depends(panel_db)):
         "recent_analyses": results,
         "performance_card": fi_db.get_performance_card(conn),
     }
+
+
+# --- Universal Human Query Interface (addendum 14 §7) ---
+#
+# Human-to-agent only. §8 is explicit that agents do not use this to talk to
+# each other; inter-agent work goes through the queue/directive tables.
+#
+# §7 also requires this to be "privilege-controlled and auditable". Auditable is
+# satisfied: uqi_requests keeps every question, who asked, the answer, and which
+# process produced it. Privilege-controlled is NOT satisfied yet - these routes
+# are unauthenticated like the rest of /admin/*, because the project has no
+# admin-auth concept to hang it on. Flagged here rather than quietly claimed.
+
+
+class AskRequest(BaseModel):
+    question: str
+    asked_by: str = "operator"
+
+
+@app.post("/admin/agents/{identity}/uqi")
+def ask_agent(identity: str, request: AskRequest, conn=Depends(panel_db)):
+    """Put a question to a specific running agent.
+
+    Returns immediately with a request id rather than blocking. The agent
+    answers on its own cycle, which is the same non-blocking discipline every
+    other cross-process exchange in this system uses - an HTTP handler that
+    waited on an agent's poll loop would be the one place holding a thread open
+    against another process's schedule.
+
+    The target must exist in the registry. Asking a nonexistent agent is an
+    operator error worth surfacing, not a question left to time out."""
+    if fi_db.get_agent(conn, identity) is None:
+        raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
+    request_id = fi_db.ask_agent(conn, request.asked_by, identity, request.question)
+    return {"request_id": request_id, "status": fi_db.UQI_PENDING}
+
+
+@app.get("/admin/uqi/{request_id}")
+def get_uqi_answer(request_id: int, conn=Depends(panel_db)):
+    """Poll one question for its answer.
+
+    Expiry runs here rather than on a timer: the asker is the only party that
+    needs the verdict, so it is computed when they look. An unanswered question
+    is a real diagnostic result - the agent's process is not servicing its loop
+    - and is reported as such rather than left pending forever."""
+    fi_db.expire_stale_uqi_requests(conn)
+    row = fi_db.get_uqi_request(conn, request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No UQI request {request_id}")
+    return {
+        "request_id": row["id"],
+        "target_identity": row["target_identity"],
+        "asked_by": row["asked_by"],
+        "question": row["question"],
+        "status": row["status"],
+        "answer": row["answer"],
+        "answered_at": row["answered_at"],
+        # Present only when a live process replied. Its absence on an answered
+        # row would mean something wrote an answer without being an agent.
+        "answered_by_pid": row["answered_by_pid"],
+        "answered_by": "agent" if row["status"] == fi_db.UQI_ANSWERED else None,
+    }
+
+
+@app.get("/admin/uqi")
+def list_uqi_history(limit: int = 25, conn=Depends(panel_db)):
+    """The audit trail §7 requires: every question asked and how it was
+    answered, newest first."""
+    return {"requests": fi_db.list_uqi_requests(conn, limit=limit)}

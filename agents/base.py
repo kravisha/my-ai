@@ -15,9 +15,39 @@ import os
 import sys
 import time
 
+from agents import introspection
 from backend import fi_db
 
 HEARTBEAT_INTERVAL_SECONDS = 1.0
+
+
+def _answer_operator_question(conn, identity: str, role: str) -> None:
+    """Answer one pending UQI question per cycle, if any (addendum 14 §7).
+
+    Lives in the shared loop rather than in each agent, so every agent - present
+    and future - is queryable by construction rather than by remembering to
+    implement it. Answering is a property of *being* an agent here.
+
+    One per cycle, not a drain loop: a burst of questions must not starve the
+    agent's actual work, and the operator asking them is a human who will wait a
+    second. Failures are swallowed for the same reason work_fn's are - a
+    malformed question must cost a cycle, never the process.
+
+    Recording the pid is what makes the answer meaningful. It proves a live
+    process replied rather than the database being read on the agent's behalf,
+    which is the whole distinction between this and GET /admin/agents/{id}."""
+    try:
+        request = fi_db.fetch_next_uqi_request(conn, identity)
+        if request is None:
+            return
+        # A fresh heartbeat before the slow step, for the same reason Explorer
+        # and Analysis do it: composing an answer can outlast the health
+        # check's staleness threshold and get a healthy agent marked crashed.
+        fi_db.record_heartbeat(conn, identity)
+        answer = introspection.answer_question(conn, identity, request["question"])
+        fi_db.answer_uqi_request(conn, request["id"], answer, os.getpid())
+    except Exception as exc:
+        print(f"[{role}:{identity}] uqi error: {exc}", file=sys.stderr)
 
 
 def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
@@ -55,6 +85,7 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
                     work_fn(conn)
                 except Exception as exc:
                     print(f"[{role}:{identity}] work_fn error: {exc}", file=sys.stderr)
+            _answer_operator_question(conn, identity, role)
             fi_db.record_heartbeat(conn, identity)
             if fi_db.is_retirement_requested(conn, identity):
                 break
