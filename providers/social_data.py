@@ -182,7 +182,11 @@ class SyntheticSocialDataProvider:
                     posted_at=self._cursor.isoformat(),
                     text=template.format(security=security),
                     security=security,
-                    engagement_score=round(engagement_base + self._rng.uniform(-0.1, 0.1), 3),
+                    # Clamped: several narrative templates sit at 0.9+, and the
+                    # jitter pushed real runs past 1.0 (observed 1.017). A
+                    # "confidence" above one is meaningless, and it would flow
+                    # straight into a report's judgment_confidence.
+                    engagement_score=round(min(1.0, max(0.0, engagement_base + self._rng.uniform(-0.1, 0.1))), 3),
                 )
             )
         if since is None:

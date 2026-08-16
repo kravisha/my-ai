@@ -234,3 +234,70 @@ def test_real_analysis_agent_consumes_report_and_produces_result(tmp_path):
         fi_db.request_retirement(conn, "analysis-1")
         process.wait(timeout=10)
         conn.close()
+
+
+# --- preserved disagreement reaches the only role that reasons ---
+
+
+def _report_with_cross_check(conn, outcome, responder_finding, requester_finding=None):
+    request_id = fi_db.open_cross_check(
+        conn, "explorer-1", "T0", "explorer", "speculator", "SYN1",
+        question="Is there contextual evidence of unusual attention on SYN1?",
+        requester_finding=requester_finding or {"ratio": 2.21, "scope": "individual"},
+    )
+    if responder_finding is not None:
+        fi_db.answer_cross_check(conn, request_id, "speculator-1", "T1", outcome, responder_finding, 0.9)
+    else:
+        fi_db.expire_stale_cross_checks(conn, timeout_seconds=0)
+    fi_db.enqueue_report(conn, "explorer-1", "T0", "explorer", "SYN1",
+                         summary="s", cross_check_id=request_id)
+    return fi_db.fetch_next_pending_report(conn)
+
+
+def test_context_carries_both_findings_unreconciled(conn):
+    report = _report_with_cross_check(
+        conn, fi_db.CROSS_CHECK_EVIDENCE,
+        {"posts": 26, "distinct_authors": 25, "stance": "undercuts"},
+    )
+    context = _assemble_context(conn, report)
+    assert '"ratio": 2.21' in context           # Explorer's claim, as stated
+    assert '"stance": "undercuts"' in context   # Speculator's, as stated
+    assert "NOT been reconciled" in context
+    # no upstream agent decided the question for Analysis
+    assert "corroborated" not in context
+
+
+def test_context_surfaces_coordinated_noise_as_a_distinct_signal(conn):
+    """Stance says the crowd agrees; the arithmetic says three accounts. Both
+    reach Analysis, because neither alone is the answer."""
+    report = _report_with_cross_check(
+        conn, fi_db.CROSS_CHECK_EVIDENCE,
+        {"posts": 36, "distinct_authors": 3, "posts_per_author": 12.0, "stance": "supports"},
+    )
+    context = _assemble_context(conn, report)
+    assert '"posts_per_author": 12.0' in context
+    assert "coordinated noise rather than a crowd" in context
+
+
+def test_context_distinguishes_no_evidence_from_never_asked(conn):
+    report = _report_with_cross_check(conn, fi_db.CROSS_CHECK_NO_EVIDENCE, {"posts": 0})
+    context = _assemble_context(conn, report)
+    assert "looked and found nothing" in context
+    assert "distinct from never having been asked" in context
+
+
+def test_context_marks_an_unanswered_cross_check_as_uncorroborated_not_refuted(conn):
+    """Silence is not evidence against a lead. Conflating the two would let a
+    dormant agent quietly veto every finding."""
+    report = _report_with_cross_check(conn, None, None)
+    context = _assemble_context(conn, report)
+    assert "nobody answered" in context
+    assert "uncorroborated rather than contradicted" in context
+
+
+def test_context_without_a_cross_check_is_unchanged(conn):
+    """Reports predating the cross-check, and any filed without one, must not
+    gain empty scaffolding."""
+    fi_db.enqueue_report(conn, "explorer-1", "T0", "explorer", "SYN1", summary="s")
+    context = _assemble_context(conn, fi_db.fetch_next_pending_report(conn))
+    assert "Cross-check" not in context

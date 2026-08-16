@@ -198,7 +198,12 @@ def test_real_explorer_agent_detects_and_files_report(tmp_path):
     is covered separately in test_controller.py) against a forced anomaly,
     and confirms it makes a real Anthropic call for the judgment gate and
     files a real report - proving the whole detector -> LLM gate -> queue
-    path works end to end, not just each mocked piece in isolation."""
+    path works end to end, not just each mocked piece in isolation.
+
+    No Speculator runs here, so the cross-check this now opens is answered by
+    nobody. A short FI_CROSS_CHECK_TIMEOUT_SECONDS makes the test exercise the
+    path that matters most for a single-agent deployment: silence must resolve
+    to 'unanswered' and the lead must still be filed."""
     db_path = str(tmp_path / "fi_test.db")
     conn = fi_db.get_connection(db_path)
     fi_db.init_schema(conn)
@@ -216,6 +221,7 @@ def test_real_explorer_agent_detects_and_files_report(tmp_path):
         "FI_DB_PATH": db_path,
         "FI_PEER_GROUP_SECURITIES": "SYN1",
         "FI_FORCE_ANOMALY_SECURITIES": "SYN1",
+        "FI_CROSS_CHECK_TIMEOUT_SECONDS": "2",
     }
     process = subprocess.Popen([sys.executable, "-m", "agents.explorer", "explorer-1"], cwd=PROJECT_ROOT, env=env)
     try:
@@ -233,6 +239,12 @@ def test_real_explorer_agent_detects_and_files_report(tmp_path):
         assert event["ratio"] >= 2.0
         assert event["judgment_passed"] == 1
         assert event["scope"] == "individual"
+
+        # the unanswered cross-check is recorded on the report, not omitted -
+        # Analysis must be able to tell "nobody corroborated this" apart from
+        # "this was never cross-checked"
+        assert report["cross_check_id"] is not None
+        assert fi_db.get_cross_check(conn, report["cross_check_id"])["outcome"] == fi_db.CROSS_CHECK_UNANSWERED
     finally:
         fi_db.request_retirement(conn, "explorer-1")
         process.wait(timeout=10)
@@ -257,6 +269,8 @@ def test_real_explorer_agent_classifies_cotriggering_securities_as_peer(tmp_path
         "FI_DB_PATH": db_path,
         "FI_PEER_GROUP_SECURITIES": "SYN1,SYN2",
         "FI_FORCE_ANOMALY_SECURITIES": "SYN1,SYN2",
+        # nobody answers the cross-checks in an Explorer-only test
+        "FI_CROSS_CHECK_TIMEOUT_SECONDS": "2",
     }
     process = subprocess.Popen([sys.executable, "-m", "agents.explorer", "explorer-1"], cwd=PROJECT_ROOT, env=env)
     try:
@@ -391,3 +405,89 @@ def test_explorer_never_binds_or_marks_a_lens_stale_itself(conn, monkeypatch):
     lens = fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME)
     assert lens is not None  # still active
     assert json.loads(lens["validity_conditions"])["regime"]["observed_under"] is None  # still unbound
+
+
+# --- cross-check: independence, timeout, and preserved disagreement ---
+
+
+def test_explorer_records_its_own_finding_before_asking(conn, monkeypatch):
+    """"Investigate independently first, then cross-check." The finding must
+    exist in full before Speculator has said anything - otherwise the two
+    views are not independent and the pair is one reference frame twice."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    request = fi_db.fetch_next_pending_cross_check(conn, "speculator")
+    finding = json.loads(request["requester_finding"])
+    assert finding["ratio"] >= 2.0
+    assert finding["detector_event_id"] is not None
+    assert request["responder_finding"] is None
+    assert "Is there contextual evidence" in request["question"]
+
+
+def test_explorer_files_the_lead_even_when_the_answer_undercuts_it(conn, monkeypatch):
+    """Dropping a lead because the other side disagreed would let the
+    originator adjudicate its own case - the suppression failure mode the gap
+    analysis §4.2 flags. The dissent is filed, not the verdict."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+    fi_db.answer_cross_check(conn, 1, "speculator-1", "T1", fi_db.CROSS_CHECK_EVIDENCE,
+                             {"posts": 26, "distinct_authors": 25, "stance": "undercuts"})
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    report = fi_db.fetch_next_pending_report(conn)
+    assert report is not None
+    assert report["cross_check_id"] == 1
+
+
+def test_an_unanswered_cross_check_never_stalls_explorer(conn, monkeypatch):
+    """A dormant or crashed Speculator must not halt the pipeline. The lead is
+    filed with the silence recorded as 'unanswered'."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    monkeypatch.setattr("backend.fi_db.CROSS_CHECK_TIMEOUT_SECONDS", 0)
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+    assert fi_db.fetch_next_pending_report(conn) is None  # nobody has answered
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert fi_db.fetch_next_pending_report(conn) is not None
+    assert fi_db.get_cross_check(conn, 1)["outcome"] == fi_db.CROSS_CHECK_UNANSWERED
+
+
+def test_explorer_answers_speculator_with_bare_detector_facts(conn, monkeypatch):
+    """The other direction (§14). Explorer states what its detector saw; it
+    does not opine on whether that supports Speculator's social evidence."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", [])
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+    request_id = fi_db.open_cross_check(
+        conn, "speculator-1", "T0", "speculator", "explorer", "SYN1",
+        question="Is there quantitative evidence on SYN1?", requester_finding={"max_confidence": 0.9},
+    )
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    row = fi_db.get_cross_check(conn, request_id)
+    assert row["outcome"] == fi_db.CROSS_CHECK_EVIDENCE
+    finding = json.loads(row["responder_finding"])
+    assert finding["cleared_threshold"] is True
+    assert "stance" not in finding  # Explorer does not judge the asker's evidence
+
+
+def test_explorer_does_not_re_ask_while_a_question_is_outstanding(conn, monkeypatch):
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=judgment_response(True)))
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    for _ in range(3):
+        _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert len(conn.fetchall("SELECT id FROM cross_check_requests")) == 1

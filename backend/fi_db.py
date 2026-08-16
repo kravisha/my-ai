@@ -1314,11 +1314,18 @@ def answer_cross_check(
     )
 
 
-def expire_stale_cross_checks(conn: Database, timeout_seconds: float = CROSS_CHECK_TIMEOUT_SECONDS) -> int:
+def expire_stale_cross_checks(conn: Database, timeout_seconds: float | None = None) -> int:
     """Resolve long-unanswered requests as 'unanswered' so the requester can
     proceed. Silence is itself recorded - a lead that went out for corroboration
     and got none is a different thing from one never sent, and Analysis should
     see which it was."""
+    # Resolved at call time, not captured as a default argument. A default is
+    # bound once at import, so `timeout_seconds=CROSS_CHECK_TIMEOUT_SECONDS`
+    # would freeze whatever the constant was when this module first loaded and
+    # ignore any later change to it.
+    if timeout_seconds is None:
+        timeout_seconds = CROSS_CHECK_TIMEOUT_SECONDS
+
     now = datetime.now(timezone.utc)
     expired = 0
     for row in conn.fetchall(

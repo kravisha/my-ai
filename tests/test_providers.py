@@ -221,3 +221,13 @@ def test_unknown_narrative_is_rejected_loudly():
 def test_securities_without_a_narrative_keep_the_default_stream():
     p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "silent"})
     assert _drain(p, "SYN2")  # unassigned security still produces chatter
+
+
+def test_engagement_score_never_exceeds_one():
+    """Several narrative templates sit at 0.9+, and unclamped jitter produced
+    1.017 in a real run - which would flow into a report's
+    judgment_confidence as a confidence above certainty."""
+    p = SyntheticSocialDataProvider(seed=7, narratives={"SYN1": "coordinated"})
+    posts = _drain(p, "SYN1", cycles=30)
+    assert posts
+    assert all(0.0 <= post.engagement_score <= 1.0 for post in posts)

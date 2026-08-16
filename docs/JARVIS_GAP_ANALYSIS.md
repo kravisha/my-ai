@@ -157,10 +157,71 @@ reason, so the suppression is at least auditable. Worth deciding whether that is
 
 ### 4.3 Disagreement is never preserved (Axiom 5, Axiom 9, §4)
 
-Confirmed absent by inspection. Explorer and Speculator investigate the same securities and never
-compare notes; Analysis grades upstream work but nothing records *dissent*. Addendum 12 §14 already
-requires "disagreement is preserved rather than erased," and §21 lists Explorer↔Speculator cross-check
-contracts as a Pre-Alpha task. **Double-mandated, and concretely specified.**
+> **CLOSED (2026-08-16).** Explorer and Speculator now investigate independently, exchange structured
+> questions through `cross_check_requests`, and hand both findings to Analysis unreconciled. Verified
+> against a real running backend; see the closing note.
+
+Was: Explorer and Speculator investigated the same securities and never compared notes; Analysis
+graded upstream work but nothing recorded *dissent*. Addendum 12 §14 requires "disagreement is
+preserved rather than erased," and §21 lists Explorer↔Speculator cross-check contracts as a Pre-Alpha
+task. **Double-mandated, and concretely specified.**
+
+#### How it was closed
+
+The prerequisite was the same one regime detection had. The synthetic social stream drew posts
+uniformly at random per security with no reference to whether that security's surface was dislocated,
+so chatter about an anomalous name was statistically identical to chatter about a flat one.
+Corroboration was a question the fixture could not answer. Narratives now control what posts say, how
+many arrive, and how many distinct authors write them, as three independent knobs — deliberately set
+so **no single frame gets the right answer**, since a fixture where one signal suffices proves
+nothing.
+
+Two design decisions carried the increment:
+
+- **Neither discovery agent judges whether the findings agree.** Explorer reports a ratio; Speculator
+  reports what the crowd appears to be saying and how broadly it is sourced. Outcomes are
+  `evidence` / `no_evidence` / `unanswered`, never `corroborated` / `contradicted`. Compatibility is a
+  reasoning judgment and Analysis is the only role that reasons, so its context presents two
+  unreconciled claims. A context that said "corroborated" would have made the decision upstream in a
+  procedural agent and hidden the evidence against it.
+- **Speculator gained one small LLM call.** This reverses a decision made when it had nothing to
+  judge. A message board is a verbal medium and post counts invert the answer: the contradicting
+  stream produces 26 posts against the corroborating stream's 6, so ranking by volume promotes exactly
+  the wrong lead. Counting kept the job language cannot do — separating a crowd from three accounts
+  posting repeatedly, which is §13's "coordinated noise" and "popularity without substance."
+
+#### Verified end to end
+
+Against a real backend with six live agents, cross-checks ran in **both** directions and correctly
+separated all three cases from ground truth the system was never given:
+
+| Security | Ground truth | Stance read | Distinct authors | Posts/author |
+|---|---|---|---|---|
+| SYN1 | corroborating | supports | 15 | 1.0 |
+| SYN2 | contradicting | undercuts | 9 | 1.0 |
+| SYN3 | coordinated | unclear | 3 | 5.67 |
+
+The stance read caught the coordination unaided — "near-duplicate hype phrases repeated with little
+variation, suggesting coordinated or low-diversity posting rather than broad organic attention" — so
+both frames agreed independently rather than one carrying the result.
+
+And the dissent reached the reasoning. Analysis discounted its own detector on contextual grounds:
+on SYN2 (ratio 2.14) it concluded "social chatter attributes the move to index rebalancing, a hedge
+roll, or a fat-finger print rather than directional positioning," landing at confidence 0.30. Before
+this increment that ratio reached Analysis with nothing to weigh it against.
+
+#### Still open
+
+- **The escalation rule is not yet an intelligence artifact.** §14 wants it "configurable" and
+  "calibrated through testing rather than permanently hard-coded" — which is the definition of a lens.
+  Deliberately not built as an unconsumed artifact ahead of having something to calibrate against.
+- **Speculator's evidence window is process-local.** A freshly respawned Speculator answers
+  `no_evidence` until it has observed a cycle or two. Honest — it genuinely has not looked yet — but
+  it means an early cross-check can under-report evidence that exists in the database. Observed live:
+  the first SYN1 cross-check saw one post and the fifth saw fifteen.
+- **Stance accuracy is unvalidated and cannot be validated here.** The templates were authored
+  alongside the classifier, so any score against them measures nothing. It gets tested against real
+  text or not at all.
 
 ### 4.4 Source reliability is earned (§3, Axiom 3)
 
