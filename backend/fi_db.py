@@ -604,6 +604,25 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     -- it too. Harmless with exactly one agent, which is why it was never seen,
     -- and the first thing that breaks when capacity is added.
     claimed_at TEXT,
+    -- When new evidence was last folded into this case, and evidence that
+    -- arrived too late to be.
+    --
+    -- A report is a *request for judgment*, not a record of observation - the
+    -- observations live in evidence_items and detector_events and are never
+    -- touched by anything the queue does. That separation is what makes a
+    -- pending case safe to keep current: enriching it discards nothing.
+    --
+    -- Before this, a security with an unjudged case could not have anything
+    -- further said about it for the ~235s the case spent waiting. The producing
+    -- agent saw new evidence every cycle and had nowhere to put it, so judgment
+    -- ran on a snapshot minutes old while newer observations sat unreferenced.
+    --
+    -- deferred_evidence_ids exists because a claimed case belongs to its judge.
+    -- Evidence arriving mid-analysis must not change the case under it - that
+    -- wastes a model call and judges a moving target - so it lands here instead
+    -- and is available as a follow-up.
+    updated_at TEXT,
+    deferred_evidence_ids TEXT,
     handled_by_identity TEXT,
     handled_by_spawned_at TEXT,
     detail TEXT,
@@ -2872,10 +2891,18 @@ def record_evidence_item(
 
 
 def list_evidence_items(conn: Database, ids: list[int]) -> list[dict]:
+    """Ordered oldest first, because a case that accumulates evidence is a
+    sequence and the order is the information.
+
+    "chatter broadening across three channels over four minutes" and the same
+    four observations shuffled are different findings, and only one of them is
+    what happened."""
     if not ids:
         return []
     placeholders = ",".join("?" for _ in ids)
-    return conn.fetchall(f"SELECT * FROM evidence_items WHERE id IN ({placeholders})", ids)
+    return conn.fetchall(
+        f"SELECT * FROM evidence_items WHERE id IN ({placeholders}) ORDER BY created_at, id", ids
+    )
 
 
 def enqueue_report(
@@ -3028,6 +3055,78 @@ def release_stale_claims(conn: Database, timeout_seconds: float | None = None) -
         "WHERE status = 'in_progress' AND claimed_at IS NOT NULL AND claimed_at < ?",
         (cutoff,),
     )
+
+
+def open_case_for(conn: Database, producer_identity: str, security: str) -> dict | None:
+    """This producer's unresolved case for a security, claimed or not."""
+    row = conn.fetchone(
+        "SELECT * FROM discovery_reports WHERE producer_identity = ? AND security = ? LIMIT 1",
+        (producer_identity, security),
+    )
+    return dict(row) if row else None
+
+
+def enrich_case(
+    conn: Database,
+    report_id: int,
+    evidence_ids: list[int],
+    judgment_confidence: float | None = None,
+    summary: str | None = None,
+) -> str:
+    """Fold new observations into an existing case.
+
+    Returns what happened, because the three outcomes need different handling by
+    the caller:
+
+    ``enriched``  the case was waiting, and now carries this evidence too. The
+                  judge will receive the whole sequence.
+    ``deferred``  a judge already holds the case. The evidence is recorded
+                  against it for follow-up and the active judgment is left
+                  alone - yanking it would waste a model call and judge a
+                  target that moved.
+    ``gone``      the case was completed between reading it and writing to it.
+                  The caller should file a fresh one.
+
+    Evidence ids are merged rather than replaced, and duplicates dropped, so a
+    producer that re-reports overlapping evidence cannot inflate a case.
+
+    Nothing is deleted. `summary` and `judgment_confidence` describe the case as
+    it now stands and are the only fields that change in place; every
+    observation, old and new, remains in evidence_items exactly as recorded."""
+    case = conn.fetchone(
+        "SELECT status, evidence_ids, deferred_evidence_ids FROM discovery_reports WHERE id = ?",
+        (report_id,),
+    )
+    if case is None:
+        return "gone"
+
+    def merged(existing: str | None) -> str:
+        current = json.loads(existing or "[]")
+        return json.dumps(current + [i for i in evidence_ids if i not in current])
+
+    if case["status"] != "pending":
+        conn.execute(
+            "UPDATE discovery_reports SET deferred_evidence_ids = ?, updated_at = ? WHERE id = ?",
+            (merged(case["deferred_evidence_ids"]), _now(), report_id),
+        )
+        return "deferred"
+
+    # Guarded on status so a claim landing between the read above and this write
+    # cannot have evidence appended underneath it.
+    changed = conn.execute_returning_rowcount(
+        "UPDATE discovery_reports SET evidence_ids = ?, updated_at = ?, "
+        "judgment_confidence = COALESCE(?, judgment_confidence), "
+        "summary = COALESCE(?, summary) WHERE id = ? AND status = 'pending'",
+        (merged(case["evidence_ids"]), _now(), judgment_confidence, summary, report_id),
+    )
+    if changed:
+        return "enriched"
+
+    conn.execute(
+        "UPDATE discovery_reports SET deferred_evidence_ids = ?, updated_at = ? WHERE id = ?",
+        (merged(case["deferred_evidence_ids"]), _now(), report_id),
+    )
+    return "deferred"
 
 
 def has_pending_report(conn: Database, producer_identity: str, security: str) -> bool:

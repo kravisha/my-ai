@@ -129,11 +129,7 @@ def _assemble_context(conn, report: dict) -> str:
     if evidence_ids:
         evidence = fi_db.list_evidence_items(conn, evidence_ids)
         lines.append(f"Social evidence ({len(evidence)} item(s)):")
-        for item in evidence:
-            lines.append(
-                f"  - [confidence {item['confidence']:.2f}]"
-                f"{_source_note(conn, item['source'])} {item['content']}"
-            )
+        lines.extend(_evidence_lines(conn, evidence))
         lines.append(
             "  Source standings above are earned from how past reports built on each source were "
             "graded - they are not assigned reputations. Weigh them; do not treat a low standing as "
@@ -171,6 +167,60 @@ def _assemble_context(conn, report: dict) -> str:
         )
 
     return "\n".join(lines)
+
+
+# A case that stays current accumulates evidence for as long as it waits, and a
+# waiting case is measured in minutes. Listing every item verbatim is fine for a
+# handful and ruinous beyond that: a real run produced a case carrying 1,023
+# observations, whose prompt came to 40,114 tokens against the ~490 a
+# single-snapshot case used. Eighty times the cost per judgment, growing without
+# bound the longer the case waits.
+#
+# The case still holds every id - that is the record. What is bounded is the
+# *request*, which is the same separation that lets a case be enriched at all:
+# observations are history, a case is work, and a prompt is a question.
+VERBATIM_EVIDENCE_LIMIT = 12
+DIGEST_BUCKETS = 6
+DIGEST_RECENT_VERBATIM = 5
+
+
+def _evidence_lines(conn, evidence: list[dict]) -> list[str]:
+    """Evidence as the judge should see it: verbatim when short, a timeline when long.
+
+    The shape of the development is the finding - 0.62 rising to 0.95 across
+    broadening sources is a different claim from a flat 0.95 - so a digest must
+    preserve the trajectory rather than sampling at random or keeping only the
+    tail. Buckets span the whole window in order, and the most recent few stay
+    verbatim because the current state is what a judgment mostly rests on."""
+    if len(evidence) <= VERBATIM_EVIDENCE_LIMIT:
+        return [_verbatim(conn, item) for item in evidence]
+
+    lines = [
+        f"  (summarised as a timeline: {len(evidence)} observations span "
+        f"{evidence[0]['observed_at'][:19]} to {evidence[-1]['observed_at'][:19]})"
+    ]
+    size = max(1, len(evidence) // DIGEST_BUCKETS)
+    for index in range(0, len(evidence), size):
+        bucket = evidence[index:index + size]
+        if not bucket:
+            continue
+        confidences = [item["confidence"] for item in bucket]
+        sources = sorted({item["source"] for item in bucket})
+        lines.append(
+            f"  - window {bucket[0]['observed_at'][11:19]}-{bucket[-1]['observed_at'][11:19]}: "
+            f"{len(bucket)} posts, confidence mean {sum(confidences) / len(confidences):.2f} "
+            f"max {max(confidences):.2f}, sources {', '.join(sources)}"
+        )
+    lines.append(f"  most recent {DIGEST_RECENT_VERBATIM} verbatim:")
+    lines.extend(_verbatim(conn, item) for item in evidence[-DIGEST_RECENT_VERBATIM:])
+    return lines
+
+
+def _verbatim(conn, item: dict) -> str:
+    return (
+        f"  - [confidence {item['confidence']:.2f}]"
+        f"{_source_note(conn, item['source'])} {item['content']}"
+    )
 
 
 def _source_note(conn, source) -> str:

@@ -72,6 +72,40 @@ TEMPLATES = (
     ("large {security} block trade just printed, unusual size", 0.75),
 )
 
+# How a security's chatter develops over the length of its arc, as a function of
+# progress from 0.0 to 1.0. The value is an intensity, also 0.0 to 1.0.
+#
+# Kept deliberately smooth. A step change would be trivially detectable and would
+# prove nothing about whether the system can notice a situation building - which
+# is the case that actually matters, and the one the previous memoryless stream
+# could not express at all.
+ARC_SHAPES = {
+    "flat": lambda progress: 0.0,
+    "escalating": lambda progress: progress,
+    "fading": lambda progress: 1.0 - progress,
+    # Rises, holds, then subsides - a story that resolves rather than one that
+    # only ever grows, so a detector cannot pass by assuming everything escalates.
+    "spike": lambda progress: min(1.0, 2.5 * progress) if progress < 0.4 else max(0.0, (1.0 - progress) / 0.6),
+}
+
+# What intensity does. Three effects, kept separate for the same reason the
+# narratives keep stance, volume and authorship separate: if escalation moved
+# every signal together, one signal would be as good as three and there would be
+# nothing for a cross-check to reconcile.
+#
+# Extra posts an arc at full intensity adds to a cycle.
+ARC_EXTRA_POSTS = 3
+# How far intensity closes the gap between a template's base engagement and 1.0.
+# Proportional rather than additive so a template already at 0.9 does not clamp
+# and flatten the signal - which additive lift did, saturating the very securities
+# that were escalating hardest.
+ARC_ENGAGEMENT_LIFT = 0.6
+# How much wider the author pool becomes at full intensity. A real developing
+# story draws in voices that were not talking before, so dispersion rises with
+# volume - and a coordinated stream that raises volume *without* widening
+# authorship stays distinguishable from it.
+ARC_AUTHOR_SPREAD = 2.0
+
 # Per-security narratives, so a caller can construct the three cases an
 # Explorer<->Speculator cross-check has to tell apart (addendum_12 §14).
 #
@@ -158,10 +192,21 @@ class SocialDataProvider(Protocol):
 
 
 class SyntheticSocialDataProvider:
-    def __init__(self, seed: int, narratives: dict[str, str] | None = None):
+    def __init__(
+        self,
+        seed: int,
+        narratives: dict[str, str] | None = None,
+        arcs: dict[str, tuple[str, int]] | None = None,
+    ):
         """narratives: maps security -> a key of NARRATIVES ('corroborating',
         'contradicting', 'coordinated', 'silent'). Securities absent from this
         dict keep the default mixed TEMPLATES stream.
+
+        arcs: maps security -> (shape, length_in_calls), giving that security's
+        chatter a trajectory over time. A narrative says what kind of information
+        environment a security is in; an arc says how that environment is
+        *developing*. The two are independent on purpose - a corroborating stream
+        can be building or fading, and only the arc distinguishes them.
 
         This is ground truth the provider generates from; the system never sees
         the label. Speculator reads whatever posts arrive and forms its own view -
@@ -180,6 +225,37 @@ class SyntheticSocialDataProvider:
         self._cursor = datetime(2026, 1, 1, tzinfo=timezone.utc)
         self._posts: list[SocialPost] = []
         self._narratives = narratives or {}
+        # {security: (shape, length_in_calls)}. Absent means a flat stream, which
+        # is the previous behaviour exactly - an arc contributes no randomness,
+        # so a seeded run with no arcs draws the identical sequence it always did.
+        self._arcs = arcs or {}
+        self._cycles: dict[str, int] = {}
+
+    def _intensity(self, security: str) -> float:
+        """How far into its arc this security is, from 0.0 to 1.0.
+
+        **The stream had no memory before this.** Every call drew a fresh post
+        count, source and template independently, so a security's chatter at
+        cycle 200 was statistically identical to its chatter at cycle 1. Measured
+        against that stream, the cycle-to-cycle change in confidence had a p90 of
+        0.481 across a 0-1 range and the source set changed on 85% of
+        transitions - every candidate signal was pure noise, because there was
+        no signal to find.
+
+        That made "materially new information arrived" unmeasurable, and any
+        threshold picked against it arbitrary. An arc gives the stream a
+        direction, so a developing situation is something the fixture can
+        actually exhibit rather than something a detector would be built to find
+        in white noise.
+
+        Counted in calls per security rather than wall-clock, so a run's pace
+        does not change the shape of its arcs."""
+        arc = self._arcs.get(security)
+        if arc is None:
+            return 0.0
+        shape, length = arc
+        progress = min(1.0, self._cycles.get(security, 0) / max(1, length))
+        return ARC_SHAPES[shape](progress)
 
     def _profile_for(self, security: str) -> dict:
         """The generation profile for one security: templates, post rate, and
@@ -199,6 +275,11 @@ class SyntheticSocialDataProvider:
     def fetch_recent(self, security: str, since: str | None = None) -> list[SocialPost]:
         profile = self._profile_for(security)
         templates = profile["templates"]
+        # Counted before the early return, so a silent security still advances
+        # through its arc - otherwise a stream that starts silent could never
+        # reach the part of its arc where it stops being silent.
+        self._cycles[security] = self._cycles.get(security, 0) + 1
+        intensity = self._intensity(security)
         # A 'silent' security has no templates to draw from. Return early rather
         # than generating zero-length posts, so the timestamp cursor does not
         # advance for a security producing nothing.
@@ -206,7 +287,8 @@ class SyntheticSocialDataProvider:
             return []
 
         low, high = profile["posts_per_call"]
-        count = self._rng.randint(low, high)
+        count = self._rng.randint(low, high) + round(intensity * ARC_EXTRA_POSTS)
+        author_pool = max(1, round(profile["author_pool"] * (1 + intensity * ARC_AUTHOR_SPREAD)))
         for _ in range(count):
             self._cursor += timedelta(seconds=POST_INTERVAL_SECONDS)
             # A source is picked first, and the content comes from that source's
@@ -229,7 +311,7 @@ class SyntheticSocialDataProvider:
                     source=source,
                     # Drawn from a pool whose *size* the narrative controls, so a
                     # high-volume stream can still come from very few accounts.
-                    author=f"user{1000 + self._rng.randrange(profile['author_pool'])}",
+                    author=f"user{1000 + self._rng.randrange(author_pool)}",
                     posted_at=self._cursor.isoformat(),
                     text=template.format(security=security),
                     security=security,
@@ -237,7 +319,12 @@ class SyntheticSocialDataProvider:
                     # jitter pushed real runs past 1.0 (observed 1.017). A
                     # "confidence" above one is meaningless, and it would flow
                     # straight into a report's judgment_confidence.
-                    engagement_score=round(min(1.0, max(0.0, engagement_base + self._rng.uniform(-0.1, 0.1))), 3),
+                    # Intensity closes the gap toward 1.0 proportionally rather
+                    # than adding a fixed amount, so a template already near the
+                    # top does not clamp and lose the signal.
+                    engagement_score=round(min(1.0, max(0.0, (
+                        engagement_base + intensity * (1.0 - engagement_base) * ARC_ENGAGEMENT_LIFT
+                    ) + self._rng.uniform(-0.1, 0.1))), 3),
                 )
             )
         if since is None:

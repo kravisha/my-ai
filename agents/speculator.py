@@ -248,8 +248,35 @@ def _speculator_work(
 
         if max_confidence < confidence_threshold:
             continue
-        if fi_db.has_pending_report(conn, identity, security):
-            continue
+
+        # An existing case is enriched rather than blocking this observation.
+        #
+        # Skipping here was the defect: the case sits unjudged for as long as the
+        # queue takes to reach it - measured at ~235s - and for that entire window
+        # this agent could see the situation developing and had no way to say so.
+        # A case is a request for judgment, so bringing it up to date discards
+        # nothing; the observations are already recorded in evidence_items
+        # regardless of what happens to the case.
+        #
+        # Deduplication is preserved: still one case per security, so the queue
+        # depth ceiling that keeps this system predictable is untouched.
+        case = fi_db.open_case_for(conn, identity, security)
+        if case is not None:
+            outcome = fi_db.enrich_case(
+                conn, case["id"], new_evidence_ids,
+                judgment_confidence=max_confidence,
+                summary=(
+                    f"Social evidence on {security}: max confidence {max_confidence:.2f}, "
+                    f"updated as the situation developed"
+                ),
+            )
+            if outcome != "gone":
+                print(f"[speculator] {outcome} case #{case['id']} ({security}) "
+                      f"with {len(new_evidence_ids)} new item(s)")
+                continue
+            # 'gone' means judgment finished it while this cycle was running, so
+            # there is no open case after all and a fresh one is correct.
+
         if fi_db.has_open_cross_check(conn, identity, security):
             continue
 
@@ -282,7 +309,9 @@ def main() -> None:
         raise SystemExit(1)
     identity = sys.argv[1]
     provider = SyntheticSocialDataProvider(
-        seed=config.SOCIAL_PROVIDER_SEED, narratives=config.SOCIAL_NARRATIVES,
+        seed=config.SOCIAL_PROVIDER_SEED,
+        narratives=config.SOCIAL_NARRATIVES,
+        arcs=config.SOCIAL_ARCS,
     )
     spawned_at_cache: dict = {}
     cursor_state: dict = {}

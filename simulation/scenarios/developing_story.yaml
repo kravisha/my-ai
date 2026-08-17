@@ -1,0 +1,54 @@
+id: developing_story
+version: 1
+lifecycle: active
+description: >
+  One security's chatter builds steadily over the run while the rest stay flat.
+
+  This is the situation the organization previously could neither exhibit nor
+  react to. The social stream drew every cycle independently, so nothing could
+  develop; and a security with an unjudged case could have nothing further said
+  about it for the ~235s the case spent waiting, so even if something had
+  developed the producing agent had no way to report it.
+
+  SYN1 escalates across 120 Speculator cycles - rising volume, rising
+  engagement, and a widening crowd of authors. SYN5 fades over the same window,
+  so the run contains a story going both ways and a detector cannot pass by
+  assuming everything escalates. Every other security is flat, as the control.
+
+  What to look for: SYN1's case should be *enriched* many times rather than
+  filed once and left, and the evidence attached to it should grow over the run.
+  A single-evidence case for SYN1 at the end would mean accumulation is not
+  working, whatever the tests say.
+
+duration_seconds: 300
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  FI_SOCIAL_ARCS: "SYN1:escalating@120,SYN5:fading@120"
+
+requires_model: true
+
+expected_properties:
+  - name: work was filed
+    metric: pipeline.reports_filed
+    assert: at_least
+    value: 8
+
+  - name: the queue ceiling still holds
+    metric: queue.pending_at_end
+    assert: at_most
+    value: 20
+    # Enrichment must not become a new case per cycle. One case per security is
+    # the bound that keeps this system predictable, and a developing story is
+    # exactly the condition that would break it if accumulation were wrong.
+
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty

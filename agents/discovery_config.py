@@ -137,6 +137,24 @@ ANALYSIS_RECENCY_WINDOW_SECONDS = float(os.environ.get("FI_ANALYSIS_RECENCY_WIND
 # Valid narratives are the keys of providers/social_data.py's NARRATIVES.
 # Without these the social stream is uncorrelated with the option surface, so a
 # cross-check could never meaningfully corroborate or contradict anything.
+# Per-security chatter trajectories, as FI_SOCIAL_ARCS="SYN1:escalating@60".
+# Shapes are the keys of providers/social_data.py's ARC_SHAPES; the number is the
+# arc's length in Speculator cycles.
+#
+# A narrative says what kind of information environment a security is in; an arc
+# says how that environment is *developing*. Without arcs the social stream is
+# redrawn independently every cycle, so a security's chatter at cycle 200 is
+# statistically identical to cycle 1 - measured, the cycle-to-cycle change in
+# confidence had a p90 of 0.481 across a 0-1 range. "Something is building" was
+# not a thing the fixture could express, so no detector for it could be
+# calibrated or falsified.
+SOCIAL_ARCS = {}
+for _entry in os.environ.get("FI_SOCIAL_ARCS", "").split(","):
+    if ":" in _entry:
+        _security, _spec = _entry.split(":", 1)
+        _shape, _, _length = _spec.partition("@")
+        SOCIAL_ARCS[_security.strip()] = (_shape.strip(), int(_length or 60))
+
 SOCIAL_NARRATIVES = {}
 for _pair in os.environ.get("FI_SOCIAL_NARRATIVES", "").split(","):
     if ":" in _pair:
