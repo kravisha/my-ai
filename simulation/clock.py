@@ -44,20 +44,34 @@ directions have a real cost:
   10,000x a one-second poll skips three simulated hours, and an agent watching
   for a dislocation would step straight over it.
 
-The default of 288 puts one simulated day in five wall minutes, chosen so that:
+**The rate is 24x - one simulated day per wall-clock hour.** Owner decision,
+2026-08-17, answering the question the Alpha review recorded as foundational.
 
-- a 300-second run covers exactly one simulated day, making rollover reachable in
-  an ordinary run rather than only in a soak;
-- a ten-generation chain covers ten simulated days;
-- an overnight run covers a quarter, so quarterly releases and revisions are
-  exercisable;
-- an agent's one-second poll advances about five simulated minutes, which is a
-  plausible analyst cadence rather than a tick-by-tick one.
+What that buys, against measured numbers rather than guesses:
 
-**This is a starting value chosen for testability, not a derived one**, and it is
-per-scenario config precisely so the simulation can be used to find out what it
-should be. A scenario studying intraday behaviour should slow it down; one
-studying multi-quarter memory should speed it up.
+- an agent's one-second poll advances **24 simulated seconds**, fine enough to
+  see intraday movement rather than stepping over it;
+- an equity session runs **16 wall minutes**, so a session opening and closing is
+  observable in a sitting;
+- ten graded reports - the threshold at which a detection lens can bind a regime
+  baseline - take about **5 wall minutes** at the measured drain rate, which is
+  the first time that behaviour has been reachable inside a run at all.
+
+The last one decided it. Intelligence expiry has been built, unit-tested and
+hand-verified since the increment that introduced it, and had **never once
+engaged in a run**, because binding needs ten graded reports and a bounded run
+produces four. A rate is not merely a testability knob; it determines which of
+the organization's behaviours can happen at all.
+
+The previous default was 288, chosen so a 300-second run covered one simulated
+day. That is a good property for a *bounded* scenario and a bad rate for a world:
+at 288 a one-second poll skips five simulated minutes, which is a coarse view of
+an intraday dislocation.
+
+**Scale stays per-scenario config**, and the two uses are genuinely different. A
+continuously advancing world runs at the organization's real rate. A bounded
+scenario that must observe a session boundary inside ninety seconds has to
+compress time and says so - `overnight_session` pins 288 for exactly that reason.
 
 Internal rationale: INT-PHIL-0022
 """
@@ -68,8 +82,9 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
-# Simulated seconds per wall-clock second. See the module docstring for why 288.
-DEFAULT_SCALE = float(os.environ.get("FI_SIM_TIME_SCALE", "288"))
+# Simulated seconds per wall-clock second: one simulated day per wall hour.
+# See the module docstring for why, and for why a bounded scenario may override it.
+DEFAULT_SCALE = float(os.environ.get("FI_SIM_TIME_SCALE", "24"))
 
 # Where simulated time starts. A Monday, so the first simulated day is a trading
 # day and a run does not open on a weekend with every market shut.

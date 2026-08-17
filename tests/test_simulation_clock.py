@@ -42,12 +42,18 @@ def test_the_default_scale_keeps_an_agent_poll_at_a_plausible_analyst_cadence():
     """The trade-off the scale makes, asserted so it cannot drift unnoticed.
 
     Too slow and a run never reaches a day rollover; too fast and a one-second
-    poll steps over hours of simulated market. Around five simulated minutes per
-    poll is a plausible cadence for something forming a view rather than watching
-    ticks."""
+    poll steps over hours of simulated market and an agent watching for a
+    dislocation walks straight past it.
+
+    The band widened at the bottom when the rate became 24x. It previously
+    started at one simulated minute, which was reasoning from a 288x world where
+    a poll covered nearly five - at 24x a poll covers 24 simulated seconds, which
+    is a finer view of the market rather than a worse one. What the lower bound
+    actually guards is sampling so fine that agents are watching ticks instead of
+    forming a view, and seconds-per-poll is comfortably clear of that."""
     poll_seconds = 1.0
     simulated = timedelta(seconds=poll_seconds * clock.DEFAULT_SCALE)
-    assert timedelta(minutes=1) <= simulated <= timedelta(minutes=30)
+    assert timedelta(seconds=10) <= simulated <= timedelta(minutes=30)
 
 
 def test_the_epoch_starts_on_a_trading_day():

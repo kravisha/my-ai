@@ -37,12 +37,19 @@ def test_alpha_is_not_currently_reached(conn):
 
 
 def test_the_unbuilt_capabilities_are_named(conn):
-    """Entry failures should say what is missing rather than that something is."""
+    """Entry failures should say what is missing rather than that something is.
+
+    Updated when A4 landed: the continuously advancing world moved from unmet to
+    met, which is the gate doing its job. This test failing on that change is the
+    intended behaviour - a criterion silently flipping to green is exactly what
+    the suite exists to make impossible."""
     entry = {r["criterion"]: r for r in certification.evaluate_entry()}
 
-    assert not entry["the world advances continuously"]["met"]
-    assert "simulation.world" in entry["the world advances continuously"]["detail"]
+    assert entry["the world advances continuously"]["met"], (
+        "simulation.world exists; this criterion should now pass"
+    )
     assert not entry["history is queryable"]["met"]
+    assert "simulation.history" in entry["history is queryable"]["detail"]
 
 
 def test_the_capabilities_already_built_pass():

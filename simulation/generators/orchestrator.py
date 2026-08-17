@@ -104,6 +104,16 @@ class Orchestrator:
     def open_data_classes(self, now: datetime) -> set[str]:
         return {name for name, cadence in CADENCES.items() if SESSIONS[cadence.session].is_open(now)}
 
+    def emit(self, event: WorldEvent) -> None:
+        """Put an event on the bus from outside any generator.
+
+        The world uses this to announce a day boundary. Queued the same way a
+        generator's event is, so it obeys the same visibility rule and there is
+        no second path with different timing - except that an event emitted
+        *before* `tick` is visible during that tick, which is what lets the first
+        tick of a new day see the rollover rather than learn of it a tick late."""
+        self._pending.append(event)
+
     def tick(self, wall: datetime | None = None) -> list[Observation]:
         """Advance the world once.
 

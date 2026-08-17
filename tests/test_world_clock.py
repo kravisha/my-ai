@@ -160,9 +160,23 @@ def test_operational_timing_constants_are_untouched_by_the_world_clock():
     assert coo.HEALTH_STALE_THRESHOLD_SECONDS == 45.0
     assert controller.AGENT_STOP_GRACE_SECONDS > 0
     assert fi_db.CLAIM_TIMEOUT_SECONDS > 0
-    # Stated so the relationship is visible: at the default scale these would be
-    # sub-second if read as simulated time.
-    assert coo.HEALTH_STALE_THRESHOLD_SECONDS / DEFAULT_SCALE < 1.0
+
+    # The invariant, stated so it survives a change of rate. This previously
+    # asserted the misread threshold would be sub-second, which was true at 288
+    # and false at 24 - it was pinning an artefact of the scale rather than the
+    # property that matters.
+    #
+    # What matters at any scale above 1: reading a wall-clock constant as
+    # simulated time compresses it by the scale factor, and 45 wall seconds was
+    # chosen because it exceeds real model latency. At 24x the misreading gives
+    # 1.9 wall seconds - not sub-second, and still short enough to mark every
+    # busy agent crashed on its first cycle.
+    assert DEFAULT_SCALE > 1.0
+    misread = coo.HEALTH_STALE_THRESHOLD_SECONDS / DEFAULT_SCALE
+    assert misread < coo.HEALTH_STALE_THRESHOLD_SECONDS
+    assert misread < 5.0, (
+        "a wall-clock threshold read as simulated time would still be far below real model latency"
+    )
 
 
 def test_heartbeats_stay_on_wall_clock_time(db):

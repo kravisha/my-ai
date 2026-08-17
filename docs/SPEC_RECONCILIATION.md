@@ -760,3 +760,66 @@ that something did — backwards for properties whose main risk is certifying an
 Two governance metrics assumed the `objections` table existed, so reading governance against any run
 database recorded before that table crashed rather than reporting. Both now treat every table they touch
 as optional, since governance is read against databases of every vintage.
+
+
+## 17. The world stops being a series of runs (2026-08-17)
+
+### The rate: one simulated day per wall-clock hour
+
+Owner decision, answering the question the Alpha review recorded as foundational. `FI_SIM_TIME_SCALE`
+moves from 288 to **24**.
+
+What it buys, against measured numbers:
+
+- an agent's one-second poll advances **24 simulated seconds** — fine enough to see intraday movement
+  rather than step over it (at 288 a poll skipped five simulated minutes);
+- an equity session runs **16 wall minutes**, so an open and a close are observable in a sitting;
+- **ten graded reports take about 5 wall minutes** at the measured drain rate — the threshold at which a
+  detection lens can bind a regime baseline, and the first time that behaviour has been reachable inside
+  a run at all.
+
+The last one decided it. **A rate is not a testability knob; it determines which of the organization's
+behaviours can happen at all.**
+
+Scale stays per-scenario config, because the two uses are genuinely different: a continuously advancing
+world runs at the organization's real rate, while a bounded scenario that must observe a session
+boundary inside ninety seconds has to compress time and says so. `overnight_session` pins 288 for
+exactly that reason.
+
+Two tests were calibrated against 288 and were updated to state the invariant rather than the artefact —
+one asserted a misread health threshold would be sub-second, which was true at 288 and false at 24; the
+other banded an agent poll at one to thirty simulated minutes, reasoning from a world where a poll
+covered five.
+
+### The world
+
+`simulation/world.py` advances the registered generators continuously. Two properties carry it.
+
+**State survives the rollover.** A price level that reset each morning would not be a price level, and a
+monthly release that forgot when it last fired would fire every day.
+
+**No day is skipped.** Ticks are driven by wall-clock, so a stalled process resumes with more simulated
+time elapsed than it expected — at this rate, a stall of an hour and five minutes crosses a rollover
+*and part of another*. Detecting "the date changed" would handle the first and silently lose the rest,
+so rollover returns **every day crossed** rather than a boolean.
+
+The boundary is announced on the event bus rather than left to each generator to notice, because three
+generators tracking their own idea of a new day is three chances to disagree about when it started. It
+is stamped at the current moment rather than the day's midnight: the bus ages events out after six
+simulated hours, so a midnight-stamped rollover would have expired before the equity session opened —
+present in the code and visible to nobody.
+
+### Verified over a simulated month
+
+3600 ticks, 30 completed simulated days, 30 rollovers announced, CPI released once on its monthly
+cadence, and a restart mid-flight resuming at the same position without replaying a single past day.
+Option surfaces appear on 19.6% of ticks, matching 6.5 session hours in 24 across five days in seven.
+
+**Two defects found only by running it**, both of which every unit test had passed:
+
+- `days_completed` recorded all-but-the-last crossed day, so an ordinary single-day rollover completed
+  nothing. A simulated week ran with the count still reading zero.
+- `summary()` asked the clock for "now" without a moment, reporting the real clock rather than the
+  world's own position — a seven-hour run claimed a simulated date five years out.
+
+**Entry criteria move 3/5 to 4/5.** Only the queryable history (A9) remains.
