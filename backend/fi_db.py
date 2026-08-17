@@ -48,6 +48,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend import triage
 from backend.db import Database
 
 # FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
@@ -1826,9 +1827,55 @@ def enqueue_report(
 
 
 def fetch_next_pending_report(conn: Database) -> dict | None:
+    """Oldest pending report. Plain FIFO - see fetch_prioritised_report for the
+    ordering Analysis actually uses. Kept because several call sites only want
+    "is there anything queued", and because FIFO is the behaviour prioritisation
+    degrades to when nothing distinguishes the queue."""
     return conn.fetchone(
         "SELECT * FROM discovery_reports WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
     )
+
+
+def list_pending_reports(conn: Database) -> list[dict]:
+    return conn.fetchall("SELECT * FROM discovery_reports WHERE status = 'pending' ORDER BY id")
+
+
+def prioritised_pending_reports(conn: Database, starvation_seconds: float | None = None) -> list[dict]:
+    """The pending queue in the order Analysis should work it, each row carrying
+    a `triage_reason`.
+
+    Ranked in Python rather than in SQL. That is affordable precisely because
+    the queue is bounded - has_pending_report dedups per producer and security,
+    so the ceiling is one row per producer per security (measured at 13 of a
+    possible 20 with ten securities). A ranking that needed the whole table
+    would deserve SQL; this one does not, and a pure function is far easier to
+    reason about and to test."""
+    reports = list_pending_reports(conn)
+    if not reports:
+        return []
+
+    cross_checks = {
+        row["id"]: row
+        for row in conn.fetchall("SELECT id, outcome FROM cross_check_requests")
+    }
+    now = datetime.now(timezone.utc)
+    ages = {
+        report["id"]: (now - parse_timestamp(report["created_at"])).total_seconds()
+        for report in reports
+    }
+
+    ordered = triage.prioritise(reports, cross_checks, ages, starvation_seconds)
+    return [
+        {**report, "waiting_seconds": round(ages[report["id"]], 1),
+         "triage_reason": triage.explain(report, cross_checks, ages, starvation_seconds)}
+        for report in ordered
+    ]
+
+
+def fetch_prioritised_report(conn: Database, starvation_seconds: float | None = None) -> dict | None:
+    """The single report Analysis should take next."""
+    queue = prioritised_pending_reports(conn, starvation_seconds)
+    return queue[0] if queue else None
 
 
 def has_pending_report(conn: Database, producer_identity: str, security: str) -> bool:

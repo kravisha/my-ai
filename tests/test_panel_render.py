@@ -188,15 +188,22 @@ def test_regime_says_the_estimate_was_inferred_not_supplied():
 
 
 def test_discovery_marks_reports_that_had_no_cross_check():
+    """Now carried by the triage reason rather than a separate column - the
+    reason a lead ranks where it does already says whether it was cross-checked,
+    so printing both would be the same fact twice."""
     text = render.format_discovery({
         "pending_reports": [
-            {"id": 1, "security": "SYN1", "producer_identity": "explorer-1", "summary": "anomaly", "cross_check_id": 7},
-            {"id": 2, "security": "SYN2", "producer_identity": "explorer-1", "summary": "anomaly", "cross_check_id": None},
+            {"id": 1, "security": "SYN1", "producer_identity": "explorer-1", "summary": "anomaly",
+             "cross_check_id": 7, "waiting_seconds": 1.0,
+             "triage_reason": "cross-check answered with evidence from the second frame"},
+            {"id": 2, "security": "SYN2", "producer_identity": "explorer-1", "summary": "anomaly",
+             "cross_check_id": None, "waiting_seconds": 3.0,
+             "triage_reason": "no cross-check on this lead"},
         ],
         "recent_analyses": [],
     })
-    assert "xcheck#7" in text
-    assert "no cross-check" in text
+    assert "evidence from the second frame" in text
+    assert "no cross-check on this lead" in text
 
 
 def _exchange(**overrides):
@@ -247,3 +254,21 @@ def test_lifecycle_log_shows_who_asked_for_each_action():
     })
     assert "by panel" in text and "by coo" in text
     assert "(none)" in text  # the empty pending queue says so rather than rendering blank
+
+
+def test_the_queue_is_shown_in_the_order_analysis_will_work_it():
+    """Showing arrival order would misrepresent what the system is about to do,
+    now that the queue is no longer worked FIFO."""
+    text = render.format_discovery({
+        "pending_reports": [
+            {"id": 7, "security": "SYN1", "producer_identity": "explorer-1", "summary": "s",
+             "cross_check_id": 3, "waiting_seconds": 2.0,
+             "triage_reason": "cross-check answered with evidence from the second frame"},
+            {"id": 2, "security": "SYN9", "producer_identity": "explorer-1", "summary": "s",
+             "cross_check_id": None, "waiting_seconds": 40.0, "triage_reason": "no cross-check on this lead"},
+        ],
+        "recent_analyses": [],
+    })
+    assert "order Analysis will take them" in text
+    assert text.index("#7") < text.index("#2")  # ranked first despite arriving later
+    assert "evidence from the second frame" in text

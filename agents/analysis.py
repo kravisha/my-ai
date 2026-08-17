@@ -187,9 +187,15 @@ def _overall_score(result: dict) -> float:
 
 
 def _analysis_work(conn, identity: str, spawned_at: str) -> None:
-    report = fi_db.fetch_next_pending_report(conn)
+    # Prioritised rather than FIFO: at ten securities detection outpaces
+    # reasoning (gap analysis §4.3b), so which lead gets the one deep-reasoning
+    # call per cycle stops being an accident of arrival order and becomes a
+    # stated choice - with the reason recorded, since an unexplained ordering
+    # is not auditable.
+    report = fi_db.fetch_prioritised_report(conn)
     if report is None:
         return  # idle - the signal a later increment's starvation scaling will consume
+    print(f"[analysis] taking report #{report['id']} ({report['security']}): {report['triage_reason']}")
 
     try:
         context = _assemble_context(conn, report)

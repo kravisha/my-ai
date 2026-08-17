@@ -226,11 +226,11 @@ def format_directives(body: dict) -> str:
 def format_discovery(body: dict) -> str:
     pending = body.get("pending_reports", [])
     analyses = body.get("recent_analyses", [])
-    lines = [f"Pending report queue ({len(pending)}):"]
+    lines = [f"Pending report queue ({len(pending)}), in the order Analysis will take them:"]
     lines += [
-        f"  #{r['id']} {r['security']:<6} from {r['producer_identity']:<13} "
-        f"{'xcheck#' + str(r['cross_check_id']) if r.get('cross_check_id') else 'no cross-check':<16} {r['summary'] or ''}"
-        for r in pending
+        f"  {n}. #{r['id']} {r['security']:<6} from {r['producer_identity']:<13} "
+        f"waited {r.get('waiting_seconds', 0):>6.1f}s  -- {r.get('triage_reason', '')}"
+        for n, r in enumerate(pending, start=1)
     ] or ["  (empty)"]
 
     lines += ["", f"Recent analyses ({len(analyses)}):"]

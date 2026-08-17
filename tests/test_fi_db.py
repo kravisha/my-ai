@@ -1085,3 +1085,60 @@ def test_pending_cross_checks_are_served_oldest_first_by_id(conn):
     first = _open(conn, security="SYN1")
     _open(conn, security="SYN2")
     assert fi_db.fetch_next_pending_cross_check(conn, "speculator")["id"] == first
+
+
+# --- prioritised report queue (gap analysis section 4.3b) ---
+
+
+def _answered_cross_check(conn, security, outcome=None):
+    request_id = fi_db.open_cross_check(
+        conn, "explorer-1", "T", "explorer", "speculator", security,
+        question="q", requester_finding={"ratio": 2.2},
+    )
+    if outcome == "timeout":
+        fi_db.expire_stale_cross_checks(conn, timeout_seconds=0)
+    elif outcome is not None:
+        fi_db.answer_cross_check(conn, request_id, "speculator-1", "T", outcome, {"posts": 3})
+    return request_id
+
+
+def test_prioritised_queue_puts_the_best_evidenced_lead_first(conn):
+    answered = _answered_cross_check(conn, "SYN1", fi_db.CROSS_CHECK_EVIDENCE)
+    timed_out = _answered_cross_check(conn, "SYN2", "timeout")
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN2", cross_check_id=timed_out)
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", cross_check_id=answered)
+
+    queue = fi_db.prioritised_pending_reports(conn)
+
+    assert [r["security"] for r in queue] == ["SYN1", "SYN2"]
+    assert fi_db.fetch_prioritised_report(conn)["security"] == "SYN1"
+
+
+def test_every_queued_report_carries_its_triage_reason_and_age(conn):
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1")
+    row = fi_db.prioritised_pending_reports(conn)[0]
+    assert row["triage_reason"] == "no cross-check on this lead"
+    assert row["waiting_seconds"] >= 0
+
+
+def test_prioritisation_never_drops_a_report(conn):
+    """Reordering must be exactly that. A ranking that silently omitted rows
+    would look like prioritisation and behave like data loss."""
+    for i in range(5):
+        fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", f"SYN{i}")
+    assert len(fi_db.prioritised_pending_reports(conn)) == 5
+
+
+def test_the_starvation_guard_reaches_reports_the_ranking_would_bury(conn):
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN9")  # no cross-check, ranks last
+    answered = _answered_cross_check(conn, "SYN1", fi_db.CROSS_CHECK_EVIDENCE)
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", cross_check_id=answered)
+
+    assert fi_db.fetch_prioritised_report(conn)["security"] == "SYN1"
+    # with a zero-second guard everything counts as starving, oldest first
+    assert fi_db.fetch_prioritised_report(conn, starvation_seconds=0)["security"] == "SYN9"
+
+
+def test_an_empty_queue_returns_nothing_rather_than_raising(conn):
+    assert fi_db.prioritised_pending_reports(conn) == []
+    assert fi_db.fetch_prioritised_report(conn) is None

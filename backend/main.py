@@ -518,10 +518,10 @@ def discovery_activity(limit: int = 25, conn=Depends(panel_db), admin: str = Dep
         "ORDER BY a.id DESC LIMIT ?", (limit,)
     )
     return {
-        "pending_reports": conn.fetchall(
-            "SELECT id, created_at, producer_identity, report_type, security, summary, cross_check_id "
-            "FROM discovery_reports ORDER BY id"
-        ),
+        # In the order Analysis will actually take them, each with its reason.
+        # Showing arrival order would misrepresent what the system is about to
+        # do now that the queue is no longer worked FIFO.
+        "pending_reports": fi_db.prioritised_pending_reports(conn),
         "recent_analyses": results,
         "performance_card": fi_db.get_performance_card(conn),
     }
