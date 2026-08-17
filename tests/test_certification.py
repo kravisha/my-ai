@@ -26,30 +26,46 @@ PERFECT_RUN = {
 
 # -- the criteria must be able to fail ---------------------------------------
 
-def test_alpha_is_not_currently_reached(conn):
-    """The load-bearing test. Criteria written from what the system already does
-    would all pass immediately and certify nothing."""
+def test_alpha_is_entered_but_not_certified(conn):
+    """The load-bearing test, and it has moved once already.
+
+    It began as "Alpha is not currently reached", asserting both gates failed.
+    A4 built the continuously advancing world and A9 the queryable history, so
+    **entry is now met** - which is the gate recording real progress rather than
+    the criteria being rewritten.
+
+    What must not happen is certification going green without the work. It still
+    fails five, and those five are the organization's actual outstanding
+    problems."""
     report = certification.report(metrics=None, conn=conn)
 
-    assert not report["entry_met"], "entry criteria all pass; they were written to the answer"
-    assert not report["certified"]
+    assert report["entry_met"], "entry criteria regressed; something that existed no longer imports"
+    assert not report["certified"], (
+        "certification passes with no run supplied; criteria were rewritten to the answer"
+    )
     assert len(report["outstanding"]) >= 4
 
 
-def test_the_unbuilt_capabilities_are_named(conn):
-    """Entry failures should say what is missing rather than that something is.
+def test_every_entry_capability_now_exists(conn):
+    """Rewritten twice as the work landed, and both rewrites were the gate
+    working: a criterion silently flipping green is what the suite exists to
+    prevent, so each flip had to fail a test first and be looked at.
 
-    Updated when A4 landed: the continuously advancing world moved from unmet to
-    met, which is the gate doing its job. This test failing on that change is the
-    intended behaviour - a criterion silently flipping to green is exactly what
-    the suite exists to make impossible."""
-    entry = {r["criterion"]: r for r in certification.evaluate_entry()}
+    An entry criterion regressing from here means a module that existed stopped
+    importing, which is worth a failure rather than a shrug."""
+    for result in certification.evaluate_entry():
+        assert result["met"], f"{result['criterion']!r} no longer holds: {result['detail']}"
 
-    assert entry["the world advances continuously"]["met"], (
-        "simulation.world exists; this criterion should now pass"
-    )
-    assert not entry["history is queryable"]["met"]
-    assert "simulation.history" in entry["history is queryable"]["detail"]
+
+def test_a_missing_capability_would_be_named(conn):
+    """The mechanism that reported the gaps while they existed, kept honest now
+    that none do - otherwise nothing would notice if it stopped detecting."""
+    from simulation.certification import Criterion, _capability_present
+
+    met, detail = _capability_present(("simulation.a_module_that_does_not_exist",))
+
+    assert not met
+    assert "simulation.a_module_that_does_not_exist" in detail
 
 
 def test_the_capabilities_already_built_pass():

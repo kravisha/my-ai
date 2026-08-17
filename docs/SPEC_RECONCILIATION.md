@@ -823,3 +823,63 @@ Option surfaces appear on 19.6% of ticks, matching 6.5 session hours in 24 acros
   world's own position — a seven-hour run claimed a simulated date five years out.
 
 **Entry criteria move 3/5 to 4/5.** Only the queryable history (A9) remains.
+
+
+## 18. Three data domains and the corpus (2026-08-17)
+
+**A historical dataset is not a run.** A run is a bounded episode with its own database and its
+provenance in a manifest; a corpus is a body of data accumulated from many sources over years, where the
+same fact is recorded repeatedly and revised. The two want opposite things from storage, which is why
+`simulation/history.py` is a separate store rather than another table.
+
+### The three domains
+
+| Domain | What it is |
+|---|---|
+| `real` | Observed from the actual market, as it arrived |
+| `historical` | Observed from the actual market, ingested afterwards as a corpus |
+| `simulated` | Produced by a generator, about no real world at all |
+
+`real` and `historical` are both about the world and differ in how they arrived — which matters, because
+an ingested corpus carries **vintages** and a live stream does not. `simulated` is a different kind of
+claim entirely.
+
+**Every query names its domains.** There is no default and no "all", because the failure being guarded
+against is a backtest that quietly proved something about generated data. Combining domains stays
+possible and becomes a decision somebody made that can be found in the code — which satisfies the
+directive's "any analysis combining domains must do so explicitly" more strongly than a filter every
+reader has to remember.
+
+### Vintages, which are why this is not a table
+
+Published statistics are revised. A quarter's figure is published, revised a month later, revised again
+a month after that — three rows describing **the same quarter**, knowable at three different times, with
+three different values.
+
+A backtest running in May must see May's number. Using the final revised figure is lookahead of the most
+seductive kind: **every result improves, nothing errors, and the mistake is invisible in the output.** So
+`latest_vintage_as_of` returns the newest revision *knowable* by the moment asked about, never the
+newest recorded.
+
+`revisions()` exists alongside it and is named so it cannot be mistaken for an as-of query: studying how
+a number was revised is a question about the corpus, not one the organization could have asked at the
+time.
+
+### Two guards that cannot be forgotten
+
+`as_of` requires both a moment and its domains, with no defaults — a query without a moment is a
+lookahead waiting to happen. And `record` refuses a datum whose `knowable_at` precedes its
+`effective_at`, because ingesting one would put lookahead in the data itself, where no query guard could
+catch it.
+
+### Verified on a simulated month
+
+3425 observations ingested from a 30-day world. Asked as of the halfway point, **1695 of 3425** are
+knowable. The single CPI row describes 5 January and becomes knowable on 19 January — the cadence's
+14-day publication lag surviving into the corpus, which is the pair of timestamps doing exactly what it
+was built for.
+
+### Alpha entry is now met, 5/5
+
+The last entry criterion closes. Certification remains **5/10**, and its five outstanding items are the
+organization's real problems rather than missing scaffolding.
