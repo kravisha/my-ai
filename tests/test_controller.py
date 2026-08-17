@@ -353,3 +353,89 @@ def test_controller_appears_on_the_performance_card(controller):
     card = {row["identity"]: row for row in fi_db.get_performance_card(controller.conn)}
     assert identity in card
     assert card[identity]["role"] == "controller"
+
+
+# --- shutdown must not orphan the workforce ---
+
+
+def test_a_stop_signal_does_not_retire_the_agent(conn):
+    """A stopped server is not a retired workforce. Reusing the retirement flag
+    would stand every agent down on each restart, and each would then need an
+    explicit resume to come back - which is not what stopping a server means."""
+    fi_db.register_agent(conn, "explorer-1", "explorer", 4242)
+
+    fi_db.request_process_stop(conn, "explorer-1")
+
+    assert fi_db.is_stop_requested(conn, "explorer-1") is True
+    assert fi_db.get_agent(conn, "explorer-1")["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+    assert fi_db.is_retirement_requested(conn, "explorer-1") is False
+
+
+def test_the_spawner_clears_the_stop_flag_not_the_agent(conn):
+    """Otherwise a respawned agent would read a stale flag and exit immediately.
+
+    But the clearing must be done by whoever *starts* the agent, not by the
+    agent registering: a stop issued while an agent was still starting up would
+    otherwise be erased by that agent's own registration moments later, and the
+    signal would be lost."""
+    fi_db.register_agent(conn, "explorer-1", "explorer", 4242)
+    fi_db.request_process_stop(conn, "explorer-1")
+
+    # registering again does NOT clear it - the signal survives startup
+    fi_db.register_agent(conn, "explorer-1", "explorer", 5555)
+    assert fi_db.is_stop_requested(conn, "explorer-1") is True
+
+    # the Controller clears it when it deliberately starts the agent
+    fi_db.clear_process_stop(conn, "explorer-1")
+    assert fi_db.is_stop_requested(conn, "explorer-1") is False
+
+
+def test_shutdown_stops_every_agent_it_spawned(tmp_path):
+    """The orphan bug: Popen children outlive their parent, so without this a
+    server stop left a full agent population running and writing to the
+    database."""
+    controller = Controller(db_path=str(tmp_path / "fi.db"))
+    try:
+        controller.bootstrap_self()
+        directive_id = fi_db.enqueue_directive(controller.conn, "spawn", "coo", target_role="dummy")
+        controller.process_next_directive()
+        assert fi_db.get_completed_directive(controller.conn, directive_id)["outcome"] == "success"
+        assert controller._processes  # something is actually running
+
+        outcome = controller.shutdown_agents(grace_seconds=10)
+
+        assert "dummy-1" in outcome["stopped"] + outcome["terminated"]
+        assert controller._processes == {}
+        agent = fi_db.get_agent(controller.conn, "dummy-1")
+        assert agent["process_state"] == fi_db.PROCESS_STOPPED
+        # still in service, so a restarted server refills the role
+        assert agent["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE
+    finally:
+        controller.close()
+
+
+def test_a_well_behaved_agent_exits_on_its_own_rather_than_being_killed(tmp_path):
+    """The project's rule is that nothing forcibly kills an agent. Termination
+    is the fallback for stragglers, not the mechanism - an agent given time
+    should appear under 'stopped', never 'terminated'."""
+    controller = Controller(db_path=str(tmp_path / "fi.db"))
+    try:
+        controller.bootstrap_self()
+        fi_db.enqueue_directive(controller.conn, "spawn", "coo", target_role="dummy")
+        controller.process_next_directive()
+
+        outcome = controller.shutdown_agents(grace_seconds=15)
+
+        assert outcome["stopped"] == ["dummy-1"]
+        assert outcome["terminated"] == []
+    finally:
+        controller.close()
+
+
+def test_shutdown_is_safe_with_nothing_running(tmp_path):
+    controller = Controller(db_path=str(tmp_path / "fi.db"))
+    try:
+        controller.bootstrap_self()
+        assert controller.shutdown_agents() == {"stopped": [], "terminated": []}
+    finally:
+        controller.close()

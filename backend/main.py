@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         _controller_poll_task.cancel()
+        # Stop the workforce before stopping ourselves. subprocess children
+        # outlive their parent, so without this a server stop left every agent
+        # running and writing to the database - see Controller.shutdown_agents.
+        outcome = controller.shutdown_agents()
+        print(f"[controller] agents stopped: {outcome['stopped']}, terminated: {outcome['terminated']}")
         # A clean shutdown is a clean agent exit, not a crash - see
         # Controller.shutdown_self.
         controller.shutdown_self()

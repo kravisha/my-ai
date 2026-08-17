@@ -331,6 +331,11 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     pid INTEGER,
     status TEXT NOT NULL DEFAULT 'active',
     retire_requested INTEGER NOT NULL DEFAULT 0,
+    -- Asks a running agent to exit without retiring it. Distinct from
+    -- retire_requested because a stopped server is not a retired workforce:
+    -- lifecycle_state stays 'active', so restarting brings every agent back
+    -- into service instead of requiring a resume for each.
+    stop_requested INTEGER NOT NULL DEFAULT 0,
     spawned_at TEXT NOT NULL,
     last_heartbeat_at TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1,
@@ -975,6 +980,36 @@ def resume_agent(conn: Database, identity: str) -> None:
         "UPDATE agent_registry SET retire_requested = 0, lifecycle_state = ?, status = ? WHERE identity = ?",
         (LIFECYCLE_ACTIVE, _derive_status(LIFECYCLE_ACTIVE, PROCESS_STOPPED), identity),
     )
+
+
+def clear_process_stop(conn: Database, identity: str) -> None:
+    """Clear a pending stop, done by the *spawner* immediately before starting a
+    process - never by the agent as it registers.
+
+    That distinction is a real race, not pedantry. register_agent clearing the
+    flag meant a stop issued while an agent was still starting up got erased by
+    that agent's own registration moments later: the agent then never saw the
+    signal, ran on past the shutdown, and had to be force-terminated. The
+    Controller knows when it is deliberately starting an agent; the agent does
+    not know why it is being started."""
+    conn.execute("UPDATE agent_registry SET stop_requested = 0 WHERE identity = ?", (identity,))
+
+
+def request_process_stop(conn: Database, identity: str) -> None:
+    """Ask an agent to exit its loop, leaving its organizational standing alone.
+
+    The shutdown counterpart to request_retirement, and deliberately a separate
+    signal rather than a reuse of it. Retirement is a decision about whether the
+    organization wants an agent; a server stopping is not, and reusing the
+    retirement flag would silently stand the whole workforce down every time the
+    process restarted - each agent would then need an explicit resume to come
+    back, which is not what stopping a server means."""
+    conn.execute("UPDATE agent_registry SET stop_requested = 1 WHERE identity = ?", (identity,))
+
+
+def is_stop_requested(conn: Database, identity: str) -> bool:
+    row = conn.fetchone("SELECT stop_requested FROM agent_registry WHERE identity = ?", (identity,))
+    return bool(row and row["stop_requested"])
 
 
 def is_retirement_requested(conn: Database, identity: str) -> bool:

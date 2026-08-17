@@ -89,6 +89,13 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
             fi_db.record_heartbeat(conn, identity)
             if fi_db.is_retirement_requested(conn, identity):
                 break
+            # A stop is not a retirement. The finally block below reports this
+            # process as stopped, but organizational standing is untouched, so
+            # COO's baseline check will ask for this role again the moment a
+            # server comes back up.
+            if fi_db.is_stop_requested(conn, identity):
+                print(f"[{role}:{identity}] stop requested - exiting", file=sys.stderr)
+                break
             time.sleep(HEARTBEAT_INTERVAL_SECONDS)
     finally:
         # Reports only that this process is ending. Whether the agent is

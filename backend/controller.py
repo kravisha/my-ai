@@ -34,6 +34,7 @@ agent finishing on its own terms.
 
 import os
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -49,6 +50,14 @@ from backend import fi_db
 # answered...") is invisible during exactly the manual verification runs that
 # have found every timing defect in this project.
 AGENT_ENV = {"PYTHONUNBUFFERED": "1"}
+
+# How long a shutdown waits for agents to exit on their own before terminating
+# the stragglers. Agents poll roughly every second, but Analysis can sit inside a
+# deep-reasoning call for ~20s, and a server stop should not wait that long - so
+# this is deliberately shorter than the slowest cycle. Most agents exit within a
+# second; the rest are terminated, which is a worse exit than they would have
+# chosen and a much better one than being orphaned.
+AGENT_STOP_GRACE_SECONDS = float(os.environ.get("FI_AGENT_STOP_GRACE_SECONDS", "5"))
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -112,6 +121,65 @@ class Controller:
         right: a dead server cannot restart itself from the inside."""
         fi_db.record_heartbeat(self.conn, self.identity)
 
+    def shutdown_agents(self, grace_seconds: float = AGENT_STOP_GRACE_SECONDS) -> dict:
+        """Stop every agent this Controller spawned, before the server goes away.
+
+        Without this they are orphaned. `subprocess.Popen` children outlive the
+        parent, so stopping the backend left a full agent population running,
+        still heartbeating, still writing to the database - and a later backend
+        started against the same database would find them healthy and never
+        respawn, so two generations of agents ran concurrently. Found while
+        verifying something else entirely: twelve orphaned processes from earlier
+        runs were still alive and producing detector events.
+
+        Asked, not killed, wherever possible. The flag is a database row the
+        agent polls, exactly as retirement is, so an agent finishes the cycle it
+        is in rather than being cut off mid-write. Force-terminating is the
+        fallback for stragglers only, because a bounded shutdown matters more
+        than the last cycle of an agent that is not responding - Analysis can sit
+        inside a deep-reasoning call for 20 seconds, and a server stop should not
+        wait that long.
+
+        Returns what happened to each, so shutdown is auditable rather than
+        silent."""
+        stopped, terminated = [], []
+        deadline = time.monotonic() + grace_seconds
+        pending = dict(self._processes)
+
+        # The stop flag is re-asserted on every pass, not set once. An agent
+        # spawned moments before shutdown may not have registered yet, so its
+        # row does not exist and the first UPDATE touches nothing - and the
+        # agent then INSERTs a fresh row defaulting to "no stop requested",
+        # erasing a signal that was sent before it existed. No amount of
+        # pre-setting wins that race; re-asserting until the process is gone
+        # does, whatever order startup and shutdown happen to interleave in.
+        while pending and time.monotonic() < deadline:
+            for identity, process in list(pending.items()):
+                if process.poll() is not None:
+                    stopped.append(identity)
+                    del pending[identity]
+                    continue
+                fi_db.request_process_stop(self.conn, identity)
+            if pending:
+                time.sleep(0.25)
+
+        for identity, process in pending.items():
+            process.terminate()
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            terminated.append(identity)
+
+        for identity in stopped + terminated:
+            # The agent's own finally block reports this when it exits cleanly;
+            # doing it here too covers the terminated case, where it never got
+            # the chance. Idempotent either way.
+            fi_db.mark_process_stopped(self.conn, identity)
+
+        self._processes.clear()
+        return {"stopped": stopped, "terminated": terminated}
+
     def shutdown_self(self) -> None:
         """Clean server shutdown reads as a clean process stop, not a crash -
         the same distinction agents/base.py's finally block makes for
@@ -132,6 +200,7 @@ class Controller:
         baseline population COO itself will ask for once running, goes
         through the normal directive queue in process_next_directive."""
         identity = _slot_identity("coo")
+        fi_db.clear_process_stop(self.conn, identity)
         env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         process = subprocess.Popen(
             [sys.executable, "-m", "agents.coo", identity],
@@ -166,6 +235,7 @@ class Controller:
     def _handle_spawn(self, directive: dict) -> None:
         role = directive["target_role"]
         identity = _slot_identity(role)
+        fi_db.clear_process_stop(self.conn, identity)
         env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         try:
             process = subprocess.Popen(

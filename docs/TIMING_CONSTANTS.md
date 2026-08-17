@@ -48,6 +48,7 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 | `STARVATION_SECONDS` (triage) | 900 s | Queue drain time | Worst drain 400s | **TUNED** from 120s |
 | `CROSS_CHECK_TIMEOUT_SECONDS` (fi_db) | 30 s | Responder's answer latency under queueing | Max observed 15.4s | **OK** — 2× |
 | `OBSERVATION_GRACE_SECONDS` (coo) | 5 s | Spawn → process start → registration | Worst observed 1.62s | **OK** — 3.1× |
+| `AGENT_STOP_GRACE_SECONDS` (controller) | 5 s | How long an agent takes to notice a stop flag | Procedural agents poll every ~1s; Analysis can be mid-call for ~20s | **DELIBERATELY SHORT** — see below |
 | `HEARTBEAT_INTERVAL_SECONDS` (base) | 1.0 s | Nothing downstream — it *sets* the rate | n/a | **OK** |
 | `CONTROLLER_POLL_INTERVAL_SECONDS` (main) | 1.0 s | Directive latency tolerance | n/a — it sets the rate | **OK** |
 | `POLL_INTERVAL_MS` (panel, monitor) | 2000 ms | Operator patience only | n/a | **OK** |
@@ -60,6 +61,21 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 | `SESSION_LIFETIME` (session) | 7 days | Operator session length | A policy, not a rate | **n/a** |
 
 ---
+
+## The one deliberately set below its rate
+
+**`AGENT_STOP_GRACE_SECONDS = 5`** is the exception to this file's own rule, and the exception is the
+point. Every other constant here is set *above* the rate it depends on. This one is set below the
+worst case on purpose: Analysis can sit inside a deep-reasoning call for ~20s, and a server stop
+should not wait that long. Agents that have not exited by the deadline are terminated.
+
+That is a real cost — a terminated agent loses the cycle it was in — accepted because the alternative
+is worse. Before this existed, agents were simply orphaned: `subprocess.Popen` children outlive their
+parent, so stopping the backend left the whole population running and writing to the database, and a
+later backend found them healthy and never respawned. Two generations of agents then ran concurrently.
+
+Verified: a graceful stop takes the process count from 14 to 2, and leaves every agent
+`process_state=stopped` with `lifecycle_state=active`, so a restart refills each role.
 
 ## The one that stays unmeasured
 
