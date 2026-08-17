@@ -10,7 +10,7 @@ both models — stop, resolve, and update the canonical specification so one int
 remains.* Since the addenda themselves are marked do-not-edit, **this file is where that resolution is
 recorded.**
 
-Last updated: 2026-08-16.
+Last updated: 2026-08-17.
 
 ---
 
@@ -345,3 +345,25 @@ Progress against addendum 12 §21's Pre-Alpha task list:
 - [ ] Explorer↔Speculator cross-check contracts + escalation policy
 - [ ] Banker session/relationship memory + on-demand Portfolio Analysis flow
 - [ ] Alpha performance milestones, stability duration, failure/recovery expectations, graduation criteria
+
+## 8. Portfolio analysis: addendum 9 extended, not replaced (2026-08-17)
+
+A portfolio-analysis directive arrived defining source-agnostic analysis, exposure, risk, attribution
+and simulation integration. Addendum 9 is marked canonical and *do not edit*, so the question was
+whether the two compete.
+
+They do not. Addendum 9 says of itself that it is "intentionally basic in the first implementation and
+will receive deeper specifications later", and this is those specifications. Recorded as an extension.
+
+**One conflict, resolved by recommendation rather than silently.** Addendum 9 has the Coordinator
+creating the Portfolio Analyst directly, bypassing COO, on a client request. Every spawn built since
+routes through COO deciding need and the Controller executing. The bypass existed to save COO's
+~1s cycle on an urgent request; a second is not worth maintaining a second spawn mechanism, so the
+recommendation is the normal path. Pending owner confirmation.
+
+**A constraint that gates the work.** The nominated reference portfolio is a real IRA statement, and
+this repository is public. Every committed fixture must be synthetic - including one structurally
+equivalent to the reference - with the real statement kept outside both repositories and read from a
+local path at runtime. `app/data_classification.py` already classifies `account_id` as LOCAL_ONLY; this
+extends the same judgment to test data.
+
