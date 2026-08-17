@@ -1,3 +1,7 @@
 -r requirements.txt
 pytest
 httpx
+# tests/test_organization_model.py reads docs/organization.yaml. Present today only
+# as a transitive dependency of uvicorn[standard]; named here so the drift test does
+# not silently start skipping if that changes.
+pyyaml

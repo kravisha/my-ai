@@ -45,6 +45,7 @@ carries... schema version" requirement without contradicting it.
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -789,6 +790,16 @@ def parse_timestamp(value: str) -> datetime:
     one place that difference gets handled, instead of every call site
     reimplementing the same .replace("Z", "+00:00") fix."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def list_tables_in_schema() -> list[str]:
+    """Table names declared by SCHEMA, read from the DDL rather than a database.
+
+    Deliberately static: callers that want to validate a reference against the
+    schema should not need a live connection, and reading `sqlite_master` would
+    answer a different question - what some database happens to contain, which on
+    a migrated file can include tables this module no longer declares."""
+    return re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA)
 
 
 def get_connection(db_path: str | Path = DB_PATH) -> Database:

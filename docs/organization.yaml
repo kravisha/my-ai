@@ -1,0 +1,232 @@
+# Machine-readable model of the organization as IMPLEMENTED.
+#
+# This file describes what exists and runs. It is not a plan and not a wish list:
+# tests/test_organization_model.py asserts every claim here against the code, so a
+# role that is named here but not implemented, or implemented but not named here,
+# fails the suite.
+#
+# Deliberately restricted to facts already visible in backend/fi_db.py's
+# ROLE_CHARTERS and agents/coo.py's BASELINE_ROLES. Planned roles, candidate
+# institutions and the reasoning behind the structure are held separately.
+#
+# Every flow must declare exactly one of:
+#   return_path         - the id of the flow that closes this loop
+#   no_feedback_required - why closure is genuinely unnecessary
+#   known_gap           - an outbound flow whose loop does NOT close, named honestly
+#
+# known_gap entries are counted by the test against `known_gap_count` below, so a
+# newly-unclosed loop fails until somebody declares it on purpose.
+
+version: 1
+known_gap_count: 2
+
+roles:
+  - id: controller
+    status: implemented
+    agent_type: infrastructure
+    reports_to: null
+    process: in_process          # the backend server itself, never spawned
+    spawned_by_coo: false
+
+  - id: coo
+    status: implemented
+    agent_type: executive
+    reports_to: controller
+    process: subprocess
+    spawned_by_coo: false        # bootstrapped by the Controller at startup
+
+  - id: explorer
+    status: implemented
+    agent_type: discovery
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true
+
+  - id: speculator
+    status: implemented
+    agent_type: discovery
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true
+
+  - id: analysis
+    status: implemented
+    agent_type: judgment
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true
+
+  - id: dummy
+    status: implemented
+    agent_type: reference
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true
+
+flows:
+  # --- authority -------------------------------------------------------------
+  - id: coo_directs_controller
+    from: coo
+    to: controller
+    kind: authority
+    medium: coo_directives
+    return_path: controller_reports_outcome
+
+  - id: controller_reports_outcome
+    from: controller
+    to: coo
+    kind: feedback
+    medium: coo_directives_completed
+    no_feedback_required: >
+      This is itself the return path for coo_directs_controller. COO additionally
+      records an observed_result, which is the loop's real closure.
+
+  - id: controller_manages_lifecycle
+    from: controller
+    to: explorer
+    kind: lifecycle
+    medium: agent_registry
+    return_path: agents_heartbeat
+    note: >
+      Applies identically to every spawned role. Modelled once rather than fanned
+      out per role, because the mechanism is the same OS-process path.
+
+  - id: agents_heartbeat
+    from: explorer
+    to: coo
+    kind: feedback
+    medium: agent_registry
+    no_feedback_required: >
+      Closure for controller_manages_lifecycle. COO reads heartbeat age and
+      process_state to judge population health.
+
+  # --- work ------------------------------------------------------------------
+  - id: explorer_files_report
+    from: explorer
+    to: analysis
+    kind: work
+    medium: discovery_reports
+    return_path: analysis_grades_report
+
+  - id: speculator_files_report
+    from: speculator
+    to: analysis
+    kind: work
+    medium: discovery_reports
+    return_path: analysis_grades_report
+
+  - id: speculator_files_evidence
+    from: speculator
+    to: analysis
+    kind: work
+    medium: evidence_items
+    return_path: source_standing_returns
+
+  - id: explorer_records_detection
+    from: explorer
+    to: analysis
+    kind: work
+    medium: detector_events
+    no_feedback_required: >
+      A detector event is the immutable record behind a report. The report it
+      produced carries the feedback; grading the event separately would grade the
+      same work twice.
+
+  # --- cross-check -----------------------------------------------------------
+  - id: cross_check_request
+    from: explorer
+    to: speculator
+    kind: work
+    medium: cross_check_requests
+    return_path: cross_check_answer
+    note: Symmetric - Speculator originates against Explorer by the same mechanism.
+
+  - id: cross_check_answer
+    from: speculator
+    to: explorer
+    kind: feedback
+    medium: cross_check_requests
+    no_feedback_required: Closure for cross_check_request.
+
+  # --- evaluation and learning ----------------------------------------------
+  - id: analysis_grades_report
+    from: analysis
+    to: coo
+    kind: evaluation
+    medium: grades
+    return_path: coo_marks_lens_stale
+    note: >
+      The grade reaches the LENS, not the agent that filed the report. See
+      grade_never_reaches_producer.
+
+  - id: grade_never_reaches_producer
+    from: analysis
+    to: explorer
+    kind: evaluation
+    medium: grades
+    known_gap: >
+      A producing agent never learns whether its own report was judged relevant,
+      novel or well-evidenced. The feedback closes at the lens level - COO reads
+      grades, marks the artifact stale, and the agent picks up a different lens -
+      so the organization learns while the individual agent does not. Closing this
+      properly requires a trainer, which does not exist. Applies to Speculator
+      identically.
+
+  - id: coo_marks_lens_stale
+    from: coo
+    to: explorer
+    kind: knowledge
+    medium: intelligence_artifacts
+    return_path: agents_read_active_lens
+
+  - id: agents_read_active_lens
+    from: explorer
+    to: analysis
+    kind: work
+    medium: intelligence_artifacts
+    no_feedback_required: >
+      Closure for coo_marks_lens_stale - a lens change is observable in the
+      reports the agent subsequently files, which are graded again.
+
+  - id: explorer_observes_regime
+    from: explorer
+    to: coo
+    kind: work
+    medium: market_regime
+    return_path: coo_marks_lens_stale
+
+  - id: source_standing_returns
+    from: coo
+    to: analysis
+    kind: knowledge
+    medium: source_reliability
+    no_feedback_required: >
+      Closure for speculator_files_evidence. COO recomputes standings from grades
+      and Analysis reads them when weighing evidence.
+
+  - id: analysis_records_knowledge
+    from: analysis
+    to: analysis
+    kind: knowledge
+    medium: knowledge_records
+    return_path: analysis_resolves_open_question
+
+  - id: analysis_resolves_open_question
+    from: analysis
+    to: analysis
+    kind: knowledge
+    medium: knowledge_records
+    no_feedback_required: >
+      Closure for analysis_records_knowledge - an open question is looked up on a
+      later report and resolved when evidence arrives.
+
+  - id: coo_records_lens_lesson
+    from: coo
+    to: analysis
+    kind: knowledge
+    medium: knowledge_records
+    known_gap: >
+      COO writes what a stale lens taught, but nothing reads those lessons back.
+      They are guarded against duplication and preserved, and no consumer exists.
+      A reader would most naturally be whatever eventually proposes a corrected
+      lens value - which is unbuilt.
