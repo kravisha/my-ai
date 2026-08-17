@@ -46,10 +46,10 @@ carries... schema version" requirement without contradicting it.
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import novelty, triage
+from backend import competency, novelty, triage
 from backend.db import Database
 
 # FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
@@ -743,6 +743,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_assignments_one_open_per_identity
     ON agent_assignments (identity) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS agent_assignments_by_name ON agent_assignments (name, started_at);
 
+-- The historical layer of the personnel record: qualifications granted and
+-- revoked, ranks achieved, commendations awarded.
+--
+-- Append-only, and nothing here is ever recomputed away. Current standing is
+-- DERIVED from evidence (see competency_profile) and changes as the evidence
+-- changes; this records when it changed, and what was true at the time. A
+-- commendation in particular outlives the standing that produced it - ranking
+-- first for a period stays true after a fall to third, which is the entire
+-- point of keeping the two layers apart.
+--
+-- Deliberately not a store of current qualification. Reading "is this agent
+-- qualified" from an event log means trusting that every revocation was
+-- recorded; deriving it from evidence means the answer is right even if the
+-- log has gaps.
+CREATE TABLE IF NOT EXISTS personnel_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    event_kind TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    detail TEXT,
+    evidence TEXT,
+    occurred_at TEXT NOT NULL,
+    recorded_by TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS personnel_events_by_name ON personnel_events (name, occurred_at, id);
+
 -- The seed of the knowledge store (JARVIS Constitution §3). Holds
 -- *intelligence* - ways of seeing - rather than data or observations. The
 -- distinction is load-bearing: an IV surface is data, a detected anomaly is
@@ -1118,6 +1146,19 @@ def mark_process_crashed(conn: Database, identity: str) -> None:
             identity,
         ),
     )
+    # A crash leaves a historical trace as well as changing current state.
+    #
+    # Without this the crash is only ever visible in `process_state`, which the
+    # next respawn overwrites - so an agent that had crashed nine times was
+    # indistinguishable from one that had never crashed, and operational
+    # reliability could not be computed from the record at all. Found while
+    # building the personnel generator, which could not gather evidence that was
+    # never written down.
+    conn.execute(
+        "INSERT INTO health_metrics (identity, timestamp, metric, value, schema_version) "
+        "VALUES (?, ?, 'crash', NULL, ?)",
+        (identity, _now(), SCHEMA_VERSION),
+    )
 
 
 def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
@@ -1443,7 +1484,7 @@ def open_assignment(
             "moving them out first - a swap is two reassignments, and doing it implicitly would "
             "silently evict an agent."
         )
-    return conn.execute(
+    return conn.execute_returning_id(
         "INSERT INTO agent_assignments (name, identity, role, started_at, ended_at, reason, schema_version) "
         "VALUES (?, ?, ?, ?, NULL, ?, ?)",
         (name, identity, role or _role_of(conn, identity), started_at or _now(), reason, SCHEMA_VERSION),
@@ -1566,6 +1607,138 @@ def personnel_record(conn: Database, name: str) -> dict | None:
         "history": assignment_history(conn, name),
         "work": attributed_work(conn, name),
     }
+
+
+PERSONNEL_EVENT_KINDS = (
+    "qualification_granted",
+    "qualification_revoked",
+    "rank_achieved",
+    "commendation",
+)
+
+
+def record_personnel_event(
+    conn: Database,
+    name: str,
+    event_kind: str,
+    subject: str,
+    recorded_by: str,
+    detail: str | None = None,
+    evidence: dict | None = None,
+    occurred_at: str | None = None,
+) -> int:
+    """Append one fact to an agent's personnel history.
+
+    `recorded_by` is required, and deliberately: a personnel record whose
+    entries have no author cannot be argued with later. `evidence` carries the
+    numbers the judgment rested on, so a grant can be re-examined against what
+    was actually known at the time rather than against what is known now."""
+    if event_kind not in PERSONNEL_EVENT_KINDS:
+        raise ValueError(f"unknown personnel event kind {event_kind!r}; expected one of {PERSONNEL_EVENT_KINDS}")
+    return conn.execute_returning_id(
+        "INSERT INTO personnel_events (name, event_kind, subject, detail, evidence, occurred_at, "
+        "recorded_by, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            name, event_kind, subject, detail,
+            json.dumps(evidence) if evidence is not None else None,
+            occurred_at or _now(), recorded_by, SCHEMA_VERSION,
+        ),
+    )
+
+
+def personnel_events_for(conn: Database, name: str) -> list[dict]:
+    """This agent's history, oldest first - the order commendation rules read it in."""
+    return [
+        dict(row)
+        for row in conn.fetchall(
+            "SELECT * FROM personnel_events WHERE name = ? ORDER BY occurred_at, id", (name,)
+        )
+    ]
+
+
+def competency_evidence(conn: Database, name: str, window_days: float | None = None) -> dict:
+    """Gather what is known about an agent's demonstrated capability.
+
+    Grades attach to the *report* rather than to its producer, so this runs
+    grades -> discovery_reports_completed -> producer_identity, intersected with
+    the assignment spans this agent held. The intersection is what makes the
+    answer right after a transfer: work done at a desk before this agent sat at
+    it belongs to whoever did sit there.
+
+    **Two dimensions cannot be gathered, and are returned empty rather than
+    guessed.** Nothing records whether a stated confidence turned out to be
+    right, so `calibration` is always empty in production - see the lifecycle
+    catalogue, where that is recorded as an event with no defined response.
+    Crashes are gathered from health_metrics, which only began recording them
+    when this function needed them, so early history undercounts."""
+    spans = assignment_history(conn, name)
+    cutoff = None
+    if window_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+
+    grades: list[dict] = []
+    sessions = 0
+    crashes = 0
+
+    for span in spans:
+        start = max(span["started_at"], cutoff) if cutoff else span["started_at"]
+        end = span["ended_at"]
+        grades.extend(
+            dict(row)
+            for row in conn.fetchall(
+                "SELECT g.overall_score, g.evidence_quality_score, g.novelty_score, g.worth_the_compute "
+                "FROM grades g JOIN discovery_reports_completed r ON g.report_id = r.id "
+                "WHERE r.producer_identity = ? AND r.created_at >= ? "
+                "AND (? IS NULL OR r.created_at < ?)",
+                (span["identity"], start, end, end),
+            )
+        )
+        sessions += conn.fetchone(
+            "SELECT COUNT(*) AS n FROM coo_directives_completed "
+            "WHERE directive_type = 'spawn' AND outcome = 'success' AND detail = ? "
+            "AND completed_at >= ? AND (? IS NULL OR completed_at < ?)",
+            (span["identity"], start, end, end),
+        )["n"]
+        crashes += conn.fetchone(
+            "SELECT COUNT(*) AS n FROM health_metrics WHERE identity = ? AND metric = 'crash' "
+            "AND timestamp >= ? AND (? IS NULL OR timestamp < ?)",
+            (span["identity"], start, end, end),
+        )["n"]
+
+    # An agent that registered without a spawn directive - the Controller and
+    # COO bootstrap themselves - has still had one session.
+    if sessions == 0 and spans:
+        sessions = 1
+
+    return {
+        "grades": grades,
+        "calibration": [],
+        "sessions": sessions,
+        "crashes": crashes,
+        "window_days": window_days,
+    }
+
+
+def competency_profile(conn: Database, name: str, window_days: float | None = None) -> dict:
+    """Gather, then judge. The judging lives in backend/competency.py."""
+    return competency.profile(competency_evidence(conn, name, window_days))
+
+
+def rank_role(conn: Database, role: str, dimension: str, window_days: float | None = None) -> list[dict]:
+    """Rank the agents currently assigned to one role, on one dimension.
+
+    Scoped to a role because a ranking across roles would compare agents doing
+    different work - which is the unexplained universal score the owner decision
+    rules out."""
+    names = [
+        row["name"]
+        for row in conn.fetchall(
+            "SELECT name FROM agent_assignments WHERE role = ? AND ended_at IS NULL ORDER BY name",
+            (role,),
+        )
+    ]
+    profiles = {name: competency_profile(conn, name, window_days) for name in names}
+    return competency.rank(profiles, dimension)
 
 
 def list_personnel(conn: Database) -> list[dict]:

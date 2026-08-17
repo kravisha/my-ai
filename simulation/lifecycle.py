@@ -200,6 +200,21 @@ EVENTS = {
         "injectable": True,
         "handled_by": [],
     },
+    "confidence_is_never_scored_against_an_outcome": {
+        "phase": "evaluation",
+        "trigger": "judgment states a confidence on every result it produces",
+        "expected_response": None,
+        "no_response_reason": (
+            "Nothing ever records whether a stated confidence turned out to be justified, so "
+            "uncertainty calibration cannot be computed from the record at all - the rule exists and "
+            "has no evidence to run on outside simulation. Found while building the personnel "
+            "generator, which could not gather what was never written down. This is also the "
+            "yardstick an evaluator would need to be checkable rather than merely authoritative."
+        ),
+        "observable": None,
+        "injectable": True,
+        "handled_by": [],
+    },
     "lens_underperforms": {
         "phase": "evaluation",
         "trigger": "grades on a lens's reports fall below its stated validity conditions",
@@ -327,10 +342,15 @@ EVENTS = {
 # new one has to be declared on purpose rather than accumulating quietly - the
 # same ratchet docs/organization.yaml uses for unclosed feedback loops.
 #
-# Five is not a target. Each is a real hole, and four of the five are the same
-# hole seen from different sides: nothing evaluates agents, so nothing responds
-# when their work, their lens, or their throughput degrades.
-UNHANDLED_COUNT = 5
+# Not a target. Each is a real hole, and most of them are the same hole seen
+# from different sides: nothing evaluates agents, so nothing responds when their
+# work, their lens, or their throughput degrades.
+#
+# The count went from five to six when the personnel generator tried to gather
+# calibration evidence and found none had ever been recorded. That is the
+# ratchet doing its job - a hole discovered by building something had to be
+# declared before the suite would go green again.
+UNHANDLED_COUNT = 6
 
 
 def by_phase(phase: str) -> dict:
