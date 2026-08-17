@@ -170,11 +170,26 @@ ROLE_CHARTERS = {
         "allowed": [
             "Request spawn, retire, and resume actions from the Controller",
             "Mark an intelligence artifact stale, with evidence",
+            # Owner decision, 2026-08-17. Several specifications say the CEO
+            # spawns a role at startup, and the CEO office is vacant - so
+            # without this the organization cannot staff roles its own
+            # specifications require.
+            #
+            # Bounded to structure and staffing on purpose. The CEO's
+            # distinctive work is synthesis and challenging what specialists
+            # assume, and COO manages those same specialists: a manager
+            # challenging the assumptions of its own reports is not the
+            # independent check the role exists to be. So the acting capacity
+            # covers deciding that a role should exist, and stops there.
+            "Act for the CEO while that office is vacant, in structural and staffing decisions only",
         ],
         "not_allowed": [
             "Execute lifecycle changes directly - it requests, the Controller executes",
             "Change the value of an intelligence artifact; it flags, it never fixes",
             "Respawn a dormant agent, which would undo a Controller decision",
+            "Exercise the CEO's judgment role - synthesis, challenging specialist "
+            "assumptions, allocating attention - even while acting for that office",
+            "Continue acting for the CEO once the office is filled",
         ],
         "competencies": ["workforce health", "decision review", "intelligence expiry"],
         "work_mechanism": "polls agent_registry, coo_directives, grades and market_regime each cycle",

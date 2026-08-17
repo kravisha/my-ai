@@ -142,3 +142,22 @@ def test_known_gaps_explain_themselves(flows):
                 f"flow {flow_id}'s known_gap is too short to be a diagnosis. An unclosed loop is "
                 "recorded so it can be argued about later, which needs the reason, not the label."
             )
+
+
+def test_the_acting_ceo_capacity_is_bounded_in_the_charter():
+    """Owner decision, 2026-08-17: COO acts for the CEO while that office is vacant.
+
+    The bound is the part worth guarding. COO manages the specialists, so a COO
+    that also inherited the CEO's job of challenging their assumptions would be
+    checking its own reports - which is not a check. The charter records the
+    capacity and its limit together, and this fails if either is dropped or the
+    capacity is silently widened."""
+    charter = fi_db.ROLE_CHARTERS["coo"]
+
+    acting = [entry for entry in charter["allowed"] if "Act for the CEO" in entry]
+    assert len(acting) == 1
+    assert "structural and staffing" in acting[0]
+
+    limits = " ".join(charter["not_allowed"])
+    assert "judgment role" in limits, "the acting capacity has no stated limit"
+    assert "once the office is filled" in limits, "nothing says when the capacity ends"
