@@ -1,0 +1,42 @@
+id: baseline_steady_state
+version: 1
+lifecycle: active
+description: >
+  The organization under ordinary conditions: a stable market with no forced
+  dislocations, the default peer groups, and pinned provider seeds. Nothing here
+  is meant to be difficult. It is the control run - the one that establishes what
+  normal looks like, so that a later scenario's numbers mean something.
+
+  It is also the run that catches the defect class this project has suffered most
+  quietly: a duplicate agent process, an orphaned agent, or a queue that never
+  drains all show up here without any adversarial condition at all. The first
+  execution of this scenario found the third of those.
+
+# Measured on the first run of this scenario, and stated here so nobody mistakes
+# it for an oversight: with seed 42 and no forced dislocation, Explorer records
+# ZERO detector events across the full 90 seconds. Every report in this run comes
+# from Speculator.
+#
+# So this scenario does not exercise the Explorer -> Analysis path at all, and
+# must not be read as covering it. That path needs a dislocation the market
+# actually contains, which is what anomaly_burst is for. Asserting Explorer
+# properties here would be asserting them against a fixture incapable of
+# producing the phenomenon - the single most repeated mistake in this project's
+# history.
+#
+# Explorer is not idle: it observes ~91 surface samples per security and drives
+# the regime EWMA throughout. It simply never crosses the detection threshold.
+duration_seconds: 90
+
+# Pinned so the stimulus is identical between runs. The outcomes downstream of
+# Analysis are not identical, because a language model sits in that path; see
+# simulation/scenario.py on properties rather than transcripts.
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+
+requires_model: false
+
+# Filled in by S2, when the metric layer exists to evaluate them.
+expected_properties: []

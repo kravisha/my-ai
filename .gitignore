@@ -14,3 +14,7 @@ user_data/
 financial_intelligence.db
 financial_intelligence.db-wal
 financial_intelligence.db-shm
+# Simulation run output: one directory per run, each holding its own database
+# and log. Reproducible from the scenario plus the manifest's recorded seed and
+# code version, so the runs themselves are not worth versioning.
+simulation/runs/

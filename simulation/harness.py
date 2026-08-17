@@ -1,0 +1,401 @@
+"""Runs the real organization, in its own database, under chosen conditions.
+
+The harness starts `backend.main:app` exactly the way an operator does. It does
+not import agents, stub providers, or drive the pipeline: the Controller spawns
+real OS processes, those processes coordinate through a real SQLite database,
+and the harness only chooses the environment they come up in and reads the
+result afterwards.
+
+**Isolation is the database, not a flag.** Each run gets its own directory and
+its own `financial_intelligence.db`, pointed at by `FI_DB_PATH` - which
+`backend/fi_db.py` honours and `backend/controller.py` already injects into every
+spawned agent's environment. Nothing existing changes, no reader needs to filter,
+concurrent runs cannot collide, and reset is deleting a directory.
+
+A tag in a shared table would not have worked. `market_regime`,
+`source_reliability` and a lens's bound `validity_conditions` are current-state
+rows revised in place, so a simulated regime would permanently displace the real
+estimate with no superseded row to discard.
+
+**Shutdown is verified, not assumed.** A run that leaves agent processes behind
+poisons every later run and eventually produces results from an organization
+nobody is watching - this project has already accumulated twelve orphans that
+way, and found them only by chasing a result an orphan was still producing. So
+`stop()` checks the database and the log for evidence that the Controller's own
+teardown actually ran, and reports `graceful=False` rather than assuming success.
+
+Note on Windows: `terminate()` and `SIGTERM` bypass uvicorn's signal handling, so
+the lifespan teardown - and with it `Controller.shutdown_agents` - never runs.
+The process group plus `CTRL_BREAK_EVENT` below is what makes a clean stop
+actually clean, and using anything else here silently reintroduces the orphans.
+
+Internal rationale: INT-PHIL-0018, INT-PHIL-0019
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from dotenv import dotenv_values
+
+from agents import coo
+from backend import fi_db
+from simulation.scenario import Scenario
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+RUNS_DIR = Path(os.environ.get("FI_SIM_RUNS_DIR") or (REPO_ROOT / "simulation" / "runs"))
+
+# How long to wait for the organization to establish itself before giving up.
+# The baseline population is spawned through the directive queue, one directive
+# per Controller poll, so this must cover several poll cycles plus process
+# startup for each role - generously, because a slow machine producing a false
+# "never came up" would be indistinguishable from a real startup defect.
+STARTUP_TIMEOUT_SECONDS = 60.0
+STARTUP_POLL_SECONDS = 0.5
+
+# How long to wait for a graceful stop before force-killing the process tree.
+# Must exceed backend/controller.py's AGENT_STOP_GRACE_SECONDS, because the
+# server spends that long waiting for its own agents before it can exit; a
+# shorter wait here would kill the parent mid-teardown and manufacture the exact
+# orphans this is meant to prevent.
+SHUTDOWN_TIMEOUT_SECONDS = 30.0
+
+# Written by backend/main.py's lifespan teardown. Its presence in the log is
+# direct evidence that the graceful path ran rather than being skipped.
+CLEAN_SHUTDOWN_MARKER = "[controller] agents stopped:"
+
+
+class HarnessError(RuntimeError):
+    pass
+
+
+@dataclass
+class RunResult:
+    run_id: str
+    directory: Path
+    db_path: Path
+    manifest_path: Path
+    started_at: str
+    finished_at: str
+    ready_after_seconds: float | None
+    graceful: bool
+    shutdown_detail: str
+    exit_code: int | None
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def model_is_available() -> bool:
+    """Whether the agents will find a usable API key - not whether this process has one.
+
+    `app/model_gateway.py` calls `load_dotenv()` at import, so an agent subprocess
+    picks the key up from `.env` even when the harness's own environment has
+    none. Reading `os.environ` alone got this backwards on the first real run:
+    the manifest recorded `model_available: false` for a run whose Analysis was
+    making real model calls throughout, which is exactly the provenance error the
+    field exists to prevent - a summary that cannot tell a degraded run from a
+    full one will compare two unlike runs as though they were alike."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    return bool(dotenv_values(REPO_ROOT / ".env").get("ANTHROPIC_API_KEY"))
+
+
+def _code_version() -> str:
+    """The commit the run executed, or an honest marker that it is unknown.
+
+    A run whose code version is unrecorded cannot be replayed, so this never
+    guesses; 'unknown' is a usable answer and a wrong sha is not."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    sha = result.stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    return f"{sha}-dirty" if dirty else sha
+
+
+def _free_port() -> int:
+    """A port the OS says is free, so concurrent runs cannot collide.
+
+    Binding to port 0 and reading back the assignment leaves a small race - the
+    port is released before uvicorn claims it - which is acceptable because the
+    alternative, a fixed port, collides with the developer's own server every
+    time and fails far more often."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _expected_population() -> set[str]:
+    """Roles that must be running before a run counts as started.
+
+    'controller' is the server process itself and 'coo' is bootstrapped directly
+    by it; the rest arrive through the directive queue."""
+    return {"controller", "coo", *coo.BASELINE_ROLES}
+
+
+class SimulationRun:
+    """One execution of one scenario, in its own directory."""
+
+    def __init__(self, scenario: Scenario, runs_dir: Path | None = None, run_id: str | None = None):
+        self.scenario = scenario
+        self.run_id = run_id or f"{scenario.id}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+        self.directory = Path(runs_dir or RUNS_DIR) / self.run_id
+        self.db_path = self.directory / "financial_intelligence.db"
+        self.manifest_path = self.directory / "manifest.json"
+        self.log_path = self.directory / "backend.log"
+        self.port = _free_port()
+        self._process: subprocess.Popen | None = None
+        self._log_handle = None
+        self._started_at: str | None = None
+        self._ready_after: float | None = None
+
+    # -- environment ---------------------------------------------------------
+
+    def build_env(self) -> dict[str, str]:
+        """The environment the whole organization comes up in.
+
+        `FI_DB_PATH` is applied after the scenario's config so that a scenario
+        cannot reach the production database even if validation is ever loosened;
+        the isolation boundary should not depend on a check somewhere else."""
+        env = {**os.environ, **self.scenario.config}
+        env["FI_DB_PATH"] = str(self.db_path)
+        env["PYTHONUNBUFFERED"] = "1"
+        return env
+
+    # -- manifest ------------------------------------------------------------
+
+    def write_manifest(self, **extra) -> dict:
+        manifest = {
+            "run_id": self.run_id,
+            "scenario_id": self.scenario.id,
+            "scenario_version": self.scenario.version,
+            "scenario_lifecycle": self.scenario.lifecycle,
+            "code_version": _code_version(),
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+            "port": self.port,
+            "duration_seconds": self.scenario.duration_seconds,
+            "config": dict(self.scenario.config),
+            "db_path": str(self.db_path),
+            # Recorded because a run without a reachable model is a materially
+            # different organization - Analysis degrades - and a summary that
+            # could not tell the two apart would compare unlike runs.
+            "model_available": model_is_available(),
+            "requires_model": self.scenario.requires_model,
+            "expected_properties": list(self.scenario.expected_properties),
+            "started_at": self._started_at,
+            **extra,
+        }
+        self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def start(self) -> None:
+        if self.scenario.requires_model and not model_is_available():
+            raise HarnessError(
+                f"scenario {self.scenario.id!r} declares requires_model but no ANTHROPIC_API_KEY is "
+                "reachable, in this environment or in .env. Running it anyway would produce a "
+                "summary describing a different organization than the scenario intends."
+            )
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._started_at = _now()
+        self.write_manifest()
+
+        self._log_handle = self.log_path.open("w", encoding="utf-8", errors="replace")
+        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        self._process = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "backend.main:app",
+             "--host", "127.0.0.1", "--port", str(self.port), "--log-level", "warning"],
+            cwd=REPO_ROOT,
+            env=self.build_env(),
+            stdout=self._log_handle,
+            stderr=subprocess.STDOUT,
+            creationflags=creation_flags,
+            start_new_session=(sys.platform != "win32"),
+        )
+
+    def wait_until_ready(self, timeout: float = STARTUP_TIMEOUT_SECONDS) -> float:
+        """Block until the whole baseline population is running.
+
+        Readiness is judged from `agent_registry`, not from the HTTP port. A
+        server that answers requests but never spawned its workforce is not a
+        started organization, and a run measured from that moment would be
+        measuring startup."""
+        deadline = time.monotonic() + timeout
+        began = time.monotonic()
+        expected = _expected_population()
+        last_seen: set[str] = set()
+
+        while time.monotonic() < deadline:
+            if self._process is not None and self._process.poll() is not None:
+                raise HarnessError(
+                    f"backend exited with code {self._process.returncode} during startup. "
+                    f"See {self.log_path}"
+                )
+            last_seen = self._running_roles()
+            if expected <= last_seen:
+                self._ready_after = time.monotonic() - began
+                return self._ready_after
+            time.sleep(STARTUP_POLL_SECONDS)
+
+        raise HarnessError(
+            f"organization did not establish itself within {timeout}s. "
+            f"Running roles: {sorted(last_seen) or 'none'}; expected {sorted(expected)}. "
+            f"See {self.log_path}"
+        )
+
+    def _running_roles(self) -> set[str]:
+        if not self.db_path.exists():
+            return set()
+        try:
+            conn = fi_db.get_connection(self.db_path)
+        except Exception:
+            return set()
+        try:
+            rows = conn.fetchall(
+                "SELECT role FROM agent_registry WHERE process_state = 'running' "
+                "AND lifecycle_state = 'active'"
+            )
+            return {row["role"] for row in rows}
+        except Exception:
+            # The schema may not exist yet on the first poll; that is a normal
+            # startup state and not worth distinguishing from "nothing running".
+            return set()
+        finally:
+            conn.close()
+
+    def stop(self, timeout: float = SHUTDOWN_TIMEOUT_SECONDS) -> tuple[bool, str]:
+        """Ask the server to shut down cleanly, then verify that it did."""
+        if self._process is None:
+            return False, "never started"
+
+        if self._process.poll() is not None:
+            return False, f"already exited with code {self._process.returncode} before stop was requested"
+
+        self._signal_shutdown()
+        try:
+            self._process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            detail = self._force_kill()
+            return False, detail
+
+        return self._verify_clean_shutdown()
+
+    def _signal_shutdown(self) -> None:
+        assert self._process is not None
+        if sys.platform == "win32":
+            # SIGBREAK is in uvicorn's handled set on Windows; SIGTERM is not
+            # delivered meaningfully and terminate() skips the handler entirely.
+            self._process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            self._process.send_signal(signal.SIGINT)
+
+    def _force_kill(self) -> str:
+        assert self._process is not None
+        if sys.platform == "win32":
+            # /T because the agents are children of this process and killing only
+            # the parent is how orphans are made.
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(self._process.pid)],
+                capture_output=True,
+            )
+        else:
+            os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+        try:
+            self._process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        return (
+            "graceful shutdown timed out; the process tree was force-killed. Agent processes may "
+            "have exited without recording a clean stop, so this run's population metrics are "
+            "unreliable."
+        )
+
+    def _verify_clean_shutdown(self) -> tuple[bool, str]:
+        """Two independent checks, because either alone can be satisfied wrongly.
+
+        The log marker proves the teardown path executed. The registry proves it
+        finished - an agent left as 'running' after the server is gone is an
+        orphan or a process that died without recording its exit, and both are
+        the condition that makes later runs untrustworthy."""
+        log_text = self.log_path.read_text(encoding="utf-8", errors="replace") if self.log_path.exists() else ""
+        marker_seen = CLEAN_SHUTDOWN_MARKER in log_text
+
+        still_running = sorted(self._running_roles())
+
+        if marker_seen and not still_running:
+            return True, "clean: teardown ran and no agent is left running"
+        if not marker_seen and still_running:
+            return False, (
+                f"teardown marker absent and {still_running} still marked running - the shutdown "
+                "path did not execute"
+            )
+        if not marker_seen:
+            return False, "teardown marker absent from the log; the shutdown path may not have executed"
+        return False, f"teardown ran but {still_running} are still marked running"
+
+    def close(self) -> None:
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
+
+
+def execute(scenario: Scenario, runs_dir: Path | None = None) -> RunResult:
+    """Start, hold for the scenario's duration, stop, and record.
+
+    The stop is in a `finally` so a failure during the run cannot leave the
+    organization alive - a harness that leaks the processes it exists to observe
+    would be worse than no harness."""
+    run = SimulationRun(scenario, runs_dir=runs_dir)
+    graceful, detail = False, "not reached"
+    try:
+        run.start()
+        run.wait_until_ready()
+        time.sleep(scenario.duration_seconds)
+    finally:
+        graceful, detail = run.stop()
+        finished_at = _now()
+        run.write_manifest(
+            finished_at=finished_at,
+            ready_after_seconds=run._ready_after,
+            graceful_shutdown=graceful,
+            shutdown_detail=detail,
+            exit_code=run._process.returncode if run._process else None,
+        )
+        run.close()
+
+    return RunResult(
+        run_id=run.run_id,
+        directory=run.directory,
+        db_path=run.db_path,
+        manifest_path=run.manifest_path,
+        started_at=run._started_at or "",
+        finished_at=finished_at,
+        ready_after_seconds=run._ready_after,
+        graceful=graceful,
+        shutdown_detail=detail,
+        exit_code=run._process.returncode if run._process else None,
+    )

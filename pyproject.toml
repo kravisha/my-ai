@@ -2,5 +2,6 @@
 testpaths = ["tests"]
 markers = [
     "real_llm: makes a real network call to the Anthropic API - excluded from the default run, use `pytest -m real_llm` to include",
+    "simulation: launches a real backend and a real agent population - takes tens of seconds, excluded from the default run, use `pytest -m simulation` to include",
 ]
-addopts = "-m \"not real_llm\""
+addopts = "-m \"not real_llm and not simulation\""

@@ -197,6 +197,34 @@ scoped to whichever account you log into, and either client can be logged
 into as a *different* account than the other, at the same time, against the
 same backend.
 
+## Simulation
+
+`simulation/` runs the whole system — real server, real agent processes, real
+database — under conditions written down in a scenario file, so a run can be
+repeated and compared instead of performed from memory.
+
+```bash
+.venv/Scripts/python.exe -m simulation list
+```
+
+```bash
+.venv/Scripts/python.exe -m simulation run baseline_steady_state
+```
+
+Each run gets its own directory under `simulation/runs/`, holding its own
+database, the backend log, and a `manifest.json` recording the seed, the full
+`FI_*` configuration, the code version, and whether a reasoning model was
+reachable. Isolation is the database itself, by way of `FI_DB_PATH`, so a run
+cannot touch the working database and two runs cannot collide.
+
+A run is only reported successful if the server shut down through the path that
+stops its agents, verified from both the log and the registry — an agent process
+left alive would keep writing to a database nobody is reading.
+
+Scenarios declare *properties* that must hold across repeats, never expected
+output: a reasoning model sits in the pipeline, so the stimulus is exactly
+reproducible and the wording of the result is not.
+
 ```bash
 # terminal 3, optional - the operator-side conversation monitor
 .venv/Scripts/python.exe -m monitor.app

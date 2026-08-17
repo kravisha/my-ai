@@ -12,7 +12,7 @@ outbound flow with no return path fails until someone raises the count on
 purpose, which turns "we should really close that loop someday" from a good
 intention into a recorded decision.
 
-Internal rationale: INT-PHIL-0015
+Internal rationale: INT-PHIL-0017
 """
 
 from pathlib import Path
