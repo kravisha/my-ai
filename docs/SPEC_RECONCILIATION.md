@@ -702,3 +702,61 @@ the cheapest way to defer something forever.
 
 Nothing is due. The ten findings on a real run are systemic, so no queue is needed to carry them and no
 agent could act on them — which is the deferral holding for the stated reason rather than by oversight.
+
+
+## 16. What Alpha means (2026-08-17)
+
+Two gates. **Entry** asks whether Alpha can be run at all — whether the machinery exists.
+**Certification** asks whether the organization performed well enough to be trusted with real work.
+Building the second without the first produces a suite that certifies against an environment incapable
+of exercising it.
+
+**The trap:** criteria composed by looking at what the system currently does will certify whatever the
+system currently does. Everything passes on the first run, the gate reads green forever, and nobody
+notices it is measuring nothing. So the criteria are written from what Alpha *requires*, and **several
+fail today on purpose** — with a test asserting that they do. If certification ever goes all-green
+without the underlying work being done, the criteria were rewritten to the answer.
+
+Criteria reuse `properties.evaluate` rather than introducing a second comparison language. A
+certification criterion is exactly a scenario property that must hold across the organization rather
+than within one run.
+
+### Where it stands
+
+**Entry 3/5.** Simulated time, the generator contract, and isolated measured runs exist. A continuously
+advancing world (A4) and a queryable history (A9) do not.
+
+**Certification 5/10**, measured against a real run:
+
+| Met | Unmet |
+|---|---|
+| No agent respawned | The queue drains — never has; pressure ratio 1.89 and 3.15 on two runs |
+| No agent outlived the run | Intelligence expiry engages — built and hand-verified, has never engaged in a run |
+| No directive failed | Both discovery paths produce work — every run so far is Speculator-only, zero detector events |
+| Every completed report analysed | The declared organization matches the built one — `known_gap_count` is 2 |
+| Every analysis graded | Governance reports no concerns — one open |
+
+The three unmet measured criteria are the three things this project already knew about itself and had
+never stated as targets. That is what the gate is for.
+
+### Deliberately not criteria
+
+The charter's three unenforced protections need a consequence path, an adjudicator, or an agent-facing
+channel — **requiring them would make Alpha readiness the reason a sanctions system gets built**, which
+the evidence does not justify. And a deferred capability holding correctly is not a deficiency; counting
+it as one would convert every deliberate omission into a blocker.
+
+### Authority
+
+**Certification currently gates nothing**, and says so on every report. There is no production operation
+to withhold, so passing confers no permission and failing withholds none. A gate described as binding
+when nothing is bound would be the first false clause in a system built to avoid them.
+
+### Found while building it
+
+`is_not_empty` was missing from the comparator set. A suite could assert that nothing happened but not
+that something did — backwards for properties whose main risk is certifying an idle system.
+
+Two governance metrics assumed the `objections` table existed, so reading governance against any run
+database recorded before that table crashed rather than reporting. Both now treat every table they touch
+as optional, since governance is read against databases of every vintage.

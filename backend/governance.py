@@ -120,6 +120,12 @@ def escalation_backlog(conn: Database, now: datetime | None = None) -> dict:
     Reports the age; states no threshold. There is no honest number yet for how
     long is too long, and the measurement that would produce one is the owner's
     observed turnaround, which has not happened."""
+    # A database created before objections existed has nothing waiting, which is
+    # different from crashing. Governance is read against run databases of every
+    # vintage, so every table it touches has to be optional.
+    if not _table_exists(conn, "objections"):
+        return {"waiting": 0, "oldest_seconds": None, "grounds": {}}
+
     escalated = conn.fetchall("SELECT * FROM objections WHERE status = 'escalated' ORDER BY id")
     if not escalated:
         return {"waiting": 0, "oldest_seconds": None, "grounds": {}}
@@ -150,7 +156,10 @@ def settlement_mix(conn: Database) -> dict:
     Refuses to state a mix below the evidence floor. Reporting "100% upheld" over
     two cases would invite exactly the over-reading the floor exists to prevent -
     and 'absent is not zero' applies to the governors as much as to the agents."""
-    rows = conn.fetchall("SELECT status, COUNT(*) AS n FROM objections GROUP BY status")
+    rows = (
+        conn.fetchall("SELECT status, COUNT(*) AS n FROM objections GROUP BY status")
+        if _table_exists(conn, "objections") else []
+    )
     counts = {row["status"]: row["n"] for row in rows}
     settled = sum(n for status, n in counts.items() if status in SETTLED_STATUSES)
 

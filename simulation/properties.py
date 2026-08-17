@@ -20,7 +20,12 @@ from __future__ import annotations
 
 from simulation.metrics import lookup
 
-COMPARATORS = ("equals", "at_most", "at_least", "is_empty", "is_true", "is_false")
+# `is_not_empty` closes an asymmetry that mattered: without it a suite can
+# assert that nothing happened but not that something did, which is backwards
+# for a set of properties whose main risk is certifying an idle system.
+COMPARATORS = (
+    "equals", "at_most", "at_least", "is_empty", "is_not_empty", "is_true", "is_false",
+)
 NEEDS_VALUE = ("equals", "at_most", "at_least")
 
 
@@ -85,6 +90,11 @@ def _compare(comparator: str, observed, expected) -> tuple[bool, str]:
             return len(observed) == 0, f"len({observed!r}) == 0"
         except TypeError:
             return False, f"{observed!r} has no length, so 'is_empty' cannot be judged"
+    if comparator == "is_not_empty":
+        try:
+            return len(observed) > 0, f"len({observed!r}) > 0"
+        except TypeError:
+            return False, f"{observed!r} has no length, so 'is_not_empty' cannot be judged"
     if comparator == "is_true":
         return observed is True, f"{observed!r} is True"
     return observed is False, f"{observed!r} is False"
