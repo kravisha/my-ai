@@ -187,6 +187,52 @@ def finding_attribution() -> dict:
     }
 
 
+def disposition_health(conn: Database) -> dict:
+    """How findings are being ruled on, and whether the rulings are reasoned.
+
+    **The failure this detects:** `false_positive` used as an off switch. It is
+    the disposition that says the governance layer erred, which is necessary to
+    have and irresistible to overuse - the cheapest way to make a compliance
+    check stop complaining is to keep deciding it was wrong.
+
+    Also watches for rulings with rationales too thin to review. A required
+    field satisfied by a single word is a required field in name only, and that
+    is how a governance record becomes unauditable without ever being empty.
+
+    No threshold on the false-positive share. A check finding real problems and
+    a check that is badly written both produce false positives, and telling them
+    apart needs the rationales read - which is a person's job, and the reason
+    this reports rather than judges."""
+    if not _table_exists(conn, "finding_dispositions"):
+        return {"total": 0, "by_disposition": {}, "false_positive_share": None, "thin_rationales": 0}
+
+    rows = conn.fetchall(
+        "SELECT disposition, rationale FROM finding_dispositions WHERE status = 'active'"
+    )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["disposition"]] = counts.get(row["disposition"], 0) + 1
+
+    total = len(rows)
+    return {
+        "total": total,
+        "by_disposition": counts,
+        "false_positive_share": (
+            round(counts.get("false_positive", 0) / total, 3) if total else None
+        ),
+        "thin_rationales": sum(1 for row in rows if len(row["rationale"].strip()) < 30),
+        "revised": conn.fetchone(
+            "SELECT COUNT(*) AS n FROM finding_dispositions WHERE status = 'superseded'"
+        )["n"],
+    }
+
+
+def _table_exists(conn: Database, table: str) -> bool:
+    return conn.fetchone(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ) is not None
+
+
 def report(conn: Database) -> dict:
     return {
         "path_coverage": path_coverage(conn),
@@ -194,6 +240,7 @@ def report(conn: Database) -> dict:
         "escalation_backlog": escalation_backlog(conn),
         "settlement_mix": settlement_mix(conn),
         "finding_attribution": finding_attribution(),
+        "disposition_health": disposition_health(conn),
     }
 
 
@@ -226,6 +273,13 @@ def concerns(conn: Database) -> list[str]:
         found.append(
             f"{coverage['without_checker']} of {coverage['verifiable_grounds']} verifiable grounds "
             "have no checker, so they escalate for want of machinery rather than for want of a judge"
+        )
+
+    thin = data["disposition_health"]["thin_rationales"]
+    if thin:
+        found.append(
+            f"{thin} finding disposition(s) carry a rationale too short to review. A required field "
+            "satisfied by a word is a required field in name only"
         )
 
     mix = data["settlement_mix"]

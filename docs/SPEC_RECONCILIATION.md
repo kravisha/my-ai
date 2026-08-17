@@ -507,3 +507,58 @@ Run against a real database, it reports one concern independently: **four of fiv
 grounds have no checker**, so they escalate for want of machinery rather than for want of a judge. That
 is the honest gap G5 left, found by the metric rather than by memory — which is the whole point of
 having one.
+
+
+## 12. What the organization decided about a finding (2026-08-17)
+
+G3 was queued as "violation and evidence schema, reusing the `knowledge_records` shape". Checking the
+premise moved it before anything was built.
+
+**A violation is recomputable; a judgment is not.** The compliance check derives findings from live
+records whenever asked, so storing a violation would duplicate state that goes stale — a stored
+"report 42 is ungraded" row survives report 42 being graded, and the two then disagree. What cannot be
+recomputed is that somebody looked at a finding and decided it was the check's own false positive. G1
+established exactly that about one of its three findings, and the fact lived only in prose.
+
+So findings stay computed and **dispositions** get the table.
+
+One consequence worth stating: **there is no `fixed` disposition.** Fixed work stops being found, so
+resolution needs no record — and a `fixed` row would be a claim about the records that the records
+already answer.
+
+| Disposition | Meaning |
+|---|---|
+| `false_positive` | The check was wrong about this item |
+| `accepted` | Real, acknowledged, corrective work expected to follow |
+| `wont_fix` | Real, and deliberately not being fixed, with a reason that stands on its own |
+
+**Shaped after `knowledge_records`, not invented.** A disposition is never edited or deleted; a revision
+supersedes it, so a finding first ruled a false positive and later accepted reads differently from one
+always accepted. Only the history distinguishes them.
+
+### The property the design exists to protect
+
+**A disposition marks a finding. It never hides one.** If ruling on a finding removed it, `false_positive`
+would be a universal off switch and the check would report clean while covering nothing. So `check()`
+still returns every finding, annotated, and splits the counts: `open_findings` is what still needs a
+decision, `total_findings` is what the check found at all.
+
+Dispositions are also strictly per-item. A rule-wide off switch is what `exempt` is for, and that is
+pinned by a count.
+
+### The guard on the guard
+
+`governance.disposition_health` watches the mechanism: the false-positive share, how many rulings have
+been revised, and how many carry a rationale too thin to review — because a required field satisfied by
+a single word is a required field in name only, and that is how a governance record becomes unauditable
+without ever being empty.
+
+It reports the false-positive share and sets **no threshold on it**. A check finding real problems and a
+check that is badly written both produce false positives, and telling them apart requires reading the
+rationales, which is a person's job.
+
+### Verified end to end
+
+Against a simulation database created before dispositions existed: the migration applies, the check
+finds **10 real findings** (all of them the self-grading gap), ruling on one leaves it reported while
+`open_findings` drops from 10 to 9, and a revised ruling leaves both views readable.

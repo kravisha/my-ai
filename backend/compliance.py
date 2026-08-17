@@ -278,6 +278,27 @@ def self_evaluated(conn: Database, limit: int = 50) -> list[dict]:
     ]
 
 
+def _annotate_dispositions(conn: Database, findings: list[dict]) -> None:
+    """Mark each finding with the active ruling on it, if any.
+
+    A read, like everything else here. Recording a disposition is a write and
+    lives in `fi_db` - this module can see what was decided and can never decide
+    anything, which is the same separation that keeps the checker from settling
+    its own objections."""
+    if not findings or not _table_exists(conn, "finding_dispositions"):
+        return
+    rulings = {
+        (row["rule"], row["item"]): row
+        for row in conn.fetchall(
+            "SELECT * FROM finding_dispositions WHERE status = 'active'"
+        )
+    }
+    for finding in findings:
+        ruling = rulings.get((finding["rule"], str(finding["item"])))
+        finding["disposition"] = ruling["disposition"] if ruling else None
+        finding["disposition_rationale"] = ruling["rationale"] if ruling else None
+
+
 def check(conn: Database, limit: int = 50) -> dict:
     """Every compliance question at once, with enough to act on each finding.
 
@@ -299,6 +320,14 @@ def check(conn: Database, limit: int = 50) -> dict:
 
     self_judged = self_evaluated(conn, limit)
 
+    # Attach any ruling the organization has already made. Findings are never
+    # removed by a disposition, only marked: a dispositioned finding that
+    # disappeared would make `false_positive` a universal off switch, and the
+    # check would stop covering things while still reporting clean.
+    _annotate_dispositions(conn, violations)
+    _annotate_dispositions(conn, self_judged)
+    all_findings = violations + self_judged
+
     return {
         "unevaluated": violations,
         "in_flight": in_flight,
@@ -306,6 +335,10 @@ def check(conn: Database, limit: int = 50) -> dict:
         "self_evaluated": self_judged,
         "passing": passing,
         "exempt": exempt,
+        # Findings nobody has ruled on yet - the ones actually awaiting a
+        # decision, as distinct from the ones already answered for.
+        "open_findings": sum(1 for f in all_findings if f.get("disposition") is None),
+        "dispositioned": sum(1 for f in all_findings if f.get("disposition") is not None),
         # Only what somebody could have done and did not. Blocked and in-flight
         # work is reported separately on purpose: counting them here would put
         # a schema constraint and a queue still draining into the same number as

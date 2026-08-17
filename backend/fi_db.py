@@ -75,7 +75,7 @@ DB_PATH = Path(os.environ.get("FI_DB_PATH") or (Path(__file__).resolve().parent.
 # lens can be bound to the regime it was observed working under - so a lens
 # can now expire because *conditions changed*, not only because its grades
 # were poor.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -402,6 +402,41 @@ CREATE TABLE IF NOT EXISTS coo_directives_completed (
     observed_result TEXT,
     observed_at TEXT
 );
+
+-- What the organization decided about a compliance finding.
+--
+-- Deliberately not a violations table. A violation is *recomputable* - the
+-- compliance check derives it from live records whenever asked - so storing one
+-- would duplicate state that can go stale and contradict the records it came
+-- from. What cannot be recomputed is the judgment: that a finding was the
+-- check's own false positive, or is real and deliberately unfixed. That is new
+-- information and it belongs in a table.
+--
+-- One consequence worth stating: there is no 'fixed' disposition. Fixed work
+-- stops being found, so resolution needs no record.
+--
+-- Shaped after knowledge_records rather than invented: a disposition is never
+-- edited or deleted, it is superseded, so how the organization's view of a
+-- finding changed stays legible.
+CREATE TABLE IF NOT EXISTS finding_dispositions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- (rule, item) is the finding's identity across recomputation.
+    rule TEXT NOT NULL,
+    item TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    -- What in the records supports this call, so a judgment can be traced back
+    -- to the thing that caused it. Same role as knowledge_records.evidence_ref.
+    evidence_ref TEXT,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    superseded_by INTEGER,
+    schema_version INTEGER NOT NULL DEFAULT 7
+);
+
+CREATE INDEX IF NOT EXISTS idx_dispositions_finding
+    ON finding_dispositions (rule, item, status);
 
 -- A declined order, with a named ground, its evidence, and what would let the
 -- work proceed. Distinct from a failed one: failure means the executor tried and
@@ -3548,3 +3583,103 @@ def settle_objection(conn: Database, objection_id: int, settled_by: str) -> dict
         (status, _now(), settled_by, settlement.reason, objection_id),
     )
     return get_objection(conn, objection_id)
+
+
+# --- what the organization decided about a finding ---------------------------
+#
+# The compliance check computes findings; it does not store them, and it must
+# not, because a stored violation goes stale the moment the work is graded. What
+# gets stored is the judgment - and only the judgments that cannot be derived by
+# looking again.
+#
+# The danger the shape guards against: `false_positive` is a universal off
+# switch if a dispositioned finding disappears. So dispositions never hide
+# anything. The check keeps reporting every finding and marks the ones that have
+# been ruled on, and `governance.disposition_health` watches the ratio.
+#
+# Internal rationale: INT-PHIL-0027
+
+# The check was wrong about this item. The most important disposition and the
+# most dangerous: it is the one that says the governance layer erred, which is
+# necessary to record and irresistible to overuse.
+FALSE_POSITIVE = "false_positive"
+# Real, acknowledged, and corrective work is expected to follow.
+ACCEPTED = "accepted"
+# Real, and deliberately not being fixed, with a reason that has to stand on its
+# own. Distinct from accepted: nothing further is coming.
+WONT_FIX = "wont_fix"
+
+DISPOSITIONS = (FALSE_POSITIVE, ACCEPTED, WONT_FIX)
+
+
+def record_disposition(
+    conn: Database,
+    rule: str,
+    item,
+    disposition: str,
+    rationale: str,
+    decided_by: str,
+    evidence_ref: str | None = None,
+) -> int:
+    """Record a judgment about a compliance finding.
+
+    Supersedes any active disposition on the same finding rather than updating
+    it, so a changed mind leaves both the old view and the new one readable -
+    the knowledge_records pattern, and the reason retirement there is
+    non-destructive.
+
+    A rationale is required. A disposition without one is an assertion that the
+    finding does not count, which is exactly what a governance layer must not
+    accept on trust - least of all from itself."""
+    if disposition not in DISPOSITIONS:
+        raise ValueError(f"unknown disposition {disposition!r}; allowed: {list(DISPOSITIONS)}")
+    if not (rationale or "").strip():
+        raise ValueError(
+            "a disposition must carry a rationale. Ruling a finding out without saying why is how "
+            "a compliance check stops covering things while still passing."
+        )
+
+    previous = get_disposition(conn, rule, item)
+    new_id = conn.execute_returning_id(
+        "INSERT INTO finding_dispositions (rule, item, disposition, rationale, evidence_ref, "
+        "decided_by, decided_at, status, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        (rule, str(item), disposition, rationale, evidence_ref, decided_by, _now(), SCHEMA_VERSION),
+    )
+    if previous:
+        conn.execute(
+            "UPDATE finding_dispositions SET status = 'superseded', superseded_by = ? WHERE id = ?",
+            (new_id, previous["id"]),
+        )
+    return new_id
+
+
+def get_disposition(conn: Database, rule: str, item) -> dict | None:
+    """The active ruling on a finding, or None if nobody has ruled."""
+    return conn.fetchone(
+        "SELECT * FROM finding_dispositions WHERE rule = ? AND item = ? AND status = 'active'",
+        (rule, str(item)),
+    )
+
+
+def list_dispositions(conn: Database, disposition: str | None = None,
+                      include_superseded: bool = False) -> list[dict]:
+    clauses, params = [], []
+    if not include_superseded:
+        clauses.append("status = 'active'")
+    if disposition:
+        clauses.append("disposition = ?")
+        params.append(disposition)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.fetchall(f"SELECT * FROM finding_dispositions {where} ORDER BY id", tuple(params))
+
+
+def disposition_history(conn: Database, rule: str, item) -> list[dict]:
+    """Every ruling ever made on one finding, oldest first.
+
+    The point of superseding rather than updating: a finding ruled a false
+    positive and later accepted is a different story from one that was always
+    accepted, and only the history distinguishes them."""
+    return conn.fetchall(
+        "SELECT * FROM finding_dispositions WHERE rule = ? AND item = ? ORDER BY id",
+        (rule, str(item)),
+    )
