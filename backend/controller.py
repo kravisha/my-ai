@@ -81,6 +81,16 @@ def _slot_identity(role: str) -> str:
     return f"{role}-1"
 
 
+# Who the Controller is, available without a Controller.
+#
+# The identity is fixed by the role, not discovered from any instance's state, so
+# a caller that only needs to recognize the Controller in a roster should not have
+# to construct one - constructing one opens a database. backend/main.py's retire
+# route is exactly that caller: it must refuse to retire controller-1, and that is
+# a name comparison, not a question about a live object.
+CONTROLLER_IDENTITY = _slot_identity(CONTROLLER_ROLE)
+
+
 class Controller:
     # What this role executes. Named rather than implied by the dispatch chain,
     # so an objection on jurisdiction grounds can state the scope it is objecting
@@ -95,7 +105,7 @@ class Controller:
         # spawning process can hold/control these; not the same as everyone
         # in agent_registry, which also reflects agents from a prior run.
         self._processes: dict[str, subprocess.Popen] = {}
-        self.identity = _slot_identity(CONTROLLER_ROLE)
+        self.identity = CONTROLLER_IDENTITY
 
     def bootstrap_self(self) -> str:
         """Registers the Controller as an agent in its own right - the first
