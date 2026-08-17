@@ -29,6 +29,7 @@ Internal rationale: INT-PHIL-0026
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from backend import compliance
@@ -233,6 +234,206 @@ def _table_exists(conn: Database, table: str) -> bool:
     ) is not None
 
 
+# --- machinery deliberately not built ---------------------------------------
+#
+# The framework asks for adjudication, precedent, appeal, rehabilitation and a
+# progressive sanctions ladder. None is built, and the reason is the same in
+# every case: **the conditions that would justify them have never occurred.**
+# Building a court before there is a dispute is the failure this whole series has
+# been avoiding, and the framework's own rule agrees - adjudicate only when an
+# exception genuinely requires it.
+#
+# But a deferral nobody can detect becoming due is not a deferral, it is an
+# omission with better wording. So each one carries a trigger, and the triggers
+# that can be evaluated from records are evaluated here every time governance is
+# reported.
+#
+# Three kinds, because they can fail differently:
+#
+#   existence      fires the first time the condition occurs. No threshold, so
+#                  nothing to invent and nothing to get wrong
+#   prerequisite   cannot fire until something else exists. Watching it now would
+#                  be watching for a phenomenon the system cannot produce
+#   unformulable   the trigger needs a measurement nobody has taken. Stated as
+#                  such rather than given a plausible number
+#
+# Internal rationale: INT-PHIL-0030
+
+EXISTENCE = "existence"
+PREREQUISITE = "prerequisite"
+UNFORMULABLE = "unformulable"
+
+
+@dataclass(frozen=True)
+class Deferred:
+    """A capability not built, and what would say it is time."""
+
+    name: str
+    what: str
+    trigger: str
+    kind: str
+    # For unformulable triggers: the measurement that would produce one.
+    needs: str = ""
+
+
+DEFERRED = (
+    Deferred(
+        "general task queue",
+        "A queue carrying corrective work to the agent that should do it. coo_directives is a "
+        "lifecycle queue and the Controller objects to anything else on jurisdiction grounds.",
+        "corrective work appears that is attributable to an agent rather than to the design",
+        EXISTENCE,
+    ),
+    Deferred(
+        "checkers for the remaining verifiable grounds",
+        "Automated settlement for the four objection grounds decidable from records in principle but "
+        "having no checker.",
+        "an objection is filed on a ground that has no checker",
+        EXISTENCE,
+    ),
+    Deferred(
+        "precedent",
+        "A record of how like cases were decided, so alike findings are treated alike.",
+        "the same rule receives two different dispositions, which is the first moment consistency "
+        "becomes a question anyone could answer wrongly",
+        EXISTENCE,
+    ),
+    Deferred(
+        "agent-facing notification",
+        "A path by which an agent learns of a finding about its own work.",
+        "a finding exists that an agent could have acted on - until then there is nothing to tell an "
+        "agent that it could do anything about",
+        EXISTENCE,
+    ),
+    Deferred(
+        "rehabilitation",
+        "A path by which an agent whose standing was reduced recovers it.",
+        "an agent's standing is reduced by a finding",
+        PREREQUISITE,
+        needs="no consequence path exists; see the charter's self-reporting protection and its tripwire",
+    ),
+    Deferred(
+        "progressive sanctions",
+        "A graduated ladder of responses to repeated findings.",
+        "findings become attributable to agents and recur for the same agent",
+        PREREQUISITE,
+        needs="no finding has ever been attributable to an agent, so there is nothing to escalate",
+    ),
+    Deferred(
+        "appeal",
+        "Review of a ruling by someone other than whoever made it.",
+        "an adjudicator exists whose rulings could be appealed to someone else",
+        PREREQUISITE,
+        needs="the owner is currently both first and last instance, so an appeal has nowhere to go",
+    ),
+    Deferred(
+        "an adjudicator",
+        "A role empowered to decide contested findings.",
+        "escalation to the owner proves insufficient - not merely that cases exist, but that the "
+        "owner's disposition of them is contested or cannot keep up",
+        UNFORMULABLE,
+        needs="the owner's turnaround on escalated objections has never been observed, because no "
+              "objection has yet escalated. Until then any threshold would be invented, and every "
+              "invented threshold in this project has been wrong",
+    ),
+)
+
+# Pinned. Deferral is the cheapest decision available and the easiest to make
+# permanently, so the count of things put off cannot move without someone moving
+# it.
+DEFERRED_COUNT = 8
+UNFORMULABLE_COUNT = 1
+
+
+def _due_general_task_queue(conn: Database) -> str:
+    from backend import remediation
+
+    attributable = [
+        item for item in remediation.corrective_items(conn)
+        if item.classification == remediation.ATTRIBUTABLE
+    ]
+    if not attributable:
+        return ""
+    return (
+        f"{len(attributable)} corrective item(s) are attributable to an agent and have nowhere to be "
+        f"sent: {', '.join(item.rule for item in attributable)}"
+    )
+
+
+def _due_checkers(conn: Database) -> str:
+    if not _table_exists(conn, "objections"):
+        return ""
+    unchecked = set(compliance.UNCHECKED_GROUNDS)
+    rows = conn.fetchall("SELECT ground, COUNT(*) AS n FROM objections GROUP BY ground")
+    arriving = {row["ground"]: row["n"] for row in rows if row["ground"] in unchecked}
+    if not arriving:
+        return ""
+    return (
+        "objections are arriving on grounds with no checker, so they escalate for want of machinery: "
+        + ", ".join(f"{ground} x{n}" for ground, n in sorted(arriving.items()))
+    )
+
+
+def _due_precedent(conn: Database) -> str:
+    if not _table_exists(conn, "finding_dispositions"):
+        return ""
+    rows = conn.fetchall(
+        "SELECT rule, COUNT(DISTINCT disposition) AS kinds FROM finding_dispositions "
+        "WHERE status = 'active' GROUP BY rule HAVING kinds > 1"
+    )
+    if not rows:
+        return ""
+    return (
+        "the same rule has received different dispositions ("
+        + ", ".join(row["rule"] for row in rows)
+        + "), so like cases are being treated unlike and nothing records why"
+    )
+
+
+def _due_notification(conn: Database) -> str:
+    from backend import remediation
+
+    actionable = [
+        item for item in remediation.corrective_items(conn)
+        if item.classification == remediation.ATTRIBUTABLE
+    ]
+    if not actionable:
+        return ""
+    return (
+        "a finding exists that an agent could act on, and no path tells the agent about it"
+    )
+
+
+_DUE_CHECKS = {
+    "general task queue": _due_general_task_queue,
+    "checkers for the remaining verifiable grounds": _due_checkers,
+    "precedent": _due_precedent,
+    "agent-facing notification": _due_notification,
+}
+
+
+def due(conn: Database) -> list[dict]:
+    """Deferred capabilities whose trigger has fired.
+
+    Only existence triggers are evaluated. A prerequisite trigger cannot fire
+    while its prerequisite is absent, and watching for it would be watching for a
+    phenomenon the system cannot produce - the mistake of building a detector for
+    something that cannot happen, which this project has made before."""
+    fired = []
+    for capability in DEFERRED:
+        if capability.kind != EXISTENCE:
+            continue
+        check = _DUE_CHECKS.get(capability.name)
+        evidence = check(conn) if check else ""
+        if evidence:
+            fired.append({
+                "capability": capability.name,
+                "what": capability.what,
+                "evidence": evidence,
+            })
+    return fired
+
+
 def report(conn: Database) -> dict:
     return {
         "path_coverage": path_coverage(conn),
@@ -241,6 +442,7 @@ def report(conn: Database) -> dict:
         "settlement_mix": settlement_mix(conn),
         "finding_attribution": finding_attribution(),
         "disposition_health": disposition_health(conn),
+        "deferred_due": due(conn),
     }
 
 
@@ -273,6 +475,11 @@ def concerns(conn: Database) -> list[str]:
         found.append(
             f"{coverage['without_checker']} of {coverage['verifiable_grounds']} verifiable grounds "
             "have no checker, so they escalate for want of machinery rather than for want of a judge"
+        )
+
+    for fired in data["deferred_due"]:
+        found.append(
+            f"deferred capability {fired['capability']!r} has come due: {fired['evidence']}"
         )
 
     thin = data["disposition_health"]["thin_rationales"]

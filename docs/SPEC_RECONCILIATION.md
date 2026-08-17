@@ -663,3 +663,42 @@ counted non-success outcomes rather than filtering to successful spawns, structu
 made refusing costly the day it shipped — and an agent that learns refusing is costly stops refusing and
 starts failing quietly. It filters correctly. **That was luck, and the tripwire is what turns it into
 design.**
+
+
+## 15. Justice machinery deliberately not built (2026-08-17)
+
+Adjudication, precedent, appeal, rehabilitation and a progressive sanctions ladder are all absent. The
+reason is the same in every case: **the conditions that would justify them have never occurred.**
+
+**A deferral nobody can detect becoming due is an omission with better wording.** So each carries a
+trigger, and the triggers that can be evaluated from records are evaluated every time governance is
+reported. Three kinds, because they fail differently:
+
+| Kind | Meaning | Count |
+|---|---|---|
+| `existence` | Fires the first time the condition occurs. No threshold to invent | 4 |
+| `prerequisite` | Cannot fire until something else exists | 3 |
+| `unformulable` | The trigger needs a measurement nobody has taken | 1 |
+
+**The four existence triggers are live and tested firing.** A general task queue becomes due when
+corrective work appears that is attributable to an agent rather than the design. Checkers become due
+when an objection arrives on a ground that has none. Precedent becomes due when the same rule receives
+two different dispositions — the first moment consistency becomes a question anyone could answer
+wrongly. Agent notification becomes due when a finding exists that an agent could act on.
+
+**Prerequisite triggers are deliberately not watched.** Rehabilitation cannot become due while nothing
+reduces an agent's standing; appeal cannot while there is nobody to appeal to. Watching for a phenomenon
+the system cannot produce is a detector that passes every test and works never — a mistake this project
+has made before.
+
+**One trigger is unformulable, and says so.** An adjudicator is justified not merely when cases exist
+but when escalation to the owner proves insufficient — and the measurement that would establish it, the
+owner's observed turnaround on escalated objections, has never been taken because no objection has yet
+escalated. Any threshold now would be invented, and every invented threshold in this project has been
+wrong. `UNFORMULABLE_COUNT` is pinned, because reclassifying a checkable condition as unformulable is
+the cheapest way to defer something forever.
+
+### On real data
+
+Nothing is due. The ten findings on a real run are systemic, so no queue is needed to carry them and no
+agent could act on them — which is the deferral holding for the stated reason rather than by oversight.
