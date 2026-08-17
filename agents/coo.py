@@ -253,17 +253,41 @@ def _evaluate_intelligence_health(conn) -> None:
                 failures.append(f"worth-the-compute rate {worth_rate:.3f} < {worth_floor}")
 
         if failures:
-            fi_db.mark_artifact_stale(
-                conn, artifact["id"],
+            reason = (
                 f"validity conditions failed over {performance['graded_reports']} graded reports: "
-                + "; ".join(failures),
+                + "; ".join(failures)
             )
+            fi_db.mark_artifact_stale(conn, artifact["id"], reason)
+            _record_lens_lesson(conn, artifact, reason)
             continue
 
         # Performance is only half of expiry. A lens can be scoring perfectly
         # well and still be about to stop working, because the conditions it
         # works under are leaving.
         _evaluate_lens_regime(conn, artifact, conditions, performing_acceptably=judged_on_performance)
+
+
+def _record_lens_lesson(conn, artifact: dict, reason: str) -> None:
+    """Write what a lens failure taught into the knowledge store.
+
+    Without this the lesson dies with the lens. `staleness_reason` lives on the
+    artifact row, so the moment that artifact is superseded by a corrected
+    value, the record of *why the old one stopped working* goes with it - and
+    the organization is free to make the same mistake again. Gap analysis §4.1's
+    distinction in one line: the artifact records what the lens was, the
+    knowledge record preserves what it taught.
+
+    Guarded on exact-statement duplication because COO re-evaluates health every
+    cycle; without that, one stale lens would relearn the same lesson every
+    second until the store was noise rather than knowledge."""
+    statement = f"Detection lens '{artifact['name']}' (value {artifact['value']}) stopped being reliable."
+    if fi_db.knowledge_exists(conn, fi_db.KNOWLEDGE_LESSON, statement):
+        return
+    fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_LESSON, statement, recorded_by=ROLE,
+        subject=artifact["name"], rationale=reason,
+        evidence_ref=f"intelligence_artifacts:{artifact['id']}",
+    )
 
 
 def _evaluate_lens_regime(conn, artifact: dict, conditions: dict, performing_acceptably: bool) -> None:

@@ -89,6 +89,7 @@ class ControlPanel:
                 ("regime", "Market Regime"),
                 ("cross_checks", "Disagreement"),
                 ("discovery", "Discovery"),
+                ("knowledge", "Knowledge"),
                 ("directives", "Lifecycle Log"),
             )
         }
@@ -293,6 +294,10 @@ class ControlPanel:
         discovery = self._get("/admin/discovery")
         if discovery is not None:
             self._write("discovery", render.format_discovery(discovery))
+
+        knowledge = self._get("/admin/knowledge")
+        if knowledge is not None:
+            self._write("knowledge", render.format_knowledge(knowledge))
 
         directives = self._get("/admin/directives")
         if directives is not None:

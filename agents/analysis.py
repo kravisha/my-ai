@@ -145,6 +145,16 @@ def _assemble_context(conn, report: dict) -> str:
             "grounds to ignore an item, and do not treat a high one as grounds to accept it."
         )
 
+    questions = fi_db.open_questions_for(conn, report["security"])
+    if questions:
+        lines.append("")
+        lines.append("Open questions the organization has already raised about this security:")
+        lines += [f"  - {q['statement']}" for q in questions]
+        lines.append(
+            "  These are unresolved, not settled. If your analysis answers one, say so explicitly; "
+            "if it does not, do not silently drop it."
+        )
+
     recent = fi_db.list_recent_analysis_results(conn, report["security"], config.ANALYSIS_RECENCY_WINDOW_SECONDS)
     if recent:
         lines.append(
@@ -217,6 +227,31 @@ def _overall_score(result: dict) -> float:
     return round((result["relevance_score"] + result["novelty_score"] + result["evidence_quality_score"]) / 3, 4)
 
 
+def _record_open_question(conn, identity: str, security: str, result: dict, analysis_result_id: int) -> None:
+    """Preserve what this analysis said might make it wrong.
+
+    `uncertainty` has always been recorded and never read again - written into
+    analysis_results and left there. Gap analysis §4.1 lists "unresolved
+    questions" as one of the things a knowledge store must hold, and this is the
+    system's only real source of them.
+
+    Deliberately not written for every analysis. A question the organization
+    should carry forward is worth recording; boilerplate hedging on a lead the
+    grader itself judged not worth the compute is not, and recording it would
+    bury the real questions under the routine ones."""
+    uncertainty = (result.get("uncertainty") or "").strip()
+    if not uncertainty or not result.get("worth_the_compute"):
+        return
+    if fi_db.knowledge_exists(conn, fi_db.KNOWLEDGE_OPEN_QUESTION, uncertainty):
+        return
+    fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_OPEN_QUESTION, uncertainty, recorded_by=identity,
+        subject=security, rationale=result.get("thesis"),
+        evidence_ref=f"analysis_results:{analysis_result_id}",
+        confidence=result.get("confidence"),
+    )
+
+
 def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     # Prioritised rather than FIFO: at ten securities detection outpaces
     # reasoning (gap analysis §4.3b), so which lead gets the one deep-reasoning
@@ -249,6 +284,7 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
             result["relevance_score"], result["novelty_score"], result["evidence_quality_score"],
             result["worth_the_compute"], _overall_score(result), result["rationale"],
         )
+        _record_open_question(conn, identity, report["security"], result, analysis_result_id)
     except Exception as exc:
         fi_db.complete_report(conn, report["id"], "failed", detail=str(exc))
         return

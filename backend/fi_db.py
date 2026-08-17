@@ -439,6 +439,52 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- The knowledge store (constitution §3; addendum 12 §8, addendum 13 §9-§10).
+--
+-- Every other table here records **what happened** - detector events, evidence,
+-- reports, analyses, grades. This one records **what is believed**: lessons
+-- learned, and questions left open. Gap analysis §4.1's distinction, and the
+-- reason event tables did not already satisfy it.
+--
+-- It is deliberately *not* a general aggregation of the other tables. A lens
+-- lives in intelligence_artifacts, a regime estimate in market_regime, a source
+-- standing in source_reliability - each with update semantics of its own, and
+-- copying them here would duplicate rather than add. What goes here is what
+-- those mechanisms *taught* and would otherwise lose: a lens carries its
+-- staleness reason until it is superseded and then that reason is gone, and an
+-- analysis records what might make it wrong in a field nothing ever reads again.
+--
+-- Records are attributable and versioned (addendum 13 §9: "the organization can
+-- understand where a lesson came from and whether later evidence changed it").
+-- Superseding never deletes: a belief that turned out wrong is itself knowledge,
+-- and the trail from it to what replaced it is the part worth keeping.
+--
+-- Addendum 13 §10's resident/database split is deliberately NOT built. The spec
+-- says to keep the first classification simple, and there is no measured need
+-- for a working-copy tier - inventing one now would be a cache with no observed
+-- pressure to relieve.
+CREATE TABLE IF NOT EXISTS knowledge_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    -- 'lesson' - something the organization learned and should not relearn.
+    -- 'open_question' - something it noticed it does not know.
+    record_kind TEXT NOT NULL,
+    subject TEXT,
+    statement TEXT NOT NULL,
+    rationale TEXT,
+    -- Who or what produced this. A lesson from COO's health check and one from
+    -- a human are different claims, and the difference has to survive.
+    recorded_by TEXT NOT NULL,
+    -- What in the event tables this was drawn from, so a belief can be traced
+    -- back to the thing that caused it.
+    evidence_ref TEXT,
+    confidence REAL,
+    status TEXT NOT NULL DEFAULT 'active',
+    superseded_by INTEGER,
+    resolved_at TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 -- Source reliability (JARVIS Constitution §3, Axiom 3: "no authority is
 -- automatically correct"). What the system has learned about each evidence
 -- source from how the reports built on it were graded.
@@ -1492,6 +1538,108 @@ def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 4
         "retire_requested": bool(agent["retire_requested"]),
         "schema_version": SCHEMA_VERSION,
     }
+
+
+# --- The knowledge store (constitution §3, addendum 13 §9) ---
+
+KNOWLEDGE_LESSON = "lesson"
+KNOWLEDGE_OPEN_QUESTION = "open_question"
+
+KNOWLEDGE_ACTIVE = "active"
+KNOWLEDGE_SUPERSEDED = "superseded"
+KNOWLEDGE_RESOLVED = "resolved"
+
+
+def record_knowledge(
+    conn: Database,
+    record_kind: str,
+    statement: str,
+    recorded_by: str,
+    subject: str | None = None,
+    rationale: str | None = None,
+    evidence_ref: str | None = None,
+    confidence: float | None = None,
+) -> int:
+    """Write down something the organization now believes, or now knows it does
+    not know.
+
+    `recorded_by` is required rather than optional. A lesson from COO's health
+    check and one from a human are different claims, and a knowledge base that
+    could not say which is which would be a pile of assertions."""
+    return conn.execute_returning_id(
+        "INSERT INTO knowledge_records "
+        "(created_at, record_kind, subject, statement, rationale, recorded_by, evidence_ref, "
+        "confidence, status, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            _now(), record_kind, subject, statement, rationale, recorded_by,
+            evidence_ref, confidence, KNOWLEDGE_ACTIVE, SCHEMA_VERSION,
+        ),
+    )
+
+
+def knowledge_exists(conn: Database, record_kind: str, statement: str) -> bool:
+    """Whether this exact statement is already on the books and still active.
+
+    The guard against a knowledge base that "learns" the same thing every cycle.
+    COO re-evaluates lens health continuously; without this, one stale lens
+    would generate an identical lesson every second until the store was noise."""
+    row = conn.fetchone(
+        "SELECT 1 FROM knowledge_records WHERE record_kind = ? AND statement = ? AND status = ?",
+        (record_kind, statement, KNOWLEDGE_ACTIVE),
+    )
+    return row is not None
+
+
+def supersede_knowledge(conn: Database, record_id: int, replacement_id: int | None = None) -> None:
+    """Mark a record as no longer believed, optionally pointing at what replaced
+    it. Never deletes: a belief that turned out wrong is itself knowledge, and
+    the trail from it to its replacement is the part worth keeping (addendum 13
+    §9 - "whether later evidence changed it")."""
+    conn.execute(
+        "UPDATE knowledge_records SET status = ?, superseded_by = ?, resolved_at = ? WHERE id = ?",
+        (KNOWLEDGE_SUPERSEDED, replacement_id, _now(), record_id),
+    )
+
+
+def resolve_knowledge(conn: Database, record_id: int) -> None:
+    """Close an open question that has been answered. Distinct from superseded:
+    a resolved question was settled, a superseded belief was wrong."""
+    conn.execute(
+        "UPDATE knowledge_records SET status = ?, resolved_at = ? WHERE id = ?",
+        (KNOWLEDGE_RESOLVED, _now(), record_id),
+    )
+
+
+def list_knowledge(
+    conn: Database, record_kind: str | None = None, subject: str | None = None,
+    status: str | None = KNOWLEDGE_ACTIVE, limit: int = 50,
+) -> list[dict]:
+    """Newest first. `status=None` includes superseded and resolved records -
+    the history is queryable, not just the current view."""
+    clauses, params = [], []
+    for column, value in (("record_kind", record_kind), ("subject", subject), ("status", status)):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.fetchall(
+        f"SELECT * FROM knowledge_records {where} ORDER BY id DESC LIMIT ?", (*params, limit)
+    )
+
+
+def open_questions_for(conn: Database, subject: str, limit: int = 5) -> list[dict]:
+    """Unresolved questions previously raised about this subject.
+
+    The store's first real consumer: Analysis sees what the organization already
+    wondered about a security before reasoning about it again. This is the thin
+    end of "agreement licenses execution; it does not terminate thought" - a
+    conclusion reached once leaves a question behind, and the question outlives
+    the analysis that raised it."""
+    return conn.fetchall(
+        "SELECT * FROM knowledge_records WHERE record_kind = ? AND subject = ? AND status = ? "
+        "ORDER BY id DESC LIMIT ?",
+        (KNOWLEDGE_OPEN_QUESTION, subject, KNOWLEDGE_ACTIVE, limit),
+    )
 
 
 # --- Source reliability (constitution §3, Axiom 3) ---

@@ -272,3 +272,35 @@ def test_the_queue_is_shown_in_the_order_analysis_will_work_it():
     assert "order Analysis will take them" in text
     assert text.index("#7") < text.index("#2")  # ranked first despite arriving later
     assert "evidence from the second frame" in text
+
+
+def test_lessons_and_open_questions_are_shown_apart():
+    """Different kinds of claim - one settled enough to act on, the other
+    explicitly not. Running them together would blur exactly the distinction
+    the store exists to hold."""
+    text = render.format_knowledge({
+        "lessons": [{"recorded_by": "coo", "statement": "Lens X stopped being reliable.",
+                     "rationale": "mean IV moved 0.08", "status": "active", "superseded_by": None}],
+        "open_questions": [{"recorded_by": "analysis-1", "subject": "SYN1",
+                            "statement": "Could be an index rebalance."}],
+    })
+    assert text.index("Lessons learned") < text.index("Open questions")
+    assert "because: mean IV moved 0.08" in text
+    assert "[analysis-1 on SYN1]" in text
+
+
+def test_a_superseded_lesson_shows_what_replaced_it():
+    """A belief that turned out wrong is itself knowledge; the trail to its
+    replacement is the part worth keeping."""
+    text = render.format_knowledge({
+        "lessons": [{"recorded_by": "coo", "statement": "Old belief.", "rationale": None,
+                     "status": "superseded", "superseded_by": 12}],
+        "open_questions": [],
+    })
+    assert "superseded, replaced by #12" in text
+
+
+def test_an_empty_store_says_so_rather_than_rendering_blank():
+    text = render.format_knowledge({"lessons": [], "open_questions": []})
+    assert "(nothing learned yet)" in text
+    assert "(none outstanding)" in text

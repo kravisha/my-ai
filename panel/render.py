@@ -197,6 +197,34 @@ def format_uqi_exchange(body: dict) -> str:
     return "\n".join(lines)
 
 
+def format_knowledge(body: dict) -> str:
+    """What the organization believes, separated from what it is still asking.
+
+    Lessons and open questions are shown apart rather than in one list because
+    they are different kinds of claim - one is settled enough to act on, the
+    other is explicitly not - and running them together would blur exactly the
+    distinction the store exists to hold."""
+    lessons = body.get("lessons", [])
+    questions = body.get("open_questions", [])
+    lines = [f"Lessons learned ({len(lessons)}):"]
+    for record in lessons:
+        lines.append(f"  [{record['recorded_by']}] {record['statement']}")
+        if record.get("rationale"):
+            lines.append(f"      because: {record['rationale']}")
+        if record.get("status") != "active":
+            lines.append(f"      ({record['status']}"
+                         + (f", replaced by #{record['superseded_by']}" if record.get("superseded_by") else "") + ")")
+    if not lessons:
+        lines.append("  (nothing learned yet)")
+
+    lines += ["", f"Open questions ({len(questions)}):"]
+    for record in questions:
+        lines.append(f"  [{record['recorded_by']} on {record.get('subject') or '-'}] {record['statement']}")
+    if not questions:
+        lines.append("  (none outstanding)")
+    return "\n".join(lines)
+
+
 def format_directives(body: dict) -> str:
     """Every lifecycle action, who asked, and what the Controller made of it.
 

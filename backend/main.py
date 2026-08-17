@@ -469,6 +469,21 @@ def list_intelligence(conn=Depends(panel_db), admin: str = Depends(require_admin
     return {"artifacts": artifacts}
 
 
+@app.get("/admin/knowledge")
+def knowledge(limit: int = 50, include_history: bool = False,
+              conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """What the organization believes, and what it knows it does not know.
+
+    Superseded and resolved records are available via include_history rather
+    than shown by default - the current view is what is believed *now*, but a
+    belief that turned out wrong is itself knowledge and must stay reachable."""
+    status = None if include_history else fi_db.KNOWLEDGE_ACTIVE
+    return {
+        "lessons": fi_db.list_knowledge(conn, record_kind=fi_db.KNOWLEDGE_LESSON, status=status, limit=limit),
+        "open_questions": fi_db.list_knowledge(conn, record_kind=fi_db.KNOWLEDGE_OPEN_QUESTION, status=status, limit=limit),
+    }
+
+
 @app.get("/admin/sources")
 def source_reliability(conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """What each evidence source has earned, and what is not yet known about

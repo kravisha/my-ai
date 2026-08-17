@@ -122,6 +122,74 @@ Worth recording so future work doesn't redo it:
 
 ### 4.1 The Knowledge Store — the central missing organ
 
+> **PARTIALLY CLOSED (2026-08-17).** `knowledge_records` now holds two of the categories §3 lists -
+> **lessons** and **unresolved questions** - written by real producers and read by a real consumer,
+> verified against a running backend. Models, assumptions and transformations remain unheld. See the
+> closing note.
+
+#### What was built, and what was deliberately not
+
+The risk with this gap was building an empty schema, so the design was driven by one test: **what
+writes to it, and what reads it?** Two answers existed, and both were things the system already
+learned and then discarded.
+
+- **COO records what a lens failure taught.** `staleness_reason` lives on the artifact row, so the
+  moment that artifact is superseded by a corrected value, the record of *why the old one stopped
+  working* goes with it and the organization is free to repeat the mistake. The artifact records what
+  the lens **was**; the knowledge record preserves what it **taught**.
+- **Analysis preserves its `uncertainty` as a standing open question.** That field has always been
+  written and never read again. It is the system's only genuine source of the "unresolved questions"
+  §3 asks for.
+
+And one consumer, which is what makes it a store rather than a log: **Analysis is shown the open
+questions already raised about a security before reasoning about it again.** That is the thin end of
+Axiom 6 — agreement licenses execution, it does not terminate thought — a question now outlives the
+analysis that raised it.
+
+Deliberately *not* built: addendum 13 §10's resident/database tier split (the spec says keep the first
+classification simple, and there is no measured pressure a cache would relieve), and any aggregation
+of the existing tables. A lens lives in `intelligence_artifacts`, a regime estimate in
+`market_regime`, a source standing in `source_reliability` — each with its own update semantics.
+Copying them here would duplicate rather than add.
+
+Two properties the store enforces: records are **attributable** (`recorded_by` is required, because a
+lesson from COO's health check and one from a human are different claims) and **superseding never
+deletes** (a belief that turned out wrong is itself knowledge, and the trail to its replacement is the
+part worth keeping — addendum 13 §9's "whether later evidence changed it").
+
+#### Verified against a running backend
+
+Both writers fired unprompted. COO, after the speculator lens failed its conditions:
+
+> `[coo] Detection lens 'speculator_confidence_threshold' (value 0.6) stopped being reliable.`
+> `because: validity conditions failed over 10 graded reports: mean overall score 0.342 < 0.35`
+> `traced to: intelligence_artifacts:2`
+
+And eleven open questions accumulated from Analysis, several genuinely substantive — one weighed
+"whether the single-author rumor is coordinated/noise rather than genuine informed chatter," which is
+the cross-check work flowing into uncertainty and on into the store. A fresh analysis of SYN1 was then
+confirmed to receive the earlier questions, with the instruction that they are unresolved rather than
+settled.
+
+#### Still open
+
+- **Three of §3's categories remain unheld:** models, assumptions, and transformations. Lessons and
+  open questions were built because real producers existed for them; nothing in the system currently
+  *forms* an assumption or a model it could write down, so building those columns would be the empty
+  schema this increment was shaped to avoid.
+- **Nothing resolves an open question yet.** Analysis is told a question exists and asked to say if it
+  answers one, but nothing calls `resolve_knowledge`. Questions therefore accumulate. That is the
+  correct failure direction — carrying a settled question is cheaper than dropping a live one — but it
+  needs closing before the store gets large.
+- **No curation.** Addendum 13 §9 makes the Training Agent the curator of validated knowledge; no
+  Trainer exists.
+
+---
+
+#### Original assessment
+
+
+
 **Constitution §3; also addendum 12 §8/§21 and addendum 13 §9/§10 (two-layer knowledge model).**
 
 There is no knowledge store. There are *event tables* — detector events, evidence items, reports,
