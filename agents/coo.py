@@ -35,6 +35,7 @@ Normally launched by backend/controller.py's bootstrap_coo(), not by hand.
 
 import json
 import sys
+from collections import Counter
 
 from agents.base import run_agent
 from backend import fi_db
@@ -340,7 +341,16 @@ def _coo_work(conn) -> None:
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     _evaluate_intelligence_health(conn)
-    print(f"[COO] ecosystem: {fi_db.get_performance_card(conn)}")
+    # One line, not the whole performance card. This ran every cycle dumping a
+    # dict repr of every agent - invisible while agent stdout was block-buffered
+    # into the log redirect, and ~1.5KB/s of noise the moment that was fixed.
+    # The roster is what the control panel is for; what belongs in a log is the
+    # shape of the population and anything abnormal about it.
+    card = fi_db.get_performance_card(conn)
+    counts = Counter(a["lifecycle_state"] for a in card)
+    unhealthy = [a["identity"] for a in card if a["process_state"] != fi_db.PROCESS_RUNNING]
+    summary = ", ".join(f"{n} {state}" for state, n in sorted(counts.items()))
+    print(f"[COO] {len(card)} agents ({summary})" + (f" | not running: {', '.join(unhealthy)}" if unhealthy else ""))
 
 
 def main() -> None:

@@ -562,3 +562,16 @@ def test_a_lens_without_regime_conditions_is_untouched_by_market_drift(conn):
     social = fi_db.get_active_artifact(conn, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME)
     assert social is not None
     assert "regime" not in json.loads(social["validity_conditions"])
+
+
+def test_the_observation_grace_exceeds_measured_spawn_latency():
+    """COO waits this long after a spawn before judging whether the agent
+    established itself. Too short and a healthy-but-slow-starting agent is
+    recorded as having died.
+
+    Measured against a real backend (docs/TIMING_CONSTANTS.md): directive
+    completion to registry entry ran 0.09-1.62s across four agents."""
+    from agents.coo import OBSERVATION_GRACE_SECONDS
+
+    worst_observed_spawn_seconds = 1.62
+    assert OBSERVATION_GRACE_SECONDS > worst_observed_spawn_seconds * 2

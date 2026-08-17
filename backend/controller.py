@@ -39,6 +39,17 @@ from pathlib import Path
 
 from backend import fi_db
 
+# Environment every spawned agent gets on top of the Controller's own.
+#
+# PYTHONUNBUFFERED matters more than it looks. Agents inherit the backend's
+# stdout, which in any real run is redirected to a log file - and Python
+# block-buffers stdout when it is not a terminal. Without this, an agent's
+# prints sit in a 4-8KB buffer and never reach the log, so the one place an
+# agent explains its own reasoning ("[analysis] taking report #7: cross-check
+# answered...") is invisible during exactly the manual verification runs that
+# have found every timing defect in this project.
+AGENT_ENV = {"PYTHONUNBUFFERED": "1"}
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 CONTROLLER_ROLE = "controller"
@@ -121,7 +132,7 @@ class Controller:
         baseline population COO itself will ask for once running, goes
         through the normal directive queue in process_next_directive."""
         identity = _slot_identity("coo")
-        env = {**os.environ, "FI_DB_PATH": self.db_path}
+        env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         process = subprocess.Popen(
             [sys.executable, "-m", "agents.coo", identity],
             cwd=PROJECT_ROOT,
@@ -155,7 +166,7 @@ class Controller:
     def _handle_spawn(self, directive: dict) -> None:
         role = directive["target_role"]
         identity = _slot_identity(role)
-        env = {**os.environ, "FI_DB_PATH": self.db_path}
+        env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         try:
             process = subprocess.Popen(
                 [sys.executable, "-m", f"agents.{role}", identity],

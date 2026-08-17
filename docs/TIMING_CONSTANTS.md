@@ -31,6 +31,7 @@ These are the facts every constant below is judged against.
 | Queue drain time | **260-400 s** | depth ÷ throughput |
 | UQI answer latency, procedural agents | **2.2-3.6 s** | Ask, watch the DB for the answer |
 | UQI answer latency, `analysis-1` | **5.8 / 19.4 / 24.0 s** | Three samples, same method |
+| Spawn → agent registered | **0.09-1.62 s** | Directive `completed_at` → registry `spawned_at`, 4 agents |
 | Cross-check answer latency | **min 0.7s, median 6.1s, max 15.4s** (n=23) | `answered_at − created_at` |
 
 ---
@@ -46,7 +47,7 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 | `UQI_TIMEOUT_SECONDS` (fi_db) | 60 s | Slowest agent's cycle + its own answer call | Worst observed 24.0s | **TUNED** from 15s |
 | `STARVATION_SECONDS` (triage) | 900 s | Queue drain time | Worst drain 400s | **TUNED** from 120s |
 | `CROSS_CHECK_TIMEOUT_SECONDS` (fi_db) | 30 s | Responder's answer latency under queueing | Max observed 15.4s | **OK** — 2× |
-| `OBSERVATION_GRACE_SECONDS` (coo) | 5 s | Spawn → process start → first heartbeat | Not directly measured; no false verdicts observed | **UNMEASURED** |
+| `OBSERVATION_GRACE_SECONDS` (coo) | 5 s | Spawn → process start → registration | Worst observed 1.62s | **OK** — 3.1× |
 | `HEARTBEAT_INTERVAL_SECONDS` (base) | 1.0 s | Nothing downstream — it *sets* the rate | n/a | **OK** |
 | `CONTROLLER_POLL_INTERVAL_SECONDS` (main) | 1.0 s | Directive latency tolerance | n/a — it sets the rate | **OK** |
 | `POLL_INTERVAL_MS` (panel, monitor) | 2000 ms | Operator patience only | n/a | **OK** |
@@ -60,22 +61,15 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 
 ---
 
-## The two unmeasured ones
-
-Neither is known to be wrong. Both are recorded here so that stays an honest statement rather than
-an assumption.
-
-**`OBSERVATION_GRACE_SECONDS = 5`** — how long COO waits after a spawn before checking whether the
-agent established itself. Too short and a healthy-but-slow-starting agent is recorded as having
-died; too long and a genuinely dead spawn goes unnoticed. Python process startup plus schema init
-plus first heartbeat is the rate, and it has never been timed. It has produced no false verdicts,
-which is weak evidence rather than none.
+## The one that stays unmeasured
 
 **`REGIME_EWMA_ALPHA = 0.05`** — the weight on each new market observation. Too high and the
 estimate chases noise; too low and a real regime shift takes so long to register that the lens stays
 bound to conditions that ended. The verified regime shift migrated the estimate 0.2999 → 0.3802 and
 tripped the drift check, so the value is *adequate* — but "adequate once" is not a calibration, and
 the right value depends on how often real regimes change, which the synthetic fixture cannot tell us.
+It is the only constant here whose dependent rate cannot be measured from the system as it stands,
+because the rate is a property of real markets rather than of this software.
 
 ---
 
