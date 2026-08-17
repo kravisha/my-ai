@@ -258,10 +258,64 @@ judgment rather than an accident of arrival order.
 
 ### 4.4 Source reliability is earned (§3, Axiom 3)
 
-Absent. `evidence_items.source` is a bare string; a Reddit post and a filing would be weighted
-identically. The constitution asks for reliability evaluated by "domain, history, corroboration,
-internal consistency, and predictive performance," represented probabilistically and changing over
-time. The grading loop already produces the outcome signal this would learn from.
+> **CLOSED (2026-08-17).** Sources now earn a standing from how the reports built on their evidence
+> were graded. Verified against a real backend: the ordering the system inferred matches ground truth
+> it was never given.
+
+Was: `evidence_items.source` was a bare string, so a Reddit post and a filing weighed identically.
+
+#### The prerequisite, again
+
+The fixture had **one** source (`SOURCES = ("reddit",)`), so a reliability model would have been a
+scorer with nothing to discriminate between — the same trap the market regime and the social
+narratives each hit. Three sources now say genuinely different things: `filing_feed` makes specific
+checkable claims, `reddit` is the mixed retail stream, `pump_channel` is confident and content-free.
+The difference is in what they *say*, never in a quality label, so the system has to infer standing
+rather than read it.
+
+#### Two refusals carry the design
+
+- **Earned, never assigned.** No source is seeded with a prior. Writing "filings are trustworthy,
+  forums are not" would assert exactly the authority Axiom 3 denies, and would make the model
+  untestable — it would be reporting its own seed back. A source starts unknown, the same way a lens
+  earns its regime baseline by being observed working.
+- **Labelled, never filtered.** A source with a poor standing still has its evidence collected, still
+  reaches Analysis, and is still weighed there. This is the property the whole design turns on: a
+  reliability model that gated collection could never learn it was wrong, because a badly-rated
+  source would stop contributing evidence, stop accumulating grades, and stay badly rated forever on
+  a record that stopped growing. Analysis is told the standing *and* told explicitly not to treat a
+  low one as grounds to ignore an item.
+
+Standings are recomputed by COO rather than by Speculator, for the same reason lens health is COO's:
+the producer of evidence must not judge its own sources (addendum 11 §8). Recomputed from the full
+grade history rather than folded in incrementally, so a standing is exactly reproducible from the
+record rather than dependent on update order.
+
+#### Verified
+
+Against a real backend, after 23 grades:
+
+| Source | Graded contributions | Mean evidence quality | Stated |
+|---|---|---|---|
+| `filing_feed` | 17 | **0.429** | yes |
+| `reddit` | 6 | **0.420** | yes |
+| `pump_channel` | 6 | **0.250** | yes |
+
+The ordering is correct against ground truth the system was never shown. Note the honest shape of it:
+`pump_channel` separates clearly, but `filing_feed` and `reddit` are within 0.009 of each other — the
+model distinguishes *content-free hype* from *substantive claims* confidently, and does not yet
+distinguish filings from good forum posts. That is a real limit, not a rounding artifact.
+
+#### Still open
+
+- **The standing is descriptive, not yet consequential.** Analysis is told; nothing else changes. That
+  is deliberate for now, but the constitution's "predictive performance" component would want a
+  source's standing to inform *what gets collected next*, and doing that safely needs the
+  never-suppress property preserved — probably by sampling low-standing sources rather than dropping
+  them.
+- **Reliability is global, not per-domain.** §3 asks for reliability by *domain*; a source good on
+  filings and useless on rumour currently gets one number.
+- **Thin separation between the two legitimate sources**, as above.
 
 ### 4.5 Agreement does not terminate thought (Axiom 6, Axiom 7, §6)
 

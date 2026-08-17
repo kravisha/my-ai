@@ -341,6 +341,10 @@ def _coo_work(conn) -> None:
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     _evaluate_intelligence_health(conn)
+    # Source standings are recomputed here rather than by Speculator, for the
+    # same reason lens health is COO's: the producer of evidence must not be
+    # the judge of its own sources (addendum 11 §8).
+    fi_db.recompute_source_reliability(conn)
     # One line, not the whole performance card. This ran every cycle dumping a
     # dict repr of every agent - invisible while agent stdout was block-buffered
     # into the log redirect, and ~1.5KB/s of noise the moment that was fixed.

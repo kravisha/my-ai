@@ -19,7 +19,44 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-SOURCES = ("reddit",)
+# Sources that genuinely differ in quality, so reliability has something to
+# discriminate between. Until this existed there was one source, and a
+# reliability model over one source is a scorer with nothing to score.
+#
+# The differences are in what the sources *say*, not in a quality label - the
+# system is never told which source is good. It has to infer that from how the
+# reports built on their evidence get graded, which is the only honest route:
+# reliability is "earned by domain, history, corroboration, internal
+# consistency, and predictive performance" (constitution §3), not assigned.
+#
+# `filing_feed` makes specific, checkable claims; `reddit` is the mixed retail
+# stream; `pump_channel` is confident and content-free. A grader reading them
+# should rate their evidence quality very differently, and that difference is
+# what the reliability model has to pick up.
+SOURCE_CONTENT = {
+    "filing_feed": (
+        ("{security} 8-K filed: revises Q3 guidance, cites supply contract renegotiation", 0.7),
+        ("{security} Form 4: two officers report open-market purchases totalling 41,000 shares", 0.75),
+        ("{security} 13D amendment: holder raises stake to 9.2% from 7.4%", 0.7),
+    ),
+    "reddit": (
+        ("anyone else seeing weird options activity on {security}?", 0.7),
+        ("{security} vol looking spicy today, someone knows something", 0.6),
+        ("just added to my {security} position, feeling good", 0.3),
+        ("random noise post not really about anything", 0.1),
+    ),
+    # Deliberately ASCII. Emoji would be realistic for this source, but agents
+    # print evidence text to a stdout that is cp1252 on Windows, so a stored
+    # emoji raises UnicodeEncodeError inside an agent's cycle rather than merely
+    # looking wrong. Fixture content has to survive the platform it runs on.
+    "pump_channel": (
+        ("{security} to the moon, next 10x, get in before it's too late", 0.85),
+        ("{security} about to explode, insiders already loading", 0.9),
+        ("do NOT sleep on {security}, this is the one", 0.88),
+    ),
+}
+
+SOURCES = tuple(SOURCE_CONTENT)
 
 # The default mixed stream: some posts hint at unusual activity, some are
 # noise. Uncorrelated with anything happening on the option surface, which is
@@ -172,10 +209,24 @@ class SyntheticSocialDataProvider:
         count = self._rng.randint(low, high)
         for _ in range(count):
             self._cursor += timedelta(seconds=POST_INTERVAL_SECONDS)
-            template, engagement_base = self._rng.choice(templates)
+            # A source is picked first, and the content comes from that source's
+            # own pool - so what a post *says* is a property of where it came
+            # from. Previously the source was a decorative label picked
+            # independently of the text, which is precisely why reliability had
+            # nothing to learn: every source said the same things.
+            #
+            # Narrative templates still win when a security has one assigned.
+            # A narrative is a claim about that security's whole information
+            # environment, and it has to be able to override any single source
+            # for the coordinated/contradicting fixtures to hold.
+            source = self._rng.choice(SOURCES)
+            if templates is TEMPLATES:
+                template, engagement_base = self._rng.choice(SOURCE_CONTENT[source])
+            else:
+                template, engagement_base = self._rng.choice(templates)
             self._posts.append(
                 SocialPost(
-                    source=self._rng.choice(SOURCES),
+                    source=source,
                     # Drawn from a pool whose *size* the narrative controls, so a
                     # high-volume stream can still come from very few accounts.
                     author=f"user{1000 + self._rng.randrange(profile['author_pool'])}",

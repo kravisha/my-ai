@@ -135,7 +135,15 @@ def _assemble_context(conn, report: dict) -> str:
         evidence = fi_db.list_evidence_items(conn, evidence_ids)
         lines.append(f"Social evidence ({len(evidence)} item(s)):")
         for item in evidence:
-            lines.append(f"  - [confidence {item['confidence']:.2f}] {item['content']}")
+            lines.append(
+                f"  - [confidence {item['confidence']:.2f}]"
+                f"{_source_note(conn, item['source'])} {item['content']}"
+            )
+        lines.append(
+            "  Source standings above are earned from how past reports built on each source were "
+            "graded - they are not assigned reputations. Weigh them; do not treat a low standing as "
+            "grounds to ignore an item, and do not treat a high one as grounds to accept it."
+        )
 
     recent = fi_db.list_recent_analysis_results(conn, report["security"], config.ANALYSIS_RECENCY_WINDOW_SECONDS)
     if recent:
@@ -145,6 +153,29 @@ def _assemble_context(conn, report: dict) -> str:
         )
 
     return "\n".join(lines)
+
+
+def _source_note(conn, source) -> str:
+    """How this evidence item's source has been graded historically.
+
+    Labelled, never filtered. A source with a poor standing still has its
+    evidence collected, still reaches Analysis, and is still weighed here -
+    because a reliability model that gated collection could never learn it was
+    wrong. A source rated badly would stop contributing evidence, stop
+    accumulating grades, and stay rated badly forever on a record that stopped
+    growing. Suppression would make the model self-confirming.
+
+    "Not yet known" is stated as such rather than rendered as a middling
+    number, which would read as a judgment that has not been made."""
+    if not source:
+        return ""
+    standing = fi_db.source_standing(conn, source)
+    if standing is None or not standing["stated"]:
+        return f" [source {source}: standing not yet earned]"
+    return (
+        f" [source {source}: mean evidence quality {standing['mean_evidence_quality']:.2f}"
+        f" over {standing['graded_contributions']} graded contributions]"
+    )
 
 
 def _run_analysis(report_context: str) -> dict:

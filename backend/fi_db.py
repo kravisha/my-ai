@@ -439,6 +439,29 @@ CREATE TABLE IF NOT EXISTS evidence_items (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Source reliability (JARVIS Constitution §3, Axiom 3: "no authority is
+-- automatically correct"). What the system has learned about each evidence
+-- source from how the reports built on it were graded.
+--
+-- **Earned, never assigned.** No source is seeded with a prior. Writing
+-- "filings are trustworthy, forums are not" would be asserting exactly the
+-- authority Axiom 3 denies - and would also be untestable, since the model
+-- would then be reporting its own seed back. A source starts unknown and
+-- earns a standing from observed outcomes, the same way a lens earns its
+-- regime baseline by being observed working.
+--
+-- A current-state table rather than an intelligence_artifact, for the same
+-- reason market_regime is: artifacts are immutable and superseded, while a
+-- reliability estimate is continuously revised in place.
+CREATE TABLE IF NOT EXISTS source_reliability (
+    source TEXT PRIMARY KEY,
+    graded_contributions INTEGER NOT NULL DEFAULT 0,
+    mean_evidence_quality REAL,
+    mean_overall_score REAL,
+    updated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 -- Universal Human Query Interface (addendum 14 §7). A human asks one agent a
 -- question; that agent's own process answers.
 --
@@ -1469,6 +1492,99 @@ def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 4
         "retire_requested": bool(agent["retire_requested"]),
         "schema_version": SCHEMA_VERSION,
     }
+
+
+# --- Source reliability (constitution §3, Axiom 3) ---
+
+# Graded contributions a source needs before its standing is stated at all.
+# Same thin-evidence refusal as min_graded_reports for a lens: below this the
+# honest answer is "not yet known", and a confident number computed from two
+# samples would be worse than no number, because it would be believed.
+MIN_GRADED_CONTRIBUTIONS = int(os.environ.get("FI_MIN_GRADED_CONTRIBUTIONS", "5"))
+
+
+def recompute_source_reliability(conn: Database) -> int:
+    """Rebuild every source's standing from the grades of reports its evidence
+    contributed to. Returns the number of sources with a stated standing.
+
+    Recomputed from the full grade history rather than folded in incrementally.
+    An EWMA would be cheaper, but a source's standing is a claim about its whole
+    record, and recomputing makes that claim exactly reproducible from the
+    evidence rather than dependent on the order updates happened to arrive in.
+    Affordable at this volume; if the grade table ever outgrows it, that is the
+    moment to reach for an incremental estimate, not before.
+
+    Attribution runs grades -> completed report -> evidence_ids -> evidence
+    items -> source. A report draws on several evidence items and therefore
+    credits several sources with the same grade, which is correct: they jointly
+    produced the thing that was judged, and no finer attribution is available
+    without asking the grader which item persuaded it."""
+    rows = conn.fetchall(
+        "SELECT r.evidence_ids, g.evidence_quality_score, g.overall_score "
+        "FROM grades g JOIN discovery_reports_completed r ON g.report_id = r.id "
+        "WHERE r.evidence_ids IS NOT NULL AND r.evidence_ids != '[]'"
+    )
+    if not rows:
+        return 0
+
+    evidence_source = {
+        item["id"]: item["source"]
+        for item in conn.fetchall("SELECT id, source FROM evidence_items WHERE source IS NOT NULL")
+    }
+
+    quality: dict[str, list[float]] = {}
+    overall: dict[str, list[float]] = {}
+    for row in rows:
+        for evidence_id in json.loads(row["evidence_ids"] or "[]"):
+            source = evidence_source.get(evidence_id)
+            if source is None:
+                continue
+            if row["evidence_quality_score"] is not None:
+                quality.setdefault(source, []).append(row["evidence_quality_score"])
+            if row["overall_score"] is not None:
+                overall.setdefault(source, []).append(row["overall_score"])
+
+    stated = 0
+    for source in set(quality) | set(overall):
+        scores = quality.get(source, [])
+        overalls = overall.get(source, [])
+        count = max(len(scores), len(overalls))
+        conn.execute(
+            "INSERT INTO source_reliability (source, graded_contributions, mean_evidence_quality, "
+            "mean_overall_score, updated_at, schema_version) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source) DO UPDATE SET graded_contributions=excluded.graded_contributions, "
+            "mean_evidence_quality=excluded.mean_evidence_quality, "
+            "mean_overall_score=excluded.mean_overall_score, updated_at=excluded.updated_at",
+            (
+                source, count,
+                round(sum(scores) / len(scores), 4) if scores else None,
+                round(sum(overalls) / len(overalls), 4) if overalls else None,
+                _now(), SCHEMA_VERSION,
+            ),
+        )
+        if count >= MIN_GRADED_CONTRIBUTIONS:
+            stated += 1
+    return stated
+
+
+def list_source_reliability(conn: Database) -> list[dict]:
+    """Every source's standing, best first. Sources below the evidence
+    threshold are included with `stated` False rather than hidden - "we do not
+    know yet" is a different answer from "this source is unreliable", and
+    collapsing them would misrepresent both."""
+    rows = conn.fetchall("SELECT * FROM source_reliability ORDER BY mean_evidence_quality DESC")
+    return [
+        {**row, "stated": row["graded_contributions"] >= MIN_GRADED_CONTRIBUTIONS}
+        for row in rows
+    ]
+
+
+def source_standing(conn: Database, source: str) -> dict | None:
+    """One source's standing, or None if it has none yet."""
+    row = conn.fetchone("SELECT * FROM source_reliability WHERE source = ?", (source,))
+    if row is None:
+        return None
+    return {**row, "stated": row["graded_contributions"] >= MIN_GRADED_CONTRIBUTIONS}
 
 
 # --- Universal Human Query Interface (addendum 14 §7) ---

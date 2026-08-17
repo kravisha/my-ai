@@ -469,6 +469,15 @@ def list_intelligence(conn=Depends(panel_db), admin: str = Depends(require_admin
     return {"artifacts": artifacts}
 
 
+@app.get("/admin/sources")
+def source_reliability(conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """What each evidence source has earned, and what is not yet known about
+    it. Sources below the evidence threshold are included with stated=False -
+    "not yet judged" is a different answer from "unreliable"."""
+    return {"sources": fi_db.list_source_reliability(conn),
+            "min_graded_contributions": fi_db.MIN_GRADED_CONTRIBUTIONS}
+
+
 @app.get("/admin/regime")
 def market_regime(conn=Depends(panel_db), admin: str = Depends(require_admin)):
     """The system's current estimate of market conditions, per security and
