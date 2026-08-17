@@ -621,3 +621,45 @@ already had, and the same fix.
 ### Verified on the real run
 
 `10/10 SYSTEMIC -> owner`, raised as one corrective action, and re-running raises nothing further.
+
+
+## 14. The agent charter (2026-08-17)
+
+`backend/charter.py` enumerates what an agent is owed and what it owes. **Every clause names the
+mechanism that enforces it, and a test resolves every name.** A protection whose enforcement does not
+exist fails the suite rather than reassuring a reader.
+
+That test earned itself on the first run: the draft claimed `fi_db.retire_agent`, and the function is
+`request_retirement`. A prose charter would have carried that error indefinitely — and the error is the
+whole hazard in miniature, a clause that reads correctly, sounds enforced, and refers to nothing.
+
+**Thirteen protections, two duties, three unenforced.** The ratio is a finding rather than a preference.
+Every finding this organization has produced has been systemic — the first compliance run, the
+attribution metric, the corrective-work classification — so the charter is written against the failure
+mode the records actually show: a system capable of faulting agents for its own defects.
+
+Duties are held to the same standard, and are therefore short. **An unenforced duty is a reprimand
+waiting for an occasion rather than a rule.**
+
+### Three protections are not enforced, and say so
+
+Each names what is missing rather than being omitted, because an omitted promise is indistinguishable
+from one nobody thought of. They need, respectively, a consequence path, an agent-facing notification
+channel, and an adjudicator — none of which exists.
+
+### The tripwire
+
+*Self-reporting treated more favourably than concealment* cannot be built yet, and not from difficulty:
+**nothing an agent does affects its standing through a finding**, so there is no leniency to grant and
+no incentive to conceal. Concealment only pays where disclosure costs something.
+
+It is nonetheless cheap now and expensive later, so the response is a **test rather than a note** — one
+that fails with instructions the moment a finding starts reaching an agent's standing. It watches
+`competency_evidence`, the single gate through which that could happen, and is keyed to the tables that
+function reads rather than to words in its source, so it fires on a real wiring and not on a comment.
+
+The near miss is worth recording. `competency_evidence` already reads completed directives. Had it
+counted non-success outcomes rather than filtering to successful spawns, structured objection would have
+made refusing costly the day it shipped — and an agent that learns refusing is costly stops refusing and
+starts failing quietly. It filters correctly. **That was luck, and the tripwire is what turns it into
+design.**
