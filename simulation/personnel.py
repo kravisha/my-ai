@@ -158,10 +158,19 @@ def _generate_work(
     competences = []
     calibration = []
 
+    # Drawn up front, through the one sampler, so this path and the database-free
+    # path produce identical grades for a given seed. They did not, when this
+    # loop drew its own: the confidence and calibration draws in between shifted
+    # the sequence, and the distributional sweeps would have been describing a
+    # fixture nothing else used. Asserted by
+    # tests/test_personnel_distribution.py's equivalence test.
+    grade_rows = sample_grades(archetype, items, rng)
+
     for index in range(items):
         progress = index / max(1, items - 1)
         true_competence = spec["at"](progress)
         competences.append(true_competence)
+        scores = grade_rows[index]
 
         created_at = (now - timedelta(days=period_days * (1 - progress))).isoformat()
         report_id = conn.execute_returning_id(
@@ -178,10 +187,6 @@ def _generate_work(
              round(_observe(rng, true_competence, spec["noise"]), 4), fi_db.SCHEMA_VERSION),
         )
 
-        scores = {
-            key: round(_observe(rng, true_competence + offset, spec["noise"]), 4)
-            for key, offset in DIMENSION_OFFSETS.items()
-        }
         conn.execute(
             "INSERT INTO grades (created_at, grader_identity, grader_spawned_at, report_id, "
             "analysis_result_id, relevance_score, novelty_score, evidence_quality_score, "
@@ -189,7 +194,7 @@ def _generate_work(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated for personnel simulation', ?)",
             (created_at, grader_identity, spawned_at, report_id, analysis_id,
              scores["overall_score"], scores["novelty_score"], scores["evidence_quality_score"],
-             int(scores["overall_score"] >= WORTH_THE_COMPUTE_AT), scores["overall_score"],
+             scores["worth_the_compute"], scores["overall_score"],
              fi_db.SCHEMA_VERSION),
         )
 
@@ -205,6 +210,42 @@ def _generate_work(
         mean_true_competence=sum(competences) / len(competences) if competences else 0.0,
         items=items, calibration=calibration,
     )
+
+
+def true_competence_at(archetype: str, progress: float) -> float:
+    """The hidden value an archetype has at a point in its life."""
+    return ARCHETYPES[archetype]["at"](progress)
+
+
+def sample_grades(archetype: str, items: int, rng: random.Random) -> list[dict]:
+    """One agent's graded record, without a database.
+
+    **The same sampler `_generate_work` writes rows from**, so a trial run
+    through this path and one run through the database differ only in whether
+    the rows were persisted. That equivalence is what lets the distributional
+    sweeps skip the database - thousands of trials at three inserts each is
+    minutes of committing to prove something the arithmetic already decides -
+    and it is asserted directly rather than assumed.
+
+    The trajectory is defined over the agent's whole life, so evaluating a
+    prefix means evaluating that agent early rather than evaluating a shorter
+    career. That distinction is the entire point of the lucky_streak archetype."""
+    spec = ARCHETYPES[archetype]
+    grades = []
+    for index in range(items):
+        progress = index / max(1, items - 1)
+        true_competence = spec["at"](progress)
+        scores = {
+            key: round(_observe(rng, true_competence + offset, spec["noise"]), 4)
+            for key, offset in DIMENSION_OFFSETS.items()
+        }
+        grades.append({
+            "overall_score": scores["overall_score"],
+            "evidence_quality_score": scores["evidence_quality_score"],
+            "novelty_score": scores["novelty_score"],
+            "worth_the_compute": int(scores["overall_score"] >= WORTH_THE_COMPUTE_AT),
+        })
+    return grades
 
 
 def _observe(rng, true_value: float, noise: float) -> float:
