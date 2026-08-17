@@ -22,13 +22,13 @@ def db(conn):
     return conn
 
 
-def complete_report(conn, report_id, graded=True, producer="speculator-1"):
+def complete_report(conn, report_id, graded=True, producer="speculator-1", outcome="analyzed"):
     conn.execute(
         "INSERT INTO discovery_reports_completed (id, created_at, producer_identity, "
         "producer_spawned_at, report_type, security, summary, completed_at, outcome, schema_version) "
         "VALUES (?, '2026-08-17T00:00:00+00:00', ?, '2026-08-17T00:00:00+00:00', 'social', 'SYN1', "
-        "'s', '2026-08-17T00:01:00+00:00', 'analyzed', 1)",
-        (report_id, producer),
+        "'s', '2026-08-17T00:01:00+00:00', ?, 1)",
+        (report_id, producer, outcome),
     )
     if graded:
         # A grade needs an analysis result, because grades.analysis_result_id is
@@ -85,7 +85,7 @@ def test_an_ungraded_report_is_found(db):
     findings = compliance.check(db)["unevaluated"]
 
     assert len(findings) == 1
-    assert findings[0]["rule"] == "discovery report"
+    assert findings[0]["rule"] == "discovery report (analysed)"
     assert findings[0]["producer"] == "speculator-1"
 
 
@@ -196,14 +196,21 @@ def test_every_rule_points_at_columns_that_exist(db):
         for column in (rule.key, rule.completed_at, rule.producer):
             assert column in columns, f"{rule.name} names {rule.table}.{column}, which does not exist"
 
-        if rule.evaluation[0] == compliance.COLUMN:
+        kind = rule.evaluation[0]
+        if kind == compliance.COLUMN:
             assert rule.evaluation[1] in columns, (
                 f"{rule.name} expects evaluation in {rule.table}.{rule.evaluation[1]}, which does not exist"
             )
+        elif kind == compliance.VIA:
+            _, carrier, link, target, key = rule.evaluation
+            carrier_cols = {row["name"] for row in db.fetchall(f"PRAGMA table_info({carrier})")}
+            target_cols = {row["name"] for row in db.fetchall(f"PRAGMA table_info({target})")}
+            assert link in carrier_cols, f"{rule.name} follows {carrier}.{link}, which does not exist"
+            assert key in target_cols, f"{rule.name} expects {target}.{key}, which does not exist"
         else:
             _, table, column = rule.evaluation
-            target = {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
-            assert column in target, f"{rule.name} expects a row in {table}.{column}, which does not exist"
+            target_cols = {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
+            assert column in target_cols, f"{rule.name} expects a row in {table}.{column}, which does not exist"
 
 
 def test_a_missing_table_does_not_crash_the_check(db):
@@ -220,7 +227,7 @@ def test_the_summary_names_both_findings_and_compliance(db):
     complete_report(db, 2, graded=True)
     text = compliance.summarise(compliance.check(db))
 
-    assert "UNEVALUATED" in text
+    assert "VIOLATION" in text
     assert "exempt:" in text
 
 
@@ -239,7 +246,7 @@ def test_a_failed_analysis_cannot_be_graded_because_the_schema_forbids_it(db):
     here would be punishing it for a constraint it cannot satisfy."""
     import sqlite3
 
-    complete_report(db, 1, graded=False)   # as the failed path leaves it
+    complete_report(db, 1, graded=False, outcome="failed")   # as the failed path leaves it
 
     with pytest.raises(sqlite3.IntegrityError, match="analysis_result_id"):
         db.execute(
@@ -250,4 +257,117 @@ def test_a_failed_analysis_cannot_be_graded_because_the_schema_forbids_it(db):
             "0.5, 0.5, 0.5, 1, 0.5, 1)"
         )
 
-    assert compliance.check(db)["unevaluated"], "the check should still report it"
+    report = compliance.check(db)
+    assert report["unevaluated"] == [], "not a violation - nobody could have graded it"
+    assert len(report["blocked"]) == 1, "it should still be reported, as blocked"
+    assert "NOT NULL" in report["blocked"][0]["note"]
+
+
+# -- classification: violation, in flight, or blocked -------------------------
+
+def carry_cross_check(conn, cross_check_id, report_id, report_completed, graded):
+    """A cross-check answered, then carried by a report that may or may not have
+    completed - which is the difference between judged, awaiting judgment, and
+    neglected."""
+    conn.execute(
+        "INSERT INTO cross_check_requests (id, created_at, requester_identity, requester_spawned_at, "
+        "requester_role, responder_role, security, question, requester_finding, status, outcome, responder_identity, "
+        "answered_at, schema_version) "
+        "VALUES (?, '2026-08-17T00:00:00+00:00', 'explorer-1', '2026-08-17T00:00:00+00:00', "
+        "'explorer', 'speculator', 'SYN1', 'q', 'f', 'consumed', 'evidence', 'speculator-1', "
+        "'2026-08-17T00:00:30+00:00', 1)",
+        (cross_check_id,),
+    )
+    table = "discovery_reports_completed" if report_completed else "discovery_reports"
+    if report_completed:
+        conn.execute(
+            f"INSERT INTO {table} (id, created_at, producer_identity, producer_spawned_at, "
+            "report_type, security, summary, completed_at, outcome, cross_check_id, schema_version) "
+            "VALUES (?, '2026-08-17T00:00:00+00:00', 'explorer-1', '2026-08-17T00:00:00+00:00', "
+            "'iv', 'SYN1', 's', '2026-08-17T00:01:00+00:00', 'analyzed', ?, 1)",
+            (report_id, cross_check_id),
+        )
+    else:
+        conn.execute(
+            f"INSERT INTO {table} (id, created_at, producer_identity, producer_spawned_at, "
+            "report_type, security, summary, status, cross_check_id, schema_version) "
+            "VALUES (?, '2026-08-17T00:00:00+00:00', 'explorer-1', '2026-08-17T00:00:00+00:00', "
+            "'iv', 'SYN1', 's', 'pending', ?, 1)",
+            (report_id, cross_check_id),
+        )
+    if graded:
+        conn.execute(
+            "INSERT INTO analysis_results (id, created_at, producer_identity, producer_spawned_at, "
+            "report_id, security, thesis, evidence_summary, confidence, schema_version) "
+            "VALUES (?, '2026-08-17T00:00:40+00:00', 'analysis-1', '2026-08-17T00:00:00+00:00', "
+            "?, 'SYN1', 't', 'e', 0.5, 1)",
+            (900 + report_id, report_id),
+        )
+        conn.execute(
+            "INSERT INTO grades (created_at, grader_identity, grader_spawned_at, report_id, "
+            "analysis_result_id, relevance_score, novelty_score, evidence_quality_score, "
+            "worth_the_compute, overall_score, schema_version) "
+            "VALUES ('2026-08-17T00:01:00+00:00', 'analysis-1', '2026-08-17T00:00:00+00:00', ?, ?, "
+            "0.5, 0.5, 0.5, 1, 0.5, 1)",
+            (report_id, 900 + report_id),
+        )
+
+
+def test_a_cross_check_judged_through_its_carrying_report_is_compliant(db):
+    """The false positive that G2 existed to check.
+
+    A cross-check answer is never graded in its own right - it is carried into a
+    report and evaluated as part of it. The first rule looked for a grade keyed
+    directly to the cross-check, which nothing ever writes, so it reported twenty
+    answers as neglected when every one had been carried."""
+    carry_cross_check(db, cross_check_id=1, report_id=1, report_completed=True, graded=True)
+    report = compliance.check(db)
+
+    assert [f for f in report["unevaluated"] if f["rule"] == "cross-check answer"] == []
+
+
+def test_a_cross_check_awaiting_its_report_is_in_flight_not_a_violation(db):
+    """Reporting work still being judged as neglect would make an organization
+    keeping up look exactly like one falling behind."""
+    carry_cross_check(db, cross_check_id=1, report_id=1, report_completed=False, graded=False)
+    report = compliance.check(db)
+
+    assert report["unevaluated"] == []
+    assert len(report["in_flight"]) == 1
+    assert "has not completed" in report["in_flight"][0]["note"]
+
+
+def test_a_cross_check_carried_by_nothing_is_a_real_violation(db):
+    """The other side. If the carrier route were treated as always-compliant,
+    the rule would excuse everything and check nothing."""
+    db.execute(
+        "INSERT INTO cross_check_requests (id, created_at, requester_identity, requester_spawned_at, "
+        "requester_role, responder_role, security, question, requester_finding, status, outcome, responder_identity, "
+        "answered_at, schema_version) "
+        "VALUES (1, '2026-08-17T00:00:00+00:00', 'explorer-1', '2026-08-17T00:00:00+00:00', "
+        "'explorer', 'speculator', 'SYN1', 'q', 'f', 'consumed', 'evidence', 'speculator-1', "
+        "'2026-08-17T00:00:30+00:00', 1)"
+    )
+    violations = [f for f in compliance.check(db)["unevaluated"] if f["rule"] == "cross-check answer"]
+    assert len(violations) == 1
+
+
+def test_blocked_work_is_not_counted_as_a_violation(db):
+    """A schema constraint and somebody's neglect have nothing in common as
+    remedies, so counting them together would make the total meaningless."""
+    complete_report(db, 1, graded=False, outcome="failed")
+    report = compliance.check(db)
+
+    assert report["total_findings"] == 0
+    assert len(report["blocked"]) == 1
+
+
+def test_the_blocked_count_is_pinned():
+    """Same ratchet as exemption. A path quietly marked blocked stops being
+    checked while the suite stays green."""
+    blocked = [rule for rule in compliance.EVALUATION_RULES if rule.blocked]
+    assert len(blocked) == compliance.BLOCKED_COUNT
+    for rule in blocked:
+        assert "Remedy" in rule.blocked or "remedy" in rule.blocked, (
+            f"{rule.name} is blocked without naming who can unblock it"
+        )
