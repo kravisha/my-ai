@@ -74,7 +74,7 @@ def test_queue_depth_is_reconstructed_from_timestamps(empty):
     assert queue["arrivals"] == 4
     assert queue["completions"] == 3
     assert queue["max_depth"] == 3
-    assert queue["final_depth"] == 1
+    assert queue["net_depth_change"] == 1
     assert queue["drained"] is False
 
 
@@ -82,7 +82,7 @@ def test_a_fully_drained_queue_reports_drained(empty):
     add_report(empty, 1, at(0), at(5))
     add_report(empty, 2, at(1), at(6))
     queue = metrics.collect_from(empty)["queue"]
-    assert queue["final_depth"] == 0
+    assert queue["net_depth_change"] == 0
     assert queue["drained"] is True
 
 
@@ -126,24 +126,24 @@ def test_completed_reports_without_analyses_are_counted(empty):
 # -- metric lookup -----------------------------------------------------------
 
 def test_lookup_resolves_a_dotted_path():
-    assert metrics.lookup({"queue": {"final_depth": 7}}, "queue.final_depth") == 7
+    assert metrics.lookup({"queue": {"net_depth_change": 7}}, "queue.net_depth_change") == 7
 
 
 def test_lookup_raises_on_a_missing_path():
     """A typo must not read as absence, which would quietly assert nothing."""
     with pytest.raises(KeyError, match="no metric at"):
-        metrics.lookup({"queue": {"final_depth": 7}}, "queue.finaldepth")
+        metrics.lookup({"queue": {"net_depth_change": 7}}, "queue.netdepth")
 
 
 def test_lookup_error_names_what_was_available():
-    with pytest.raises(KeyError, match="final_depth"):
-        metrics.lookup({"queue": {"final_depth": 7}}, "queue.nope")
+    with pytest.raises(KeyError, match="net_depth_change"):
+        metrics.lookup({"queue": {"net_depth_change": 7}}, "queue.nope")
 
 
 # -- property evaluation -----------------------------------------------------
 
 METRICS = {
-    "queue": {"final_depth": 10, "drained": False, "pressure_ratio": 3.15},
+    "queue": {"net_depth_change": 10, "drained": False, "pressure_ratio": 3.15},
     "population": {"respawns": 0, "running_at_end": [], "crashed": ["analysis-1"]},
     "cross_check": {"unanswered_rate": None},
 }
@@ -158,8 +158,8 @@ def check(**prop):
     ("equals", "population.respawns", 1, False),
     ("at_most", "queue.pressure_ratio", 5.0, True),
     ("at_most", "queue.pressure_ratio", 2.0, False),
-    ("at_least", "queue.final_depth", 5, True),
-    ("at_least", "queue.final_depth", 50, False),
+    ("at_least", "queue.net_depth_change", 5, True),
+    ("at_least", "queue.net_depth_change", 50, False),
     ("is_empty", "population.running_at_end", None, True),
     ("is_empty", "population.crashed", None, False),
     ("is_false", "queue.drained", None, True),
@@ -171,13 +171,13 @@ def test_comparators(comparator, path, value, expected):
 
 
 def test_unknown_comparator_fails_rather_than_passing():
-    result = check(metric="queue.final_depth", **{"assert": "roughly"}, value=10)
+    result = check(metric="queue.net_depth_change", **{"assert": "roughly"}, value=10)
     assert result["passed"] is False
     assert "unknown comparator" in result["detail"]
 
 
 def test_comparator_needing_a_value_fails_without_one():
-    result = check(metric="queue.final_depth", **{"assert": "at_most"})
+    result = check(metric="queue.net_depth_change", **{"assert": "at_most"})
     assert result["passed"] is False
     assert "needs a value" in result["detail"]
 
@@ -236,3 +236,89 @@ def test_baseline_properties_all_resolve_against_the_metric_shape(empty):
             assert "no metric at" not in result["detail"], (
                 f"scenario {scenario.id!r} property {prop['name']!r}: {result['detail']}"
             )
+
+
+# -- day two: metrics against an inherited database ---------------------------
+
+def test_a_run_boundary_excludes_inherited_rows(empty):
+    """The defect chaining exposed.
+
+    Without a boundary, a run that inherits another run's database reports that
+    run's work as its own. Measured on a real chain: the third generation
+    reported eight respawns having respawned nothing, because every generation's
+    baseline spawn was still being counted."""
+    add_report(empty, 1, at(0), at(5))       # inherited
+    add_report(empty, 2, at(1), at(6))       # inherited
+    add_report(empty, 3, at(30), at(35))     # this run
+
+    unscoped = metrics.collect_from(empty)["pipeline"]
+    scoped = metrics.collect_from(empty, since=at(20))["pipeline"]
+
+    assert unscoped["reports_filed"] == 3
+    assert scoped["reports_filed"] == 1
+
+
+def test_work_retired_this_run_counts_even_if_it_arrived_earlier(empty):
+    """Completions are scoped by when the work was retired, not filed.
+
+    An inherited report finished during this run is work this run did, and
+    counting it by creation would credit it to a run that never touched it."""
+    add_report(empty, 1, at(0), at(30))      # arrived before, retired during
+
+    scoped = metrics.collect_from(empty, since=at(20))
+    assert scoped["pipeline"]["reports_completed"] == 1
+    assert scoped["pipeline"]["reports_filed"] == 0
+
+
+def test_inherited_backlog_is_reported_separately(empty):
+    """A run that starts behind is a different situation from one that falls
+    behind, and one depth number cannot tell them apart."""
+    add_report(empty, 1, at(0))              # inherited, still pending
+    add_report(empty, 2, at(1))              # inherited, still pending
+    add_report(empty, 3, at(30))             # filed this run
+
+    queue = metrics.collect_from(empty, since=at(20))["queue"]
+    assert queue["inherited_backlog"] == 2
+    assert queue["arrivals"] == 1
+    assert queue["pending_at_end"] == 3
+
+
+def test_drained_answers_from_what_is_pending_not_from_the_net_change(empty):
+    """It read True over ten waiting reports before these were separated.
+
+    A run that retires exactly as many as it files nets zero while leaving the
+    inherited backlog untouched."""
+    add_report(empty, 1, at(0))              # inherited, never touched
+    add_report(empty, 2, at(30), at(35))     # filed and retired this run
+
+    queue = metrics.collect_from(empty, since=at(20))["queue"]
+    assert queue["net_depth_change"] == 0
+    assert queue["drained"] is False, "a net change of zero is not an empty queue"
+    assert queue["pending_at_end"] == 1
+
+
+def test_intelligence_state_is_never_scoped(empty):
+    """A lens that went stale in an earlier generation is still stale now.
+
+    Scoping current state would report a healthy organization by forgetting."""
+    empty.execute(
+        "INSERT INTO intelligence_artifacts (created_at, artifact_kind, name, version, value, "
+        "status, staleness_reason, schema_version) "
+        "VALUES (?, 'detection_lens', 'old_lens', 1, '2.0', 'stale', 'failed earlier', 1)",
+        (at(0),),
+    )
+    assert metrics.collect_from(empty, since=at(20))["intelligence"]["stale"] == 1
+
+
+def test_lifetime_spawns_stays_cumulative_while_respawns_do_not(empty):
+    for index, completed in enumerate([at(0), at(5), at(30)], start=1):
+        empty.execute(
+            "INSERT INTO coo_directives_completed (id, timestamp, directive_type, target_role, "
+            "requested_by, completed_at, outcome, schema_version) "
+            "VALUES (?, ?, 'spawn', 'analysis', 'coo', ?, 'success', 1)",
+            (index, completed, completed),
+        )
+
+    scoped = metrics.collect_from(empty, since=at(20))["population"]
+    assert scoped["lifetime_spawns"] == 3
+    assert scoped["respawns"] == 0, "one baseline spawn this run is not a respawn"

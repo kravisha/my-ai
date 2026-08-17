@@ -38,6 +38,7 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -158,6 +159,56 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def inherit_database(source_db: Path, destination: Path) -> None:
+    """Start a run from another run's database, without touching the original.
+
+    **Copied rather than reused.** Mutating the source would make day one
+    unrepeatable the moment day two ran, and the whole value of a chain is being
+    able to replay any generation from the state that preceded it.
+
+    Uses SQLite's own backup API rather than a file copy: the source may have a
+    WAL sidecar holding committed pages that `financial_intelligence.db` does not
+    yet contain, so copying the one file can silently produce a database missing
+    its most recent writes - which on a simulation chain would be the writes that
+    matter most."""
+    source_db = Path(source_db)
+    if source_db.is_dir():
+        source_db = source_db / "financial_intelligence.db"
+    if not source_db.exists():
+        raise HarnessError(f"cannot inherit from {source_db}: no database there")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(source_db)
+    target = sqlite3.connect(destination)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+
+
+def latest_run(scenario_id: str | None = None, runs_dir: Path | None = None) -> Path | None:
+    """The most recent completed run, optionally of one scenario.
+
+    Completed means it has a summary; a run that crashed halfway is not a state
+    anything should inherit."""
+    root = Path(runs_dir or RUNS_DIR)
+    if not root.exists():
+        return None
+    candidates = []
+    for directory in root.iterdir():
+        manifest_path = directory / "manifest.json"
+        if not directory.is_dir() or not manifest_path.exists():
+            continue
+        if not (directory / "summary.json").exists():
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if scenario_id and manifest.get("scenario_id") != scenario_id:
+            continue
+        candidates.append((manifest.get("started_at") or "", directory))
+    return max(candidates)[1] if candidates else None
+
+
 def _expected_population() -> set[str]:
     """Roles that must be running before a run counts as started.
 
@@ -169,8 +220,15 @@ def _expected_population() -> set[str]:
 class SimulationRun:
     """One execution of one scenario, in its own directory."""
 
-    def __init__(self, scenario: Scenario, runs_dir: Path | None = None, run_id: str | None = None):
+    def __init__(
+        self,
+        scenario: Scenario,
+        runs_dir: Path | None = None,
+        run_id: str | None = None,
+        inherit_from: Path | None = None,
+    ):
         self.scenario = scenario
+        self.inherit_from = Path(inherit_from) if inherit_from else None
         self.run_id = run_id or f"{scenario.id}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
         self.directory = Path(runs_dir or RUNS_DIR) / self.run_id
         self.db_path = self.directory / "financial_intelligence.db"
@@ -183,6 +241,16 @@ class SimulationRun:
         self._ready_after: float | None = None
 
     # -- environment ---------------------------------------------------------
+
+    def _generation(self) -> int:
+        """How many runs deep the inherited state is. A fresh run is generation 1."""
+        if self.inherit_from is None:
+            return 1
+        parent = Path(self.inherit_from)
+        manifest = parent / "manifest.json" if parent.is_dir() else parent.parent / "manifest.json"
+        if not manifest.exists():
+            return 2
+        return int(json.loads(manifest.read_text(encoding="utf-8")).get("generation", 1)) + 1
 
     def build_env(self) -> dict[str, str]:
         """The environment the whole organization comes up in.
@@ -217,6 +285,12 @@ class SimulationRun:
             "requires_model": self.scenario.requires_model,
             "expected_properties": list(self.scenario.expected_properties),
             "started_at": self._started_at,
+            # Lineage. A run that began from another run's database is a
+            # different experiment from one that began empty, and a summary
+            # comparing the two without knowing which is which would attribute
+            # inherited state to this run's conditions.
+            "inherited_from": str(self.inherit_from) if self.inherit_from else None,
+            "generation": self._generation(),
             **extra,
         }
         self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -233,6 +307,8 @@ class SimulationRun:
             )
 
         self.directory.mkdir(parents=True, exist_ok=True)
+        if self.inherit_from is not None:
+            inherit_database(self.inherit_from, self.db_path)
         self._started_at = _now()
         self.write_manifest()
 
@@ -393,7 +469,9 @@ def summarise_run(directory: str | Path) -> dict:
     if not db_path.exists():
         raise HarnessError(f"run {manifest.get('run_id')} has no database at {db_path}")
 
-    collected = metrics_module.collect(db_path)
+    # Bounded to when this run started, so an inherited database's history is not
+    # reported as this run's activity.
+    collected = metrics_module.collect(db_path, since=manifest.get("started_at"))
     results = properties_module.evaluate_all(manifest.get("expected_properties") or [], collected)
 
     summary = {
@@ -404,6 +482,8 @@ def summarise_run(directory: str | Path) -> dict:
         # Carried into the summary so a comparison between two runs cannot
         # silently put a degraded Analysis alongside a full one.
         "model_available": manifest.get("model_available"),
+        "generation": manifest.get("generation", 1),
+        "inherited_from": manifest.get("inherited_from"),
         "graceful_shutdown": manifest.get("graceful_shutdown"),
         "started_at": manifest.get("started_at"),
         "finished_at": manifest.get("finished_at"),
@@ -415,13 +495,15 @@ def summarise_run(directory: str | Path) -> dict:
     return summary
 
 
-def execute(scenario: Scenario, runs_dir: Path | None = None) -> RunResult:
+def execute(
+    scenario: Scenario, runs_dir: Path | None = None, inherit_from: Path | None = None
+) -> RunResult:
     """Start, hold for the scenario's duration, stop, and record.
 
     The stop is in a `finally` so a failure during the run cannot leave the
     organization alive - a harness that leaks the processes it exists to observe
     would be worse than no harness."""
-    run = SimulationRun(scenario, runs_dir=runs_dir)
+    run = SimulationRun(scenario, runs_dir=runs_dir, inherit_from=inherit_from)
     graceful, detail = False, "not reached"
     try:
         run.start()

@@ -38,8 +38,14 @@ def _cmd_run(args) -> int:
         )
         return 2
 
-    print(f"running {scenario.id} v{scenario.version} for {scenario.duration_seconds:.0f}s")
-    result = harness.execute(scenario)
+    inherit = _resolve_inheritance(args.inherit, scenario.id)
+    if args.inherit and inherit is None:
+        print(f"nothing to inherit from for {scenario.id!r}", file=sys.stderr)
+        return 2
+
+    print(f"running {scenario.id} v{scenario.version} for {scenario.duration_seconds:.0f}s"
+          + (f", inheriting {inherit.name}" if inherit else ""))
+    result = harness.execute(scenario, inherit_from=inherit)
 
     print(f"\nrun_id     {result.run_id}")
     print(f"directory  {result.directory}")
@@ -55,6 +61,48 @@ def _cmd_run(args) -> int:
     # agent process left alive keeps writing, and results from an organization
     # nobody is watching are worse than no results.
     return 0 if result.graceful and result.properties_passed else 1
+
+
+def _resolve_inheritance(value: str | None, scenario_id: str) -> Path | None:
+    if not value:
+        return None
+    if value == "latest":
+        return harness.latest_run(scenario_id)
+    candidate = Path(value)
+    return candidate if candidate.exists() else harness.RUNS_DIR / value
+
+
+def _cmd_chain(args) -> int:
+    """Run one scenario repeatedly, each generation starting from the last one's database.
+
+    The point is day two. Every run the harness produced before this started from
+    an empty database, so an entire class of defect - anything that only appears
+    against state that already exists - was structurally unreachable. A chain is
+    what makes accumulated regime observations, an inherited report backlog, a
+    partly-consumed name pool and a migrated schema part of the experiment
+    instead of things production discovers alone."""
+    scenarios = scenario_module.load_all()
+    scenario = scenarios.get(args.scenario_id)
+    if scenario is None:
+        print(f"no scenario {args.scenario_id!r}", file=sys.stderr)
+        return 2
+
+    inherit = _resolve_inheritance(args.inherit, scenario.id)
+    failures = 0
+    for generation in range(1, args.generations + 1):
+        print(f"\n=== generation {generation}/{args.generations} "
+              f"({'fresh' if inherit is None else 'inheriting ' + inherit.name}) ===")
+        result = harness.execute(scenario, inherit_from=inherit)
+        print(f"run_id     {result.run_id}")
+        print(f"shutdown   {'clean' if result.graceful else 'NOT CLEAN'} - {result.shutdown_detail}")
+        if result.summary:
+            _print_summary(result.summary)
+        if not (result.graceful and result.properties_passed):
+            failures += 1
+        inherit = result.directory
+
+    print(f"\n{args.generations - failures}/{args.generations} generations passed")
+    return 0 if failures == 0 else 1
 
 
 def _cmd_summarise(args) -> int:
@@ -77,12 +125,16 @@ def _print_summary(summary: dict, verbose: bool = False) -> None:
     population, intel = metrics["population"], metrics["intelligence"]
 
     model = "live model" if summary.get("model_available") else "NO MODEL - Analysis degraded"
-    print(f"\n-- {summary['scenario_id']} v{summary['scenario_version']} ({model}) --")
+    generation = summary.get("generation") or 1
+    lineage = f", generation {generation}" if generation > 1 else ""
+    print(f"\n-- {summary['scenario_id']} v{summary['scenario_version']} ({model}{lineage}) --")
     print(f"  detections {pipeline['detector_events']:<6} evidence {pipeline['evidence_items']:<7} "
           f"reports {pipeline['reports_filed']:<5} analyses {pipeline['analyses']:<5} "
           f"grades {pipeline['grades']}")
     print(f"  queue      arrivals {queue['arrivals']}, completed {queue['completions']}, "
-          f"peak depth {queue['max_depth']}, final {queue['final_depth']}"
+          f"peak {queue['max_depth']}, net {queue['net_depth_change']:+d}, "
+          f"pending at end {queue['pending_at_end']}"
+          + (f" (inherited {queue['inherited_backlog']})" if queue.get("inherited_backlog") else "")
           + (f", pressure x{queue['pressure_ratio']}" if queue["pressure_ratio"] else ""))
     if pipeline["handling_latency_seconds"]["p50"] is not None:
         latency = pipeline["handling_latency_seconds"]
@@ -119,7 +171,17 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("scenario_id")
     run_parser.add_argument("--force", action="store_true",
                             help="run a scenario whose lifecycle state says it should not be run")
+    run_parser.add_argument("--inherit", metavar="RUN",
+                            help="start from another run's database: a run_id, a path, or 'latest'")
     run_parser.set_defaults(func=_cmd_run)
+
+    chain_parser = sub.add_parser(
+        "chain", help="run a scenario several times, each starting from the previous database")
+    chain_parser.add_argument("scenario_id")
+    chain_parser.add_argument("-n", "--generations", type=int, default=3)
+    chain_parser.add_argument("--inherit", metavar="RUN",
+                              help="seed the first generation from an existing run instead of empty")
+    chain_parser.set_defaults(func=_cmd_chain)
 
     summarise_parser = sub.add_parser(
         "summarise", help="re-read a finished run directory and rewrite its summary")

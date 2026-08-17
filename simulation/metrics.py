@@ -27,7 +27,6 @@ Internal rationale: INT-PHIL-0018
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 from backend import fi_db
@@ -51,63 +50,106 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return round(ordered[index], 2)
 
 
-def collect(db_path: str | Path) -> dict:
+def collect(db_path: str | Path, since: str | None = None) -> dict:
     conn = fi_db.get_connection(db_path)
     try:
-        return collect_from(conn)
+        return collect_from(conn, since)
     finally:
         conn.close()
 
 
-def collect_from(conn) -> dict:
+def collect_from(conn, since: str | None = None) -> dict:
     """Split out from `collect` so the derivations can be exercised against a
-    constructed database rather than only against a completed run."""
+    constructed database rather than only against a completed run.
+
+    **`since` is what makes a metric describe a run rather than a lineage.**
+    A run that inherits another run's database inherits its rows too, and
+    without a boundary every flow measure reports the accumulated history of
+    every generation. That is not a subtle distortion: chained runs reported
+    four respawns and then eight, when each generation had spawned its baseline
+    exactly once and nothing had been respawned at all. Two property failures,
+    neither of them real.
+
+    Flow families - what happened - are scoped. State families - what is true
+    now, like which lenses are stale or who is registered - are not, because
+    inherited state is genuinely part of the organization's present."""
     return {
-        "pipeline": _pipeline(conn),
-        "queue": _queue(conn),
-        "cross_check": _cross_check(conn),
-        "population": _population(conn),
+        "pipeline": _pipeline(conn, since),
+        "queue": _queue(conn, since),
+        "cross_check": _cross_check(conn, since),
+        "population": _population(conn, since),
         "intelligence": _intelligence(conn),
-        "resource": _resource(conn),
+        "resource": _resource(conn, since),
     }
 
 
-def _count(conn, table: str) -> int:
-    return conn.fetchone(f"SELECT COUNT(*) AS n FROM {table}")["n"]
+def _scoped_count(conn, table: str, column: str, since: str | None) -> int:
+    if since is None:
+        return conn.fetchone(f"SELECT COUNT(*) AS n FROM {table}")["n"]
+    return conn.fetchone(
+        f"SELECT COUNT(*) AS n FROM {table} WHERE {column} >= ?", (since,)
+    )["n"]
 
 
-def _pipeline(conn) -> dict:
-    reports_pending = _count(conn, "discovery_reports")
-    reports_done = _count(conn, "discovery_reports_completed")
+def _scoped_rows(conn, sql: str, column: str, since: str | None, params: tuple = ()) -> list:
+    """Append a time bound to a query, or run it unbounded.
+
+    The caller supplies a query ending in a WHERE clause of its own or none at
+    all; `1=1` keeps both shapes valid without two versions of every statement."""
+    if since is None:
+        return conn.fetchall(sql.replace("{bound}", "1=1"), params)
+    return conn.fetchall(sql.replace("{bound}", f"{column} >= ?"), params + (since,))
+
+
+def _pipeline(conn, since: str | None = None) -> dict:
+    """Work filed and retired during this run.
+
+    Arrivals are scoped by when a report was created; completions by when it was
+    *completed*, not created. A report inherited from an earlier generation and
+    retired during this one is work this run did, and counting it by creation
+    would credit it to a run that never touched it."""
+    reports_filed = (
+        _scoped_count(conn, "discovery_reports", "created_at", since)
+        + _scoped_count(conn, "discovery_reports_completed", "created_at", since)
+    )
+    reports_done = _scoped_count(conn, "discovery_reports_completed", "completed_at", since)
+    analyses = _scoped_count(conn, "analysis_results", "created_at", since)
+    grades = _scoped_count(conn, "grades", "created_at", since)
 
     by_producer = {
         row["producer_identity"]: row["n"]
-        for row in conn.fetchall(
+        for row in _scoped_rows(
+            conn,
             "SELECT producer_identity, COUNT(*) AS n FROM ("
-            "  SELECT producer_identity FROM discovery_reports"
-            "  UNION ALL SELECT producer_identity FROM discovery_reports_completed"
-            ") GROUP BY producer_identity"
+            "  SELECT producer_identity, created_at FROM discovery_reports"
+            "  UNION ALL SELECT producer_identity, created_at FROM discovery_reports_completed"
+            ") WHERE {bound} GROUP BY producer_identity",
+            "created_at", since,
         )
     }
 
     latencies = [
         _seconds(row["created_at"], row["completed_at"])
-        for row in conn.fetchall("SELECT created_at, completed_at FROM discovery_reports_completed")
+        for row in _scoped_rows(
+            conn,
+            "SELECT created_at, completed_at FROM discovery_reports_completed WHERE {bound}",
+            "completed_at", since,
+        )
     ]
 
     return {
-        "detector_events": _count(conn, "detector_events"),
-        "evidence_items": _count(conn, "evidence_items"),
-        "reports_filed": reports_pending + reports_done,
+        "detector_events": _scoped_count(conn, "detector_events", "created_at", since),
+        "evidence_items": _scoped_count(conn, "evidence_items", "created_at", since),
+        "reports_filed": reports_filed,
         "reports_completed": reports_done,
         "reports_by_producer": by_producer,
-        "analyses": _count(conn, "analysis_results"),
-        "grades": _count(conn, "grades"),
+        "analyses": analyses,
+        "grades": grades,
         # Every completed report should produce exactly one analysis and one
         # grade. A shortfall means work was consumed without being judged, which
         # no test would notice because each stage passes on its own.
-        "unanalysed_completed_reports": reports_done - _count(conn, "analysis_results"),
-        "ungraded_analyses": _count(conn, "analysis_results") - _count(conn, "grades"),
+        "unanalysed_completed_reports": reports_done - analyses,
+        "ungraded_analyses": analyses - grades,
         "handling_latency_seconds": {
             "count": len(latencies),
             "p50": _percentile(latencies, 0.5),
@@ -117,26 +159,47 @@ def _pipeline(conn) -> dict:
     }
 
 
-def _queue(conn) -> dict:
-    """Arrival against drain, and the depth curve implied by the two."""
+def _queue(conn, since: str | None = None) -> dict:
+    """Arrival against drain, and the depth curve implied by the two.
+
+    `inherited_backlog` is reported separately because a run that starts behind
+    is a different situation from one that falls behind, and a single depth
+    number cannot tell the two apart."""
     arrivals = [
         row["created_at"]
-        for row in conn.fetchall(
-            "SELECT created_at FROM discovery_reports "
-            "UNION ALL SELECT created_at FROM discovery_reports_completed"
+        for row in _scoped_rows(
+            conn,
+            "SELECT created_at FROM ("
+            "  SELECT created_at FROM discovery_reports"
+            "  UNION ALL SELECT created_at FROM discovery_reports_completed"
+            ") WHERE {bound}",
+            "created_at", since,
         )
     ]
     completions = [
         row["completed_at"]
-        for row in conn.fetchall("SELECT completed_at FROM discovery_reports_completed")
+        for row in _scoped_rows(
+            conn,
+            "SELECT completed_at FROM discovery_reports_completed WHERE {bound}",
+            "completed_at", since,
+        )
     ]
+
+    inherited = 0
+    if since is not None:
+        inherited = conn.fetchone(
+            "SELECT COUNT(*) AS n FROM discovery_reports WHERE created_at < ?", (since,)
+        )["n"]
+
+    pending_now = conn.fetchone("SELECT COUNT(*) AS n FROM discovery_reports")["n"]
 
     if not arrivals:
         return {
-            "arrivals": 0, "completions": 0, "final_depth": 0, "max_depth": 0,
-            "drained": True, "arrival_interval_seconds": None,
-            "drain_interval_seconds": None, "pressure_ratio": None,
-            "oldest_pending_age_seconds": None,
+            "arrivals": 0, "completions": len(completions), "net_depth_change": 0,
+            "max_depth": 0, "drained": pending_now == 0,
+            "arrival_interval_seconds": None, "drain_interval_seconds": None,
+            "pressure_ratio": None, "oldest_pending_age_seconds": None,
+            "inherited_backlog": inherited, "pending_at_end": pending_now,
         }
 
     events = [(fi_db.parse_timestamp(t), +1) for t in arrivals]
@@ -168,9 +231,14 @@ def _queue(conn) -> dict:
     return {
         "arrivals": len(arrivals),
         "completions": len(completions),
-        "final_depth": depth,
+        # The NET CHANGE this run made to the queue, not the queue's size. A run
+        # that retired exactly as many as it filed nets zero while leaving an
+        # inherited backlog untouched, so `drained` is answered from what is
+        # actually pending - it read True over ten waiting reports before this
+        # was separated.
+        "net_depth_change": depth,
         "max_depth": max_depth,
-        "drained": depth == 0,
+        "drained": pending_now == 0,
         "arrival_interval_seconds": arrival_interval,
         "drain_interval_seconds": drain_interval,
         # Above 1.0 the queue grows without bound. This is the single number that
@@ -180,14 +248,20 @@ def _queue(conn) -> dict:
             if arrival_interval and drain_interval else None
         ),
         "oldest_pending_age_seconds": oldest_pending_age,
+        # Work this run began already owing, and everything still owed at the
+        # end regardless of which generation filed it.
+        "inherited_backlog": inherited,
+        "pending_at_end": pending_now,
     }
 
 
-def _cross_check(conn) -> dict:
+def _cross_check(conn, since: str | None = None) -> dict:
     outcomes = {
         str(row["outcome"]): row["n"]
-        for row in conn.fetchall(
-            "SELECT outcome, COUNT(*) AS n FROM cross_check_requests GROUP BY outcome"
+        for row in _scoped_rows(
+            conn,
+            "SELECT outcome, COUNT(*) AS n FROM cross_check_requests WHERE {bound} GROUP BY outcome",
+            "created_at", since,
         )
     }
     total = sum(outcomes.values())
@@ -206,15 +280,22 @@ def _cross_check(conn) -> dict:
     }
 
 
-def _population(conn) -> dict:
+def _population(conn, since: str | None = None) -> dict:
+    """Registry state is current and unscoped; spawn activity is this run's.
+
+    Mixing the two is what made a chained run report eight respawns having
+    respawned nothing: the registry is rightly cumulative, and the directives
+    are rightly not."""
     rows = conn.fetchall(
         "SELECT identity, role, process_state, lifecycle_state FROM agent_registry"
     )
     spawns = {
         row["target_role"]: row["n"]
-        for row in conn.fetchall(
+        for row in _scoped_rows(
+            conn,
             "SELECT target_role, COUNT(*) AS n FROM coo_directives_completed "
-            "WHERE directive_type = 'spawn' GROUP BY target_role"
+            "WHERE directive_type = 'spawn' AND {bound} GROUP BY target_role",
+            "completed_at", since,
         )
     }
     return {
@@ -224,21 +305,28 @@ def _population(conn) -> dict:
         "crashed": sorted(r["identity"] for r in rows if r["process_state"] == "crashed"),
         "dormant": sorted(r["identity"] for r in rows if r["lifecycle_state"] == "dormant"),
         "spawn_directives": spawns,
-        # A role spawned more than once in a single run was either respawned
+        # A role spawned more than once *within one run* was either respawned
         # after a crash or - the defect that produced three concurrent processes
-        # under one identity - respawned while still alive. Either way the
-        # control run should show none.
+        # under one identity - respawned while still alive. Establishing the
+        # baseline once per run is normal and must not count here.
         "respawns": sum(max(0, n - 1) for n in spawns.values()),
-        "failed_directives": conn.fetchone(
-            "SELECT COUNT(*) AS n FROM coo_directives_completed WHERE outcome = 'failure'"
+        "lifetime_spawns": conn.fetchone(
+            "SELECT COUNT(*) AS n FROM coo_directives_completed WHERE directive_type = 'spawn'"
         )["n"],
-        "heartbeats": conn.fetchone(
-            "SELECT COUNT(*) AS n FROM health_metrics WHERE metric = 'heartbeat'"
-        )["n"],
+        "failed_directives": len(_scoped_rows(
+            conn,
+            "SELECT id FROM coo_directives_completed WHERE outcome = 'failure' AND {bound}",
+            "completed_at", since,
+        )),
+        "heartbeats": _scoped_count(conn, "health_metrics", "timestamp", since),
     }
 
 
 def _intelligence(conn) -> dict:
+    """Current state, never scoped.
+
+    A lens that went stale in an earlier generation is still stale now, and
+    scoping this would report a healthy organization by forgetting."""
     artifacts = conn.fetchall(
         "SELECT name, status, staleness_reason, validity_conditions FROM intelligence_artifacts"
     )
@@ -262,11 +350,11 @@ def _intelligence(conn) -> dict:
         "staleness_reasons": [row["staleness_reason"] for row in artifacts if row["staleness_reason"]],
         "securities_observed": len(regimes),
         "regime_observations": sum(row["observation_count"] for row in regimes),
-        "knowledge_records": _count(conn, "knowledge_records"),
+        "knowledge_records": conn.fetchone("SELECT COUNT(*) AS n FROM knowledge_records")["n"],
     }
 
 
-def _resource(conn) -> dict:
+def _resource(conn, since: str | None = None) -> dict:
     """What the run consumed.
 
     **Nothing meters model usage**, so the counts below are inferred from work
@@ -280,13 +368,14 @@ def _resource(conn) -> dict:
     return {
         "metered": False,
         "unit": "model_call",
-        "inferred_reasoning_calls": _count(conn, "analysis_results"),
+        "inferred_reasoning_calls": _scoped_count(conn, "analysis_results", "created_at", since),
         "inferred_uqi_calls": conn.fetchone(
-            "SELECT COUNT(*) AS n FROM uqi_requests WHERE status = 'answered'"
+            "SELECT COUNT(*) AS n FROM uqi_requests WHERE status = 'answered' "
+            "AND (? IS NULL OR created_at >= ?)", (since, since),
         )["n"],
-        "evidence_items_collected": _count(conn, "evidence_items"),
+        "evidence_items_collected": _scoped_count(conn, "evidence_items", "created_at", since),
         "rows_written": sum(
-            _count(conn, table)
+            _scoped_count(conn, table, "created_at", since)
             for table in ("detector_events", "evidence_items", "analysis_results", "grades")
         ),
     }
