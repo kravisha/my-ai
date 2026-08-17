@@ -75,7 +75,7 @@ DB_PATH = Path(os.environ.get("FI_DB_PATH") or (Path(__file__).resolve().parent.
 # lens can be bound to the regime it was observed working under - so a lens
 # can now expire because *conditions changed*, not only because its grades
 # were poor.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -701,6 +701,48 @@ CREATE TABLE IF NOT EXISTS agent_names (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Which name occupied which slot, and when. The owner decision of 2026-08-17 is
+-- that the agent is not the job: `name` is the durable agent, `identity` is the
+-- desk it currently sits at, and the two must be able to come apart.
+--
+-- `agent_names` records only the *current* binding, so without this table the
+-- previous binding is not superseded, it is gone. **That is why this table
+-- exists now rather than when the rest of the personnel system is built:**
+-- assignment history is the one part that cannot be reconstructed later. Every
+-- other personnel concept - qualifications, commendations, rankings - can be
+-- added the day something produces them, with nothing lost by the wait.
+--
+-- No work row is denormalised against a name, ever. The ~73 provenance columns
+-- (producer_identity, grader_identity, requester_identity and the rest) keep
+-- naming the slot, because that is what was true when the work happened.
+-- Personnel history is *derived* by intersecting those timestamps with the span
+-- that contained them - see attributed_work. A name that later moves therefore
+-- cannot silently re-attribute work it never did.
+--
+-- Dormancy does NOT end an assignment (owner decision, 2026-08-17): a retired
+-- agent still holds its desk. It is not working and it has not vacated, and
+-- resuming it must not need a fresh assignment.
+CREATE TABLE IF NOT EXISTS agent_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    role TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    reason TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+-- Attribution is ambiguous unless a timestamp falls inside exactly one span, so
+-- the two invariants are enforced by the database rather than by whichever
+-- caller remembers. Partial indexes constrain only the open rows, leaving any
+-- number of closed spans per name and per identity - which is the history.
+CREATE UNIQUE INDEX IF NOT EXISTS agent_assignments_one_open_per_name
+    ON agent_assignments (name) WHERE ended_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_assignments_one_open_per_identity
+    ON agent_assignments (identity) WHERE ended_at IS NULL;
+CREATE INDEX IF NOT EXISTS agent_assignments_by_name ON agent_assignments (name, started_at);
+
 -- The seed of the knowledge store (JARVIS Constitution §3). Holds
 -- *intelligence* - ways of seeing - rather than data or observations. The
 -- distinction is load-bearing: an IV surface is data, a detected anomaly is
@@ -942,7 +984,7 @@ def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     # burning a second one. Deliberately best-effort: a name is a display
     # concern, and an exhausted pool must never be able to stop an agent from
     # registering (see assign_agent_name).
-    assign_agent_name(conn, identity)
+    assign_agent_name(conn, identity, role=role)
 
 
 def request_retirement(conn: Database, identity: str) -> None:
@@ -1342,7 +1384,200 @@ def get_performance_card(conn: Database) -> list[dict]:
 # --- Pre-Alpha static metadata: Agent Name Repository + Security Universe ---
 
 
-def assign_agent_name(conn: Database, identity: str) -> str | None:
+# Every table where an agent's work is recorded against the slot it occupied,
+# with the column naming that slot. attributed_work intersects these timestamps
+# with an assignment span to answer "what did this agent do", without any of
+# these rows referring to a name.
+#
+# discovery_reports and discovery_reports_completed are both listed on purpose:
+# a report that has not been consumed yet is still work the producer did, and
+# leaving the pending table out would make an agent's record shrink and grow as
+# the queue drains.
+WORK_PROVENANCE = (
+    ("detector_events", "producer_identity"),
+    ("evidence_items", "producer_identity"),
+    ("discovery_reports", "producer_identity"),
+    ("discovery_reports_completed", "producer_identity"),
+    ("analysis_results", "producer_identity"),
+    ("grades", "grader_identity"),
+)
+
+
+def _role_of(conn: Database, identity: str) -> str:
+    """The role a slot belongs to, from the registry if it is known there.
+
+    Falls back to the slot naming convention rather than failing: an assignment
+    with an unknown role is still a true assignment, and refusing to record it
+    would lose the history this table exists to keep."""
+    row = conn.fetchone("SELECT role FROM agent_registry WHERE identity = ?", (identity,))
+    if row is not None:
+        return row["role"]
+    return identity.rsplit("-", 1)[0] if "-" in identity else identity
+
+
+def open_assignment(
+    conn: Database,
+    name: str,
+    identity: str,
+    role: str | None = None,
+    reason: str | None = None,
+    started_at: str | None = None,
+) -> int:
+    """Record that `name` now occupies `identity`.
+
+    Raises if either party already holds an open assignment. The partial unique
+    indexes would refuse it anyway; checking here turns an IntegrityError into a
+    sentence that says which agent is already where.
+
+    `started_at` exists for backdating a span to when the assignment actually
+    began, which matters only on the backfill path - see _ensure_assignment."""
+    held = current_assignment(conn, name=name)
+    if held is not None:
+        raise ValueError(
+            f"{name!r} already holds {held['identity']!r}; reassign it rather than opening a second assignment"
+        )
+    occupant = current_assignment(conn, identity=identity)
+    if occupant is not None:
+        raise ValueError(
+            f"{identity!r} is already occupied by {occupant['name']!r}. Moving {name!r} there means "
+            "moving them out first - a swap is two reassignments, and doing it implicitly would "
+            "silently evict an agent."
+        )
+    return conn.execute(
+        "INSERT INTO agent_assignments (name, identity, role, started_at, ended_at, reason, schema_version) "
+        "VALUES (?, ?, ?, ?, NULL, ?, ?)",
+        (name, identity, role or _role_of(conn, identity), started_at or _now(), reason, SCHEMA_VERSION),
+    )
+
+
+def reassign_agent_name(conn: Database, name: str, identity: str, reason: str | None = None) -> dict:
+    """Move an agent to a different slot, closing the span it is leaving.
+
+    The transfer of §10: Alex begins as Explorer and later becomes Analyst
+    without becoming a second agent. Both spans survive, so work done under
+    either remains attributable to the span that contained it.
+
+    Deliberately NOT reachable from register_agent. A respawn must never be able
+    to trigger a move - assign_agent_name stays idempotent, and this is the only
+    other writer of assigned_to_identity."""
+    row = conn.fetchone("SELECT name FROM agent_names WHERE name = ?", (name,))
+    if row is None:
+        raise ValueError(f"no agent named {name!r}")
+
+    held = current_assignment(conn, name=name)
+    if held is not None and held["identity"] == identity:
+        return held
+
+    occupant = current_assignment(conn, identity=identity)
+    if occupant is not None:
+        raise ValueError(
+            f"{identity!r} is already occupied by {occupant['name']!r}; move them out first"
+        )
+
+    if held is not None:
+        conn.execute(
+            "UPDATE agent_assignments SET ended_at = ?, reason = COALESCE(reason, ?) "
+            "WHERE id = ? AND ended_at IS NULL",
+            (_now(), reason, held["id"]),
+        )
+
+    conn.execute(
+        "UPDATE agent_names SET assigned_to_identity = ?, assigned_at = ? WHERE name = ?",
+        (identity, _now(), name),
+    )
+    open_assignment(conn, name, identity, reason=reason)
+    return current_assignment(conn, name=name)
+
+
+def current_assignment(
+    conn: Database, identity: str | None = None, name: str | None = None
+) -> dict | None:
+    """The open span for a slot or an agent, or None if there is none."""
+    if (identity is None) == (name is None):
+        raise ValueError("pass exactly one of identity or name")
+    column, value = ("identity", identity) if identity is not None else ("name", name)
+    row = conn.fetchone(
+        f"SELECT * FROM agent_assignments WHERE {column} = ? AND ended_at IS NULL", (value,)
+    )
+    return dict(row) if row else None
+
+
+def assignment_history(conn: Database, name: str) -> list[dict]:
+    """Every span this agent has held, oldest first. The open one is last."""
+    return [
+        dict(row)
+        for row in conn.fetchall(
+            "SELECT * FROM agent_assignments WHERE name = ? ORDER BY started_at, id", (name,)
+        )
+    ]
+
+
+def attributed_work(conn: Database, name: str) -> dict:
+    """What this agent produced, counted per work table across all of its spans.
+
+    A row counts when its producer was the slot and its timestamp fell inside a
+    span this agent held. Half-open on purpose - `started_at <= t < ended_at` -
+    so a row written at the exact instant of a transfer belongs to exactly one
+    span rather than to both or to neither."""
+    spans = assignment_history(conn, name)
+    counts = {table: 0 for table, _ in WORK_PROVENANCE}
+    for span in spans:
+        for table, column in WORK_PROVENANCE:
+            row = conn.fetchone(
+                f"SELECT COUNT(*) AS n FROM {table} "
+                f"WHERE {column} = ? AND created_at >= ? AND (? IS NULL OR created_at < ?)",
+                (span["identity"], span["started_at"], span["ended_at"], span["ended_at"]),
+            )
+            counts[table] += row["n"]
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+def personnel_record(conn: Database, name: str) -> dict | None:
+    """The personnel folder: who this agent is, where it sits, where it has sat,
+    and what it produced along the way.
+
+    The two layers are kept apart rather than merged. `current` is what is true
+    now and changes; `history` and `work` are what happened and do not. Neither
+    overwrites the other, which is the same discipline intelligence_artifacts and
+    knowledge_records already follow.
+
+    Qualifications, commendations, competency profiles and rankings are
+    deliberately absent: nothing awards them yet. Returning empty lists for them
+    would present a capability that does not exist."""
+    row = conn.fetchone("SELECT * FROM agent_names WHERE name = ?", (name,))
+    if row is None:
+        return None
+
+    current = current_assignment(conn, name=name)
+    agent = get_agent(conn, current["identity"]) if current else None
+
+    return {
+        "name": name,
+        "current": {
+            "identity": current["identity"] if current else None,
+            "role": current["role"] if current else None,
+            "since": current["started_at"] if current else None,
+            # Dormancy does not vacate the desk, so an agent can hold an
+            # assignment while not being in service. Both facts are reported.
+            "lifecycle_state": agent["lifecycle_state"] if agent else None,
+            "process_state": agent["process_state"] if agent else None,
+        },
+        "history": assignment_history(conn, name),
+        "work": attributed_work(conn, name),
+    }
+
+
+def list_personnel(conn: Database) -> list[dict]:
+    return [
+        personnel_record(conn, row["name"])
+        for row in conn.fetchall(
+            "SELECT name FROM agent_names WHERE assigned_to_identity IS NOT NULL ORDER BY name"
+        )
+    ]
+
+
+def assign_agent_name(conn: Database, identity: str, role: str | None = None) -> str | None:
     """Claims the next available non-reserved name for this identity, or
     returns the name it already holds. Idempotent by design: identity is a
     permanent role-slot (see backend/controller.py's _slot_identity), so an
@@ -1355,6 +1590,10 @@ def assign_agent_name(conn: Database, identity: str) -> str | None:
     agent from registering and doing real work."""
     existing = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
     if existing is not None:
+        # Backfill path as well as the respawn path. A database created before
+        # agent_assignments existed has bindings but no spans, and this is where
+        # they acquire one - on the next registration, without a migration step.
+        _ensure_assignment(conn, existing["name"], identity, role)
         return existing["name"]
 
     available = conn.fetchone(
@@ -1373,7 +1612,43 @@ def assign_agent_name(conn: Database, identity: str) -> str | None:
     # this identity actually ended up with (None if it lost and the pool has
     # since emptied).
     confirmed = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
-    return confirmed["name"] if confirmed else None
+    if confirmed is None:
+        return None
+    _ensure_assignment(conn, confirmed["name"], identity, role)
+    return confirmed["name"]
+
+
+def _ensure_assignment(conn: Database, name: str, identity: str, role: str | None) -> None:
+    """Open this agent's first assignment span, if it has none.
+
+    Idempotent, and it has to be: register_agent runs on every spawn AND every
+    respawn, and a respawn that opened a second span would read as a transfer
+    the agent never made. The span is what the personnel history is built from,
+    so a spurious one is not a cosmetic error - it would split one agent's
+    record in two."""
+    if current_assignment(conn, name=name) is not None:
+        return
+    if current_assignment(conn, identity=identity) is not None:
+        # The desk is held by a different name. Reaching here means the binding
+        # in agent_names disagrees with the open span, which reassign_agent_name
+        # keeps consistent - so do nothing rather than evict anyone, and leave
+        # the disagreement visible.
+        return
+
+    # **Backdated to when the name was actually bound, not to now.** On a
+    # database that predates this table the binding is old and the span is new,
+    # and a span starting at backfill time would place every hour of prior work
+    # outside every span - attributed to nobody. Measured against the real
+    # database at the time this was written: 188 detector events, 361 evidence
+    # items, four completed reports and four grades, all orphaned, in a table
+    # whose entire purpose is that the history survives.
+    binding = conn.fetchone("SELECT assigned_at FROM agent_names WHERE name = ?", (name,))
+    started_at = binding["assigned_at"] if binding else None
+
+    open_assignment(
+        conn, name, identity, role=role, started_at=started_at,
+        reason="initial assignment on registration",
+    )
 
 
 def get_agent_name(conn: Database, identity: str) -> str | None:
