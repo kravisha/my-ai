@@ -1477,11 +1477,26 @@ UQI_PENDING = "pending"
 UQI_ANSWERED = "answered"
 UQI_UNANSWERED = "unanswered"
 
-# How long a question waits before the asker is told nobody replied. Shorter
-# than the cross-check timeout because a human is sitting there: an operator
-# needs "this agent is not answering" quickly, and that verdict is itself
-# useful diagnostic output.
-UQI_TIMEOUT_SECONDS = float(os.environ.get("FI_UQI_TIMEOUT_SECONDS", "15"))
+# How long a question waits before the asker is told nobody replied.
+#
+# **Must exceed the slowest agent's work cycle plus its answer time.** An agent
+# answers a UQI question only after finishing the work cycle it is in
+# (agents/base.py), so the wait is a full cycle of that agent's work plus one
+# model call of its own. Measured against a real backend: coo/explorer/
+# speculator answer in 2-4s, but analysis-1 - whose cycle is a deep-reasoning
+# call - took 5.8s, 19.4s and 24.0s across three samples.
+#
+# The first value tried was 15s, which turned two of those three into
+# 'unanswered'. That is worse than a slow answer: an operator would read it as
+# "Analysis is unresponsive" when Analysis was working perfectly, and
+# 'unanswered' is supposed to be a genuine health finding rather than a
+# rendering of impatience.
+#
+# 60s costs little, because this is not the system's liveness signal. Death is
+# detected from heartbeat age - HEALTH_STALE_THRESHOLD_SECONDS, surfaced in the
+# roster every couple of seconds - so a generous question timeout delays no
+# diagnosis that matters.
+UQI_TIMEOUT_SECONDS = float(os.environ.get("FI_UQI_TIMEOUT_SECONDS", "60"))
 
 
 def ask_agent(conn: Database, asked_by: str, target_identity: str, question: str) -> int:

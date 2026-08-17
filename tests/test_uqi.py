@@ -172,3 +172,25 @@ def test_history_route_exposes_the_audit_trail(panel_client, panel_conn):
     row = panel_client.get("/admin/uqi").json()["requests"][0]
     assert row["asked_by"] == "test-admin"  # the session identity
     assert row["question"] == "q1"
+
+
+def test_the_uqi_timeout_exceeds_the_slowest_agents_answer_latency():
+    """The timeout must clear a full work cycle of the slowest agent plus its
+    own answer call, or a busy-but-healthy agent reads as unresponsive.
+
+    Measured against a real backend (docs/TIMING_CONSTANTS.md): procedural
+    agents answer in 2-4s, but analysis-1 - whose cycle is a deep-reasoning
+    call - took up to 24.0s. The first value tried was 15s, which turned two of
+    three samples into 'unanswered'. This encodes the measurement so the
+    constant cannot drift back under it unnoticed."""
+    worst_observed_answer_seconds = 24.0
+    assert fi_db.UQI_TIMEOUT_SECONDS > worst_observed_answer_seconds * 2
+
+
+def test_a_slow_agent_is_not_reported_unresponsive_before_the_timeout(panel_conn):
+    """'unanswered' is meant to be a real health finding - a dormant or crashed
+    agent - not a rendering of impatience with a working one."""
+    request_id = fi_db.ask_agent(panel_conn, "krish", "analysis-1", "Are you healthy?")
+    # 24s is the worst latency observed from a *healthy* Analysis
+    assert fi_db.expire_stale_uqi_requests(panel_conn, timeout_seconds=25.0) == 0
+    assert fi_db.get_uqi_request(panel_conn, request_id)["status"] == fi_db.UQI_PENDING
