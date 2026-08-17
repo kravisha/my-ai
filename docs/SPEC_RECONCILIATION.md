@@ -462,3 +462,48 @@ directive completed as `objected` was never archived and stayed in the pending q
 database, an executor re-processing the same directive every cycle forever. `apply_additive_migrations`
 now reconciles triggers by content, and the fix is verified against a database created before the
 change.
+
+
+## 11. Measuring the governors (2026-08-17)
+
+The governing framework asks for governance metrics *before* adjudication rather than after, so that if
+a courtroom is ever built there is already evidence about whether the processes feeding it work.
+
+The design question is what makes a metric a *governance* metric. Counting violations measures the
+agents. To measure the governors, a metric has to be able to indict the machinery — so **every metric in
+`backend/governance.py` names a specific way the governance layer fails**, and each is tested in both
+directions: healthy, and broken on purpose in the way it exists to detect. A metric that reads healthy
+under every condition is decoration, and decoration is worse than nothing because it also supplies the
+reassurance.
+
+| Metric | The failure it detects |
+|---|---|
+| `path_coverage` | A new kind of completed work with no evaluation rule. The check keeps passing because it never looks |
+| `escalation_backlog` | Escalation as a dead letter box. Unattended, the settlement design becomes refusal with extra steps |
+| `settlement_mix` | Filing becomes free (every objection upheld) or punished (none ever upheld). The second is worse — agents learn to fail silently, and a silent failure carries no ground, evidence or remedy |
+| `checker_coverage` | Escalation caused by unbuilt machinery, mistaken for a genuine need to appoint a judge |
+| `finding_attribution` | A governance layer blaming agents for the specification |
+
+`path_coverage` reads the **live database** rather than the declared schema, deliberately: the question
+is whether the check covers work this system actually completes, and a table present in a running
+database is work being completed whether or not anything declared it.
+
+**No single governance score.** A health number would be the first thing optimised and the last thing
+understood — the same reasoning that keeps competency per-dimension.
+
+**No invented thresholds.** `settlement_mix` refuses to state a rate below ten settled objections, and
+`escalation_backlog` reports an age while stating no threshold at all, because the measurement that
+would set one — the owner's observed turnaround — has not happened. "Absent is not zero" applies to the
+governors as much as to the agents.
+
+**Read-only and owner-run.** The module cannot write, asserted by a test. It is deliberately not wired
+into any agent's cycle: the obvious host is COO, which already judges intelligence health, and that is
+the reason not to — it would put the assessment of the governors inside the role the assessment most
+needs to cover. `python -m backend.governance` reports to the owner instead.
+
+### What it says today
+
+Run against a real database, it reports one concern independently: **four of five verifiable objection
+grounds have no checker**, so they escalate for want of machinery rather than for want of a judge. That
+is the honest gap G5 left, found by the metric rather than by memory — which is the whole point of
+having one.
