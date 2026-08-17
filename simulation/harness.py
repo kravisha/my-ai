@@ -50,6 +50,8 @@ from dotenv import dotenv_values
 
 from agents import coo
 from backend import fi_db
+from simulation import metrics as metrics_module
+from simulation import properties as properties_module
 from simulation.scenario import Scenario
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +93,16 @@ class RunResult:
     graceful: bool
     shutdown_detail: str
     exit_code: int | None
+    summary: dict | None = None
+
+    @property
+    def properties_passed(self) -> bool:
+        """False if any declared property failed. A run with no properties is not
+        a passing run - `asserted` is reported separately so the two are never
+        confused."""
+        if not self.summary:
+            return False
+        return self.summary["properties"]["failed"] == 0
 
 
 def _now() -> str:
@@ -363,6 +375,46 @@ class SimulationRun:
             self._log_handle = None
 
 
+def summarise_run(directory: str | Path) -> dict:
+    """Read a finished run directory and write `summary.json` beside its manifest.
+
+    Separated from `execute` so a run can be re-summarised after the fact -
+    when a metric is added, or when a scenario's properties change and the
+    question is whether an old run would still have satisfied them. The run's
+    database is the durable record; the summary is a view of it and is always
+    safe to regenerate."""
+    directory = Path(directory)
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.exists():
+        raise HarnessError(f"no manifest at {manifest_path}; this is not a run directory")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    db_path = Path(manifest.get("db_path") or (directory / "financial_intelligence.db"))
+    if not db_path.exists():
+        raise HarnessError(f"run {manifest.get('run_id')} has no database at {db_path}")
+
+    collected = metrics_module.collect(db_path)
+    results = properties_module.evaluate_all(manifest.get("expected_properties") or [], collected)
+
+    summary = {
+        "run_id": manifest.get("run_id"),
+        "scenario_id": manifest.get("scenario_id"),
+        "scenario_version": manifest.get("scenario_version"),
+        "code_version": manifest.get("code_version"),
+        # Carried into the summary so a comparison between two runs cannot
+        # silently put a degraded Analysis alongside a full one.
+        "model_available": manifest.get("model_available"),
+        "graceful_shutdown": manifest.get("graceful_shutdown"),
+        "started_at": manifest.get("started_at"),
+        "finished_at": manifest.get("finished_at"),
+        "metrics": collected,
+        "property_results": results,
+        "properties": properties_module.summarise(results),
+    }
+    (directory / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
 def execute(scenario: Scenario, runs_dir: Path | None = None) -> RunResult:
     """Start, hold for the scenario's duration, stop, and record.
 
@@ -387,6 +439,11 @@ def execute(scenario: Scenario, runs_dir: Path | None = None) -> RunResult:
         )
         run.close()
 
+    # After the manifest is final, so the summary records the run as it ended.
+    # Outside the `finally` deliberately: if the run itself failed, the exception
+    # is what the caller needs, not a summary of a run that did not happen.
+    summary = summarise_run(run.directory)
+
     return RunResult(
         run_id=run.run_id,
         directory=run.directory,
@@ -398,4 +455,5 @@ def execute(scenario: Scenario, runs_dir: Path | None = None) -> RunResult:
         graceful=graceful,
         shutdown_detail=detail,
         exit_code=run._process.returncode if run._process else None,
+        summary=summary,
     )

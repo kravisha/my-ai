@@ -36,7 +36,89 @@ config:
   FI_SOCIAL_PROVIDER_SEED: 7
   FI_FORCE_ANOMALY_SECURITIES: ""
 
+# Also measured and stated so it is not read as a defect: NO lens binds a regime
+# baseline in this run. Binding requires min_graded_reports = 10 and the run
+# produces four, because the queue does not drain (see the pressure ratio
+# property below). The regime half of intelligence expiry is built and verified,
+# and simply cannot engage inside 90 seconds at the observed drain rate.
 requires_model: false
 
-# Filled in by S2, when the metric layer exists to evaluate them.
-expected_properties: []
+expected_properties:
+  # --- the organization stayed intact ---------------------------------------
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+    # The direct detector for the defect that once produced three concurrent
+    # analysis-1 processes under one identity: a health threshold below real
+    # model latency made COO conclude a busy agent had crashed.
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty
+    # Twelve orphaned agent processes accumulated during earlier development,
+    # found only by chasing a result one of them was still producing.
+
+  - name: no directive failed
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+
+  # --- work was actually done ----------------------------------------------
+  # Without these a run in which nothing happened would pass everything else,
+  # which is how a suite comes to assert that the system is fine because it is
+  # idle.
+  - name: reports were filed
+    metric: pipeline.reports_filed
+    assert: at_least
+    value: 8
+
+  - name: explorer observed the market throughout
+    metric: intelligence.regime_observations
+    assert: at_least
+    value: 400
+
+  - name: cross-checks were exchanged
+    metric: cross_check.total
+    assert: at_least
+    value: 5
+
+  # --- nothing was consumed without being judged ----------------------------
+  - name: every completed report was analysed
+    metric: pipeline.unanalysed_completed_reports
+    assert: equals
+    value: 0
+
+  - name: every analysis was graded
+    metric: pipeline.ungraded_analyses
+    assert: equals
+    value: 0
+
+  # --- timing constants still match the system they govern ------------------
+  - name: no cross-check went unanswered
+    metric: cross_check.unanswered_rate
+    assert: at_most
+    value: 0.0
+    # This number is how a timeout set below real answer latency announces
+    # itself. It read 0.67 when UQI's timeout was 15s against answers taking up
+    # to 24s.
+
+  - name: no cross-check was left open
+    metric: cross_check.open_at_end
+    assert: equals
+    value: 0
+
+  # --- the known bottleneck, held rather than endorsed -----------------------
+  - name: queue pressure has not worsened
+    metric: queue.pressure_ratio
+    assert: at_most
+    value: 5.0
+    # Measured at 3.15 on the first run: reports arrive about three times faster
+    # than Analysis retires them, so the queue grows for the whole run and each
+    # report waits longer than the last (18s, 37s, 59s, 74s).
+    #
+    # This is a CEILING ON KNOWN-BAD BEHAVIOUR, not a statement that the
+    # behaviour is acceptable. Asserting `drained` would fail every run and
+    # teach everyone to ignore the suite; asserting nothing would let the
+    # backlog quietly triple. Tighten this when the bottleneck is addressed -
+    # and it should be tightened, not deleted.
