@@ -355,11 +355,16 @@ whether the two compete.
 They do not. Addendum 9 says of itself that it is "intentionally basic in the first implementation and
 will receive deeper specifications later", and this is those specifications. Recorded as an extension.
 
-**One conflict, resolved by recommendation rather than silently.** Addendum 9 has the Coordinator
+**One conflict — RESOLVED (owner, 2026-08-17): the normal path.** Addendum 9 has the Coordinator
 creating the Portfolio Analyst directly, bypassing COO, on a client request. Every spawn built since
-routes through COO deciding need and the Controller executing. The bypass existed to save COO's
-~1s cycle on an urgent request; a second is not worth maintaining a second spawn mechanism, so the
-recommendation is the normal path. Pending owner confirmation.
+routes through COO deciding need and the Controller executing, and that is what a client-triggered
+Portfolio Analyst will use too. The bypass existed to save COO's ~1s cycle on an urgent request, which
+is not worth maintaining a second way to create an agent — and under a manifesto that declines to be
+rushed, saving a second by adding a mechanism is the wrong trade.
+
+`bootstrap_coo` remains the sole exception and must: there is no COO yet to have placed the directive
+that would create one. `tests/test_controller.py` now parses the Controller and asserts that exactly
+two functions start a process, so a second bypass cannot be added quietly for one good local reason.
 
 **A constraint that gates the work.** The nominated reference portfolio is a real IRA statement, and
 this repository is public. Every committed fixture must be synthetic - including one structurally

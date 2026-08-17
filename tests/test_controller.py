@@ -439,3 +439,40 @@ def test_shutdown_is_safe_with_nothing_running(tmp_path):
         assert controller.shutdown_agents() == {"stopped": [], "terminated": []}
     finally:
         controller.close()
+
+
+def test_only_the_coo_bootstrap_spawns_outside_the_directive_queue():
+    """Owner decision, 2026-08-17: client-triggered agents use the normal path.
+
+    Addendum 9 has the Controller creating the Portfolio Analyst directly on a
+    client request, bypassing COO. That predates the authority model since built,
+    where COO decides operational need and the Controller executes. The bypass
+    existed to save COO's ~1s cycle on an urgent request, which is not worth
+    maintaining a second way to create an agent.
+
+    `bootstrap_coo` remains the one exception, and it has to be: there is no COO
+    yet to have placed the directive that would create it.
+
+    Asserted by parsing rather than by convention, because a second bypass is
+    exactly the kind of thing that gets added for one good local reason and then
+    becomes the way things are done."""
+    import ast
+    import inspect
+
+    from backend import controller as controller_module
+
+    tree = ast.parse(inspect.getsource(controller_module))
+    spawners = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if (isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "Popen"):
+                spawners.add(node.name)
+
+    assert spawners == {"bootstrap_coo", "_handle_spawn"}, (
+        f"agent processes are started from {sorted(spawners)}. Every spawn but the COO bootstrap "
+        "must go through a directive, so COO decides need and the Controller executes."
+    )
