@@ -12,12 +12,16 @@ months later by hashing the file by hand.
 """
 
 import hashlib
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import conftest
 
 from backend import fi_db
+from backend.controller import PROJECT_ROOT
 
 
 def test_the_default_database_path_is_not_the_real_one():
@@ -46,13 +50,54 @@ def test_a_no_argument_connection_does_not_open_the_real_database():
     assert opened != conftest.REAL_DB_PATH
 
 
-def test_the_module_level_controller_is_not_on_the_real_database():
-    """backend.main builds a Controller at import time, and Controller.__init__
-    runs init_schema. This is the write that used to land on the real database
-    before any fixture could intervene."""
+def test_importing_backend_main_creates_no_database(tmp_path):
+    """Importing backend.main must not touch a database at all.
+
+    backend.main used to build a Controller at module level, and
+    Controller.__init__ runs init_schema - so the import statement itself
+    executed DDL, migrations and metadata seeding. That is the write that landed
+    on the developer's real database before any fixture could intervene, and it
+    also meant any script or doc build that imported this module created a
+    database as a side effect.
+
+    Checked in a subprocess with FI_DB_PATH aimed at a path that does not exist,
+    because the property is about import time and this process imported
+    backend.main long ago. Asserting on where some object points would be weaker:
+    this asks whether a file appeared."""
+    import backend.main  # noqa: F401 - fail here, not in the subprocess, if broken
+
+    db_path = tmp_path / "import-side-effect.db"
+    result = subprocess.run(
+        [sys.executable, "-c", "import backend.main"],
+        cwd=PROJECT_ROOT,
+        env={**os.environ, "FI_DB_PATH": str(db_path)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, f"importing backend.main failed:\n{result.stderr}"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [], (
+        "importing backend.main created a database; construction of anything that "
+        "calls fi_db.init_schema belongs in lifespan, not at module level"
+    )
+
+
+def test_no_module_level_controller_instance():
+    """The specific shape that caused it, named so a reintroduction fails here
+    with an explanation rather than only as a mystery file in the test above.
+
+    lifespan owns the Controller and nothing outside it holds the instance; a
+    route that needs one should reach it through app.state or a dependency. Those
+    are created when the server starts. A module global is not - it has to be
+    filled at import time, which is the whole problem."""
     import backend.main as backend_main
 
-    assert backend_main.controller.db_path != str(conftest.REAL_DB_PATH)
+    assert not hasattr(backend_main, "controller"), (
+        "backend.main has a module-level `controller` again; anything constructed "
+        "at import time is constructed by every importer, including tooling that "
+        "never intended to start a server"
+    )
 
 
 def test_panel_db_is_overridden_for_every_test(tmp_path):

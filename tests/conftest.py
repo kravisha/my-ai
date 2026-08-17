@@ -9,25 +9,34 @@ this, merely importing app.main would crash in a clean environment with no
 .env file. No real network call is ever made in these tests; call_reasoning_model
 itself is always mocked out, so the key's value never matters, only its presence.
 
-FI_DB_PATH: backend/main.py constructs `controller = Controller()` at module
-level, and Controller.__init__ runs fi_db.init_schema against fi_db.DB_PATH. So
-the mere act of `import backend.main` - which every FastAPI test does, most of
-them indirectly through the backend_client/panel_client fixtures below - used to
-execute DDL, additive migrations and static-metadata seeding against the
-developer's real financial_intelligence.db. That is why overriding the panel_db
-dependency alone never fixed the leak: the write had already happened by the
-time any fixture ran. fi_db.DB_PATH is `Path(os.environ.get("FI_DB_PATH") or
-<project root>/financial_intelligence.db)`, evaluated once when backend.fi_db is
-first imported, so redirecting it here - above every import in this file - is
-the only place that catches it.
+FI_DB_PATH: fi_db.DB_PATH is `Path(os.environ.get("FI_DB_PATH") or <project
+root>/financial_intelligence.db)`, evaluated once when backend.fi_db is first
+imported. Redirecting it here - above every import in this file - is therefore
+the only point at which the suite can decide what "the default database" means
+for the process; by the time the first fixture runs, every module that cared has
+already read it.
 
-The redirect is deliberately unconditional rather than a setdefault. A developer
-with FI_DB_PATH already pointing at a real database is exactly the case the
-redirect exists to defend against.
+What made that decisive: backend/main.py used to construct `controller =
+Controller()` at module level, and Controller.__init__ runs fi_db.init_schema, so
+`import backend.main` executed DDL, additive migrations and static-metadata
+seeding against the developer's real financial_intelligence.db. That is why
+overriding the panel_db dependency never fixed the leak - the write had already
+happened by the time any fixture ran. The Controller now belongs to lifespan
+(see backend/main.py), so importing the module writes nothing, and
+tests/test_db_isolation.py holds that line in a subprocess.
 
-Between them, the redirect and the _isolate_fi_db autouse fixture close the leak
-by construction, and _assert_real_database_untouched below proves it stayed
-closed - see its docstring for why all three layers are worth having.
+The redirect stays regardless, because it is not aimed at that one bug. It is
+aimed at the class: any code that resolves the default rather than being handed a
+path. One import-time constructor already did it once, and the redirect is what
+makes the next one harmless rather than discovered by hashing the file by hand.
+
+It is deliberately unconditional rather than a setdefault. A developer with
+FI_DB_PATH already pointing at a real database is exactly the case it defends
+against.
+
+Between them the redirect and the _isolate_fi_db autouse fixture close the leak
+by construction; pytest_sessionfinish below proves it stayed closed - see its
+docstring for why all three layers are worth having.
 """
 
 import hashlib

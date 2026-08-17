@@ -30,7 +30,7 @@ from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
 from backend import fi_db
-from backend.controller import Controller
+from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
 
 # How often the background loop below checks coo_directives for new work -
@@ -38,17 +38,17 @@ from backend.transcripts import TranscriptStore
 # interval (agents/base.py), no reason for it to differ.
 CONTROLLER_POLL_INTERVAL_SECONDS = 1.0
 
-controller = Controller()
-_controller_poll_task: asyncio.Task | None = None
 
-
-async def _controller_poll_loop() -> None:
+async def _controller_poll_loop(controller: Controller) -> None:
     """Stands in for what a human would otherwise have to trigger by hand:
     repeatedly calls process_next_directive() so COO's spawn/retire requests
     (rows in coo_directives) actually get acted on. Runs as a plain asyncio
     task in this process's own event loop - the Controller itself is not a
     separate process, it lives inside the backend engine (confirmed process
-    model), so this needs no subprocess or IPC of its own."""
+    model), so this needs no subprocess or IPC of its own.
+
+    Takes the Controller as an argument rather than reading a module global, so
+    the loop cannot outlive or disagree with the instance lifespan created."""
     while True:
         controller.record_self_heartbeat()
         controller.process_next_directive()
@@ -57,19 +57,34 @@ async def _controller_poll_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Owns the Controller for exactly as long as the server is serving.
+
+    The Controller is constructed here, not at module level, because
+    Controller.__init__ opens a database and runs init_schema on it - DDL,
+    additive migrations and static-metadata seeding. At module level that made
+    `import backend.main` a statement that writes to disk: any script, doc build
+    or CLI that imported this module created or migrated a database as a side
+    effect, and the test suite silently migrated the developer's real
+    financial_intelligence.db before any fixture could intervene. Importing a
+    module should be free; starting a server is where the cost belongs.
+
+    Nothing outside this function holds the instance. If a route ever needs one,
+    it should reach it through app.state or a dependency - not a module global,
+    which is what has to be constructed at import time and is therefore how this
+    would come back."""
     # The startup sequence the specs give literally (Consolidated §2, Org
     # Addendum §13): server starts -> Controller Agent starts (registering
     # itself as the first agent - it *is* this server process) -> Controller
     # creates COO. Every agent COO wants after this goes through the normal
     # directive queue, picked up by the poll loop above.
-    global _controller_poll_task
+    controller = Controller()
     controller.bootstrap_self()
     controller.bootstrap_coo()
-    _controller_poll_task = asyncio.create_task(_controller_poll_loop())
+    poll_task = asyncio.create_task(_controller_poll_loop(controller))
     try:
         yield
     finally:
-        _controller_poll_task.cancel()
+        poll_task.cancel()
         # Stop the workforce before stopping ourselves. subprocess children
         # outlive their parent, so without this a server stop left every agent
         # running and writing to the database - see Controller.shutdown_agents.
@@ -651,11 +666,16 @@ def retire_agent(identity: str, request: LifecycleRequest, conn=Depends(panel_db
     name, and entire history, and `resume` is the exact inverse. What stops is
     the process; what persists is the agent."""
     agent = _require_agent(conn, identity)
-    if identity == controller.identity:
+    if identity == CONTROLLER_IDENTITY:
         # The Controller *is* this server process. Retiring it would have the
         # backend ask its own poll loop to shut itself down - a genuinely
         # reachable footgun, since controller-1 appears in the roster like any
         # other agent and the panel offers the same button for every row.
+        #
+        # Compared against the role's fixed identity rather than a live
+        # Controller's .identity: the two are always equal, and this way the
+        # check needs no instance - so refusing to retire the Controller does not
+        # depend on the server having constructed one.
         raise HTTPException(status_code=400, detail="The Controller cannot retire itself; stop the server instead")
     if agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT:
         raise HTTPException(status_code=409, detail=f"{identity} is already dormant")
