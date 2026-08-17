@@ -5,38 +5,24 @@ agents/analysis.py so the ordering decision can be tested on its own - the
 ordering is the substance here, and it should not need a database or a model
 call to examine.
 
-**What this deliberately does not do: predict value.** The obvious design is to
-rank by how good a lead looks, but the system has no validated way to predict
-which lead will grade well, and a ranking built on an unvalidated predictor is
-the same trap as scoring stance against templates written alongside the scorer -
-it looks principled and measures nothing. Learned prioritisation is Trainer
-work, behind validation (addendum 13 §14).
+Ranking inputs, in precedence order:
 
-So the ranking uses only what can be *observed* about a report, and only where
-the observation supports the inference:
+1. **Waiting time** overrides everything. Any report older than
+   STARVATION_SECONDS sorts first, oldest first within that block.
+2. **Structural novelty** (see backend/novelty.py). A lead scoring at or above
+   novelty.NOVEL_THRESHOLD is promoted ahead of familiar ones.
+3. **Evidence completeness** - whether the lead's cross-check returned, and with
+   what outcome. `evidence` ranks above `no_evidence`, above `unanswered`, above
+   no cross-check at all.
+4. **Report id**, i.e. arrival order, breaking all remaining ties. Among equally
+   ranked leads the queue is therefore FIFO.
 
-- **Structural novelty, ahead of evidence completeness.** A lead the system has
-  no precedent for is worth the scarce deep-reasoning call more than the
-  twentieth instance of a familiar pattern, even a well-evidenced one. This is
-  constitution §8's "transformation, not filing" made operational: novelty
-  changes what the system *does next* rather than being recorded and ignored.
-  Ranked above evidence completeness deliberately - a novel lead with a
-  timed-out cross-check is still the more interesting thing to reason about.
-- **Evidence completeness.** A lead whose cross-check came back has two
-  independent findings for Analysis to weigh; one whose partner never answered
-  has one. That is a statement about how much evidence exists, not about which
-  way it points - and the direction is explicitly not consulted here. Ranking on
-  whether Speculator's stance *supported* the lead would settle in a queue the
-  question addendum 12 §14 reserves for Analysis.
-- **Waiting time, which overrides everything.** Without it, a security whose
-  cross-checks keep timing out would sit at the back of the queue forever, and
-  prioritisation would quietly become permanent suppression. Any report older
-  than STARVATION_SECONDS jumps ahead of the ranking entirely.
+Deliberately *not* inputs: any prediction of how well a lead will grade; the
+*direction* of the cross-check finding as opposed to its presence; and scope
+(peer versus individual). Changing any of these is a design decision, not a
+tuning change - do not add them without consulting the governing rationale.
 
-Scope (peer versus individual) is deliberately *not* a ranking input. Addendum 7
-§5 treats the two as different findings, not better and worse ones, and
-preferring either would assert a strategic judgment that belongs to Bob rather
-than to a queue.
+Internal rationale: INT-PHIL-0001, INT-PHIL-0002, INT-PHIL-0003, INT-PHIL-0005
 """
 
 import os

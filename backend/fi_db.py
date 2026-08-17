@@ -446,28 +446,22 @@ CREATE TABLE IF NOT EXISTS evidence_items (
 
 -- The knowledge store (constitution §3; addendum 12 §8, addendum 13 §9-§10).
 --
--- Every other table here records **what happened** - detector events, evidence,
--- reports, analyses, grades. This one records **what is believed**: lessons
--- learned, and questions left open. Gap analysis §4.1's distinction, and the
--- reason event tables did not already satisfy it.
+-- Every other table records what happened - detector events, evidence, reports,
+-- analyses, grades. This one records what is believed: lessons learned, and
+-- questions left open.
 --
--- It is deliberately *not* a general aggregation of the other tables. A lens
--- lives in intelligence_artifacts, a regime estimate in market_regime, a source
--- standing in source_reliability - each with update semantics of its own, and
--- copying them here would duplicate rather than add. What goes here is what
--- those mechanisms *taught* and would otherwise lose: a lens carries its
--- staleness reason until it is superseded and then that reason is gone, and an
--- analysis records what might make it wrong in a field nothing ever reads again.
+-- Not an aggregation of the other tables. A lens lives in intelligence_artifacts,
+-- a regime estimate in market_regime, a source standing in source_reliability,
+-- each with its own update semantics; copying them here would duplicate rather
+-- than add. What lands here is what those mechanisms taught and would otherwise
+-- lose when the artifact carrying it is superseded.
 --
--- Records are attributable and versioned (addendum 13 §9: "the organization can
--- understand where a lesson came from and whether later evidence changed it").
--- Superseding never deletes: a belief that turned out wrong is itself knowledge,
--- and the trail from it to what replaced it is the part worth keeping.
+-- Invariants: records are attributable (recorded_by is required) and superseding
+-- never deletes - status becomes 'superseded' and superseded_by points at the
+-- replacement. 'superseded' (was wrong) and 'resolved' (was settled) are
+-- distinct states and must not be merged.
 --
--- Addendum 13 §10's resident/database split is deliberately NOT built. The spec
--- says to keep the first classification simple, and there is no measured need
--- for a working-copy tier - inventing one now would be a cache with no observed
--- pressure to relieve.
+-- Internal rationale: INT-PHIL-0009
 CREATE TABLE IF NOT EXISTS knowledge_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -498,16 +492,15 @@ CREATE TABLE IF NOT EXISTS knowledge_records (
 -- automatically correct"). What the system has learned about each evidence
 -- source from how the reports built on it were graded.
 --
--- **Earned, never assigned.** No source is seeded with a prior. Writing
--- "filings are trustworthy, forums are not" would be asserting exactly the
--- authority Axiom 3 denies - and would also be untestable, since the model
--- would then be reporting its own seed back. A source starts unknown and
--- earns a standing from observed outcomes, the same way a lens earns its
--- regime baseline by being observed working.
+-- No source is seeded with a prior; a standing is computed only from the grades
+-- of reports its evidence contributed to. Seeding one would make the model
+-- untestable, since it would report its own seed back.
 --
--- A current-state table rather than an intelligence_artifact, for the same
--- reason market_regime is: artifacts are immutable and superseded, while a
--- reliability estimate is continuously revised in place.
+-- A current-state table rather than an intelligence_artifact, because the update
+-- semantics differ: artifacts are immutable and superseded, a reliability
+-- estimate is continuously revised in place.
+--
+-- Internal rationale: INT-PHIL-0007
 CREATE TABLE IF NOT EXISTS source_reliability (
     source TEXT PRIMARY KEY,
     graded_contributions INTEGER NOT NULL DEFAULT 0,
@@ -1773,9 +1766,8 @@ def open_questions_for(conn: Database, subject: str, limit: int = 5) -> list[dic
 # --- Source reliability (constitution §3, Axiom 3) ---
 
 # Graded contributions a source needs before its standing is stated at all.
-# Same thin-evidence refusal as min_graded_reports for a lens: below this the
-# honest answer is "not yet known", and a confident number computed from two
-# samples would be worse than no number, because it would be believed.
+# Below this, `stated` is False - "not yet known" is a different answer from
+# "unreliable" and callers must not collapse them.
 MIN_GRADED_CONTRIBUTIONS = int(os.environ.get("FI_MIN_GRADED_CONTRIBUTIONS", "5"))
 
 

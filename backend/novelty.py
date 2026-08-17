@@ -1,32 +1,25 @@
 """Does this observation fit what the system has seen before? (Constitution §8,
 Axiom 8.)
 
-A pure function over history, deliberately kept free of semantics. The tempting
-design asks a model "is this novel?", and that produces an assessment nothing
-can contradict - the unfalsifiable-judgment failure mode this project has had to
-refuse repeatedly. Novelty here is instead *structural*: measured against what
-the system has actually recorded, so every verdict can be checked against the
-rows that produced it.
+A pure function over recorded history, free of semantics. Novelty here is
+*structural*: an observation is novel when it lands outside what the system has
+recorded, which for this system means the securities it has observed, the
+detector ratios seen for each, the peer combinations that have co-triggered, and
+the cross-check outcomes encountered.
 
-What "the current conceptual structure" means concretely, given what this system
-holds: the securities it has observed, the detector ratios it has seen for each,
-the peer combinations that have co-triggered, and the cross-check outcomes it
-has encountered. An observation that lands outside all of those is one the
-system has no precedent for.
+**Not the same field as `analysis_results`-adjacent `novelty_score`, and the two
+must not be conflated.** That score is a judgment formed after reasoning about
+whether a report told the organization anything new. This is a fact computed
+before reasoning, about whether anything like it has been seen. One is an input
+to the other.
 
-**This is not the same thing as `novelty_score`, and the two must not be
-confused.** That score is Analysis's judgment, formed after reasoning, about
-whether a report told the organization anything new. This is a structural fact
-computed before reasoning, about whether anything like it has been seen. One is
-an input to the other: Analysis is told "no precedent exists" and forms its own
-view. Collapsing them would replace a judgment with a count.
+Scope limit, relevant to maintenance: this detects *unprecedented*, which is a
+proper subset of *novel*. It cannot recognise that two differently-shaped
+observations mean the same thing, nor that a familiar-looking one arrives for an
+unfamiliar reason. Do not extend it toward semantic novelty without consulting
+the governing rationale.
 
-The limits are worth stating plainly. Structural novelty cannot notice that two
-differently-shaped observations mean the same thing, nor that a familiar-looking
-one arrives for an unfamiliar reason. It detects *unprecedented*, which is a
-proper subset of *novel*. Semantic novelty needs a conceptual model the system
-does not yet have, and asserting one now would be the empty-schema mistake in a
-new place.
+Internal rationale: INT-PHIL-0004, INT-PHIL-0005
 """
 
 # Novelty is capped at 1.0 and reasons stack, so a first-ever security carrying

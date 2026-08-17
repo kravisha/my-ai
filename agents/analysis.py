@@ -44,18 +44,13 @@ def _extract_text(response) -> str:
 
 
 def _cross_check_lines(conn, report: dict) -> list[str]:
-    """Both sides of the cross-check, unreconciled.
+    """Both sides of the cross-check, presented unreconciled.
 
-    This is where "disagreement is preserved rather than erased" (addendum 12
-    §14) actually pays off. Neither discovery agent decided whether the two
-    findings agree - Explorer reported a ratio, Speculator reported what the
-    crowd said and how broadly it was sourced, and both are handed over as
-    stated. Analysis is the first place in the pipeline where a judgment about
-    *compatibility* is legitimate, because it is the only role that reasons.
+    Neither discovery agent judges whether the two findings agree; both are
+    handed over as stated, and this role forms that judgment. Do not add a
+    computed agree/disagree verdict here or upstream.
 
-    Deliberately presented as two claims rather than a resolved summary. A
-    context that said "corroborated" would have made the decision upstream, in
-    a procedural agent, and hidden the evidence that might contradict it."""
+    Internal rationale: INT-PHIL-0010"""
     if report.get("cross_check_id") is None:
         return []
     request = fi_db.get_cross_check(conn, report["cross_check_id"])
@@ -181,15 +176,13 @@ def _assemble_context(conn, report: dict) -> str:
 def _source_note(conn, source) -> str:
     """How this evidence item's source has been graded historically.
 
-    Labelled, never filtered. A source with a poor standing still has its
-    evidence collected, still reaches Analysis, and is still weighed here -
-    because a reliability model that gated collection could never learn it was
-    wrong. A source rated badly would stop contributing evidence, stop
-    accumulating grades, and stay rated badly forever on a record that stopped
-    growing. Suppression would make the model self-confirming.
+    Labelled, never filtered: a poorly-rated source still has its evidence
+    collected and still reaches this role. Nothing in the evidence path may
+    consult the standing to decide what to gather.
 
-    "Not yet known" is stated as such rather than rendered as a middling
-    number, which would read as a judgment that has not been made."""
+    An unearned standing is reported as such rather than as a middling number.
+
+    Internal rationale: INT-PHIL-0008"""
     if not source:
         return ""
     standing = fi_db.source_standing(conn, source)

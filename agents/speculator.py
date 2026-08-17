@@ -87,13 +87,13 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str, lens_artif
 
 
 def _source_dispersion(posts: list) -> dict:
-    """How many distinct voices the chatter actually came from.
+    """How many distinct voices the chatter came from.
 
-    This is the frame language cannot supply. Ten enthusiastic posts from three
-    accounts read exactly like ten from ten - the text is identical - but one is
-    a crowd and the other is coordinated noise (addendum 12 §13's "coordinated
-    noise" and "popularity without substance"). Telling them apart is counting,
-    not comprehension, so it stays deterministic and needs no model."""
+    Deterministic and model-free by design: ten posts from three accounts are
+    textually indistinguishable from ten from ten, so this signal is a count
+    rather than a reading. It is the second, independent frame alongside stance.
+
+    Internal rationale: INT-PHIL-0011"""
     if not posts:
         return {"posts": 0, "distinct_authors": 0, "posts_per_author": 0.0}
     authors = len(set(post.author for post in posts))

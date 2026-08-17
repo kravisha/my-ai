@@ -1,14 +1,15 @@
 """How an agent answers a human's question about itself (addendum 14 §6-§7).
 
-Lives beside agents/base.py rather than inside it because the *answering* is a
+Lives beside agents/base.py rather than inside it because answering is a
 capability every agent has, but the machinery is worth reading on its own.
 
-The governing constraint: an agent answers from its own organizational record
-and nothing else. §6 asks for operational self-awareness - identity, role,
-responsibilities, permissions, state - and says explicitly that this "does not
-mean unrestricted introspection into hidden model internals." So the model here
-is a *presenter* of known facts, never a source of them. If the facts do not
-answer the question, the correct reply is to say so.
+**Operational constraint, load-bearing:** the model is supplied the complete
+organizational record and instructed to answer only from it. Self-awareness is
+scoped to organizational identity - role, responsibilities, permissions, state -
+and explicitly excludes introspection into model reasoning. Widening that scope
+would produce answers that cannot be checked against any record.
+
+Internal rationale: INT-PHIL-0006
 """
 
 import json

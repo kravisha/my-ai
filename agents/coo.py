@@ -270,16 +270,14 @@ def _evaluate_intelligence_health(conn) -> None:
 def _record_lens_lesson(conn, artifact: dict, reason: str) -> None:
     """Write what a lens failure taught into the knowledge store.
 
-    Without this the lesson dies with the lens. `staleness_reason` lives on the
-    artifact row, so the moment that artifact is superseded by a corrected
-    value, the record of *why the old one stopped working* goes with it - and
-    the organization is free to make the same mistake again. Gap analysis §4.1's
-    distinction in one line: the artifact records what the lens was, the
-    knowledge record preserves what it taught.
+    `staleness_reason` lives on the artifact row, so it is lost when that
+    artifact is superseded - this preserves it independently.
 
-    Guarded on exact-statement duplication because COO re-evaluates health every
-    cycle; without that, one stale lens would relearn the same lesson every
-    second until the store was noise rather than knowledge."""
+    Guarded on exact-statement duplication: health is re-evaluated every cycle,
+    and without the guard one stale lens would record an identical lesson every
+    second.
+
+    Internal rationale: INT-PHIL-0009"""
     statement = f"Detection lens '{artifact['name']}' (value {artifact['value']}) stopped being reliable."
     if fi_db.knowledge_exists(conn, fi_db.KNOWLEDGE_LESSON, statement):
         return

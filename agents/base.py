@@ -2,13 +2,18 @@
 Phase A). Every agent: registers itself in fi_db on startup, runs a
 heartbeat + retire-poll loop, and exits itself cleanly when told to retire.
 
-Nothing ever forcibly kills an agent process - retirement works by the
-Controller setting a flag (fi_db.request_retirement) that the agent's own
-loop notices and acts on. This is the concrete mechanism behind "graceful
-retire": the agent retires itself, on its own terms, once it sees the
-signal - matching the no-direct-IPC rule (the flag is a database row, not a
-signal/call from one process to another) and letting a real agent finish
-whatever it's mid-doing before exiting, rather than being cut off mid-work.
+Stopping is cooperative, not forced. The Controller sets a flag
+(fi_db.request_retirement or fi_db.request_process_stop) and the agent's own
+loop notices it and exits, having finished the cycle it was in. The flag is a
+database row rather than a signal or call between processes, which is what keeps
+the no-direct-IPC rule intact.
+
+Two distinct signals, and the difference matters for correctness: retirement
+changes organizational standing (lifecycle_state becomes dormant), a stop does
+not. A stopped agent stays in service and is restaffed on the next server start;
+a retired one waits for an explicit resume.
+
+Internal rationale: INT-PHIL-0013, INT-PHIL-0014
 """
 
 import os
