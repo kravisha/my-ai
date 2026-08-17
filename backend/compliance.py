@@ -446,3 +446,117 @@ def objection_grounds(kind: str | None = None) -> tuple:
     if kind is None:
         return OBJECTION_GROUNDS
     return tuple(ground for ground in OBJECTION_GROUNDS if ground.kind == kind)
+
+
+# --- settling an objection --------------------------------------------------
+#
+# G7 settled who adjudicates by finding that most objections do not need one.
+# This is that finding made executable: a checker reads the records and reports
+# what they show.
+#
+# It lives here, in the module with no write path, on purpose. **The checker
+# cannot settle anything.** It returns a Settlement describing what the records
+# say, and a separate call with its own authority records it. Investigation
+# proposes, and something else disposes - which is the same separation the
+# read-only construction of this module already asserts, extended to the one
+# mechanism most likely to erode it.
+
+UPHELD = "upheld"          # the records agree with the objector; the work should not proceed
+REJECTED = "rejected"      # the records contradict the objection; the work stands
+UNSETTLED = "unsettled"    # nothing here can decide it, and why is stated
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """What the records say about an objection. Not a decision - a reading.
+
+    `checked_by` distinguishes the three ways an outcome can be reached, because
+    "the records settled it" and "nobody has built the check yet" are different
+    facts and reporting them the same way would hide the second one."""
+
+    outcome: str
+    reason: str
+    checked_by: str
+
+
+RECORDS = "records"                # decided by reading what exists
+OWNER = "owner"                    # needs judgment; escalates
+NO_CHECKER = "no checker yet"      # verifiable in principle, unbuilt in practice
+
+
+# Grounds that are decidable from records in principle but have no checker
+# implemented, each with what is actually missing. Stated rather than left as an
+# absence: an unchecked ground looks identical to a checked one that always
+# returns UNSETTLED, and the difference is whether anyone knows work remains.
+#
+# Following the rule that an undefined response is a finding rather than an
+# omission - the same discipline as the lifecycle catalogue's null responses.
+UNCHECKED_GROUNDS = {
+    "workload harm": (
+        "queue depth and latency are recorded, but 'measurably overloaded' needs a threshold, and "
+        "calibrating one against no measurement is how every wrong timing constant in this project "
+        "got set. Blocked on the threshold-calibration work, not on the query"
+    ),
+    "jurisdiction mismatch": (
+        "charters state scope in prose. Matching a directive against prose is not a check, it is a "
+        "guess with a lookup in it. Needs charters to carry a machine-readable scope first"
+    ),
+    "unavailable resource": (
+        "a probe exists (simulation.harness.model_is_available) but lives in the simulation layer, "
+        "and backend must not depend on it. Needs a backend-level resource probe"
+    ),
+    "contradictory instructions": (
+        "requires naming both requirements and showing they cannot both hold. Decidable by a reader, "
+        "not by anything that exists to read them"
+    ),
+}
+
+# Pinned. The gap between "verifiable in principle" and "checkable today" is a
+# number, so it cannot quietly stay where it is: closing one requires editing
+# this count, and opening a new one requires the same.
+UNCHECKED_GROUND_COUNT = 4
+CHECKED_GROUND_COUNT = 1
+
+
+def _check_missing_dependency(conn: Database, directive: dict) -> Settlement:
+    """Does the record this work refers to actually exist?
+
+    The one ground with a real instance in the running system: the Controller
+    already refuses to retire or resume an identity it cannot find, and recorded
+    that as a *failure* - conflating "the executor broke" with "the order named
+    something that is not there". The second is an objection, and it is settled
+    by looking."""
+    identity = directive.get("target_identity")
+    if not identity:
+        return Settlement(
+            UNSETTLED,
+            "the directive names no target identity, so there is no referenced record to look for",
+            NO_CHECKER,
+        )
+
+    row = conn.fetchone("SELECT identity FROM agent_registry WHERE identity = ?", (identity,))
+    if row is None:
+        return Settlement(UPHELD, f"no agent is registered as {identity}", RECORDS)
+    return Settlement(REJECTED, f"{identity} is registered; the dependency exists", RECORDS)
+
+
+_CHECKERS = {"missing dependency": _check_missing_dependency}
+
+
+def check_objection(conn: Database, ground: str, directive: dict) -> Settlement:
+    """Read the records and report what they say about an objection.
+
+    Three outcomes and no fourth. A judged ground escalates to the owner; a
+    verifiable ground with no checker says so and names what is missing; a
+    verifiable ground with a checker gets checked."""
+    known = {g.name: g for g in OBJECTION_GROUNDS}
+    if ground not in known:
+        raise ValueError(f"unknown objection ground: {ground!r}")
+
+    if known[ground].kind == JUDGED:
+        return Settlement(UNSETTLED, known[ground].decided_by, OWNER)
+
+    checker = _CHECKERS.get(ground)
+    if checker is None:
+        return Settlement(UNSETTLED, UNCHECKED_GROUNDS[ground], NO_CHECKER)
+    return checker(conn, directive)

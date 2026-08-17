@@ -91,22 +91,32 @@ def test_retire_directive_sets_flag_and_completes_successfully(controller):
     assert completed[0]["outcome"] == "success"
 
 
-def test_retire_directive_for_unknown_identity_fails(controller):
+def test_retire_directive_for_unknown_identity_is_objected_not_failed(controller):
+    """Recorded as a failure until G5, which read a correct refusal as a
+    malfunction. Nothing broke here: the Controller worked exactly as intended
+    and the order named an agent that does not exist.
+
+    Kept as an outcome assertion rather than folded into tests/test_objections.py
+    because the distinction that matters is what the *directive* ends as - a
+    failure counts against the executor, and this must not."""
     fi_db.enqueue_directive(controller.conn, "retire", "coo", target_identity="does-not-exist")
     controller.process_next_directive()
 
     completed = fi_db.list_completed_directives(controller.conn)
-    assert completed[0]["outcome"] == "failure"
-    assert "does-not-exist" in completed[0]["detail"]
+    assert completed[0]["outcome"] == "objected"
+    assert "does-not-exist" in fi_db.list_objections(controller.conn)[0]["evidence"]
 
 
-def test_unknown_directive_type_fails(controller):
+def test_unknown_directive_type_is_objected_on_jurisdiction_grounds(controller):
     fi_db.enqueue_directive(controller.conn, "self_destruct", "coo")
     controller.process_next_directive()
 
     completed = fi_db.list_completed_directives(controller.conn)
-    assert completed[0]["outcome"] == "failure"
-    assert "self_destruct" in completed[0]["detail"]
+    assert completed[0]["outcome"] == "objected"
+
+    objection = fi_db.list_objections(controller.conn)[0]
+    assert objection["ground"] == "jurisdiction mismatch"
+    assert "self_destruct" in objection["evidence"]
 
 
 def test_multiple_directives_processed_one_per_call(controller):

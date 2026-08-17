@@ -82,6 +82,11 @@ def _slot_identity(role: str) -> str:
 
 
 class Controller:
+    # What this role executes. Named rather than implied by the dispatch chain,
+    # so an objection on jurisdiction grounds can state the scope it is objecting
+    # against instead of just reporting that a branch fell through.
+    HANDLED_DIRECTIVE_TYPES = ("spawn", "retire", "resume")
+
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or str(fi_db.DB_PATH)
         self.conn = fi_db.get_connection(self.db_path)
@@ -255,9 +260,20 @@ class Controller:
         elif directive["directive_type"] == "resume":
             self._handle_resume(directive)
         else:
-            fi_db.complete_directive(
-                self.conn, directive["id"], "failure",
-                detail=f"unknown directive_type: {directive['directive_type']}",
+            # An objection, not a failure. Nothing broke here - the Controller
+            # was asked to do something it has no charter to do, and saying so is
+            # a correct outcome rather than a malfunction.
+            fi_db.file_objection(
+                self.conn, directive["id"], self.identity,
+                ground="jurisdiction mismatch",
+                evidence=(
+                    f"directive_type {directive['directive_type']!r} has no handler; the Controller "
+                    f"executes {', '.join(sorted(self.HANDLED_DIRECTIVE_TYPES))}"
+                ),
+                remedy=(
+                    "route this to a role that holds the capability, or - if no role does - treat it "
+                    "as a capability the organization is missing and decide whether to build it"
+                ),
             )
         return True
 
@@ -283,6 +299,23 @@ class Controller:
         self._processes[identity] = process
         fi_db.complete_directive(self.conn, directive["id"], "success", detail=identity)
 
+    def _object_missing_identity(self, directive: dict, identity: str, action: str) -> None:
+        """Ordered to act on an agent that does not exist.
+
+        Recorded as a failure before G5, which read a correct refusal as a
+        malfunction: the Controller worked exactly as intended, and the order
+        named something absent. The ground is verifiable - `settle_objection`
+        re-checks the registry rather than taking this claim on trust."""
+        fi_db.file_objection(
+            self.conn, directive["id"], self.identity,
+            ground="missing dependency",
+            evidence=f"no agent is registered as {identity}, so there is nothing to {action}",
+            remedy=(
+                f"spawn {identity} first if it should exist, or withdraw the directive if the "
+                "identity was a mistake"
+            ),
+        )
+
     def _handle_retire(self, directive: dict) -> None:
         """Retirement moves the agent to dormant and asks its process to wind
         down. It never deletes anything: the identity, name, and full history
@@ -290,7 +323,7 @@ class Controller:
         "retirement is non-destructive and reversible")."""
         identity = directive["target_identity"]
         if fi_db.get_agent(self.conn, identity) is None:
-            fi_db.complete_directive(self.conn, directive["id"], "failure", detail=f"unknown identity: {identity}")
+            self._object_missing_identity(directive, identity, "retire")
             return
         fi_db.request_retirement(self.conn, identity)
         fi_db.complete_directive(self.conn, directive["id"], "success", detail=f"retirement requested for {identity}")
@@ -304,7 +337,7 @@ class Controller:
         identity = directive["target_identity"]
         agent = fi_db.get_agent(self.conn, identity)
         if agent is None:
-            fi_db.complete_directive(self.conn, directive["id"], "failure", detail=f"unknown identity: {identity}")
+            self._object_missing_identity(directive, identity, "resume")
             return
         fi_db.resume_agent(self.conn, identity)
         fi_db.complete_directive(self.conn, directive["id"], "success", detail=f"resumed {identity}")

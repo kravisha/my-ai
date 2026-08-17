@@ -197,3 +197,66 @@ def test_every_declared_table_is_parsed():
 
 def _columns(conn, table: str) -> set[str]:
     return {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
+
+
+# -- trigger drift ------------------------------------------------------------
+
+def _trigger_sql(db, name):
+    row = db.fetchone("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?", (name,))
+    return row["sql"] if row else None
+
+
+def test_a_stale_trigger_is_replaced(db):
+    """The same trap as the column case, and it hides better.
+
+    `CREATE TRIGGER IF NOT EXISTS` silently keeps the old definition when the
+    trigger exists, and unlike a missing column there is no PRAGMA that reveals
+    it and no query that fails - the outdated trigger just keeps running.
+
+    Measured before the fix was written: with the archive trigger still on its
+    two-outcome version, a directive completed as 'objected' was never archived
+    and stayed in the pending queue, so an executor would re-process it every
+    cycle forever."""
+    db.execute("DROP TRIGGER coo_directives_archive")
+    db.execute(
+        "CREATE TRIGGER coo_directives_archive AFTER UPDATE OF status ON coo_directives "
+        "WHEN NEW.status IN ('success', 'failure') BEGIN "
+        "DELETE FROM coo_directives WHERE id = NEW.id; END"
+    )
+    assert "objected" not in _trigger_sql(db, "coo_directives_archive")
+
+    applied = fi_db.apply_additive_migrations(db)
+
+    assert "trigger coo_directives_archive" in applied
+    assert "objected" in _trigger_sql(db, "coo_directives_archive")
+
+
+def test_an_unchanged_trigger_is_left_alone(db):
+    """Comparison is by content, not by formatting - SQLite stores the text as
+    written, so whitespace differences would read as drift on every startup and
+    the trigger would be dropped and rebuilt forever."""
+    before = _trigger_sql(db, "coo_directives_archive")
+    assert fi_db.apply_additive_migrations(db) == []
+    assert _trigger_sql(db, "coo_directives_archive") == before
+
+
+def test_a_replaced_trigger_actually_archives_the_new_outcome(db):
+    """The behavioural half. A trigger whose text was updated but which does not
+    fire would pass the comparison above and fail in production."""
+    db.execute("DROP TRIGGER coo_directives_archive")
+    db.execute(
+        "CREATE TRIGGER coo_directives_archive AFTER UPDATE OF status ON coo_directives "
+        "WHEN NEW.status IN ('success', 'failure') BEGIN "
+        "DELETE FROM coo_directives WHERE id = NEW.id; END"
+    )
+    fi_db.apply_additive_migrations(db)
+
+    directive_id = fi_db.enqueue_directive(
+        db, directive_type="retire", requested_by="coo-1", target_identity="explorer-404",
+    )
+    fi_db.file_objection(
+        db, directive_id, filed_by="controller-1", ground="missing dependency",
+        evidence="no such agent", remedy="spawn it first",
+    )
+
+    assert fi_db.fetch_next_pending_directive(db) is None, "objected directive stayed in the queue"

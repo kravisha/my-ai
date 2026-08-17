@@ -49,7 +49,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, novelty, triage
+from backend import competency, compliance, novelty, triage
 from backend.db import Database
 
 # FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
@@ -75,7 +75,7 @@ DB_PATH = Path(os.environ.get("FI_DB_PATH") or (Path(__file__).resolve().parent.
 # lens can be bound to the regime it was observed working under - so a lens
 # can now expire because *conditions changed*, not only because its grades
 # were poor.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # --- Pre-Alpha static metadata (Consolidated spec §10/§21) ---
 # These are organization-level constants, deliberately kept here rather than
@@ -403,9 +403,31 @@ CREATE TABLE IF NOT EXISTS coo_directives_completed (
     observed_at TEXT
 );
 
+-- A declined order, with a named ground, its evidence, and what would let the
+-- work proceed. Distinct from a failed one: failure means the executor tried and
+-- broke, objection means it declined and said why.
+--
+-- No foreign key to coo_directives on purpose - the archive trigger below moves
+-- a directive out of that table the moment it completes, so a reference would
+-- break on exactly the directives that have been settled.
+CREATE TABLE IF NOT EXISTS objections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    directive_id INTEGER NOT NULL,
+    filed_by TEXT NOT NULL,
+    filed_at TEXT NOT NULL,
+    ground TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    remedy TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'filed',
+    settled_at TEXT,
+    settled_by TEXT,
+    settlement_reason TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 6
+);
+
 CREATE TRIGGER IF NOT EXISTS coo_directives_archive
 AFTER UPDATE OF status ON coo_directives
-WHEN NEW.status IN ('success', 'failure')
+WHEN NEW.status IN ('success', 'failure', 'objected')
 BEGIN
     INSERT INTO coo_directives_completed
         (id, timestamp, directive_type, target_role, target_identity, params, requested_by, reason, completed_at, outcome, detail, schema_version)
@@ -1068,6 +1090,54 @@ def _declared_columns() -> dict[str, list[tuple[str, str]]]:
     return declared
 
 
+_TRIGGER_PATTERN = re.compile(
+    r"CREATE TRIGGER IF NOT EXISTS\s+(\w+)(.*?)\bEND;", re.DOTALL | re.IGNORECASE
+)
+
+
+def _declared_triggers() -> dict[str, str]:
+    return {
+        match.group(1): match.group(0).rstrip(";")
+        for match in _TRIGGER_PATTERN.finditer(SCHEMA)
+    }
+
+
+def _normalise(sql: str) -> str:
+    """Compare triggers by content, not by formatting. SQLite stores the text as
+    written, so indentation differences would read as drift forever."""
+    return " ".join(sql.replace("IF NOT EXISTS", "").split()).lower()
+
+
+def _reconcile_triggers(conn: Database) -> list[str]:
+    """Replace triggers whose definition has changed since the database was made.
+
+    **`CREATE TRIGGER IF NOT EXISTS` has the same trap as `CREATE TABLE IF NOT
+    EXISTS`, and it hides better.** A changed trigger silently does nothing on an
+    existing database, and unlike a missing column there is no PRAGMA that would
+    reveal it and no query that fails - the old trigger just keeps running.
+
+    Measured before being written: adding a third status to the archive trigger's
+    WHEN clause and re-running the schema left the two-status version in place, so
+    a directive with the new status was never archived and stayed in the pending
+    queue permanently. On a real database that is an executor re-processing the
+    same directive every cycle forever.
+
+    Replacement is safe in a way column changes are not. A trigger holds no data,
+    so dropping and recreating one loses nothing - which is why this can be
+    automatic while `apply_additive_migrations` refuses anything but additions."""
+    changed = []
+    for name, declared in _declared_triggers().items():
+        row = conn.fetchone(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?", (name,)
+        )
+        if row is None or _normalise(row["sql"]) == _normalise(declared):
+            continue
+        conn.execute(f"DROP TRIGGER {name}")
+        conn.execute(declared)
+        changed.append(f"trigger {name}")
+    return changed
+
+
 def apply_additive_migrations(conn: Database) -> list[str]:
     """Add columns that SCHEMA declares but an existing database does not have.
 
@@ -1084,7 +1154,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
 
     Returns what it changed, so a caller can log a migration rather than have one
     happen invisibly."""
-    applied = []
+    applied = _reconcile_triggers(conn)
     for table, columns in _declared_columns().items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
@@ -3370,3 +3440,111 @@ def list_grades_for_identity(conn: Database, identity: str) -> list[dict]:
         "ORDER BY g.created_at",
         (identity,),
     )
+
+
+# --- structured objection ---------------------------------------------------
+#
+# Before this, a directive could end only 'success' or 'failure', which meant an
+# executor declining an order had nowhere to put the fact. Two paths in the
+# Controller were already objections wearing a failure's clothes: retiring or
+# resuming an identity that does not exist is not the executor breaking, it is
+# the order naming something absent.
+#
+# Conflating them costs two things. The metrics read a well-founded refusal as a
+# malfunction, so an executor that correctly declines looks unreliable. And the
+# reason lives in free text, where nothing can check it - which is precisely what
+# a structured objection replaces.
+#
+# Internal rationale: INT-PHIL-0025
+
+OBJECTION_FILED = "filed"
+OBJECTION_SETTLED_STATUSES = ("upheld", "rejected", "escalated")
+
+
+def file_objection(
+    conn: Database,
+    directive_id: int,
+    filed_by: str,
+    ground: str,
+    evidence: str,
+    remedy: str,
+) -> int:
+    """Decline ordered work on a named ground, and complete the directive as
+    'objected' rather than as a failure.
+
+    Three things are required and none is optional. The **ground** must come from
+    the closed list, because an open one makes refusal discretionary again. The
+    **evidence** must say what was observed. The **remedy** must say what would
+    let the work proceed - a refusal that only says no hands the design problem
+    back to whoever asked."""
+    known = {g.name for g in compliance.OBJECTION_GROUNDS}
+    if ground not in known:
+        raise ValueError(
+            f"unknown objection ground: {ground!r}. Allowed: {sorted(known)}. The list is closed "
+            "deliberately; an 'other' category would restore free-form refusal under a new name."
+        )
+    if not (evidence or "").strip():
+        raise ValueError("an objection must carry evidence; asserting a ground is not showing one")
+    if not (remedy or "").strip():
+        raise ValueError(
+            "an objection must propose a remedy - what would have to be true for this work to "
+            "proceed. On integrity grounds 'nothing would' is a legitimate remedy, but it has to "
+            "be said."
+        )
+    if conn.fetchone("SELECT 1 FROM coo_directives WHERE id = ?", (directive_id,)) is None:
+        raise ValueError(f"directive {directive_id} is not pending; nothing to object to")
+
+    objection_id = conn.execute_returning_id(
+        "INSERT INTO objections (directive_id, filed_by, filed_at, ground, evidence, remedy, "
+        "status, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (directive_id, filed_by, _now(), ground, evidence, remedy,
+         OBJECTION_FILED, SCHEMA_VERSION),
+    )
+    # Completes the directive on its own outcome. The archive trigger carries it
+    # across exactly as it does a success or a failure, so an objected directive
+    # leaves the pending queue instead of being re-processed every cycle.
+    complete_directive(conn, directive_id, "objected", detail=f"objection {objection_id}: {ground}")
+    return objection_id
+
+
+def get_objection(conn: Database, objection_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM objections WHERE id = ?", (objection_id,))
+
+
+def list_objections(conn: Database, status: str | None = None) -> list[dict]:
+    if status is None:
+        return conn.fetchall("SELECT * FROM objections ORDER BY id")
+    return conn.fetchall("SELECT * FROM objections WHERE status = ? ORDER BY id", (status,))
+
+
+def settle_objection(conn: Database, objection_id: int, settled_by: str) -> dict:
+    """Check an objection against the records and record what they showed.
+
+    The separation this preserves is the whole point of G7. `compliance` reads and
+    reports; it has no write path and cannot settle anything. This function has
+    the write path and does no reasoning - it asks the checker what the records
+    say and records the answer. Neither half can do the other's job, which is
+    separation of powers at the only scale that currently exists.
+
+    An objection that cannot be settled from records is marked 'escalated' and
+    waits for the owner. It is not quietly rejected: an unsettled objection
+    treated as unfounded would make refusal cost the objector, which is the
+    incentive the governing framework spends §28 trying to avoid."""
+    objection = get_objection(conn, objection_id)
+    if objection is None:
+        raise ValueError(f"no objection {objection_id}")
+    if objection["status"] != OBJECTION_FILED:
+        raise ValueError(f"objection {objection_id} is already {objection['status']}")
+
+    directive = conn.fetchone(
+        "SELECT * FROM coo_directives_completed WHERE id = ?", (objection["directive_id"],)
+    ) or {}
+    settlement = compliance.check_objection(conn, objection["ground"], dict(directive))
+
+    status = "escalated" if settlement.outcome == compliance.UNSETTLED else settlement.outcome
+    conn.execute(
+        "UPDATE objections SET status = ?, settled_at = ?, settled_by = ?, settlement_reason = ? "
+        "WHERE id = ?",
+        (status, _now(), settled_by, settlement.reason, objection_id),
+    )
+    return get_objection(conn, objection_id)

@@ -413,3 +413,52 @@ Two boundaries are asserted rather than stated:
 **Retirement stays outside enforcement.** It remains an organizational decision — COO requests, the
 Controller executes — with no enforcement path able to reach it while there is no independent
 adjudicator.
+
+
+## 10. Declining ordered work (2026-08-17)
+
+G5 was queued as "structured objection instead of free-form refusal". Checking the premise first
+changed the work: **there was no free-form refusal, because there was no refusal at all.** Every
+directive ended `success` or `failure`, and two paths in the Controller were objections wearing a
+failure's clothes.
+
+| Path | Was | Is |
+|---|---|---|
+| Retire or resume an identity that does not exist | `failure`, detail "unknown identity" | objection, ground *missing dependency* |
+| A directive type the Controller has no handler for | `failure`, detail "unknown directive_type" | objection, ground *jurisdiction mismatch* |
+
+Conflating them cost two things. The metrics read a well-founded refusal as a malfunction, so an
+executor that correctly declined an impossible order looked unreliable. And the reason lived in free
+text, where nothing could check it.
+
+**Three requirements at filing.** The ground must come from the closed list; an "other" category would
+restore discretionary refusal under a new name. The evidence must state what was observed. The remedy
+must state what would let the work proceed — a refusal that only says no hands the design problem back
+to whoever asked.
+
+**Settling is checking, not judging.** `compliance.check_objection` reads the records and reports;
+`fi_db.settle_objection` records the answer. The checker has no write path and the writer does no
+reasoning, so neither half can do the other's job — the G7 separation, made behavioural. An objection
+can be *rejected*: claiming an agent is absent when the registry has it is settled against the objector.
+
+**Unsettled is not rejected.** A ground needing judgment, or one with no checker built, is marked
+`escalated` and waits for the owner. Treating it as unfounded would make refusing cost the objector,
+which is the incentive the governing framework spends a section trying to avoid.
+
+**One checker exists, and the gap is counted.** `missing dependency` is checkable today and is the one
+ground with a real instance in the running system. Four others are verifiable in principle with no
+checker yet, each recording what is actually missing — a threshold that must be measured, charters that
+state scope in prose rather than machine-readably, a resource probe that lives in the wrong layer.
+`UNCHECKED_GROUND_COUNT` pins the gap so it cannot quietly stay where it is.
+
+### A migration hazard found on the way
+
+`CREATE TRIGGER IF NOT EXISTS` has the same trap as `CREATE TABLE IF NOT EXISTS`, **and it hides
+better**: a changed trigger silently keeps its old definition, and unlike a missing column there is no
+PRAGMA that reveals it and no query that fails.
+
+Measured before the fix was written. With the archive trigger still on its two-outcome version, a
+directive completed as `objected` was never archived and stayed in the pending queue — on a real
+database, an executor re-processing the same directive every cycle forever. `apply_additive_migrations`
+now reconciles triggers by content, and the fix is verified against a database created before the
+change.
