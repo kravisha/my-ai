@@ -15,6 +15,13 @@ work, behind validation (addendum 13 §14).
 So the ranking uses only what can be *observed* about a report, and only where
 the observation supports the inference:
 
+- **Structural novelty, ahead of evidence completeness.** A lead the system has
+  no precedent for is worth the scarce deep-reasoning call more than the
+  twentieth instance of a familiar pattern, even a well-evidenced one. This is
+  constitution §8's "transformation, not filing" made operational: novelty
+  changes what the system *does next* rather than being recorded and ignored.
+  Ranked above evidence completeness deliberately - a novel lead with a
+  timed-out cross-check is still the more interesting thing to reason about.
 - **Evidence completeness.** A lead whose cross-check came back has two
   independent findings for Analysis to weigh; one whose partner never answered
   has one. That is a statement about how much evidence exists, not about which
@@ -33,6 +40,8 @@ than to a queue.
 """
 
 import os
+
+from backend.novelty import NOVEL_THRESHOLD
 
 # How long a report may wait before it outranks everything regardless of how
 # well-evidenced it is. Starvation is the failure mode prioritisation invents,
@@ -68,12 +77,14 @@ def _evidence_rank(report: dict, cross_checks: dict) -> int:
     return _OUTCOME_RANK.get(outcome, _NO_CROSS_CHECK_RANK)
 
 
-def prioritise(reports: list[dict], cross_checks: dict, ages: dict, starvation_seconds: float | None = None) -> list[dict]:
-    """Order the pending queue. `ages` maps report id -> seconds waiting.
+def prioritise(reports: list[dict], cross_checks: dict, ages: dict, starvation_seconds: float | None = None,
+               novelty_scores: dict | None = None) -> list[dict]:
+    """Order the pending queue. `ages` maps report id -> seconds waiting, and
+    `novelty_scores` maps report id -> structural novelty (see backend/novelty.py).
 
-    Ties break on report id, which is arrival order - so among equally
-    well-evidenced leads the queue stays FIFO, and the change is a refinement
-    of the old behaviour rather than a replacement for it."""
+    Ties break on report id, which is arrival order - so among equally ranked
+    leads the queue stays FIFO, and the change is a refinement of the old
+    behaviour rather than a replacement for it."""
     if starvation_seconds is None:
         starvation_seconds = STARVATION_SECONDS
 
@@ -85,12 +96,20 @@ def prioritise(reports: list[dict], cross_checks: dict, ages: dict, starvation_s
         # is the only thing that matters.
         if starving:
             return (0, -ages.get(report["id"], 0.0), report["id"])
-        return (1, _evidence_rank(report, cross_checks), report["id"])
+        # Novel first, then best-evidenced, then arrival order. `novelty_scores`
+        # holds whole assessments rather than bare numbers, so the reason a lead
+        # was promoted is available to explain() from the same structure that
+        # promoted it - two representations would let the ranking and its stated
+        # reason drift apart.
+        assessment = (novelty_scores or {}).get(report["id"]) or {}
+        novel = assessment.get("score", 0.0) >= NOVEL_THRESHOLD
+        return (1, 0 if novel else 1, _evidence_rank(report, cross_checks), report["id"])
 
     return sorted(reports, key=key)
 
 
-def explain(report: dict, cross_checks: dict, ages: dict, starvation_seconds: float | None = None) -> str:
+def explain(report: dict, cross_checks: dict, ages: dict, starvation_seconds: float | None = None,
+            novelty_scores: dict | None = None) -> str:
     """Why this report sits where it does. Recorded alongside the choice so the
     ordering is auditable rather than merely effective - the same reason every
     other decision in this system carries its reason."""
@@ -99,6 +118,9 @@ def explain(report: dict, cross_checks: dict, ages: dict, starvation_seconds: fl
     age = ages.get(report["id"], 0.0)
     if age >= starvation_seconds:
         return f"waited {age:.0f}s, past the {starvation_seconds:.0f}s starvation guard"
+    novel = (novelty_scores or {}).get(report["id"])
+    if novel and novel.get("is_novel"):
+        return f"unprecedented: {novel['summary']}"
     if report.get("cross_check_id") is None:
         return "no cross-check on this lead"
     outcome = (cross_checks.get(report["cross_check_id"]) or {}).get("outcome")

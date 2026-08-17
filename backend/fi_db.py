@@ -48,7 +48,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend import triage
+from backend import novelty, triage
 from backend.db import Database
 
 # FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
@@ -1156,6 +1156,90 @@ def most_recent_completed_spawn(conn: Database, role: str) -> dict | None:
     )
 
 
+def observed_history(conn: Database, before_event_id: int | None = None) -> dict:
+    """What the system had seen - the "current conceptual structure"
+    constitution §8 asks novelty to be measured against.
+
+    **`before_event_id` is not an optimisation, it is the correctness of the
+    whole thing.** By the time a report reaches the queue its own detector event
+    is already recorded, so a history built from everything includes the very
+    observation being judged - the lead makes itself familiar, and nothing is
+    ever novel. Found by running it: unit tests construct history explicitly and
+    so never exhibit the off-by-one.
+
+    Passing the candidate's own event id asks the honest question instead: what
+    did the system know *before this arrived*?
+
+    Assembled from the event tables rather than kept as a separate summary,
+    because a cached structure could drift from the record it summarizes and
+    novelty would then be measured against a fiction."""
+    securities_seen, ratio_range = set(), {}
+    peer_combinations = set()
+    where = "WHERE id < ?" if before_event_id is not None else ""
+    params = (before_event_id,) if before_event_id is not None else ()
+    for event in conn.fetchall(
+        f"SELECT security, ratio, peer_context FROM detector_events {where}", params
+    ):
+        securities_seen.add(event["security"])
+        if event["ratio"] is not None:
+            low, high = ratio_range.get(event["security"], (event["ratio"], event["ratio"]))
+            ratio_range[event["security"]] = (min(low, event["ratio"]), max(high, event["ratio"]))
+        if event["peer_context"]:
+            co = json.loads(event["peer_context"]).get("co_triggering") or []
+            if co:
+                peer_combinations.add(",".join(sorted(co)))
+
+    # Speculator-sourced leads never produce a detector event, so a security
+    # only ever seen socially would otherwise read as never-observed forever.
+    #
+    # Deliberately *not* bounded by before_event_id: that is a detector_events
+    # id, and evidence_items has an independent id space, so any cutoff
+    # translated between them would be arbitrary rather than meaningful. The
+    # consequence is that "first observation" is coarse - a security Speculator
+    # saw in the same cycle already counts as seen when Explorer's lead is
+    # judged. That makes the signal conservative, which is the right direction:
+    # it under-reports novelty rather than inventing it, and the peer-combination
+    # and ratio-range signals still fire on genuine first encounters.
+    for row in conn.fetchall("SELECT DISTINCT security FROM evidence_items"):
+        securities_seen.add(row["security"])
+
+    outcomes = {
+        row["outcome"] for row in conn.fetchall(
+            "SELECT DISTINCT outcome FROM cross_check_requests WHERE outcome IS NOT NULL")
+    }
+    return {
+        "securities_seen": securities_seen,
+        "ratio_range": ratio_range,
+        "peer_combinations": peer_combinations,
+        "cross_check_outcomes": outcomes,
+    }
+
+
+def assess_report_novelty(conn: Database, report: dict, history: dict | None = None) -> dict:
+    """Structural novelty for one queued report, from its detector event and
+    cross-check if it has them.
+
+    History is built excluding this report's own detector event - see
+    observed_history. A caller supplying `history` is responsible for that
+    exclusion itself; the default path does it correctly."""
+    candidate = {"security": report["security"]}
+    if report.get("detector_event_id"):
+        event = get_detector_event(conn, report["detector_event_id"])
+        if event:
+            if history is None:
+                history = observed_history(conn, before_event_id=report["detector_event_id"])
+            candidate["ratio"] = event["ratio"]
+            if event["peer_context"]:
+                candidate["co_triggering"] = json.loads(event["peer_context"]).get("co_triggering")
+    if history is None:
+        history = observed_history(conn)
+    if report.get("cross_check_id"):
+        request = get_cross_check(conn, report["cross_check_id"])
+        if request:
+            candidate["cross_check_outcome"] = request["outcome"]
+    return novelty.assess(candidate, history)
+
+
 def get_directive(conn: Database, directive_id: int) -> dict | None:
     """A pending directive by id. Returns None once it completes - the archive
     trigger moves the row to coo_directives_completed, so absence here means
@@ -2142,6 +2226,13 @@ def prioritised_pending_reports(conn: Database, starvation_seconds: float | None
     if not reports:
         return []
 
+    # Assessed per report rather than against one shared history: each lead must
+    # be judged against what was known *before it arrived*, and a single shared
+    # history would include every queued observation in the baseline they are
+    # measured against. Affordable because the queue is bounded by the
+    # per-producer-per-security dedup (measured at 13 of a possible 20).
+    novelty_scores = {r["id"]: assess_report_novelty(conn, r) for r in reports}
+
     cross_checks = {
         row["id"]: row
         for row in conn.fetchall("SELECT id, outcome FROM cross_check_requests")
@@ -2152,10 +2243,11 @@ def prioritised_pending_reports(conn: Database, starvation_seconds: float | None
         for report in reports
     }
 
-    ordered = triage.prioritise(reports, cross_checks, ages, starvation_seconds)
+    ordered = triage.prioritise(reports, cross_checks, ages, starvation_seconds, novelty_scores)
     return [
         {**report, "waiting_seconds": round(ages[report["id"]], 1),
-         "triage_reason": triage.explain(report, cross_checks, ages, starvation_seconds)}
+         "novelty": novelty_scores[report["id"]],
+         "triage_reason": triage.explain(report, cross_checks, ages, starvation_seconds, novelty_scores)}
         for report in ordered
     ]
 

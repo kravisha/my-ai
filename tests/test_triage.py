@@ -13,8 +13,8 @@ def _report(report_id, cross_check_id=None):
     return {"id": report_id, "security": f"SYN{report_id}", "cross_check_id": cross_check_id}
 
 
-def _order(reports, cross_checks=None, ages=None, starvation=120.0):
-    ranked = triage.prioritise(reports, cross_checks or {}, ages or {}, starvation)
+def _order(reports, cross_checks=None, ages=None, starvation=120.0, novelty_scores=None):
+    ranked = triage.prioritise(reports, cross_checks or {}, ages or {}, starvation, novelty_scores)
     return [r["id"] for r in ranked]
 
 
@@ -131,3 +131,69 @@ def test_the_guard_is_configurable_for_a_faster_or_slower_pipeline():
     ages = {1: 300.0, 2: 1.0}
     assert _order(reports, cross_checks, ages, starvation=200.0) == [1, 2]   # 1 starves
     assert _order(reports, cross_checks, ages, starvation=9999.0) == [2, 1]  # nothing starves
+
+
+# --- novelty as a ranking input (constitution section 8: transformation, not filing) ---
+
+
+def _novel(score=1.0, summary="first observation ever recorded"):
+    return {"score": score, "is_novel": score >= triage.NOVEL_THRESHOLD,
+            "reasons": [summary], "summary": summary}
+
+
+def test_an_unprecedented_lead_outranks_a_well_evidenced_familiar_one():
+    """The whole point. A lead the system has no precedent for is worth the
+    scarce deep-reasoning call more than the twentieth instance of a known
+    pattern - even one with a complete cross-check."""
+    reports = [_report(1, cross_check_id=10), _report(2, cross_check_id=20)]
+    cross_checks = {10: {"outcome": "evidence"}, 20: {"outcome": "unanswered"}}
+    novelty_scores = {2: _novel()}
+
+    assert _order(reports, cross_checks, novelty_scores=novelty_scores) == [2, 1]
+
+
+def test_among_novel_leads_evidence_still_decides():
+    """Novelty promotes a lead into the front group; within it the ordering is
+    still the evidence ranking, so the two inputs compose rather than one
+    erasing the other."""
+    reports = [_report(1, cross_check_id=10), _report(2, cross_check_id=20)]
+    cross_checks = {10: {"outcome": "unanswered"}, 20: {"outcome": "evidence"}}
+    novelty_scores = {1: _novel(), 2: _novel()}
+
+    assert _order(reports, cross_checks, novelty_scores=novelty_scores) == [2, 1]
+
+
+def test_starvation_still_beats_novelty():
+    """A lead that has waited too long outranks everything, novel or not -
+    otherwise a steady stream of unprecedented leads would starve the queue and
+    prioritisation would become the suppression it exists to avoid."""
+    reports = [_report(1), _report(2)]
+    novelty_scores = {2: _novel()}
+    ages = {1: 5000.0, 2: 1.0}
+
+    assert _order(reports, {}, ages, starvation=900.0, novelty_scores=novelty_scores) == [1, 2]
+
+
+def test_a_below_threshold_score_does_not_promote():
+    reports = [_report(1, cross_check_id=10), _report(2)]
+    cross_checks = {10: {"outcome": "evidence"}}
+    novelty_scores = {2: _novel(score=0.3)}  # under NOVEL_THRESHOLD
+
+    assert _order(reports, cross_checks, novelty_scores=novelty_scores) == [1, 2]
+
+
+def test_the_reason_says_what_was_unprecedented():
+    """A novelty verdict nobody can interrogate is the unfalsifiable assessment
+    this whole approach exists to avoid."""
+    reason = triage.explain(_report(1), {}, {},
+                            novelty_scores={1: _novel(summary="ratio 9.90 exceeds anything seen")})
+    assert "unprecedented" in reason
+    assert "ratio 9.90 exceeds anything seen" in reason
+
+
+def test_ranking_without_novelty_scores_is_unchanged():
+    """Novelty is additive. Callers that do not supply scores must get exactly
+    the previous ordering."""
+    reports = [_report(1, cross_check_id=10), _report(2, cross_check_id=20)]
+    cross_checks = {10: {"outcome": "unanswered"}, 20: {"outcome": "evidence"}}
+    assert _order(reports, cross_checks) == [2, 1]

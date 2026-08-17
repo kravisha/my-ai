@@ -1115,10 +1115,28 @@ def test_prioritised_queue_puts_the_best_evidenced_lead_first(conn):
 
 
 def test_every_queued_report_carries_its_triage_reason_and_age(conn):
+    """The first report for a security the system has never seen is genuinely
+    unprecedented, so novelty - which outranks evidence completeness - is the
+    honest reason it sits where it does."""
     fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1")
     row = fi_db.prioritised_pending_reports(conn)[0]
-    assert row["triage_reason"] == "no cross-check on this lead"
+    assert "unprecedented" in row["triage_reason"]
+    assert row["novelty"]["is_novel"] is True
     assert row["waiting_seconds"] >= 0
+
+
+def test_a_familiar_lead_falls_back_to_the_evidence_reason(conn):
+    """Once a security has history, novelty stops firing and the ranking is
+    decided by how well-evidenced the lead is - so the two inputs are visibly
+    distinct rather than one always masking the other."""
+    fi_db.record_detector_event(conn, "explorer-1", "T", "SYN1", "iv_surface_peak_ratio",
+                                0.6, 0.3, 2.2, 2.0)
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1")
+
+    row = fi_db.prioritised_pending_reports(conn)[0]
+
+    assert row["novelty"]["is_novel"] is False
+    assert row["triage_reason"] == "no cross-check on this lead"
 
 
 def test_prioritisation_never_drops_a_report(conn):

@@ -405,7 +405,63 @@ that already exists.
 
 ### 4.7 Novelty detection and knowledge transformation (§8, Axiom 8)
 
-Absent. Depends on 4.1.
+> **PARTIALLY CLOSED (2026-08-17).** Structural novelty is detected and, per §8's "transformation, not
+> filing", it *changes what the system does*: an unprecedented lead outranks a well-evidenced familiar
+> one in the queue. Semantic novelty and knowledge restructuring remain absent.
+
+Depended on §4.1, correctly — there was nothing to detect non-fit against until the knowledge store
+and the event history gave the system a conceptual structure.
+
+#### What "does not fit" means here
+
+Deliberately **structural, not semantic**. The tempting design asks a model "is this novel?", which
+produces an assessment nothing can contradict — the unfalsifiable-judgment trap this project has had
+to refuse repeatedly. Novelty is instead measured against what the system has actually recorded: a
+security never observed, a detector ratio outside anything seen for it, a peer combination that has
+never co-triggered, a cross-check outcome not encountered before. Every verdict carries its reasons
+and can be checked against the rows that produced it.
+
+**This is not `novelty_score`, and conflating them would lose something.** That score is Analysis's
+judgment, formed after reasoning, about whether a report told the organization anything new. This is a
+structural fact computed *before* reasoning. One is an input to the other: Analysis is told "no
+precedent exists" and forms its own view. Replacing a judgment with a count would be a downgrade.
+
+#### Transformation, not filing
+
+§8 is explicit that novel information "should not merely be appended to a database", so a
+`novelty_records` table nothing acted on would have failed the spec's own central instruction. Novelty
+is instead the **top-ranked input to triage**, above evidence completeness: a lead with no precedent
+is worth the scarce deep-reasoning call more than the twentieth instance of a known pattern, even a
+well-evidenced one. Starvation still overrides everything, so a stream of novel leads cannot starve
+the queue.
+
+#### The defect only a running system showed
+
+The first implementation never fired. By the time a report reaches the queue its own detector event is
+already recorded, so a history built from everything included the very observation being judged — each
+lead made itself familiar. The unit tests all passed, because they construct history explicitly and
+never exhibit the off-by-one. Fixed by asking the honest question: what did the system know *before
+this arrived*?
+
+After the fix, on a fresh backend: the first SYN1 lead read `unprecedented: peer group has not
+co-triggered as [SYN2,SYN3] before`, and the second SYN1 lead was already familiar. After 537 detector
+events, nothing in a 13-deep queue was novel — the system had genuinely seen it all.
+
+#### Still open
+
+- **The ratio-range signal cannot be exercised in this fixture.** Synthetic surfaces are static per
+  security within a regime, so a security's observed ratio range collapses to a single point
+  (`SYN1: 2.22-2.22`). Changing the regime does not help: it makes the detector stop firing entirely
+  rather than produce a different ratio — at base 0.55 the ratio falls below the 2.0 threshold. The
+  signal is unit-tested and structurally sound but has never fired live, and saying otherwise would
+  overstate it. Exercising it needs a fixture where dislocation *size* varies.
+- **Semantic novelty is absent**, and deliberately. Structural novelty detects *unprecedented*, which
+  is a proper subset of *novel*: it cannot notice that two differently-shaped observations mean the
+  same thing, nor that a familiar-looking one arrives for an unfamiliar reason. That needs a
+  conceptual model the system does not have.
+- **Knowledge restructuring is absent.** §8's "what concepts it creates or modifies, and whether the
+  knowledge model must be materially restructured" is untouched — nothing revises the conceptual
+  structure in response to novelty, it only reprioritises attention.
 
 ### 4.8 Exploration mode with visible risk (§9)
 

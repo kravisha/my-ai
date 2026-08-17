@@ -145,6 +145,17 @@ def _assemble_context(conn, report: dict) -> str:
             "grounds to ignore an item, and do not treat a high one as grounds to accept it."
         )
 
+    novelty = fi_db.assess_report_novelty(conn, report)
+    if novelty["is_novel"]:
+        lines.append("")
+        lines.append(f"NOVELTY: this lead has no precedent - {novelty['summary']}.")
+        lines.append(
+            "  That is a structural fact about the system's records, not a judgment that the lead is "
+            "important. Nothing here has been seen before, so there is less to pattern-match against "
+            "and more reason to reason from first principles. Weigh it yourself, and set "
+            "novelty_score on what you conclude rather than on this note."
+        )
+
     questions = fi_db.open_questions_for(conn, report["security"])
     if questions:
         lines.append("")
