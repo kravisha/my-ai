@@ -1,0 +1,40 @@
+id: saturation
+version: 1
+lifecycle: active
+description: >
+  The same conditions as baseline_steady_state, run long enough for the queue to
+  reach whatever state it settles into.
+
+  Ninety seconds was never long enough to tell the difference between a queue
+  that grows without bound and one that saturates at a fixed depth, and those
+  two need completely different fixes - one is a capacity problem, the other is
+  a latency problem. Everything recorded about R1 so far came from runs too
+  short to distinguish them.
+
+  There is a reason to expect saturation rather than growth. Discovery agents
+  check has_pending_report before filing, so at most one report per producer per
+  security can be waiting. With ten securities under observation that puts a
+  ceiling on the backlog no matter how slow judgment is - the queue cannot run
+  away, but the wait can still be long, and discovery goes quiet whenever a
+  security's last report is still unconsumed.
+
+  This run exists to measure which of those is actually happening.
+
+# Long enough for several full passes through a saturated queue. At the observed
+# drain rate of roughly one report every twenty seconds and a ceiling of ten
+# pending, one complete cycle takes about 200s - so this covers two and a half
+# cycles, which is enough for a growing queue and a settled one to look
+# obviously different.
+duration_seconds: 300
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+
+requires_model: true
+
+# Deliberately none. This scenario is a measurement, not a regression: asserting
+# a bound on behaviour nobody has characterised yet would be inventing the answer
+# before taking the reading.
+expected_properties: []

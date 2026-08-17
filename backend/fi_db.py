@@ -596,6 +596,14 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     evidence_ids TEXT,
     judgment_confidence REAL,
     status TEXT NOT NULL DEFAULT 'pending',
+    -- When a judgment agent took this report. NULL while it waits.
+    --
+    -- Judgment holds a report for roughly twenty seconds while a model call
+    -- runs, and nothing marked the report as taken during that window - so a
+    -- second judgment agent would read the same top-ranked report and analyse
+    -- it too. Harmless with exactly one agent, which is why it was never seen,
+    -- and the first thing that breaks when capacity is added.
+    claimed_at TEXT,
     handled_by_identity TEXT,
     handled_by_spawned_at TEXT,
     detail TEXT,
@@ -878,7 +886,77 @@ def get_connection(db_path: str | Path = DB_PATH) -> Database:
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+    apply_additive_migrations(conn)
     _seed_static_metadata(conn)
+
+
+# Constraint clauses inside a CREATE TABLE body, which are not columns.
+_TABLE_CONSTRAINTS = ("UNIQUE", "PRIMARY", "FOREIGN", "CHECK", "CONSTRAINT")
+
+
+def _declared_columns() -> dict[str, list[tuple[str, str]]]:
+    """Every column SCHEMA declares, as {table: [(name, full definition)]}.
+
+    Parsed from the DDL rather than kept in a second hand-maintained list. A
+    registry of "columns added later" is a thing somebody forgets to update, and
+    the failure mode is silent."""
+    declared: dict[str, list[tuple[str, str]]] = {}
+    for table, body in re.findall(
+        r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", SCHEMA, re.S
+    ):
+        columns = []
+        for line in body.splitlines():
+            line = line.strip().rstrip(",")
+            if not line or line.startswith("--"):
+                continue
+            name = line.split()[0]
+            # `startswith`, not equality: a table-level constraint is written
+            # `UNIQUE(name, version)` with no space, so the first token is
+            # `UNIQUE(name,` and an equality check lets it through as a column.
+            if name.upper().startswith(_TABLE_CONSTRAINTS):
+                continue
+            columns.append((name, line))
+        declared[table] = columns
+    return declared
+
+
+def apply_additive_migrations(conn: Database) -> list[str]:
+    """Add columns that SCHEMA declares but an existing database does not have.
+
+    **`CREATE TABLE IF NOT EXISTS` silently does nothing when the table already
+    exists**, so a column added to SCHEMA never reaches a database created before
+    the change. Everything keeps working on a fresh database and fails with "no
+    such column" against a real one - at runtime, on whichever query touches it
+    first. Verified by adding a column to SCHEMA, re-running it against a
+    database from an earlier run, and finding the column absent.
+
+    Additive only, by design. Renames, type changes and drops need a considered
+    migration with a data step; quietly inventing one here would be the more
+    dangerous convenience. This closes the case that was silently broken.
+
+    Returns what it changed, so a caller can log a migration rather than have one
+    happen invisibly."""
+    applied = []
+    for table, columns in _declared_columns().items():
+        existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table did not exist; executescript just created it in full
+        for name, definition in columns:
+            if name in existing:
+                continue
+            if "NOT NULL" in definition.upper() and "DEFAULT" not in definition.upper():
+                # SQLite refuses this, and it should: there is no value to give
+                # the rows that already exist. Raised rather than skipped,
+                # because skipping leaves the database one query away from
+                # failing and says nothing about why.
+                raise RuntimeError(
+                    f"cannot add {table}.{name} to an existing database: it is NOT NULL with no "
+                    "DEFAULT, so existing rows have no value. Give it a default, or write a "
+                    "migration that supplies one."
+                )
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+            applied.append(f"{table}.{name}")
+    return applied
 
 
 def _seed_static_metadata(conn: Database) -> None:
@@ -2739,9 +2817,72 @@ def prioritised_pending_reports(conn: Database, starvation_seconds: float | None
 
 
 def fetch_prioritised_report(conn: Database, starvation_seconds: float | None = None) -> dict | None:
-    """The single report Analysis should take next."""
+    """The single report Analysis should take next.
+
+    A read with no claim, so two judgment agents reading at once both get the
+    same row. Safe only with a single agent; use claim_next_report otherwise."""
     queue = prioritised_pending_reports(conn, starvation_seconds)
     return queue[0] if queue else None
+
+
+def claim_next_report(
+    conn: Database,
+    identity: str,
+    spawned_at: str,
+    starvation_seconds: float | None = None,
+) -> dict | None:
+    """Take the highest-priority report, atomically, so no two agents take the same one.
+
+    Walks the triage order attempting a guarded UPDATE on each: the claim only
+    succeeds if the row is still 'pending', so a loser sees rowcount zero and
+    moves to the next candidate rather than duplicating work. Reading the queue
+    and then claiming without a guard would leave a twenty-second window - the
+    length of a model call - in which both agents believe they own the report.
+
+    Returns the claimed report with its triage_reason, or None if every candidate
+    was taken while this agent was choosing."""
+    for report in prioritised_pending_reports(conn, starvation_seconds):
+        won = conn.execute_returning_rowcount(
+            "UPDATE discovery_reports SET status = 'in_progress', claimed_at = ?, "
+            "handled_by_identity = ?, handled_by_spawned_at = ? "
+            "WHERE id = ? AND status = 'pending'",
+            (_now(), identity, spawned_at, report["id"]),
+        )
+        if won:
+            return report
+    return None
+
+
+# How long a claim may stand before the report is treated as abandoned.
+#
+# Must exceed the longest realistic time an agent holds a report, or a working
+# agent's claim is stolen mid-analysis and the report is judged twice - the exact
+# duplication the claim exists to prevent, reintroduced by a timeout set too low.
+# Measured: a judgment cycle is ~19.5s of model call plus a poll interval, with
+# one observed outlier at 42s. 180s is far above the worst case and still short
+# enough that a crashed agent's report is back in the queue within three minutes.
+CLAIM_TIMEOUT_SECONDS = float(os.environ.get("FI_CLAIM_TIMEOUT_SECONDS", "180"))
+
+
+def release_stale_claims(conn: Database, timeout_seconds: float | None = None) -> int:
+    """Return abandoned claims to the queue.
+
+    Claiming introduces a way to lose work that did not exist before: an agent
+    that dies mid-analysis leaves its report 'in_progress' forever, and since
+    has_pending_report still counts it, that security goes permanently silent.
+    So the claim has to expire, exactly as a cross-check request does.
+
+    Resolved at call time rather than bound as a default argument, so changing
+    the constant does not require a reimport."""
+    if timeout_seconds is None:
+        timeout_seconds = CLAIM_TIMEOUT_SECONDS
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+    return conn.execute_returning_rowcount(
+        "UPDATE discovery_reports SET status = 'pending', claimed_at = NULL, "
+        "handled_by_identity = NULL, handled_by_spawned_at = NULL "
+        "WHERE status = 'in_progress' AND claimed_at IS NOT NULL AND claimed_at < ?",
+        (cutoff,),
+    )
 
 
 def has_pending_report(conn: Database, producer_identity: str, security: str) -> bool:

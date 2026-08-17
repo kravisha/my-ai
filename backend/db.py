@@ -46,6 +46,17 @@ class Database:
         self._conn.commit()
         return cursor.lastrowid
 
+    def execute_returning_rowcount(self, sql: str, params: tuple = ()) -> int:
+        """For conditional UPDATEs where the caller needs to know whether it won.
+
+        The claim pattern: an UPDATE guarded by the state it expects to find,
+        where a rowcount of zero means another process got there first. Without
+        this the caller cannot distinguish "I claimed it" from "somebody else
+        did", which is the whole point of an atomic claim."""
+        cursor = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cursor.rowcount
+
     def fetchone(self, sql: str, params: tuple = ()) -> dict | None:
         row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None

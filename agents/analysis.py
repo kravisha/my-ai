@@ -294,7 +294,19 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     # call per cycle stops being an accident of arrival order and becomes a
     # stated choice - with the reason recorded, since an unexplained ordering
     # is not auditable.
-    report = fi_db.fetch_prioritised_report(conn)
+    # Claims before working rather than after. The claim is what makes a second
+    # judgment agent safe: reading the queue and analysing without one leaves a
+    # twenty-second window in which two agents own the same report.
+    #
+    # Released claims come first, so a report abandoned by an agent that died
+    # mid-analysis is back in this pass's queue rather than stuck out of
+    # circulation - and stuck matters more than it sounds, because
+    # has_pending_report still counts it, so that security would go silent.
+    reclaimed = fi_db.release_stale_claims(conn)
+    if reclaimed:
+        print(f"[analysis] returned {reclaimed} abandoned report(s) to the queue")
+
+    report = fi_db.claim_next_report(conn, identity, spawned_at)
     if report is None:
         return  # idle - the signal a later increment's starvation scaling will consume
     print(f"[analysis] taking report #{report['id']} ({report['security']}): {report['triage_reason']}")
