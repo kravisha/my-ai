@@ -19,6 +19,8 @@ import pytest
 
 yaml = pytest.importorskip("yaml")
 
+import conftest
+
 from backend import fi_db
 from simulation import harness
 from simulation import scenario as scenario_module
@@ -278,8 +280,13 @@ def test_real_run_starts_stops_and_leaves_nothing_behind(tmp_path):
 
 @pytest.mark.simulation
 def test_real_run_does_not_touch_the_production_database(tmp_path):
-    """The isolation claim, checked rather than asserted in a comment."""
-    production = fi_db.DB_PATH
+    """The isolation claim, checked rather than asserted in a comment.
+
+    Reads the path from conftest rather than fi_db.DB_PATH, which the suite now
+    redirects to a temp file for the whole session. Against DB_PATH this test
+    would still pass and would no longer be testing anything: the file it
+    watched would be one no simulation run was ever going to touch."""
+    production = conftest.REAL_DB_PATH
     before = production.stat().st_mtime if production.exists() else None
 
     scenario = make_scenario(id="isolation_check", duration_seconds=scenario_module.MIN_DURATION_SECONDS)
