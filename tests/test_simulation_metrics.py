@@ -322,3 +322,30 @@ def test_lifetime_spawns_stays_cumulative_while_respawns_do_not(empty):
     scoped = metrics.collect_from(empty, since=at(20))["population"]
     assert scoped["lifetime_spawns"] == 3
     assert scoped["respawns"] == 0, "one baseline spawn this run is not a respawn"
+
+
+def test_staffing_a_role_with_two_agents_is_not_counted_as_a_respawn(empty):
+    """Counted per identity, not per role.
+
+    A role staffed with two agents takes two spawns to establish. Counting
+    spawns-beyond-the-first per role reported that as a respawn, and flagged it
+    the first time judgment was staffed with two."""
+    for index, identity in enumerate(["analysis-1", "analysis-2"], start=1):
+        empty.execute(
+            "INSERT INTO coo_directives_completed (id, timestamp, directive_type, target_role, "
+            "requested_by, completed_at, outcome, detail, schema_version) "
+            "VALUES (?, ?, 'spawn', 'analysis', 'coo', ?, 'success', ?, 1)",
+            (index, at(index), at(index), identity),
+        )
+    assert metrics.collect_from(empty)["population"]["respawns"] == 0
+
+
+def test_the_same_slot_filled_twice_is_a_respawn(empty):
+    for index in (1, 2):
+        empty.execute(
+            "INSERT INTO coo_directives_completed (id, timestamp, directive_type, target_role, "
+            "requested_by, completed_at, outcome, detail, schema_version) "
+            "VALUES (?, ?, 'spawn', 'analysis', 'coo', ?, 'success', 'analysis-1', 1)",
+            (index, at(index), at(index)),
+        )
+    assert metrics.collect_from(empty)["population"]["respawns"] == 1

@@ -1,0 +1,46 @@
+id: saturation_two_judges
+version: 1
+lifecycle: active
+description: >
+  Identical to `saturation` in every respect except one: the judgment role is
+  staffed with two agents instead of one.
+
+  This is the A/B that tests the diagnosis rather than assuming it. R1 was
+  characterised as a saturated pipeline whose latency is the time to cycle the
+  whole security universe - ten securities at roughly twenty-three seconds of
+  judgment each, measured at a median of 149s and a maximum of 237s with a
+  single judgment agent.
+
+  If that characterisation is right, doubling judgment capacity should roughly
+  halve both, and the backlog should stay pinned at ten because the ceiling
+  comes from has_pending_report rather than from throughput. If latency does not
+  move, the diagnosis is wrong and the bottleneck is somewhere the measurement
+  did not look.
+
+  Same seeds as `saturation`, so the stimulus is identical and the only
+  difference is the number of agents doing the work.
+
+duration_seconds: 300
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  FI_BASELINE_ANALYSIS: 2
+
+requires_model: true
+
+expected_properties:
+  - name: two judgment agents were staffed
+    metric: population.registered
+    assert: at_least
+    value: 7
+    # controller, coo, dummy, explorer, speculator and two analysis agents.
+
+  - name: no report was analysed twice
+    metric: pipeline.ungraded_analyses
+    assert: equals
+    value: 0
+    # The claim exists because two agents would otherwise both take the top
+    # report and spend twenty seconds each on it. A duplicate would show up as
+    # analyses outnumbering the reports that produced them.

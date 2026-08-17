@@ -65,16 +65,19 @@ CONTROLLER_ROLE = "controller"
 
 
 def _slot_identity(role: str) -> str:
-    """Permanent, role-slot agent identity (addendum_5 §4: "each role or
-    agent identity maintains a durable performance record independent of
-    any one process instance") - replaces the disposable {role}-{uuid4}
-    scheme, under which every respawn started that role's performance
-    history over from zero. Phase A/B's baseline population is exactly one
-    instance per role (BASELINE_ROLES in agents/coo.py), so slot numbering
-    is trivial for now - always slot 1. Real multi-instance-per-role
-    scaling, and the slot-allocation policy that would need, is deferred to
-    Phase C+ along with the rest of the agent lifecycle states (reserve/
-    retraining/quarantine)."""
+    """Slot 1 of a role, for the two agents that are never allocated.
+
+    The Controller and COO bootstrap themselves before any allocation policy
+    could run - the Controller *is* the server process, and COO is spawned
+    directly because there is no COO yet to have asked for one. Both are
+    singletons by construction.
+
+    Every other role goes through fi_db.allocate_slot, which reuses the slot of
+    an agent that needs its process back and opens a new one only when the role
+    genuinely needs more agents than it has. Identity stays permanent either way
+    (addendum 5 §4): a slot outlives every process that runs under it, so a
+    respawn keeps the name, assignment span and performance record rather than
+    starting over."""
     return f"{role}-1"
 
 
@@ -234,7 +237,12 @@ class Controller:
 
     def _handle_spawn(self, directive: dict) -> None:
         role = directive["target_role"]
-        identity = _slot_identity(role)
+        # Which slot this process runs under is the Controller's call, not the
+        # directive's: COO decides that a role is short, the Controller decides
+        # whether that means refilling an existing slot or opening a new one.
+        # See fi_db.allocate_slot - refilling comes first, so an agent that
+        # crashed returns under its own identity with its history intact.
+        identity = fi_db.allocate_slot(self.conn, role)
         fi_db.clear_process_stop(self.conn, identity)
         env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         try:

@@ -298,6 +298,18 @@ def _population(conn, since: str | None = None) -> dict:
             "completed_at", since,
         )
     }
+    # Counted per identity, not per role. A role staffed with two agents takes
+    # two spawns to establish, and counting spawns-beyond-the-first per *role*
+    # reported that as a respawn - which it flagged the moment judgment was
+    # first staffed with two agents. A respawn is the same slot being filled
+    # twice, which is exactly what a per-identity count says.
+    per_identity = _scoped_rows(
+        conn,
+        "SELECT detail, COUNT(*) AS n FROM coo_directives_completed "
+        "WHERE directive_type = 'spawn' AND outcome = 'success' AND detail IS NOT NULL "
+        "AND {bound} GROUP BY detail",
+        "completed_at", since,
+    )
     return {
         "registered": len(rows),
         "roles": sorted({row["role"] for row in rows}),
@@ -305,11 +317,11 @@ def _population(conn, since: str | None = None) -> dict:
         "crashed": sorted(r["identity"] for r in rows if r["process_state"] == "crashed"),
         "dormant": sorted(r["identity"] for r in rows if r["lifecycle_state"] == "dormant"),
         "spawn_directives": spawns,
-        # A role spawned more than once *within one run* was either respawned
+        # A slot filled more than once *within one run* was either refilled
         # after a crash or - the defect that produced three concurrent processes
-        # under one identity - respawned while still alive. Establishing the
-        # baseline once per run is normal and must not count here.
-        "respawns": sum(max(0, n - 1) for n in spawns.values()),
+        # under one identity - refilled while still alive. Establishing the
+        # baseline is normal and must not count here, however many slots it takes.
+        "respawns": sum(max(0, row["n"] - 1) for row in per_identity),
         "lifetime_spawns": conn.fetchone(
             "SELECT COUNT(*) AS n FROM coo_directives_completed WHERE directive_type = 'spawn'"
         )["n"],

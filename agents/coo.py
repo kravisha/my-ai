@@ -34,6 +34,7 @@ Normally launched by backend/controller.py's bootstrap_coo(), not by hand.
 """
 
 import json
+import os
 import sys
 from collections import Counter
 
@@ -45,7 +46,30 @@ ROLE = "coo"
 # diagnostic isolation if a new agent fails to spawn - if dummy comes up but
 # explorer/speculator/analysis don't, the problem is in the new agent code,
 # not the control plane.
-BASELINE_ROLES = ["dummy", "explorer", "speculator", "analysis"]
+# How many agents each baseline role should have in service.
+#
+# A count rather than a list, because judgment latency is the time to cycle the
+# whole security universe divided by the number of judgment agents - measured at
+# ~235s with one agent over ten securities. Coverage cannot grow without this
+# growing with it, and until now the organization had no way to express that.
+#
+# Overridable per role as FI_BASELINE_<ROLE>, so a scenario can staff a role
+# differently without a code change - which is what makes one-versus-two
+# judgment agents an experiment rather than an edit.
+def _baseline_target(role: str, default: int) -> int:
+    return max(0, int(os.environ.get(f"FI_BASELINE_{role.upper()}", str(default))))
+
+
+BASELINE_POPULATION = {
+    "dummy": _baseline_target("dummy", 1),
+    "explorer": _baseline_target("explorer", 1),
+    "speculator": _baseline_target("speculator", 1),
+    "analysis": _baseline_target("analysis", 1),
+}
+
+# The role names alone. Kept because plenty of callers only ever wanted the
+# names, and widening all of them to carry counts they ignore would be churn.
+BASELINE_ROLES = list(BASELINE_POPULATION)
 
 # How long to wait after a spawn directive completes before checking whether
 # the target agent actually established itself (registered a heartbeat)
@@ -76,38 +100,39 @@ OBSERVATION_GRACE_SECONDS = 5.0
 HEALTH_STALE_THRESHOLD_SECONDS = 45.0
 
 
-def _role_spawn_in_flight(conn, role: str) -> bool:
-    """True if a spawn for this role is still in progress somewhere between
-    "COO asked for it" and "the agent is registered and active": either the
-    directive itself hasn't been picked up by the Controller yet (still
-    pending), or the Controller has processed it but the target identity
-    hasn't (re-)registered for *this* attempt yet.
+# How long after a spawn directive completes the agent is still considered to be
+# starting up. Must comfortably exceed process start plus first registration, or
+# COO enqueues a second spawn for a slot that is already coming up - and because
+# allocate_slot is deterministic, both would target the same identity, which is
+# how duplicate processes under one identity happened before.
+SPAWN_IN_FLIGHT_WINDOW_SECONDS = 30.0
 
-    Agent identity is a permanent role-slot (addendum_5 §4 - see
-    backend/controller.py's _slot_identity), so "does this identity exist
-    in agent_registry" stopped being a usable signal for the second half:
-    once a role has been spawned even once, its identity exists forever,
-    reused across every later respawn. The real question is whether the
-    registry row's spawned_at reflects *this* spawn attempt specifically -
-    compared against the directive's own completed_at, not just presence.
-    An older spawned_at means the row is still showing a previous life;
-    this attempt's process hasn't registered yet (or never will).
 
-    Both this half and the still-pending half were caught by manual end-to-
-    end verification, not the unit suite - see the project memory for both
-    incidents. The still-pending half: COO's ~1s cycle and the
-    Controller's ~1s poll loop (backend/main.py) are close enough in
-    period that it's routine for COO's next cycle to run before the
-    previous cycle's directive has even been picked up."""
-    if fi_db.has_pending_spawn_directive(conn, role):
-        return True
-    directive = fi_db.most_recent_completed_spawn(conn, role)
-    if directive is None or directive["outcome"] != "success":
-        return False
-    agent = fi_db.get_agent(conn, directive["detail"])
-    if agent is None:
-        return True
-    return fi_db.parse_timestamp(agent["spawned_at"]) < fi_db.parse_timestamp(directive["completed_at"])
+def _spawns_in_flight(conn, role: str) -> int:
+    """How many spawns for this role are between "asked for" and "landed".
+
+    Two halves, both found by end-to-end verification rather than by the unit
+    suite. A directive the Controller has not picked up yet is in flight - COO's
+    cycle and the Controller's poll loop have close enough periods that COO
+    routinely runs again before its last directive was read. And a directive the
+    Controller *has* executed is still in flight until the target identity
+    registers for that attempt specifically.
+
+    Registration cannot be judged by existence, because a slot identity is
+    permanent and outlives every process that ever ran under it. The signal is
+    whether the registry row's spawned_at is newer than the directive's
+    completed_at; an older one means the row is still showing a previous life.
+
+    A count rather than a boolean now that a role can hold several agents: three
+    legitimate spawns in the same second are normal, and a boolean would suppress
+    two of them."""
+    pending = fi_db.count_pending_spawn_directives(conn, role)
+    # The same predicate the Controller allocates against, deliberately shared:
+    # if COO's idea of "still coming up" and the Controller's idea of "already
+    # issued" could drift apart, one would ask for an agent the other was in the
+    # middle of starting.
+    landing = len(fi_db.slots_awaiting_registration(conn, role, SPAWN_IN_FLIGHT_WINDOW_SECONDS))
+    return pending + landing
 
 
 def _ensure_baseline_population(conn) -> None:
@@ -127,24 +152,42 @@ def _ensure_baseline_population(conn) -> None:
     Before lifecycle and process state were separated, this was impossible
     to express: a retired agent was indistinguishable from a dead one, so
     COO respawned it within a cycle and retirement silently did nothing."""
-    agents = fi_db.list_agents(conn)
-    staffed_roles = {
-        a["role"] for a in agents
-        if a["lifecycle_state"] == fi_db.LIFECYCLE_ACTIVE and a["process_state"] == fi_db.PROCESS_RUNNING
-    }
-    dormant_roles = {a["role"] for a in agents if a["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT}
-    known_roles = {a["role"] for a in agents}
-    for role in BASELINE_ROLES:
-        if role in staffed_roles or role in dormant_roles:
+    for role, target in BASELINE_POPULATION.items():
+        staffing = fi_db.staffing(conn, role)
+
+        # Retirement genuinely leaves a role short. A dormant member still holds
+        # its slot, so it lowers what COO is trying to staff rather than being
+        # replaced - otherwise COO would quietly spawn a substitute and undo a
+        # decision the Controller took.
+        effective_target = max(0, target - staffing["dormant"])
+
+        in_flight = _spawns_in_flight(conn, role)
+        have = staffing["running"] + in_flight
+        shortfall = effective_target - have
+        if shortfall <= 0:
             continue
-        if _role_spawn_in_flight(conn, role):
-            continue
-        reason = (
-            f"baseline role '{role}' has never been spawned - establishing initial population"
-            if role not in known_roles
-            else f"baseline role '{role}' has zero active agents - respawning to maintain baseline"
-        )
-        fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role, reason=reason)
+
+        # Three situations that a bare shortfall would flatten into one. They
+        # want different things looked at when someone reads the directive log:
+        # a role that never came up is a startup or deployment problem, a slot
+        # being refilled is a crash to investigate, and a new slot is capacity
+        # being added on purpose.
+        for index in range(shortfall):
+            if staffing["members"] == 0:
+                what = "has never been spawned - establishing initial population"
+            elif staffing["awaiting_process"] > index:
+                what = "has a slot with no process - refilling it under the same identity"
+            else:
+                what = "needs more agents than it has slots - adding capacity"
+            reason = (
+                f"baseline role '{role}' {what} "
+                f"({staffing['running']}/{effective_target} in service"
+                + (f", {staffing['dormant']} dormant" if staffing["dormant"] else "")
+                + (f", {in_flight} spawning" if in_flight else "")
+                + ")"
+            )
+            fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role=role, reason=reason)
+            in_flight += 1
 
 
 def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_SECONDS) -> None:

@@ -15,7 +15,7 @@ from agents.coo import (
     _evaluate_agent_health,
     _evaluate_intelligence_health,
     _evaluate_past_decisions,
-    _role_spawn_in_flight,
+    _spawns_in_flight,
 )
 from backend import fi_db
 
@@ -51,7 +51,11 @@ def test_ensure_baseline_population_respawns_role_after_it_goes_gone(conn):
     pending = fi_db.fetch_next_pending_directive(conn)
     assert pending is not None
     assert pending["target_role"] == "dummy"
-    assert "zero active agents" in pending["reason"]
+    # A refill must read differently from a first-ever spawn and from capacity
+    # being added deliberately - three situations that want different things
+    # investigated, and which a bare shortfall count would flatten into one.
+    assert "refilling it under the same identity" in pending["reason"]
+    assert "never been spawned" not in pending["reason"]
 
 
 def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn):
@@ -69,7 +73,7 @@ def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn
     directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, directive_id, "success", detail="dummy-not-yet-registered")
 
-    assert _role_spawn_in_flight(conn, "dummy") is True
+    assert _spawns_in_flight(conn, "dummy") == 1
 
     _ensure_baseline_population(conn)
 
@@ -78,7 +82,7 @@ def test_ensure_baseline_population_does_not_duplicate_when_spawn_in_flight(conn
 
 def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pending(conn):
     """Regression test for a bug found via manual verification of Gap 3: the
-    old _role_spawn_in_flight only checked coo_directives_completed, which
+    old _spawns_in_flight only checked coo_directives_completed, which
     is blind to a directive the Controller hasn't picked up yet. COO's
     ~1s cycle and the Controller's ~1s poll are close enough in period
     that this was routine, not rare - simulated here by enqueuing a spawn
@@ -87,7 +91,7 @@ def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pen
     up yet."""
     fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
 
-    assert _role_spawn_in_flight(conn, "dummy") is True
+    assert _spawns_in_flight(conn, "dummy") == 1
 
     _ensure_baseline_population(conn)
 
@@ -95,7 +99,7 @@ def test_ensure_baseline_population_does_not_duplicate_while_directive_still_pen
     assert count == 1
 
 
-def test_role_spawn_in_flight_true_when_directive_reuses_identity_of_a_dead_prior_life(conn):
+def test_spawns_in_flight_true_when_directive_reuses_identity_of_a_dead_prior_life(conn):
     """Core regression test for the permanent-identity redesign (addendum_5
     §4): identity is now a role-slot reused across every respawn, so a
     fresh spawn directive for 'dummy' names the *same* identity a previous,
@@ -116,10 +120,10 @@ def test_role_spawn_in_flight_true_when_directive_reuses_identity_of_a_dead_prio
     new_directive_id = fi_db.enqueue_directive(conn, "spawn", requested_by="coo", target_role="dummy")
     fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")  # same permanent identity
 
-    assert _role_spawn_in_flight(conn, "dummy") is True
+    assert _spawns_in_flight(conn, "dummy") == 1
 
 
-def test_role_spawn_in_flight_false_once_reused_identity_reregisters(conn):
+def test_spawns_in_flight_false_once_reused_identity_reregisters(conn):
     """Continuation of the above: once the new process actually registers
     (register_agent bumps spawned_at past the new directive's completed_at),
     the same identity that was 'in flight' a moment ago should no longer
@@ -133,7 +137,7 @@ def test_role_spawn_in_flight_false_once_reused_identity_reregisters(conn):
     fi_db.complete_directive(conn, new_directive_id, "success", detail="dummy-1")
     fi_db.register_agent(conn, "dummy-1", "dummy", 222)  # the new life actually registers
 
-    assert _role_spawn_in_flight(conn, "dummy") is False
+    assert _spawns_in_flight(conn, "dummy") == 0
 
 
 def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(conn):
@@ -146,7 +150,7 @@ def test_ensure_baseline_population_respawns_once_in_flight_agent_actually_dies(
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     fi_db.mark_process_stopped(conn, "dummy-1")
 
-    assert _role_spawn_in_flight(conn, "dummy") is False
+    assert _spawns_in_flight(conn, "dummy") == 0
 
     _ensure_baseline_population(conn)
 

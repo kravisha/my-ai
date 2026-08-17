@@ -1239,6 +1239,151 @@ def mark_process_crashed(conn: Database, identity: str) -> None:
     )
 
 
+def count_pending_spawn_directives(conn: Database, role: str) -> int:
+    return conn.fetchone(
+        "SELECT COUNT(*) AS n FROM coo_directives WHERE directive_type = 'spawn' "
+        "AND target_role = ? AND status = 'pending'",
+        (role,),
+    )["n"]
+
+
+def recent_completed_spawns(conn: Database, role: str, within_seconds: float) -> list[dict]:
+    """Spawns for this role completed recently enough that the agent may still
+    be starting up.
+
+    Bounded by time rather than by count. The question is "did a spawn happen
+    that has not landed yet", and once several slots per role exist there is no
+    fixed number of recent directives that answers it - a role staffed with
+    three has three legitimate spawns in the same second.
+
+    Filtered in Python rather than in SQL, and that is not a style choice.
+    `completed_at` is written by the archive trigger as `...Z` while every
+    Python-written timestamp ends `...+00:00`, so a string comparison between
+    them is decided by 'Z' sorting after '+' whenever the prefixes match - which
+    makes any same-instant directive compare as recent no matter what window is
+    asked for. parse_timestamp exists precisely to reconcile the two formats."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=within_seconds)
+    rows = conn.fetchall(
+        "SELECT * FROM coo_directives_completed WHERE directive_type = 'spawn' "
+        "AND target_role = ? AND outcome = 'success' ORDER BY completed_at",
+        (role,),
+    )
+    return [dict(row) for row in rows if parse_timestamp(row["completed_at"]) >= cutoff]
+
+
+def role_members(conn: Database, role: str) -> list[dict]:
+    """Every agent ever created in this role, in slot order.
+
+    Ordered by slot number rather than by string, so `analysis-10` sorts after
+    `analysis-9` instead of before it - the kind of thing that stays invisible
+    until a role reaches ten members and then allocates a slot that is already
+    taken."""
+    rows = [dict(row) for row in conn.fetchall("SELECT * FROM agent_registry WHERE role = ?", (role,))]
+    return sorted(rows, key=lambda row: slot_number(row["identity"]))
+
+
+def slot_number(identity: str) -> int:
+    """The numeric slot in `role-N`, or 0 if the identity does not follow it."""
+    _, _, suffix = identity.rpartition("-")
+    return int(suffix) if suffix.isdigit() else 0
+
+
+# How long a slot named by a completed spawn directive stays reserved while the
+# process starts and registers. Must exceed process start plus first
+# registration; below that, a second allocation hands out a slot that is already
+# coming up.
+SPAWN_LANDING_WINDOW_SECONDS = float(os.environ.get("FI_SPAWN_LANDING_WINDOW_SECONDS", "30"))
+
+
+def slots_awaiting_registration(
+    conn: Database, role: str, within_seconds: float | None = None
+) -> set[str]:
+    """Slots a spawn has already been issued for, which have not reported in yet.
+
+    A slot is only visible in agent_registry once its process registers, and
+    that takes a moment. In the gap the slot exists in no query - so a second
+    allocation in the same moment hands out the identity that was just handed
+    out, and two processes come up under one identity.
+
+    Not hypothetical: staffing judgment with two agents for the first time
+    produced exactly that. COO correctly asked for two, the Controller executed
+    both before either had registered, and both were allocated `analysis-1`.
+    The registry showed one row, so COO then asked for a third."""
+    if within_seconds is None:
+        within_seconds = SPAWN_LANDING_WINDOW_SECONDS
+
+    awaiting = set()
+    for directive in recent_completed_spawns(conn, role, within_seconds):
+        identity = directive["detail"]
+        if not identity:
+            continue
+        agent = get_agent(conn, identity)
+        # Registered *for this attempt* - a permanent slot's row outlives every
+        # process that ran under it, so mere existence proves nothing.
+        if agent is None or parse_timestamp(agent["spawned_at"]) < parse_timestamp(directive["completed_at"]):
+            awaiting.add(identity)
+    return awaiting
+
+
+def allocate_slot(conn: Database, role: str) -> str:
+    """The identity the next process for this role should run under.
+
+    One function for what are really two situations, because the caller cannot
+    reliably tell them apart and getting it wrong is expensive in both
+    directions:
+
+    **Refilling a slot that already exists.** An active member whose process is
+    not running - crashed, stopped, or waiting after a server restart - gets its
+    own identity back. That is the whole point of a permanent slot: the agent
+    returns with its name, assignment span and performance record intact rather
+    than starting over. The lowest such slot is chosen so refills are
+    deterministic.
+
+    **Adding a slot.** Only when every active member already has a process does
+    this issue a new one, numbered above the highest ever used. Numbering above
+    the highest *ever* rather than the highest *current* matters - reusing a
+    retired member's number would attach a new agent to another agent's history.
+
+    Dormant members are never refilled here. Retirement is a decision the
+    Controller took, and COO respawning into it would silently undo it.
+
+    Slots already issued to a spawn that has not registered yet are skipped in
+    both branches - see slots_awaiting_registration for the run that proved why."""
+    members = role_members(conn, role)
+    reserved = slots_awaiting_registration(conn, role)
+
+    for member in members:
+        if member["identity"] in reserved:
+            continue
+        if member["lifecycle_state"] == LIFECYCLE_ACTIVE and member["process_state"] != PROCESS_RUNNING:
+            return member["identity"]
+
+    highest = max(
+        (slot_number(identity) for identity in
+         [member["identity"] for member in members] + list(reserved)),
+        default=0,
+    )
+    return f"{role}-{highest + 1}"
+
+
+def staffing(conn: Database, role: str) -> dict:
+    """How this role is staffed right now, in the terms COO decides from."""
+    members = role_members(conn, role)
+    return {
+        "role": role,
+        "members": len(members),
+        "running": sum(
+            1 for m in members
+            if m["lifecycle_state"] == LIFECYCLE_ACTIVE and m["process_state"] == PROCESS_RUNNING
+        ),
+        "awaiting_process": sum(
+            1 for m in members
+            if m["lifecycle_state"] == LIFECYCLE_ACTIVE and m["process_state"] != PROCESS_RUNNING
+        ),
+        "dormant": sum(1 for m in members if m["lifecycle_state"] == LIFECYCLE_DORMANT),
+    }
+
+
 def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
     """Agents believed to be running whose most recent signal of life (last
     heartbeat, or spawn time if they never got as far as a first heartbeat)
