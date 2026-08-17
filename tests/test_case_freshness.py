@@ -348,3 +348,71 @@ def test_the_most_recent_observations_stay_verbatim(db):
 
     assert len(tail) == analysis.DIGEST_RECENT_VERBATIM
     assert "post 299" in tail[-1]
+
+
+# -- can a developing situation be told from noise? ---------------------------
+
+def build_series(db, levels: dict[str, float], cycles: int = 40):
+    """Write evidence at a chosen per-cycle volume per security."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 8, 17, tzinfo=timezone.utc)
+    for cycle in range(cycles):
+        stamp = (base + timedelta(seconds=cycle)).isoformat()
+        for security, per_cycle in levels.items():
+            for post in range(round(per_cycle)):
+                db.execute(
+                    "INSERT INTO evidence_items (created_at, producer_identity, producer_spawned_at, "
+                    "evidence_type, security, source, observed_at, content, confidence, raw_ref, schema_version) "
+                    "VALUES (?, 'speculator-1', ?, 'social', ?, 'reddit', ?, 'c', 0.6, ?, 1)",
+                    (stamp, stamp, security, stamp, f"reddit:user{cycle}{post}:{stamp}"),
+                )
+
+
+def test_a_developing_security_is_a_clear_peer_outlier(db):
+    """The discriminator, and it needs no calibrated constant.
+
+    Flat securities cluster tightly and the developing one sits far outside, so
+    the usable question is "is this an outlier among its peers" rather than "is
+    this above some number" - which would be a constant to calibrate and then
+    recalibrate whenever conditions changed."""
+    from simulation import discrimination
+
+    build_series(db, {"SYN1": 5, "SYN2": 2, "SYN3": 2, "SYN4": 2, "SYN5": 2})
+    scores = {r["security"]: r["deviations"] for r in discrimination.peer_outlier_scores(db)}
+
+    assert scores["SYN1"] > 3.0, f"a clearly elevated security scored only {scores['SYN1']}"
+    assert all(abs(v) < 3.0 for s, v in scores.items() if s != "SYN1"), scores
+
+
+def test_a_suppressed_security_scores_negative(db):
+    """Direction comes free, so a fading story needs no second mechanism to say
+    it does not want elevating."""
+    from simulation import discrimination
+
+    build_series(db, {"SYN1": 1, "SYN2": 3, "SYN3": 3, "SYN4": 3, "SYN5": 3})
+    scores = {r["security"]: r["deviations"] for r in discrimination.peer_outlier_scores(db)}
+
+    assert scores["SYN1"] < 0
+
+
+def test_one_extreme_security_cannot_hide_itself(db):
+    """Scored in median absolute deviations, not standard deviations.
+
+    A single large outlier inflates a standard deviation enough to fall inside
+    it - the security most worth elevating would be the one that raised the bar
+    past its own value."""
+    from simulation import discrimination
+
+    build_series(db, {"SYN1": 40, "SYN2": 2, "SYN3": 2, "SYN4": 2, "SYN5": 2})
+    scores = {r["security"]: r["deviations"] for r in discrimination.peer_outlier_scores(db)}
+
+    assert scores["SYN1"] > 10, f"an extreme outlier scored only {scores['SYN1']}"
+
+
+def test_peer_comparison_refuses_to_run_on_too_few_securities(db):
+    """A comparison across two securities has no peer group to speak of."""
+    from simulation import discrimination
+
+    build_series(db, {"SYN1": 3, "SYN2": 2})
+    with pytest.raises(ValueError, match="at least three"):
+        discrimination.peer_outlier_scores(db)
