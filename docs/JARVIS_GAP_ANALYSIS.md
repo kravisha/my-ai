@@ -34,44 +34,12 @@ Put plainly: we have built a disciplined organism. We have not yet built its min
 
 ### 1.1 What counts as intelligence — the core distinction
 
-**Owner clarification, 2026-08-16.** This governs everything below and corrects an earlier version of
-this document that had it wrong:
+**Held privately.** The owner's distinction between data and intelligence — which governs
+preservation, expiry, and what the knowledge store is for — is a guiding principle and lives in
+the internal documentation repository rather than here.
 
-> Not all data is intelligence. **Only intelligence needs to be preserved; data does not.** Intelligence
-> is *extracted from* data. Intelligence has an expiry date — it depends on market conditions, and when
-> conditions change, intelligence changes. Intelligence is about **defining how to look at things,
-> using pattern recognition as the key guiding principle to differentiate things.** Knowledge retention
-> is imperative; data retention is not imperative and is done on an as-possible basis.
-
-Three consequences, each of which changes a conclusion elsewhere in this file:
-
-**1. Intelligence is the lens, not the observation.** The IV surface is data. A detected anomaly is an
-observation. The *threshold, neighborhood definition, and peer-grouping that decide what counts as an
-anomaly at all* — those are the intelligence. So is a validated lesson about when such a signal is
-misleading. This sharpens what the knowledge store (§4.1) is for: it holds **ways of seeing**, not
-piles of facts.
-
-**2. Intelligence expires; data has no preservation claim.** Since a lens is only valid under the
-market conditions it was derived for, intelligence carries validity conditions and goes stale. Data,
-by contrast, has served its purpose once its intelligence is extracted. This reverses the earlier
-recommendation to prioritize raw-data retention — see §4.11.
-
-**3. Reconciling with "intelligence is distributed amongst agents, knowledge base, and raw data yet to
-be processed" (§5.2).** No contradiction: unprocessed data holds intelligence in *latent* form. It is a
-transient **source**, not a store. Distribution describes where intelligence can be *found*; the
-preservation obligation attaches to the **extract**, not the source.
-
-One narrow exception, recorded so it is not lost: §16 auditability requires preserving "sufficient logs
-to reconstruct what information was available" at decision time. That is a claim about *provenance and
-reference*, satisfiable by recording what was seen — not a mandate for bulk retention. Likewise,
-regression fixtures (addendum 8 §5, 13 §14) need reproducible inputs, which for seeded generation means
-preserving the **seed**, not the data.
-
-A third category matters for honesty: **several axioms are currently vacuous.** The system has no
-execution capability whatsoever — no trades, no external actions, informational output only
-(confirmed by inspection). Axioms 11 and 13, and §12/§14/§16's execution governance, therefore cannot
-be violated today, but they become binding the moment any execution capability appears. They should
-be treated as *pre-committed constraints*, not as satisfied requirements.
+What matters for reading the rest of this document: **intelligence is the lens, not the
+observation**, and it expires. Sections 4.1, 4.4, 4.7 and 4.11 below are all consequences of that.
 
 ---
 
