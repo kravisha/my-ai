@@ -333,3 +333,116 @@ def summarise(report: dict) -> str:
     for entry in report["exempt"]:
         lines.append(f"  exempt:      {entry['rule']} - {entry['reason']}")
     return "\n".join(lines)
+
+
+# --- objections -------------------------------------------------------------
+#
+# Who decides a contested case, given that nothing in this organization can.
+#
+# The Controller executes and does not decide. Explorer and Speculator are
+# procedurally barred from judging - separating observation from judgment is an
+# axiom, not a convenience. Analysis is the only role that reasons, and it is
+# both the subject of the one live finding and the throughput bottleneck. COO
+# already maintains the workforce, judges intelligence health and acts for the
+# vacant CEO; adding adjudication would make one agent the manager, the
+# investigator, the reputation assessor and the authority that can retire the
+# accused. There is no adjudicator, and appointing one would be building a court
+# before there is a dispute.
+#
+# **But most objections do not need a judge - they need a checker.** Of the
+# grounds the governing framework lists, all but one are decidable from recorded
+# facts: whether the work falls in the role's charter, whether a dependency
+# exists, whether a resource is available, whether the instructions contradict
+# each other, whether the agent is genuinely overloaded. Only a subjective
+# safety concern requires someone to weigh it.
+#
+# So adjudication splits. Verifiable objections are settled by checking, which
+# needs no authority at all. Anything left escalates to the owner, who is the
+# only genuinely independent party that exists. When a contested caseload
+# appears, that is the evidence for appointing an adjudicator; until then the
+# framework's own rule applies - adjudicate only when an exception genuinely
+# requires it.
+
+VERIFIABLE = "verifiable"      # decidable from records, no judgment needed
+JUDGED = "judged"              # needs someone to weigh it
+
+
+@dataclass(frozen=True)
+class ObjectionGround:
+    """An allowed reason to object to ordered work, and how it gets decided.
+
+    A closed list on purpose. An open "other" category would make refusal
+    discretionary, which is the thing a structured objection exists to replace.
+
+    Every ground carries a `remedy`: the shape of the answer to "what would have
+    to be true for this work to proceed". An objection that only says no leaves
+    the requester exactly where they were, and a blocked agent that reports the
+    obstacle without proposing a way past it has transferred the design problem
+    back rather than doing its share of it.
+
+    Internal rationale: INT-PHIL-0025"""
+
+    name: str
+    kind: str
+    decided_by: str
+    evidence: str
+    remedy: str
+
+
+OBJECTION_GROUNDS = (
+    ObjectionGround(
+        "workload harm", VERIFIABLE,
+        "queue depth, handling latency and the agent's in-flight work",
+        "the metrics already record whether an agent is behind; an assertion of being busy is not "
+        "the same as being measurably overloaded",
+        "the capacity that would clear it - another slot for the role, a deferral until in-flight "
+        "work completes, or a reprioritisation naming what should yield",
+    ),
+    ObjectionGround(
+        "jurisdiction mismatch", VERIFIABLE,
+        "the role charter's allowed and not_allowed lists",
+        "charters already state what a role may and may not do, so whether work falls outside one "
+        "is a lookup",
+        "the role that should hold this work, or - if no role does - that the capability is missing "
+        "and what a role holding it would be responsible for",
+    ),
+    ObjectionGround(
+        "missing dependency", VERIFIABLE,
+        "whether the referenced record exists",
+        "a task naming a report, artifact or agent that is not there is decidable without opinion",
+        "what would have to be produced first, and by whom. A dependency that does not exist "
+        "anywhere is a component to build, not merely an absence to report",
+    ),
+    ObjectionGround(
+        "unavailable resource", VERIFIABLE,
+        "whether the required provider, model or data class is reachable",
+        "the same check the harness already makes about model availability",
+        "the substitute that would serve, or the degraded result obtainable without it, stated with "
+        "what the degradation costs",
+    ),
+    ObjectionGround(
+        "contradictory instructions", VERIFIABLE,
+        "whether two governing requirements cannot both be satisfied",
+        "contradiction is demonstrable by naming both requirements",
+        "which requirement the objector believes should yield and why - a contradiction reported "
+        "without a recommendation is half the analysis",
+    ),
+    ObjectionGround(
+        "integrity or safety concern", JUDGED,
+        "escalation to the owner",
+        "the one ground that needs weighing rather than checking - an agent believing execution "
+        "would cause harm is exactly the case where being wrong in either direction is expensive",
+        "what would make the work safe to perform, if anything would. This is the one ground where "
+        "'nothing would' is a legitimate remedy, and saying so explicitly is the point",
+    ),
+)
+
+# Grounds needing a judge. Pinned, because the cheapest way to acquire a
+# judiciary is to keep reclassifying checkable things as matters of opinion.
+JUDGED_GROUND_COUNT = 1
+
+
+def objection_grounds(kind: str | None = None) -> tuple:
+    if kind is None:
+        return OBJECTION_GROUNDS
+    return tuple(ground for ground in OBJECTION_GROUNDS if ground.kind == kind)

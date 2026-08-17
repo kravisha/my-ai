@@ -190,6 +190,19 @@ ROLE_CHARTERS = {
             "Exercise the CEO's judgment role - synthesis, challenging specialist "
             "assumptions, allocating attention - even while acting for that office",
             "Continue acting for the CEO once the office is filled",
+            # 2026-08-17. The governing framework wants investigation,
+            # adjudication and retirement authority separated, and COO is the
+            # obvious host for all three - which is exactly why it cannot be.
+            # It already maintains the workforce, judges intelligence health and
+            # acts for the vacant CEO; adding enforcement would make one agent
+            # the manager, the investigator, the reputation assessor and the
+            # authority that can retire the accused.
+            #
+            # Retirement stays an organizational decision with a recorded
+            # reason, not an enforcement outcome. See docs/SPEC_RECONCILIATION.md §9.
+            "Adjudicate a contested finding, or sanction an agent on enforcement grounds",
+            "Request retirement as a punishment - retirement is organizational, and its "
+            "reason is recorded",
         ],
         "competencies": ["workforce health", "decision review", "intelligence expiry"],
         "work_mechanism": "polls agent_registry, coo_directives, grades and market_regime each cycle",

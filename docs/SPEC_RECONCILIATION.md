@@ -372,3 +372,44 @@ equivalent to the reference - with the real statement kept outside both reposito
 local path at runtime. `app/data_classification.py` already classifies `account_id` as LOCAL_ONLY; this
 extends the same judgment to test data.
 
+
+
+## 9. Who adjudicates a contested case (2026-08-17)
+
+The governance framework requires investigation, prosecution, adjudication, rehabilitation, reputation
+assessment and retirement authority to be separated. That raises the question of who adjudicates, and
+the honest inventory is that **nothing in this organization can**.
+
+| Role | Why not |
+|---|---|
+| Controller | Executes lifecycle actions; explicitly not a policy maker |
+| COO | Already maintains the workforce, judges intelligence health and acts for the vacant CEO. Adding adjudication concentrates manager, investigator, reputation assessor and retirement authority in one agent |
+| Explorer, Speculator | Barred from judging by the axiom separating observation from judgment |
+| Analysis | The only role that reasons — and the subject of the one live finding, and the throughput bottleneck |
+| CEO | Vacant |
+
+**Resolution: adjudication splits, and no adjudicator is appointed.**
+
+Of the objection grounds the framework lists, five of six are decidable from recorded facts — whether
+work falls outside a role's charter, whether a dependency exists, whether a resource is reachable,
+whether instructions contradict, whether an agent is measurably overloaded. Only a subjective safety
+concern needs weighing, and that escalates to the owner, who is the only genuinely independent party
+that exists.
+
+So the objection mechanism is not blocked by the absence of a judge: **most objections need a checker.**
+Appointing an adjudicator now would be building a court before there is a dispute, against the
+framework's own rule to adjudicate only when an exception genuinely requires it. A contested caseload
+is the evidence that would justify one.
+
+Two boundaries are asserted rather than stated:
+
+- **Detection cannot punish**, because `backend/compliance.py` contains no write path at all. A module
+  with no write statement cannot sanction anyone whatever it concludes, and the test parses for it —
+  the natural next change to a compliance module is to have it record what it found, and that is the
+  change that merges the investigator with the enforcer.
+- **No role charter grants adjudication, sanction or punishment.** Checked across every charter, so a
+  judiciary cannot be acquired by wording.
+
+**Retirement stays outside enforcement.** It remains an organizational decision — COO requests, the
+Controller executes — with no enforcement path able to reach it while there is no independent
+adjudicator.

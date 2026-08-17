@@ -371,3 +371,106 @@ def test_the_blocked_count_is_pinned():
         assert "Remedy" in rule.blocked or "remedy" in rule.blocked, (
             f"{rule.name} is blocked without naming who can unblock it"
         )
+
+
+# -- separation of powers, at the only scale that currently exists ------------
+
+def test_the_detection_layer_cannot_change_anything():
+    """Investigation cannot punish, because investigation cannot write.
+
+    The governing framework asks for investigation, prosecution, adjudication and
+    retirement authority to be separated. With six roles and no adjudicator, the
+    one separation that can be made real today is this one - and it is made real
+    by construction rather than by policy, since a module containing no write
+    statement cannot sanction anyone whatever it concludes.
+
+    Parsed rather than trusted, because the natural next change to a compliance
+    module is to have it record what it found, and that is the change that would
+    quietly merge the investigator with the enforcer."""
+    import ast
+    import inspect
+
+    from backend import compliance as module
+
+    source = inspect.getsource(module)
+    for statement in ("INSERT ", "UPDATE ", "DELETE "):
+        assert statement not in source.upper().replace("INSERT/UPDATE/DELETE", ""), (
+            f"the compliance module contains {statement.strip()}. Detection must not be able to "
+            "change what it inspects; recording a finding belongs to a separate step with its own "
+            "authority."
+        )
+
+    tree = ast.parse(source)
+    writers = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "execute" not in writers, "the compliance module calls execute(); it should only read"
+
+
+def test_no_role_charter_grants_adjudication():
+    """There is no adjudicator, and appointing one silently is how a court gets
+    built before there is a dispute.
+
+    The Controller executes and does not decide. Explorer and Speculator are
+    barred from judging by the axiom separating observation from judgment.
+    Analysis is the only role that reasons and is itself the subject of the one
+    live finding. COO already manages the workforce and acts for the vacant CEO;
+    adding adjudication would concentrate manager, investigator, reputation
+    assessor and retirement authority in one agent."""
+    for role, charter in fi_db.ROLE_CHARTERS.items():
+        granted = " ".join(charter["allowed"]).lower()
+        for word in ("adjudicat", "sanction", "punish", "convict"):
+            assert word not in granted, f"{role}'s charter grants {word!r}"
+
+
+def test_most_objection_grounds_need_a_checker_rather_than_a_judge():
+    """Why the absence of an adjudicator does not block the objection mechanism.
+
+    Whether work falls outside a role's charter, whether a dependency exists,
+    whether a resource is reachable, whether two instructions contradict, whether
+    an agent is measurably overloaded - all decidable from records. Only a
+    subjective safety concern needs weighing."""
+    verifiable = compliance.objection_grounds(compliance.VERIFIABLE)
+    judged = compliance.objection_grounds(compliance.JUDGED)
+
+    assert len(verifiable) >= 4
+    assert len(judged) == compliance.JUDGED_GROUND_COUNT
+    assert all(ground.evidence for ground in compliance.OBJECTION_GROUNDS)
+
+
+def test_the_judged_ground_count_is_pinned():
+    """The cheapest way to acquire a judiciary is to keep reclassifying checkable
+    things as matters of opinion."""
+    judged = [g for g in compliance.OBJECTION_GROUNDS if g.kind == compliance.JUDGED]
+    assert len(judged) == compliance.JUDGED_GROUND_COUNT
+    assert "owner" in judged[0].decided_by
+
+
+def test_the_grounds_list_is_closed(db):
+    """An open "other" category would make refusal discretionary, which is the
+    thing a structured objection exists to replace."""
+    names = {ground.name for ground in compliance.OBJECTION_GROUNDS}
+    assert not any(name in ("other", "misc", "general") for name in names)
+
+
+def test_every_objection_ground_proposes_a_way_forward():
+    """A blocked agent owes a proposal, not just a report of being blocked.
+
+    The manifesto's fifth principle: when progress stops because something does
+    not exist, the answer is what would have to be built and at what cost - not
+    that it is absent. An objection mechanism that only recorded refusals would
+    institutionalise the opposite, since "I cannot" would become a complete and
+    accepted answer."""
+    for ground in compliance.OBJECTION_GROUNDS:
+        assert ground.remedy, f"{ground.name} says no without saying what would let it proceed"
+        assert len(ground.remedy) > 40, f"{ground.name}'s remedy is too thin to act on"
+
+
+def test_the_safety_ground_may_answer_that_nothing_would_help():
+    """The bound on the principle above. Constructive initiative is a default,
+    not an obligation to find a way to do everything - and the one ground that
+    turns on judgment is exactly where "no remedy exists" must stay sayable."""
+    judged = compliance.objection_grounds(compliance.JUDGED)[0]
+    assert "nothing would" in judged.remedy
