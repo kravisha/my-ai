@@ -562,3 +562,62 @@ rationales, which is a person's job.
 Against a simulation database created before dispositions existed: the migration applies, the check
 finds **10 real findings** (all of them the self-grading gap), ruling on one leaves it reported while
 `open_findings` drops from 10 to 9, and a revised ruling leaves both views readable.
+
+
+## 13. Corrective work: per cause, routed by who could have complied (2026-08-17)
+
+Two measurements shaped G4 before anything was built, and a third emerged from trying to dispatch the
+result.
+
+### Corrective work is per cause, not per finding
+
+A real run produced ten findings that were one design gap. Generating a task per finding would have
+produced nine duplicates and one misdirected task, and would have looked like diligence.
+
+### Whether an agent could have complied is measurable
+
+The framework asks investigators to distinguish agent failure from system failure before assigning
+fault. The sharp form of that question needs **no threshold at all**:
+
+> If every single opportunity failed, the compliant path was not available.
+
+Nobody could have done otherwise, so nobody can be faulted, and the remedy is a design change. That was
+literally true of the ten — 10 of 10, one analysis agent in the run, and nothing else able to grade its
+output. Below a share of 1.0 some agent did comply, which proves compliance was possible. Between the
+two sits a judgment `remediation.py` refuses to make from records alone, reporting `undetermined` rather
+than guessing at a cutoff for "mostly".
+
+| Classification | Meaning | Goes to |
+|---|---|---|
+| `systemic` | Every opportunity failed; compliance was not available | The owner |
+| `attributable` | Some complied, so compliance was possible | The producing agent |
+| `undetermined` | Too few completions to tell the two apart | The owner, as a question |
+
+### There is no general task queue
+
+Trying to dispatch attributable work surfaced it: `coo_directives` is a **lifecycle** queue carrying
+spawn, retire and resume. A corrective directive draws a jurisdiction objection from the Controller —
+and because G5 built that mechanism, the blocker is **demonstrable rather than asserted**. A test
+enqueues corrective work and watches the system refuse it, so the claim cannot rot into a stale comment.
+
+The blocker is carried into the record rather than dropped, because corrective work with nowhere to go
+looks exactly like corrective work nobody raised.
+
+**A general task queue is not yet justified.** No attributable corrective work has been observed — every
+finding so far is systemic. Building the queue now would be building for a caseload that does not exist,
+which is the mistake this whole series has been avoiding.
+
+### Ordinary records, not a parallel track
+
+Corrective items are `knowledge_records` with `record_kind = 'corrective_action'` — a value, not a new
+table. The shape already carries a statement, its evidence, who raised it, and closure with a trace of
+what closed it, and it already distinguishes *was settled* from *was wrong*.
+
+`knowledge_exists` is the idempotence guard, and it is load-bearing rather than tidy: the check
+recomputes the same findings from the same records every run, so without it one design gap would raise
+an identical item every cycle until the store was noise. That is the failure COO's lens health check
+already had, and the same fix.
+
+### Verified on the real run
+
+`10/10 SYSTEMIC -> owner`, raised as one corrective action, and re-running raises nothing further.

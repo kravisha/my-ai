@@ -278,6 +278,34 @@ def self_evaluated(conn: Database, limit: int = 50) -> list[dict]:
     ]
 
 
+def opportunity_count(conn: Database, rule_name: str) -> int:
+    """How many chances there were to comply with a rule.
+
+    The denominator that turns a count of findings into a statement about the
+    system. Ten ungraded reports out of ten is a design that does not permit
+    grading; ten out of two hundred is ten agents that did not grade. Without
+    this the two are the same number.
+
+    `analysis result` is the self-grading check rather than an evaluation rule,
+    so its opportunities are the analyses that were graded at all - an ungraded
+    analysis had no chance to be graded independently or otherwise."""
+    if rule_name == "analysis result":
+        if not (_table_exists(conn, "grades") and _table_exists(conn, "analysis_results")):
+            return 0
+        return conn.fetchone(
+            "SELECT COUNT(*) AS n FROM grades g JOIN analysis_results a "
+            "ON g.analysis_result_id = a.id"
+        )["n"]
+
+    rule = next((r for r in EVALUATION_RULES if r.name == rule_name), None)
+    if rule is None or not _table_exists(conn, rule.table):
+        return 0
+    return conn.fetchone(
+        f"SELECT COUNT(*) AS n FROM {rule.table} w "
+        f"WHERE w.{rule.completed_at} IS NOT NULL AND {rule.applies_when}"
+    )["n"]
+
+
 def _annotate_dispositions(conn: Database, findings: list[dict]) -> None:
     """Mark each finding with the active ruling on it, if any.
 

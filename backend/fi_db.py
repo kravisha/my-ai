@@ -2595,6 +2595,14 @@ def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 4
 
 KNOWLEDGE_LESSON = "lesson"
 KNOWLEDGE_OPEN_QUESTION = "open_question"
+# Something that must be fixed, raised by the compliance check.
+#
+# A record kind rather than a table: knowledge_records already carries a
+# statement, its evidence, who raised it, and closure with a trace of what closed
+# it - which is the whole of what a corrective item needs. `resolve_knowledge`
+# and `supersede_knowledge` already distinguish "was settled" from "was wrong",
+# and corrective work needs exactly that distinction.
+KNOWLEDGE_CORRECTIVE = "corrective_action"
 
 KNOWLEDGE_ACTIVE = "active"
 KNOWLEDGE_SUPERSEDED = "superseded"
@@ -3683,3 +3691,43 @@ def disposition_history(conn: Database, rule: str, item) -> list[dict]:
         "SELECT * FROM finding_dispositions WHERE rule = ? AND item = ? ORDER BY id",
         (rule, str(item)),
     )
+
+
+def raise_corrective_actions(conn: Database, items, recorded_by: str = "compliance") -> list[int]:
+    """Turn corrective items into ordinary records, once each.
+
+    The idempotence guard is load-bearing rather than tidy. The compliance check
+    is meant to run repeatedly, and each run recomputes the same findings from
+    the same records - so without `knowledge_exists` a single design gap would
+    raise an identical corrective item every cycle until the store was noise.
+    The same failure COO's lens health check already had, and the same fix.
+
+    `items` are `remediation.CorrectiveItem`s. Passed in rather than computed
+    here: deciding what work is needed happens in a module with no write path,
+    and this one writes without deciding.
+
+    Internal rationale: INT-PHIL-0028"""
+    raised = []
+    for item in items:
+        if knowledge_exists(conn, KNOWLEDGE_CORRECTIVE, item.statement):
+            continue
+        rationale = item.rationale
+        if item.blocked:
+            # Carried into the record rather than dropped. Corrective work with
+            # nowhere to go looks exactly like corrective work nobody raised,
+            # and the difference is the whole point of raising it.
+            rationale = f"{rationale}. BLOCKED: {item.blocked}"
+        raised.append(record_knowledge(
+            conn,
+            record_kind=KNOWLEDGE_CORRECTIVE,
+            statement=item.statement,
+            recorded_by=recorded_by,
+            subject=item.assigned_to,
+            rationale=rationale,
+            evidence_ref=item.evidence_ref,
+        ))
+    return raised
+
+
+def list_corrective_actions(conn: Database, status: str = KNOWLEDGE_ACTIVE) -> list[dict]:
+    return list_knowledge(conn, record_kind=KNOWLEDGE_CORRECTIVE, status=status)
