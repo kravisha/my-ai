@@ -178,3 +178,107 @@ def test_questions_about_other_securities_do_not_leak_in(conn):
     fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
 
     assert "SYN9" not in _assemble_context(conn, fi_db.fetch_next_pending_report(conn))
+
+
+# --- resolving open questions (the loop the store shipped without) ---
+
+
+def _result_resolving(ids, **overrides):
+    base = _analysis_result()
+    base["resolved_question_ids"] = ids
+    base.update(overrides)
+    return base
+
+
+def test_analysis_can_close_a_question_it_answered(conn, monkeypatch):
+    from agents.analysis import _analysis_work
+
+    question_id = fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_OPEN_QUESTION, "Is the flow a hedge roll?",
+        recorded_by="analysis-1", subject="SYN1")
+    monkeypatch.setattr("agents.analysis._run_analysis", lambda ctx: _result_resolving([question_id]))
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
+
+    _analysis_work(conn, "analysis-1", "T")
+
+    record = [r for r in fi_db.list_knowledge(conn, status=None) if r["id"] == question_id][0]
+    assert record["status"] == fi_db.KNOWLEDGE_RESOLVED
+    assert record["resolved_by_ref"].startswith("analysis_results:")
+
+
+def test_a_question_never_shown_cannot_be_closed(conn, monkeypatch):
+    """The integrity guard. A hallucinated or stale id must not retire a
+    question the analysis never saw - without this, one malformed response
+    could silently empty the store."""
+    from agents.analysis import _analysis_work
+
+    other = fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_OPEN_QUESTION, "About a different security",
+        recorded_by="analysis-1", subject="SYN9")
+    monkeypatch.setattr("agents.analysis._run_analysis",
+                        lambda ctx: _result_resolving([other, 99999]))
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
+
+    _analysis_work(conn, "analysis-1", "T")
+
+    assert fi_db.open_questions_for(conn, "SYN9")  # still open - it was never presented
+
+
+def test_resolving_nothing_is_correct_behaviour(conn, monkeypatch):
+    """The prompt asks for [] when unsure. An analysis that closes no questions
+    is behaving as intended, not failing."""
+    from agents.analysis import _analysis_work
+
+    question_id = fi_db.record_knowledge(conn, fi_db.KNOWLEDGE_OPEN_QUESTION, "Still unknown",
+                                         recorded_by="analysis-1", subject="SYN1")
+    monkeypatch.setattr("agents.analysis._run_analysis", lambda ctx: _result_resolving([]))
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
+
+    _analysis_work(conn, "analysis-1", "T")
+
+    # the pre-existing question is untouched. The analysis also files its own
+    # uncertainty as a new question, which is the writer working, not a leak.
+    still_open = {q["id"] for q in fi_db.open_questions_for(conn, "SYN1")}
+    assert question_id in still_open
+
+
+def test_a_missing_field_does_not_break_the_analysis(conn, monkeypatch):
+    """Older responses, or a model that omits the field, must still produce a
+    valid analysis - resolution is additive, not required."""
+    from agents.analysis import _analysis_work
+
+    result = _analysis_result()
+    result.pop("resolved_question_ids", None)
+    monkeypatch.setattr("agents.analysis._run_analysis", lambda ctx: result)
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
+
+    _analysis_work(conn, "analysis-1", "T")
+
+    assert fi_db.list_analysis_results(conn) if hasattr(fi_db, "list_analysis_results") else True
+    assert conn.fetchone("SELECT COUNT(*) n FROM analysis_results")["n"] == 1
+
+
+def test_a_question_is_only_closed_once(conn):
+    """Two agents reaching the same conclusion concurrently must not overwrite
+    the record of which one actually closed it."""
+    question_id = fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_OPEN_QUESTION, "q", recorded_by="a", subject="SYN1")
+    fi_db.resolve_knowledge(conn, question_id, resolved_by_ref="analysis_results:1")
+    fi_db.resolve_knowledge(conn, question_id, resolved_by_ref="analysis_results:2")
+
+    record = [r for r in fi_db.list_knowledge(conn, status=None) if r["id"] == question_id][0]
+    assert record["resolved_by_ref"] == "analysis_results:1"
+
+
+def test_question_ids_are_shown_so_they_can_be_referenced(conn):
+    from agents.analysis import _assemble_context
+
+    question_id = fi_db.record_knowledge(
+        conn, fi_db.KNOWLEDGE_OPEN_QUESTION, "Is it a hedge roll?",
+        recorded_by="analysis-1", subject="SYN1")
+    fi_db.enqueue_report(conn, "explorer-1", "T", "explorer", "SYN1", summary="s")
+
+    context = _assemble_context(conn, fi_db.fetch_next_pending_report(conn))
+
+    assert f"[#{question_id}]" in context
+    assert "Leave it open when you are unsure" in context

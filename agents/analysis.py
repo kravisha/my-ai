@@ -149,10 +149,12 @@ def _assemble_context(conn, report: dict) -> str:
     if questions:
         lines.append("")
         lines.append("Open questions the organization has already raised about this security:")
-        lines += [f"  - {q['statement']}" for q in questions]
+        lines += [f"  [#{q['id']}] {q['statement']}" for q in questions]
         lines.append(
-            "  These are unresolved, not settled. If your analysis answers one, say so explicitly; "
-            "if it does not, do not silently drop it."
+            "  These are unresolved, not settled. If - and only if - your analysis genuinely answers "
+            "one, list its number in resolved_question_ids. Leave it open when you are unsure: "
+            "carrying a settled question costs little, while closing a live one loses it. Do not "
+            "silently drop a question you did not answer."
         )
 
     recent = fi_db.list_recent_analysis_results(conn, report["security"], config.ANALYSIS_RECENCY_WINDOW_SECONDS)
@@ -200,6 +202,9 @@ def _run_analysis(report_context: str) -> dict:
         '{"thesis": "...", "evidence_summary": "...", "confidence": <0.0-1.0>, '
         '"uncertainty": "...", "relevance_score": <0.0-1.0>, "novelty_score": <0.0-1.0>, '
         '"evidence_quality_score": <0.0-1.0>, "worth_the_compute": <true or false>, '
+        '"resolved_question_ids": [<numbers of any open questions listed in the context that this '
+        'analysis genuinely answers - use [] when in doubt, since carrying a settled question costs '
+        'little and closing a live one loses it>], '
         '"rationale": "...", "peer_classification": "common_factor" or "idiosyncratic" or '
         '"not_applicable"}. thesis should include reasons the idea could be wrong. '
         'peer_classification: "common_factor" if the context says peers also triggered '
@@ -252,6 +257,33 @@ def _record_open_question(conn, identity: str, security: str, result: dict, anal
     )
 
 
+def _resolve_answered_questions(conn, security: str, result: dict, analysis_result_id: int) -> None:
+    """Close the open questions this analysis says it answered.
+
+    Two guards, both about not trusting a model's bookkeeping:
+
+    - **Only questions that were actually shown can be closed.** The ids are
+      re-read from the store and intersected with what the model was given, so a
+      hallucinated or stale id cannot retire a question the analysis never saw.
+      Without this, one malformed response could silently empty the store.
+    - **What closed it is recorded.** A question retired with no trace of what
+      answered it is worse than one left open, because the organization would
+      have stopped carrying it while being unable to say why.
+
+    A model that resolves nothing is behaving correctly; the prompt asks it to
+    leave questions open when unsure, since carrying a settled question costs
+    little and closing a live one loses it."""
+    claimed = result.get("resolved_question_ids") or []
+    if not claimed:
+        return
+    presented = {q["id"] for q in fi_db.open_questions_for(conn, security)}
+    for question_id in claimed:
+        if question_id in presented:
+            fi_db.resolve_knowledge(
+                conn, question_id, resolved_by_ref=f"analysis_results:{analysis_result_id}"
+            )
+
+
 def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     # Prioritised rather than FIFO: at ten securities detection outpaces
     # reasoning (gap analysis §4.3b), so which lead gets the one deep-reasoning
@@ -285,6 +317,7 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
             result["worth_the_compute"], _overall_score(result), result["rationale"],
         )
         _record_open_question(conn, identity, report["security"], result, analysis_result_id)
+        _resolve_answered_questions(conn, report["security"], result, analysis_result_id)
     except Exception as exc:
         fi_db.complete_report(conn, report["id"], "failed", detail=str(exc))
         return

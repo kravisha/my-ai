@@ -482,6 +482,10 @@ CREATE TABLE IF NOT EXISTS knowledge_records (
     status TEXT NOT NULL DEFAULT 'active',
     superseded_by INTEGER,
     resolved_at TEXT,
+    -- What closed this question. A question retired with no trace of what
+    -- answered it is worse than one left open: the organization would have
+    -- stopped carrying it without being able to say why.
+    resolved_by_ref TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -1601,12 +1605,17 @@ def supersede_knowledge(conn: Database, record_id: int, replacement_id: int | No
     )
 
 
-def resolve_knowledge(conn: Database, record_id: int) -> None:
+def resolve_knowledge(conn: Database, record_id: int, resolved_by_ref: str | None = None) -> None:
     """Close an open question that has been answered. Distinct from superseded:
-    a resolved question was settled, a superseded belief was wrong."""
+    a resolved question was settled, a superseded belief was wrong.
+
+    `resolved_by_ref` points at what answered it. Guarded on status so a
+    question is only ever closed once - two agents reaching the same conclusion
+    concurrently must not overwrite the record of which one actually did it."""
     conn.execute(
-        "UPDATE knowledge_records SET status = ?, resolved_at = ? WHERE id = ?",
-        (KNOWLEDGE_RESOLVED, _now(), record_id),
+        "UPDATE knowledge_records SET status = ?, resolved_at = ?, resolved_by_ref = ? "
+        "WHERE id = ? AND status = ?",
+        (KNOWLEDGE_RESOLVED, _now(), resolved_by_ref, record_id, KNOWLEDGE_ACTIVE),
     )
 
 

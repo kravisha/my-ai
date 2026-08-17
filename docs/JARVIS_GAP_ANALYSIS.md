@@ -177,10 +177,14 @@ settled.
   open questions were built because real producers existed for them; nothing in the system currently
   *forms* an assumption or a model it could write down, so building those columns would be the empty
   schema this increment was shaped to avoid.
-- **Nothing resolves an open question yet.** Analysis is told a question exists and asked to say if it
-  answers one, but nothing calls `resolve_knowledge`. Questions therefore accumulate. That is the
-  correct failure direction — carrying a settled question is cheaper than dropping a live one — but it
-  needs closing before the store gets large.
+- ~~Nothing resolves an open question yet.~~ **Closed (2026-08-17).** Analysis now declares which
+  questions it answered, and the record keeps what closed each one. Two guards, both about not
+  trusting a model's bookkeeping: only questions actually *presented* in that analysis's context can
+  be closed, so a hallucinated or stale id cannot retire something the analysis never saw; and a
+  question is only ever closed once, so concurrent agents cannot overwrite the record of which one
+  did it. Verified live — across six real analyses the model resolved nothing, and a direct probe
+  with evidence that genuinely settled two questions returned both ids, so the abstention was a
+  judgment rather than a missing field.
 - **No curation.** Addendum 13 §9 makes the Training Agent the curator of validated knowledge; no
   Trainer exists.
 
