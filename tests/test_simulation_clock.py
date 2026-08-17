@@ -187,3 +187,87 @@ def test_a_record_with_no_effective_date_is_dropped_not_assumed_current():
     as current is how lookahead gets in through the back door."""
     now = datetime(2026, 12, 31, tzinfo=timezone.utc)
     assert clock.visible("cpi", [{"value": "undated"}], now) == []
+
+
+# -- the taxonomy ------------------------------------------------------------
+
+def test_every_data_class_names_a_known_archetype():
+    from simulation import cadences
+
+    for name, cadence in clock.CADENCES.items():
+        assert cadence.kind in cadences.ARCHETYPES, f"{name} has unknown archetype {cadence.kind!r}"
+
+
+def test_the_registry_covers_the_archetypes_it_declares():
+    """An archetype nobody uses is a pattern that was imagined rather than found.
+
+    Not every archetype needs many members - windowed has one - but one with
+    none means the taxonomy drifted from the inventory it was drawn from."""
+    from simulation import cadences
+
+    unused = [kind for kind in cadences.ARCHETYPES if not cadences.by_archetype(kind)]
+    assert not unused, f"archetypes with no data class: {unused}"
+
+
+def test_traded_prices_carry_no_lag_and_published_statistics_do():
+    """The distinction the whole two-timestamp model rests on."""
+    from simulation import cadences
+
+    for name in cadences.by_archetype(cadences.CONTINUOUS):
+        assert clock.CADENCES[name].publication_lag == timedelta(0), name
+    for name in ("cpi", "gdp", "home_price_index", "employment", "institutional_holdings"):
+        assert clock.CADENCES[name].publication_lag > timedelta(0), name
+
+
+def test_the_worst_lag_is_measured_in_months_not_days():
+    """13F may describe a position closed four months before anyone can read it,
+    and treating it as current holdings is not a small error."""
+    assert clock.CADENCES["institutional_holdings"].publication_lag >= timedelta(days=45)
+    assert clock.CADENCES["home_price_index"].publication_lag >= timedelta(days=60)
+
+
+def test_smoothed_data_classes_can_be_asked_whether_they_are_smoothed():
+    """An appraised or rarely-traded value shows low measured volatility because
+    it is not being repriced, not because it is not risky. A consumer has to be
+    able to ask, rather than discovering it in a risk number that looked calm."""
+    assert clock.CADENCES["private_asset_mark"].is_smoothed is True
+    assert clock.CADENCES["corporate_bond_price"].is_smoothed is True
+    assert clock.CADENCES["equity_price"].is_smoothed is False
+
+
+def test_classes_where_absence_is_a_finding_are_marked():
+    """A bond that did not trade and a broken feed look identical otherwise."""
+    assert clock.CADENCES["corporate_bond_price"].absence_is_data is True
+    assert clock.CADENCES["auction_imbalance"].absence_is_data is True
+    assert clock.CADENCES["equity_price"].absence_is_data is False
+
+
+def test_series_that_get_restated_declare_their_revisions():
+    """A series is a value per (date, vintage), not per date. A decision taken on
+    the first print was taken without the later ones."""
+    assert clock.CADENCES["gdp"].revisions == 2
+    assert clock.CADENCES["employment"].revisions == 2
+    assert clock.CADENCES["consumer_sentiment"].revisions == 1
+    assert clock.CADENCES["equity_price"].revisions == 0
+
+
+def test_the_etf_and_mutual_fund_pair_still_disagrees():
+    """The clearest case for cadence being a property of the instrument rather
+    than of what it holds, and the reason the registry is not grouped by asset."""
+    assert clock.CADENCES["etf_price"].kind == clock.CONTINUOUS
+    assert clock.CADENCES["mutual_fund_nav"].kind == clock.DAILY_CLOSE
+
+
+def test_the_same_underlying_can_be_priced_on_two_clocks():
+    """REIT prices and private real-estate marks describe the same buildings."""
+    assert clock.CADENCES["private_asset_mark"].kind == clock.APPRAISAL
+    assert clock.CADENCES["equity_price"].kind == clock.CONTINUOUS
+
+
+def test_lagged_lists_exactly_the_classes_with_a_gap():
+    from simulation import cadences
+
+    listed = set(cadences.lagged())
+    computed = {n for n, c in clock.CADENCES.items() if c.publication_lag > timedelta(0)}
+    assert listed == computed
+    assert len(listed) > 20, "the lookahead guard should have plenty to guard"

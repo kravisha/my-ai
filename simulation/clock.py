@@ -128,75 +128,23 @@ SESSIONS = {
 
 # --- cadences ---------------------------------------------------------------
 
-CONTINUOUS = "continuous"       # updates whenever its session is open
-DAILY_CLOSE = "daily_close"     # one value, struck at the session close
-SPORADIC = "sporadic"           # trades irregularly; absence is not an error
-PERIODIC = "periodic"           # released on a calendar: monthly, quarterly
-SCHEDULED = "scheduled"         # a known list of dates, e.g. policy meetings
+# Archetypes and the per-data-class registry live in simulation/cadences.py.
+# The clock is a mechanism and that is a taxonomy: the mechanism changes
+# rarely, the taxonomy grows every time the organization learns to consume
+# something new, and keeping them together would make every new data type a
+# change to the clock.
+from simulation.cadences import (  # noqa: E402  (re-exported for callers)
+    ABSENCE_IS_DATA, ARCHETYPES, CADENCES, SMOOTHED, Cadence, by_archetype, lagged,
+)
+from simulation.cadences import (  # noqa: E402
+    ANNOUNCED_EFFECTIVE, APPRAISAL, CONTINUOUS, CONTINUOUS_247, DAILY_CLOSE,
+    DAILY_LAGGED, EVENT_FILED, IRREGULAR, PERIODIC, REVISED, SCHEDULED,
+    SEMI_MONTHLY, SPORADIC, STATIC, TWO_VINTAGE, WEEKLY, WEEKLY_AS_OF, WINDOWED,
+)
 
 
-@dataclass(frozen=True)
-class Cadence:
-    """How one class of market data arrives.
-
-    `publication_lag` is the gap between what a datum describes and when the
-    world could know it. It is zero for anything traded and substantial for
-    anything measured: a home price index describes a month that ended two months
-    ago. Modelling it is the difference between a simulation that can teach the
-    organization to wait for confirmation and one that quietly hands it the
-    future.
-
-    `revisions` is how many times a figure is restated afterwards. GDP is
-    published, revised, and revised again, and a decision made on the first print
-    was made without the other two - which is a thing worth being able to test."""
-
-    name: str
-    kind: str
-    session: str
-    interval: timedelta | None = None
-    publication_lag: timedelta = timedelta(0)
-    revisions: int = 0
-
-    def session_spec(self) -> Session:
-        return SESSIONS[self.session]
-
-
-# Chosen from how these instruments actually behave, not from convenience. The
-# groupings that matter are traded-vs-published and continuous-vs-struck: an ETF
-# and a mutual fund hold nearly the same assets and keep completely different
-# clocks, because one trades all day and the other is priced once.
-CADENCES = {
-    "equity_price": Cadence("equity_price", CONTINUOUS, "equity"),
-    "option_surface": Cadence("option_surface", CONTINUOUS, "equity"),
-    "etf_price": Cadence("etf_price", CONTINUOUS, "equity"),
-    "index_price": Cadence("index_price", CONTINUOUS, "equity"),
-    # Priced once a day from the closing marks. No intraday value exists, and a
-    # simulation that produced one would be inventing a quote nobody could trade.
-    "mutual_fund_nav": Cadence("mutual_fund_nav", DAILY_CLOSE, "equity"),
-    "index_fund_nav": Cadence("index_fund_nav", DAILY_CLOSE, "equity"),
-    # Government paper trades continuously; a given corporate bond may not trade
-    # for days, and its last price going stale is information rather than a gap.
-    "government_yield": Cadence("government_yield", CONTINUOUS, "bond"),
-    "corporate_bond_price": Cadence("corporate_bond_price", SPORADIC, "bond"),
-    "credit_spread": Cadence("credit_spread", DAILY_CLOSE, "bond"),
-    "commodity_price": Cadence("commodity_price", CONTINUOUS, "futures"),
-    "fx_rate": Cadence("fx_rate", CONTINUOUS, "fx"),
-    # Policy decisions land on a published schedule, roughly eight times a year.
-    "policy_rate": Cadence("policy_rate", SCHEDULED, "none", interval=timedelta(days=45)),
-    # Published statistics. The lags are what make them different from prices:
-    # by the time the organization sees them they describe a period that closed
-    # weeks or months earlier.
-    "employment": Cadence("employment", PERIODIC, "none",
-                          interval=timedelta(days=30), publication_lag=timedelta(days=7)),
-    "cpi": Cadence("cpi", PERIODIC, "none",
-                   interval=timedelta(days=30), publication_lag=timedelta(days=14)),
-    "gdp": Cadence("gdp", PERIODIC, "none",
-                   interval=timedelta(days=91), publication_lag=timedelta(days=28), revisions=2),
-    "home_price_index": Cadence("home_price_index", PERIODIC, "none",
-                                interval=timedelta(days=30), publication_lag=timedelta(days=60)),
-    "earnings": Cadence("earnings", PERIODIC, "none",
-                        interval=timedelta(days=91), publication_lag=timedelta(days=21)),
-}
+def session_for(data_class: str) -> Session:
+    return SESSIONS[CADENCES[data_class].session]
 
 
 class SimulationClock:
@@ -225,7 +173,9 @@ class SimulationClock:
         return self.now(wall).date()
 
     def is_open(self, data_class: str, wall: datetime | None = None) -> bool:
-        return CADENCES[data_class].session_spec().is_open(self.now(wall))
+        # The session lookup lives here rather than on Cadence: a cadence names
+        # its session, and which sessions exist is a property of the clock.
+        return session_for(data_class).is_open(self.now(wall))
 
     def open_data_classes(self, wall: datetime | None = None) -> list[str]:
         """Which data classes could produce something right now.
