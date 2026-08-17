@@ -214,6 +214,16 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     # Scan every peer-group security independently first, so classification
     # (below) can ask "how many others also triggered this same cycle"
     # without re-scanning anything.
+    # An options surface does not exist while the market is shut, so scanning
+    # one would be reading a quote nobody could trade. Speculator deliberately
+    # does not do this: message boards have no closing bell, and an organization
+    # that went quiet with the exchange would miss the overnight chatter that is
+    # often the most informative part of the day.
+    #
+    # Off unless a scenario enables it - see fi_db.market_is_open.
+    if not fi_db.market_is_open(conn, "option_surface"):
+        return
+
     results = {}
     for security in config.PEER_GROUP_SECURITIES:
         surface = provider.get_option_surface(security)

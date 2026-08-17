@@ -877,6 +877,42 @@ CREATE TABLE IF NOT EXISTS security_universe (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- The simulated clock every process reads, so they agree about what time it is
+-- in the world.
+--
+-- **Two kinds of time, and conflating them is expensive.**
+--
+--   Operational time is wall-clock: heartbeats, process state, claims, spawn
+--   grace, shutdown. These are facts about OS processes, and an agent that has
+--   not heartbeat for forty-five seconds is dead whatever the simulated clock
+--   says. Every timing constant in this system is operational, and every one of
+--   them would be wrong if it were reinterpreted as simulated seconds - at the
+--   default scale a 45s staleness threshold becomes 0.16 wall seconds, and the
+--   whole workforce is marked crashed on the first cycle.
+--
+--   World time is simulated: when an observation happened in the market, when a
+--   figure became knowable, whether a session is open. These are facts about the
+--   world being simulated.
+--
+-- Nothing in this table changes operational time. It exists so world time is a
+-- shared fact rather than something each process invents - a clock derived
+-- independently in six processes is six clocks.
+--
+-- Absent means the organization is running in real time, which is exactly
+-- scale 1 with the epoch at start, so there is no special case to write.
+CREATE TABLE IF NOT EXISTS simulation_clock (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    epoch TEXT NOT NULL,
+    scale REAL NOT NULL,
+    started_at TEXT NOT NULL,
+    -- Whether agents should stand down when their market is shut. Off by
+    -- default: without it, behaviour would depend on the wall-clock hour a test
+    -- happened to run at, and a suite that passes in the morning and fails at
+    -- night is worse than one that does not test sessions at all.
+    enforce_sessions INTEGER NOT NULL DEFAULT 0,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE VIEW IF NOT EXISTS performance_card AS
 SELECT
     r.identity,
@@ -902,6 +938,71 @@ def parse_timestamp(value: str) -> datetime:
     one place that difference gets handled, instead of every call site
     reimplementing the same .replace("Z", "+00:00") fix."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def set_simulation_clock(
+    conn: Database,
+    epoch: str | datetime,
+    scale: float,
+    started_at: str | datetime | None = None,
+    enforce_sessions: bool = False,
+) -> None:
+    """Fix the world clock for this database, once, at startup.
+
+    Written by the Controller before it spawns anything, so every agent reads
+    the same epoch and rate. Replaced rather than appended: a run has one clock,
+    and a second row would mean two answers to what time it is."""
+    conn.execute("DELETE FROM simulation_clock")
+    conn.execute(
+        "INSERT INTO simulation_clock (id, epoch, scale, started_at, enforce_sessions, schema_version) "
+        "VALUES (1, ?, ?, ?, ?, ?)",
+        (
+            epoch.isoformat() if isinstance(epoch, datetime) else epoch,
+            float(scale),
+            (started_at.isoformat() if isinstance(started_at, datetime) else started_at) or _now(),
+            int(bool(enforce_sessions)),
+            SCHEMA_VERSION,
+        ),
+    )
+
+
+def get_simulation_clock(conn: Database) -> dict | None:
+    row = conn.fetchone("SELECT * FROM simulation_clock WHERE id = 1")
+    return dict(row) if row else None
+
+
+def simulated_now(conn: Database, wall: datetime | None = None) -> datetime:
+    """What time it is in the simulated world.
+
+    Falls back to wall-clock when no clock is configured, which is not a special
+    case: real time is scale 1 with the epoch at the start, so the same
+    arithmetic gives the same answer."""
+    clock = get_simulation_clock(conn)
+    now = wall or datetime.now(timezone.utc)
+    if clock is None:
+        return now
+    elapsed = (now - parse_timestamp(clock["started_at"])).total_seconds()
+    return parse_timestamp(clock["epoch"]) + timedelta(seconds=elapsed * clock["scale"])
+
+
+def market_is_open(conn: Database, data_class: str, wall: datetime | None = None) -> bool:
+    """Whether this class of data can be produced right now.
+
+    True when session enforcement is off, so an organization with no configured
+    clock behaves exactly as it did before this existed. Enforcement is opt-in
+    precisely because the alternative makes behaviour depend on the hour a run
+    happened to start."""
+    clock = get_simulation_clock(conn)
+    if clock is None or not clock["enforce_sessions"]:
+        return True
+
+    from simulation.clock import SESSIONS  # imported lazily; agents that never
+    from simulation.cadences import CADENCES  # ask about sessions do not pay for it
+
+    cadence = CADENCES.get(data_class)
+    if cadence is None:
+        return True
+    return SESSIONS[cadence.session].is_open(simulated_now(conn, wall))
 
 
 def list_tables_in_schema() -> list[str]:

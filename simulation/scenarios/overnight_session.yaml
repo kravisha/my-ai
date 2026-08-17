@@ -1,0 +1,72 @@
+id: overnight_session
+version: 1
+lifecycle: active
+description: >
+  The world clock running with sessions enforced, starting shortly before the
+  equity close and carrying on through the night.
+
+  The organization has never had a notion of the market being shut. This is the
+  first run in which it does, and the behaviour to look for is asymmetric:
+  Explorer should stand down when the options market closes, and Speculator
+  should carry straight on, because message boards have no closing bell.
+
+  That asymmetry is the whole argument for per-data-class sessions rather than
+  one calendar. An organization that went quiet with the exchange would miss the
+  overnight chatter that is often the most informative part of the day.
+
+  The epoch is 20:30 UTC on a Monday - half an hour before the 21:00 close - so
+  a 300-second run at 288x covers the last of the session and about twenty-three
+  hours of simulated night, reopening the following afternoon.
+
+duration_seconds: 300
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  FI_SIM_EPOCH: "2026-01-05T20:30:00+00:00"
+  FI_SIM_TIME_SCALE: 288
+  FI_SIM_ENFORCE_SESSIONS: 1
+
+requires_model: true
+
+expected_properties:
+  - name: explorer stood down outside the session
+    metric: intelligence.regime_observations
+    assert: at_most
+    value: 1200
+    # Explorer observes the regime from every surface it scans, so its
+    # observation count is the cleanest measure of how much it worked.
+    #
+    # Set from measurement, not estimate. The run spans 20:30 to 20:30, of which
+    # the equity session covers 30 minutes before the close plus 6 hours the
+    # following afternoon - 6.5 of 24 hours, or 27.1%. A session-less run
+    # produces ~2970 observations; this one produced 830, which is 27.9%. The
+    # feature tracks the session almost exactly.
+    #
+    # The first version of this property guessed 400 and failed a run that was
+    # behaving correctly. Guessing a threshold rather than measuring it is the
+    # error this project has made three times with timing constants.
+
+  - name: explorer did not stop altogether
+    metric: intelligence.regime_observations
+    assert: at_least
+    value: 400
+    # The other side, so a broken agent cannot pass as a closed market. One-sided
+    # bounds let "stood down" and "died quietly" look identical.
+
+  - name: speculator kept working through the night
+    metric: pipeline.evidence_items
+    assert: at_least
+    value: 1000
+    # Social evidence does not pause. If this falls with Explorer's, sessions
+    # are being applied to a data class that has none.
+
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty

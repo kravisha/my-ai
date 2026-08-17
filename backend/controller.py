@@ -110,7 +110,33 @@ class Controller:
         between registration and the first poll-loop tick."""
         fi_db.register_agent(self.conn, self.identity, CONTROLLER_ROLE, os.getpid())
         fi_db.record_heartbeat(self.conn, self.identity)
+        self._establish_world_clock()
         return self.identity
+
+    def _establish_world_clock(self) -> None:
+        """Fix what time it is in the simulated world, before anything is spawned.
+
+        Written once by the first process to exist, because a clock each agent
+        derived for itself would be one clock per process: they would agree on
+        the rate and disagree about when the run started, which is the same thing
+        as disagreeing about the date.
+
+        Absent config leaves no row, and no row means real time - scale 1 with
+        the epoch at start, which is the same arithmetic rather than a special
+        case. So an ordinary server is completely unaffected by this."""
+        epoch = os.environ.get("FI_SIM_EPOCH")
+        scale = os.environ.get("FI_SIM_TIME_SCALE")
+        if not epoch and not scale:
+            return
+
+        from simulation.clock import DEFAULT_EPOCH
+
+        fi_db.set_simulation_clock(
+            self.conn,
+            epoch=epoch or DEFAULT_EPOCH,
+            scale=float(scale or 1.0),
+            enforce_sessions=os.environ.get("FI_SIM_ENFORCE_SESSIONS", "0") not in ("0", "", "false"),
+        )
 
     def record_self_heartbeat(self) -> None:
         """Called once per poll-loop tick by backend/main.py. The loop
