@@ -1491,3 +1491,122 @@ requirement against a transient, the floor in a silent room, the echo filter in
 both directions, and the two speaking modes taking different paths. Whether real
 echo cancellation on a real phone leaves a residual this scheme separates cleanly
 is the owner's test, and it is the one that matters.
+
+## 28. Fault tolerance: the COO watcher and the incident record (2026-08-18)
+
+The **Fault Tolerance and Organizational Resilience Framework** (supplied
+2026-08-18) states its rule in two lines: *NO CRITICAL FAILURE GOES UNNOTICED, NO
+NOTICED FAILURE GOES OWNERLESS.* Its §18 requires a review before implementation
+and an explicit disposition.
+
+**Disposition: ACCEPT WITH MODIFICATIONS.** The document itself is not yet filed
+as an addendum - it is constitutional in kind, like addenda 11 and 15, and where
+it lives is an open public/private decision. The disposition and what was built
+are recorded here regardless, so the reasoning does not live only in a
+conversation.
+
+### What was already built, and is not owed to this framework
+
+More of §§6-8 existed than the document assumes: heartbeats with a *measured*
+staleness threshold (45s, raised from 10s after slow model calls were mistaken
+for crashes); §7's central demand - telling intentional dormancy from failure -
+already structural in the two-axis lifecycle; the Controller already heartbeating
+and already covered by COO's health scan; `docs/organization.yaml` already
+declaring `reports_to` for every role; and a lifecycle event catalogue with
+expected responses and observables.
+
+### The hole it found
+
+**Nothing watched the COO.** It is spawned once at startup, is deliberately not in
+`BASELINE_POPULATION`, and the health evaluation that notices every *other*
+agent's silence is a function inside it. If it died: crashed agents stayed marked
+`running` forever, the baseline stopped being enforced, and nothing reported any
+of it. That is §5 exactly, one level below where the framework expects the
+problem.
+
+### What was built
+
+- **The Controller watches the COO** (`Controller.watch_coo`). Detection,
+  diagnosis, recovery, and closure when the capability returns. The Controller is
+  COO's manager *and* the sole lifecycle executor, so detection and authority land
+  on the same entity and no new authority was invented.
+- **`backend/watch.py`** holds the relationships in one place (§3), because §16
+  forbids all-to-all monitoring and a map that emerges from whichever loop scans
+  whichever table is not a map.
+- **An incident record** (`incidents`) with the fields that have writers, and two
+  writers from the start: the Controller for the COO, the COO for the workforce.
+  Detection now produces a durable record rather than only a state change on a
+  registry row.
+- **Escalation and a recovery budget** (§11, §13). More than three failures inside
+  ten minutes and the Controller stops respawning and escalates to a human owner,
+  stating the lost capability. Counted from the durable record, so a loop that
+  survives a restart is still caught.
+- **The split-brain fix, first.** `bootstrap_coo` used to spawn unconditionally;
+  an unclean server death leaves the COO subprocess alive, so a restart produced
+  two live processes under one permanent identity. It now goes through
+  `respawn_coo`, which refuses when a live COO is heartbeating, and
+  `reconcile_on_start` reports what it found (§10).
+
+### The modifications, and what stays deferred
+
+1. Detection and diagnosis follow relationships; **lifecycle recovery remains the
+   Controller's exclusive act** (addendum 11 §15). No manager restarts anything
+   directly.
+2. **The top of the hierarchy is watched but not recoverable from inside.** COO
+   detects the Controller's silence; nothing can restart the server from within
+   it, and `watch.RECOVERY_OWNER` names the human rather than inventing an
+   in-process watcher that would die with what it watches.
+3. **The watch loop is asymmetric on purpose.** COO watches the Controller and the
+   Controller watches COO, which is the circular relationship §18 asks about. It
+   is safe only because exactly one direction carries recovery authority - two
+   watchers that could each restart the other would thrash. A test pins that.
+4. The incident record carries **fields with writers**, not §14's fourteen.
+5. Fault scenarios enter the existing lifecycle catalogue **one event at a time**;
+   four are declared now, and `incidents.*` metrics exist so a scenario can assert
+   on them rather than merely run.
+6. Deferred with no objection, as §17 asks: leases, leader election, hot/warm
+   standby, back-pressure limits. Nothing here has evidence of needing them.
+
+### The defect this increment created and then found
+
+The first version of the watch had no notion of a spawn in flight. The poll loop's
+first tick runs microseconds after `bootstrap_coo`; it found no registry row for a
+process that had existed for less than a millisecond, declared the COO missing,
+and started another - **the duplicate-executive hazard this watch exists to
+prevent, caused by the watch.** The incident record shows it plainly: a row filed
+in the same second as bootstrap, symptom "COO has no registry row".
+
+Two things made it worse than a simple bug. The incident *dedup* guarded the row
+and not the spawn, so a persistent condition could respawn on every pass. And the
+unit test written alongside it - "a COO that never registered is noticed too" -
+asserted the broken behaviour was correct, because it never distinguished a COO
+that had never registered from one that had not registered **yet**.
+
+`agents/coo.py` had solved this exact problem for every agent it spawns
+(`SPAWN_IN_FLIGHT_WINDOW_SECONDS`). The precedent existed and was not applied.
+
+Fixed by teaching the watch what a spawn in flight is, from two sources - this
+process's own memory and the registry's `spawned_at`, so a COO another process
+started is also given time - and by moving the guard into `respawn_coo`, because a
+guard in the caller is a guard the next caller does not have.
+
+### Verified
+
+1246 passed. Against a real server, on a sandboxed database:
+
+- **Startup files no incident.** The race is closed: zero incidents, one COO.
+- **A real kill is detected, diagnosed, recovered and closed.** Killing the live
+  COO produced: `COO heartbeat is 45.2s old, past the 45.0s threshold` ->
+  `process claims to be running but has stopped signalling; treating as crashed`
+  -> `respawned COO` -> `heartbeat resumed (1.0s old)`, status recovered, one COO
+  running under the same permanent identity with a new pid.
+
+A measurement correction worth recording: an early reading of "six COO processes"
+was wrong. `.venv/Scripts/python.exe` is a launcher that re-executes, so **every**
+agent appears as a parent/child pair, and a `Get-CimInstance` filter on the
+command line also matches the shell command doing the filtering. The duplicate
+spawn is evidenced by the incident record and the code path, not by that count.
+
+The escalation path is covered by tests rather than by a live run: reaching it
+takes four failures at 45 seconds apiece, and the wall-clock cost buys nothing the
+unit tests do not already pin.

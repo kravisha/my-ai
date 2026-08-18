@@ -31,7 +31,9 @@ from pathlib import Path
 
 from backend import fi_db
 
-FAMILIES = ("pipeline", "queue", "cross_check", "population", "intelligence", "resource")
+FAMILIES = (
+    "pipeline", "queue", "cross_check", "population", "intelligence", "resource", "incidents",
+)
 
 
 def _seconds(earlier: str, later: str) -> float:
@@ -80,6 +82,41 @@ def collect_from(conn, since: str | None = None) -> dict:
         "population": _population(conn, since),
         "intelligence": _intelligence(conn),
         "resource": _resource(conn, since),
+        "incidents": _incidents(conn, since),
+    }
+
+
+def _incidents(conn, since: str | None = None) -> dict:
+    """What the organization noticed about its own failures.
+
+    A flow family, scoped like the others: incidents are things that happened
+    during a run, and an inherited database's old failures are not this run's.
+
+    This exists because the Fault Tolerance Framework's §15 asks for fault
+    simulations whose purpose "is not merely to prove that processes restart" but
+    to prove the organization notices, assigns responsibility, recovers and
+    learns. None of that is observable unless detection itself is measured -
+    `recovered` is the organization fixing itself, and `escalated` is it correctly
+    admitting that it cannot."""
+    rows = _scoped_rows(
+        conn,
+        "SELECT status, COUNT(*) AS n FROM incidents WHERE {bound} GROUP BY status",
+        "detected_at", since,
+    )
+    counts = {row["status"]: row["n"] for row in rows}
+    return {
+        "open": counts.get("open", 0),
+        "recovered": counts.get("recovered", 0),
+        "escalated": counts.get("escalated", 0),
+        "total": sum(counts.values()),
+        "subjects": sorted({
+            row["subject_identity"]
+            for row in _scoped_rows(
+                conn,
+                "SELECT subject_identity FROM incidents WHERE {bound}",
+                "detected_at", since,
+            )
+        }),
     }
 
 
