@@ -1838,3 +1838,61 @@ where it can be read again rather than remembered: **file content goes through t
 file tools, never through a shell string** — the shell is for running things, and
 any content containing backticks, `$`, or heredoc terminators will be transformed
 in transit.
+
+## 32. The Historical Market Data Engine, and the vendor wall it met (2026-08-18)
+
+Scoreboard #4, addendum 20 §2B. The first real ingest path, chosen before Live
+because it is replayable, needs no credentials, and proves the canonical contract
+against data the synthetic provider did not shape.
+
+### Files are the engine; the network is an errand
+
+The durable artifact is the file plus the rows ingested from it, and a fetch is
+merely one way a file comes to exist. Replay — the engine's defining obligation —
+requires a held corpus, and holding it is what keeps the engine whole when the
+vendor is down. The same isolation argument the Gateway was built under, one layer
+down.
+
+With the engine came the Data Store (§4) that PR #19 deliberately deferred:
+`backend/observations.py`, storing canonical observations with provenance as
+CHECK-constrained columns rather than a blob, so a row cannot lose its origin in a
+migration. `(entity, class, moment, origin, source)` is unique — re-ingest
+converges — while the same fact from two *sources* is deliberately kept twice,
+because two vendors disagreeing about a close is information.
+
+### The vendor wall, met on first live use
+
+Stooq was chosen as the keyless source and turned out, on the first real fetch, to
+gate programmatic clients behind a JavaScript proof-of-work wall — a 404 to
+`requests`, a challenge page to curl. **This project does not automate around
+anti-bot controls.** The fetcher now names the wall and the legitimate path (a
+person downloads in a browser; `ingest_file` takes it from there), and FRED — 
+genuinely public, keyless, decades deep — became the adapter that works
+unattended: `SP500` → `index_price`, `DGS10`/`DGS2` → `government_yield`, all
+cadences the taxonomy already carried.
+
+Two vendors in the first hour, one of them hostile to automation, is the §1
+vendor-independence argument arriving as experience rather than principle.
+
+### Disclosures, so they are read rather than discovered
+
+- FRED series are registered through `ensure_security`, so `SP500` is an entity
+  of type "security", which it is not. Widening entity types belongs to the
+  Reference Data Engine (Scoreboard #5) and its schema-migration question; the
+  ingest comment carries the same disclosure.
+- Daily observations are stamped at 21:00 UTC — the EDT close. In winter that is
+  an hour late, which is conservative in the only direction a lookahead guard can
+  afford.
+- The `government_yield` cadence declares zero publication lag; H.15's actual
+  release schedule has not been measured. If someone measures it, the fix belongs
+  in `cadences.py` and every stored `knowable_at` derived from it is already
+  materialized — a re-ingest would be needed. Known cost, taken knowingly.
+
+### Verified
+
+1305 passed (was 1285). Live, against real data: 18,653 observations ingested
+(S&P 500 2016–2026, DGS10 1962–2026), re-ingest against the live feed converged
+(0 kept, 16,141 already held), and the lookahead guard held on the Lehman week —
+standing at midday 2008-09-16, the 15th's flight-to-safety plunge (3.74 → 3.47)
+is visible and the 16th's close is not. Scratch database, removed afterwards; the
+real one untouched.

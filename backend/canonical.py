@@ -42,7 +42,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from backend.fi_db import _now, parse_timestamp
+# From backend.db, not backend.fi_db: fi_db now imports the observation store,
+# which imports this module, and a contract that imported the schema above it
+# would close the loop. The time helpers were moved to the bottom layer in the
+# same increment that created them for exactly this reason.
+from backend.db import now_iso as _now
+from backend.db import parse_timestamp
 from simulation.cadences import CADENCES
 
 # Where an observation came from. There is no fourth value and no default: §15's
