@@ -66,18 +66,25 @@ def test_importing_backend_main_creates_no_database(tmp_path):
     this asks whether a file appeared."""
     import backend.main  # noqa: F401 - fail here, not in the subprocess, if broken
 
-    db_path = tmp_path / "import-side-effect.db"
+    # Its own directory, not tmp_path itself: the autouse _isolate_fi_db fixture
+    # is pointed at this same tmp_path, and asserting a directory is empty means
+    # nothing unless the test owns every file in it. Today that fixture creates
+    # its database lazily and this test makes no request, so tmp_path happens to
+    # stay clean - but "happens to" is what this whole file exists to stop
+    # relying on.
+    probe_dir = tmp_path / "import-probe"
+    probe_dir.mkdir()
     result = subprocess.run(
         [sys.executable, "-c", "import backend.main"],
         cwd=PROJECT_ROOT,
-        env={**os.environ, "FI_DB_PATH": str(db_path)},
+        env={**os.environ, "FI_DB_PATH": str(probe_dir / "import-side-effect.db")},
         capture_output=True,
         text=True,
         timeout=120,
     )
 
     assert result.returncode == 0, f"importing backend.main failed:\n{result.stderr}"
-    assert sorted(p.name for p in tmp_path.iterdir()) == [], (
+    assert sorted(p.name for p in probe_dir.iterdir()) == [], (
         "importing backend.main created a database; construction of anything that "
         "calls fi_db.init_schema belongs in lifespan, not at module level"
     )
