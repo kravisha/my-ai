@@ -260,10 +260,24 @@ philosophy `docs/PUBLIC_PRIVATE_BOUNDARY.md` keeps private — because publishin
 publicly cannot be undone. Only files git is *tracking* can be read, which is why
 `.env` is invisible to it.
 
-What does not work yet: voice, pushing, and any call into the backend at all —
-this service still does not touch the rest of Jarvis.
-`docs/SPEC_RECONCILIATION.md` §20, §21 and §22 record why it is shaped this way
-and what the remaining increments are.
+It can also **see the running system** (G5): which agents exist, their lifecycle
+state and process state kept separate, and how stale each heartbeat is. That is
+read-only — it cannot retire, resume or spawn anything, because the Controller
+alone executes lifecycle changes. Point it at a backend account with:
+
+```bash
+GATEWAY_BACKEND_URL=http://localhost:8000
+GATEWAY_BACKEND_USER=<an account in the backend's MY_AI_ADMIN_USERS>
+GATEWAY_BACKEND_PASSWORD=<its password>
+```
+
+**And it keeps working when the backend does not.** With Jarvis stopped, the
+conversation, the Scoreboard and Git all carry on; the system view says the
+backend did not answer and why. That is addendum 16 §23, and it is why the
+Gateway is a separate process with its own database.
+
+What does not work yet: voice, and pushing. `docs/SPEC_RECONCILIATION.md` §20 to
+§23 record why it is shaped this way and what the remaining increments are.
 
 ## Simulation
 
@@ -434,6 +448,9 @@ gateway/
   tools.py                What the assistant can actually do. Five Scoreboard tools and three
                          Git ones; failures come back as tool results the model can correct
                          itself from
+  jarvis.py               The window onto the running backend: read-only GETs, short timeouts,
+                         and "unavailable" as an ordinary answer rather than an exception -
+                         which is what addendum 16 §23's isolation actually requires
   repositories.py         Git as the artifact exchange (addendum 16 §14/§20): tracked-files-only
                          reads, and publishes that commit to a new branch via plumbing - no
                          checkout, no push, no working-tree writes. Holds the public/private
