@@ -1,0 +1,98 @@
+"""The model as a service behind an interface, rather than a vendor baked into
+the call site (addendum 16 §24: the Gateway "must not fundamentally be a 'Claude
+Gateway' or 'ChatGPT Gateway'... Models are services behind it").
+
+Two operations, because the system genuinely needs two and not because a wider
+interface looked more complete:
+
+- `complete` — one blocking call returning the provider's own response object.
+  This is what the agents and `backend/main.py`'s `/chat` have always done, and
+  they need the raw object because they read `stop_reason` and walk `content`
+  blocks to run tool loops.
+- `stream_text` — incremental text for a conversational interface. Addendum 16
+  §9 asks for streaming responses and low latency, and a Gateway that waited for
+  a complete reply before showing anything would fail that on the first turn.
+
+`stream_text` deliberately returns text only. A streaming tool-use surface is
+real work and nothing consumes it yet; the Gateway's assistant gains tools when
+the Scoreboard and Git actions exist to call. Adding the wider contract now
+would be an interface with no implementation worth testing.
+
+**The client is constructed on first use, not at import.** This module was split
+out of `app/model_gateway.py`, which held `_client = Anthropic(api_key=os.environ[
+"ANTHROPIC_API_KEY"])` at module level: importing it raised `KeyError` in any
+environment without the variable, so the test suite carried a `setdefault` to
+make imports survive, and every importer paid for a client it might never call.
+That is the same class of import-time side effect that made `import backend.main`
+write to the developer's database. Constructing lazily also means the key is read
+when it is used, so a process that loads `.env` after import still works.
+"""
+
+import os
+from typing import Iterator, Protocol
+
+from dotenv import load_dotenv
+
+# At import, because it must happen before anything reads ANTHROPIC_API_KEY and
+# because agent subprocesses depend on it: simulation/harness.py's
+# model_is_available() documents that an agent picks the key up from .env even
+# when the launching process has none. That behavior moved here with the client.
+load_dotenv()
+
+DEFAULT_MODEL = "claude-sonnet-5"
+
+
+class ModelProvider(Protocol):
+    """What the rest of the system may assume about a model, whoever supplies it."""
+
+    def complete(self, system: str, messages: list, tools: list, max_tokens: int = 2048):
+        """One reply, as the provider's own response object."""
+        ...
+
+    def stream_text(self, system: str, messages: list, max_tokens: int = 2048) -> Iterator[str]:
+        """The reply as it arrives, in text fragments."""
+        ...
+
+
+class AnthropicProvider:
+    """The one implementation there is. Named for its vendor so that a second one
+    can exist without either pretending to be generic."""
+
+    def __init__(self, model: str = DEFAULT_MODEL, api_key: str | None = None):
+        self.model = model
+        self._api_key = api_key
+        self._client = None
+
+    def client(self):
+        """Built once, on demand. The import of `anthropic` is deferred with it:
+        a module that only names this class should not pay for the SDK, and a
+        test that never calls a model should not need a key to exist."""
+        if self._client is None:
+            from anthropic import Anthropic
+
+            self._client = Anthropic(api_key=self._api_key or os.environ["ANTHROPIC_API_KEY"])
+        return self._client
+
+    def complete(self, system: str, messages: list, tools: list, max_tokens: int = 2048):
+        return self.client().messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            tools=tools,
+        )
+
+    def stream_text(self, system: str, messages: list, max_tokens: int = 2048) -> Iterator[str]:
+        """Yields text fragments in arrival order.
+
+        The SDK's context manager owns the HTTP connection, so the generator must
+        stay inside it while yielding - which also means an abandoned generator
+        closes the connection when it is collected, rather than leaking it."""
+        with self.client().messages.stream(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+        ) as stream:
+            for fragment in stream.text_stream:
+                yield fragment

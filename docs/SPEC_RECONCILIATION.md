@@ -10,7 +10,7 @@ both models — stop, resolve, and update the canonical specification so one int
 remains.* Since the addenda themselves are marked do-not-edit, **this file is where that resolution is
 recorded.**
 
-Last updated: 2026-08-17.
+Last updated: 2026-08-18.
 
 ---
 
@@ -884,7 +884,7 @@ was built for.
 The last entry criterion closes. Certification remains **5/10**, and its five outstanding items are the
 organization's real problems rather than missing scaffolding.
 
-## 16. The Gateway lineage arrives, and one of it is already built (2026-08-17)
+## 19. The Gateway lineage arrives, and one of it is already built (2026-08-17)
 
 Three documents supplied together: the AI Communication Gateway specification (addendum 16), its Super
 User addendum (17), and a Lifecycle-Managed Controller Initialization specification (18). All three are
@@ -962,3 +962,62 @@ Addendum 18 is built. Addenda 16 and 17 are not, and nothing in this repository 
 external service, no phone client, no voice interface, no Scoreboard, no Technology and Architecture
 function. The `/admin` routes and the UQI are the closest existing things, and they are an internal
 panel behind session auth — not the single externally exposed boundary 16 §7 requires.
+
+*(As of 2026-08-18 the first part of that is out of date: §20 below records the first increment of the
+Gateway, which is a real service with a real client. Voice, Git, the Scoreboard and the Technology and
+Architecture function remain unbuilt. The paragraph above is left as written, since this file records
+what was true when each entry was made.)*
+
+## 20. The Gateway becomes a process (2026-08-18)
+
+Addenda 16 and 17 describe a service; G1 builds the first increment of it, in `gateway/`. Three
+questions had to be settled before any of it could be written, and the documents settle all three
+between them rather than any one of them saying so outright.
+
+### It is a separate process, not a router on the backend
+
+Addendum 16 §7 requires the Gateway to be the *only* externally exposed Jarvis service, and forbids
+external clients from reaching internal APIs, the Controller, agents or databases. Adding these routes
+to `backend/main.py` would have exposed every internal and `/admin` route on the port the phone talks
+to — the precise arrangement §7 exists to prevent. §22 (able to run while the larger system is under
+construction) and §23 (usable when an internal component is unavailable) both point the same way, and
+neither is satisfiable by a router inside the process it must survive.
+
+### It is a client of Jarvis, not part of it
+
+The Gateway is not an agent: it is not spawned by the Controller, holds no role in the organization,
+and must keep working when the organization is not running at all. It is the same shape the project
+already uses three times — `agents/coo.py`, `panel/app.py`, `monitor/app.py` are all separate
+processes that talk HTTP to the backend.
+
+**The "SQLite is the only IPC" rule is unchanged and was never in tension here.** That rule governs
+communication *between agents*, which is what addendum 6 §3 is about. Clients have always used HTTP.
+Recording it because the higher addendum number invites the opposite reading, and a future reader
+finding a second transport in the repository deserves to find the reason next to it.
+
+### Its store is its own
+
+`gateway.db`, separate from `financial_intelligence.db`, built on the same `backend/db.py` Database
+class whose own docstring anticipated a second use. §23 is what forces this: if the Scoreboard and the
+conversation lived in the FI database, reading a deferred question would require the backend to be up,
+and the isolation §23 asks for would exist only on paper. `GATEWAY_DB_PATH` mirrors `FI_DB_PATH`, and
+`tests/conftest.py`'s guard now fingerprints both files.
+
+### What G1 does not do
+
+It makes no call into the backend at all. There is no Git, no Scoreboard, no voice, and the assistant
+has no tools — its system prompt says so explicitly, and a test asserts that it keeps saying so, since
+an assistant that implied it had filed a Scoreboard item would be inventing the rest of the roadmap.
+The remaining increments are G2 (phone reachability and TLS), G3 (Scoreboard), G4 (Git), G5 (project
+status and proven failure isolation), G6 (voice), G7 (the Technology and Architecture function of
+addendum 17 §7–§9).
+
+### One thing G1 changed outside the Gateway
+
+Addendum 16 §24 — "The Gateway must not fundamentally be a 'Claude Gateway'... Models are services
+behind it" — required a provider interface, which is `app/model_provider.py`. Building it also removed
+an import-time side effect that had been documented in `tests/conftest.py` since before the database
+leak was found: `app/model_gateway.py` constructed its Anthropic client at module scope, so importing
+it raised `KeyError` without an API key in the environment. It is the same class of defect as the
+import-time Controller, found the same way — by reading what the tests had to work around. The
+public contract of `call_reasoning_model` is unchanged.

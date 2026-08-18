@@ -5,3 +5,8 @@ httpx
 # as a transitive dependency of uvicorn[standard]; named here so the drift test does
 # not silently start skipping if that changes.
 pyyaml
+
+# tests/test_gateway_streaming.py uses anyio's pytest plugin to run async tests.
+# Present today only as a transitive dependency of starlette; named here for the
+# same reason pyyaml is, so those tests do not vanish if that changes.
+anyio

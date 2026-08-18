@@ -1,0 +1,353 @@
+"""The Gateway as a running service: the boundary, the login, and one turn of
+conversation over the WebSocket.
+
+The model is always a stand-in here. What is real is everything else - the
+routes, the session checks, the transport protocol and the persistence - which is
+where every defect these tests are meant to catch would live.
+"""
+
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
+from app import model_gateway
+from conftest import GATEWAY_TEST_PASSWORD, GATEWAY_TEST_USER
+from gateway import auth, store
+
+
+class FakeProvider:
+    """Streams a fixed reply and records what it was asked.
+
+    `complete` deliberately raises: G1's conversation is streaming-only, and a
+    silent fallback to a blocking call would hide a wiring mistake that matters
+    (a non-streaming Gateway fails addendum 16 §9 while still returning text)."""
+
+    def __init__(self, fragments=("Specification ", "leads ", "the code.")):
+        self.fragments = list(fragments)
+        self.calls = []
+
+    def complete(self, system, messages, tools, max_tokens=2048):
+        raise AssertionError("the Gateway conversation must stream, not complete")
+
+    def stream_text(self, system, messages, max_tokens=2048):
+        self.calls.append({"system": system, "messages": messages, "max_tokens": max_tokens})
+        yield from self.fragments
+
+
+class FailingProvider:
+    def complete(self, *args, **kwargs):
+        raise AssertionError("not used")
+
+    def stream_text(self, system, messages, max_tokens=2048):
+        yield "I can start "
+        raise RuntimeError("upstream refused")
+
+
+@pytest.fixture
+def fake_model():
+    provider = FakeProvider()
+    model_gateway.set_provider(provider)
+    try:
+        yield provider
+    finally:
+        model_gateway.set_provider(None)
+
+
+def authenticated_socket(client, token):
+    """Opens a socket and completes the handshake, returning it and the ready
+    frame. Every conversation test needs both, and doing it by hand each time
+    would bury the thing under test."""
+    socket = client.websocket_connect("/ws")
+    socket.__enter__()
+    socket.send_json({"type": "auth", "token": token})
+    return socket, socket.receive_json()
+
+
+# --- The boundary itself ---
+
+
+def test_health_says_nothing_about_jarvis(gateway_client):
+    """An unauthenticated caller learns that a Gateway is here and whether its
+    operator finished configuring it. Not what is behind it - addendum 16 §7
+    makes this the only externally exposed service, so its unauthenticated
+    surface is the one an unknown caller sees."""
+    response = gateway_client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "configured": True}
+
+
+def test_the_client_page_is_served(gateway_client):
+    response = gateway_client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Jarvis Gateway" in response.text
+
+
+def test_the_page_fetches_nothing_from_a_third_party(gateway_client):
+    """A page that loads a script from a CDN can leak a session token to whoever
+    controls that CDN. This service is specified as the external boundary, so
+    'no external requests' is a property worth asserting rather than intending."""
+    body = gateway_client.get("/").text
+
+    for marker in ("http://", "https://", "//cdn", "integrity="):
+        assert marker not in body, f"the client page references something external: {marker}"
+
+
+# --- Login ---
+
+
+def test_login_issues_a_session(gateway_client, gateway_conn):
+    response = gateway_client.post(
+        "/auth/login", json={"username": GATEWAY_TEST_USER, "password": GATEWAY_TEST_PASSWORD}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token"]
+    assert store.session_is_valid(gateway_conn, body["token"]) is True
+
+
+def test_a_wrong_password_is_refused(gateway_client, gateway_conn):
+    response = gateway_client.post(
+        "/auth/login", json={"username": GATEWAY_TEST_USER, "password": "wrong"}
+    )
+
+    assert response.status_code == 401
+    assert gateway_conn.fetchall("SELECT 1 FROM sessions") == []
+
+
+def test_an_unconfigured_gateway_says_so_rather_than_rejecting_the_password(
+    gateway_client, monkeypatch
+):
+    """503 and 401 are different situations. An operator who has not set the
+    environment variables would otherwise spend the evening retyping a correct
+    password."""
+    monkeypatch.delenv(auth.SUPER_USER_ENV, raising=False)
+    monkeypatch.delenv(auth.PASSWORD_HASH_ENV, raising=False)
+
+    response = gateway_client.post(
+        "/auth/login", json={"username": GATEWAY_TEST_USER, "password": GATEWAY_TEST_PASSWORD}
+    )
+
+    assert response.status_code == 503
+    assert auth.SUPER_USER_ENV in response.json()["detail"]
+    assert gateway_client.get("/health").json()["configured"] is False
+
+
+def test_logout_ends_the_session(gateway_client, gateway_token, gateway_conn):
+    response = gateway_client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {gateway_token}"}
+    )
+
+    assert response.status_code == 200
+    assert store.session_is_valid(gateway_conn, gateway_token) is False
+
+
+def test_logout_without_a_token_is_refused(gateway_client):
+    assert gateway_client.post("/auth/logout").status_code == 401
+    assert gateway_client.post(
+        "/auth/logout", headers={"Authorization": "Bearer nonsense"}
+    ).status_code == 401
+
+
+# --- The conversation socket ---
+
+
+def test_the_socket_refuses_an_unauthenticated_opening_frame(gateway_client):
+    with gateway_client.websocket_connect("/ws") as socket:
+        socket.send_json({"type": "message", "text": "let me in"})
+
+        assert socket.receive_json() == {"type": "error", "error": "unauthorized"}
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            socket.receive_json()
+    assert disconnected.value.code == 4401
+
+
+def test_the_socket_refuses_an_unknown_token(gateway_client):
+    with gateway_client.websocket_connect("/ws") as socket:
+        socket.send_json({"type": "auth", "token": "not-a-real-token"})
+
+        assert socket.receive_json()["error"] == "unauthorized"
+
+
+def test_a_valid_token_opens_the_conversation(gateway_client, gateway_token):
+    socket, ready = authenticated_socket(gateway_client, gateway_token)
+    try:
+        assert ready["type"] == "ready"
+        assert ready["messages"] == []
+        assert ready["conversation_id"] > 0
+    finally:
+        socket.__exit__(None, None, None)
+
+
+def test_a_turn_streams_and_is_recorded(gateway_client, gateway_token, gateway_conn, fake_model):
+    socket, ready = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": "what leads, the spec or the code?"})
+
+        deltas = []
+        while True:
+            frame = socket.receive_json()
+            if frame["type"] == "done":
+                break
+            assert frame["type"] == "delta", frame
+            deltas.append(frame["text"])
+    finally:
+        socket.__exit__(None, None, None)
+
+    # Arriving in pieces is the requirement (§9), not merely arriving.
+    assert deltas == ["Specification ", "leads ", "the code."]
+
+    turns = store.history(gateway_conn, ready["conversation_id"])
+    assert [(turn["role"], turn["text"]) for turn in turns] == [
+        ("user", "what leads, the spec or the code?"),
+        ("assistant", "Specification leads the code."),
+    ]
+
+
+def test_the_model_is_given_the_conversation_so_far(gateway_client, gateway_token, fake_model):
+    """Context is the difference between a conversation and a series of
+    questions, and it is the thing a persistence bug quietly breaks."""
+    socket, _ = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": "first"})
+        while socket.receive_json()["type"] != "done":
+            pass
+        socket.send_json({"type": "message", "text": "second"})
+        while socket.receive_json()["type"] != "done":
+            pass
+    finally:
+        socket.__exit__(None, None, None)
+
+    assert [message["content"] for message in fake_model.calls[1]["messages"]] == [
+        "first",
+        "Specification leads the code.",
+        "second",
+    ]
+    assert fake_model.calls[1]["messages"][1]["role"] == "assistant"
+
+
+def test_reconnecting_resumes_the_same_conversation(
+    gateway_client, gateway_token, fake_model
+):
+    """Addendum 16 §9's conversation continuity, end to end: the transcript is
+    server-side, so closing the tab is not the end of the conversation."""
+    socket, first_ready = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": "remember this"})
+        while socket.receive_json()["type"] != "done":
+            pass
+    finally:
+        socket.__exit__(None, None, None)
+
+    socket, second_ready = authenticated_socket(gateway_client, gateway_token)
+    try:
+        assert second_ready["conversation_id"] == first_ready["conversation_id"]
+        assert [message["text"] for message in second_ready["messages"]] == [
+            "remember this",
+            "Specification leads the code.",
+        ]
+    finally:
+        socket.__exit__(None, None, None)
+
+
+def test_an_empty_or_oversized_message_is_refused(gateway_client, gateway_token, gateway_conn):
+    socket, ready = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": "   "})
+        assert socket.receive_json() == {"type": "error", "error": "empty message"}
+
+        socket.send_json({"type": "message", "text": "x" * 20_001})
+        assert socket.receive_json() == {"type": "error", "error": "message too long"}
+
+        socket.send_json({"type": "nonsense"})
+        assert socket.receive_json() == {"type": "error", "error": "unknown message type"}
+
+        socket.send_text("{not json")
+        assert socket.receive_json() == {"type": "error", "error": "malformed message"}
+    finally:
+        socket.__exit__(None, None, None)
+
+    assert store.history(gateway_conn, ready["conversation_id"]) == [], (
+        "a refused frame must not reach the transcript, or the next model call "
+        "is given a turn that was never answered"
+    )
+
+
+def test_a_socket_survives_a_refused_frame(gateway_client, gateway_token, fake_model):
+    """The refusals above must not be fatal - a phone client that has to
+    reconnect after every typo is unusable."""
+    socket, _ = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": ""})
+        socket.receive_json()
+        socket.send_json({"type": "message", "text": "still here?"})
+
+        assert socket.receive_json()["type"] == "delta"
+    finally:
+        socket.__exit__(None, None, None)
+
+
+def test_a_revoked_session_cannot_keep_talking(
+    gateway_client, gateway_token, gateway_conn, fake_model
+):
+    """The session is re-checked every turn. A socket opened before logout would
+    otherwise stay privileged for as long as it was held open, which is the same
+    defect as a session that never expires."""
+    socket, _ = authenticated_socket(gateway_client, gateway_token)
+    try:
+        store.delete_session(gateway_conn, gateway_token)
+        socket.send_json({"type": "message", "text": "still allowed?"})
+
+        assert socket.receive_json() == {"type": "error", "error": "unauthorized"}
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            socket.receive_json()
+    finally:
+        socket.__exit__(None, None, None)
+
+    assert disconnected.value.code == 4401
+
+
+def test_a_model_failure_is_reported_and_the_partial_reply_kept(
+    gateway_client, gateway_token, gateway_conn
+):
+    """What the user sees when the model errors mid-reply: an explanation, a
+    socket that still works, and no user turn left dangling without a response."""
+    model_gateway.set_provider(FailingProvider())
+    try:
+        socket, ready = authenticated_socket(gateway_client, gateway_token)
+        try:
+            socket.send_json({"type": "message", "text": "trigger the failure"})
+
+            assert socket.receive_json() == {"type": "delta", "text": "I can start "}
+            failure = socket.receive_json()
+            assert failure["type"] == "error"
+            assert "upstream refused" in failure["error"]
+        finally:
+            socket.__exit__(None, None, None)
+    finally:
+        model_gateway.set_provider(None)
+
+    turns = store.history(gateway_conn, ready["conversation_id"])
+    assert [(turn["role"], turn["text"]) for turn in turns] == [
+        ("user", "trigger the failure"),
+        ("assistant", "I can start "),
+    ]
+
+
+def test_the_assistant_is_told_it_cannot_act_yet(gateway_client, gateway_token, fake_model):
+    """G1 has no tools. An assistant that implies it filed a Scoreboard item or
+    pushed to Git would be inventing the rest of the roadmap, so the system
+    prompt says so and this asserts it keeps saying so."""
+    socket, _ = authenticated_socket(gateway_client, gateway_token)
+    try:
+        socket.send_json({"type": "message", "text": "publish the spec"})
+        while socket.receive_json()["type"] != "done":
+            pass
+    finally:
+        socket.__exit__(None, None, None)
+
+    system = fake_model.calls[0]["system"]
+    assert "not yet built" in system
+    assert "Git" in system and "Scoreboard" in system

@@ -198,6 +198,40 @@ scoped to whichever account you log into, and either client can be logged
 into as a *different* account than the other, at the same time, against the
 same backend.
 
+## AI Communication Gateway
+
+A separate service on its own port (`gateway/`, addenda 16–18), and the only
+one intended to be reachable from outside this machine. It does not run inside
+the backend on purpose: addendum 16 §7 makes it the single external boundary,
+and sharing a port with the internal and `/admin` routes would defeat that.
+
+It needs a Super User credential, which comes from the environment rather than
+from `users.json` — a route that could grant this privilege would be an
+escalation surface, and the Gateway login should not be the ordinary
+application password:
+
+```bash
+.venv/Scripts/python.exe -m gateway.hash_password
+```
+
+Put the printed `GATEWAY_PASSWORD_HASH=...` line and a `GATEWAY_SUPER_USER=...`
+in `.env`, then:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn gateway.main:app --port 8100
+```
+
+Open <http://localhost:8100> and sign in. **Unset means nobody can log in** —
+an unconfigured Gateway refuses every attempt and says which variables are
+missing, rather than defaulting open.
+
+What works today (increment G1): the boundary, Super User sessions, and a
+streaming text conversation with the analysis model over a WebSocket, persisted
+so closing the tab and returning resumes the same conversation. What does not:
+voice, Git, the Scoreboard, and any call into the backend at all — this service
+does not yet touch the rest of Jarvis. `docs/SPEC_RECONCILIATION.md` §20 records
+why it is shaped this way and what the remaining increments are.
+
 ## Simulation
 
 `simulation/` runs the whole system — real server, real agent processes, real
@@ -349,6 +383,20 @@ monitor/
                          client's live conversation (right), polls GET /admin/clients and
                          GET /admin/clients/<username>/transcript every 2s via plain `requests`
                          (not api_client.APIClient - these two routes are unauthenticated)
+gateway/
+  main.py                 The external boundary (addenda 16-17): its own FastAPI app on its own
+                         port, Super User login, and the conversation WebSocket. Nothing is
+                         constructed at import; the database belongs to lifespan
+  store.py                gateway.db - sessions (tokens stored hashed) and the conversation
+                         transcript. Separate from financial_intelligence.db so the Gateway
+                         survives the backend being down, which addendum 16 §23 requires
+  auth.py                 Who the Super User is, from the environment. Unset means nobody
+  conversation.py         The analysis assistant's system prompt and one turn's mechanics.
+                         Not backend/main.py's /chat - that is the user's permissioned personal
+                         assistant; this one answers about the project
+  streaming.py            Runs the blocking model stream on a worker thread so the event loop
+                         stays free to read the socket while a reply is being produced
+  static/index.html       The whole client: one file, no build step, no external requests
 data/
   portfolio.xlsx         Mock demo holdings (fake tickers/shares/prices/dates/account_id) - shared
                          across all users; only the governance state around it is per-user

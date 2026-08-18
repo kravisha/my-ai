@@ -14,6 +14,13 @@ user_data/
 financial_intelligence.db
 financial_intelligence.db-wal
 financial_intelligence.db-shm
+
+# The Gateway's own store: sessions and the Super User's conversation transcript.
+# Separate from the FI database by design (see gateway/store.py), and no more
+# versionable - it is live local state, and its session rows are credentials.
+gateway.db
+gateway.db-wal
+gateway.db-shm
 # Simulation run output: one directory per run, each holding its own database
 # and log. Reproducible from the scenario plus the manifest's recorded seed and
 # code version, so the runs themselves are not worth versioning.
