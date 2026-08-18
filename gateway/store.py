@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
+from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
 
@@ -65,7 +66,14 @@ def get_connection(db_path: str | Path = DB_PATH) -> Database:
 
 
 def init_schema(conn: Database) -> None:
+    """Every table in gateway.db, from whichever module owns it.
+
+    The Scoreboard keeps its own DDL next to the functions that read and write it
+    (gateway/scoreboard.py), because that is where the reasoning about its fields
+    belongs. This function stays the single place that creates the database, so a
+    caller never has to know how many modules have tables in it."""
     conn.executescript(SCHEMA)
+    scoreboard.init_schema(conn)
 
 
 def _now() -> datetime:

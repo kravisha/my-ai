@@ -62,6 +62,36 @@
     border: 0; border-radius: .5rem; padding: .55rem 1rem; cursor: pointer;
   }
   button:disabled { opacity: .45; cursor: default; }
+  /* Scoreboard */
+  #board-toggle {
+    font: inherit; font-size: .78rem; font-weight: 600; color: var(--ink);
+    background: none; border: 1px solid var(--line); border-radius: 999px;
+    padding: .15rem .6rem; cursor: pointer;
+  }
+  #board-toggle .count { color: var(--muted); font-weight: 500; }
+  #board-toggle .count.urgent { color: var(--error); font-weight: 700; }
+  #board { max-width: 46rem; margin: 0 auto; display: grid; gap: .7rem; }
+  #board .empty { color: var(--muted); }
+  .item {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--line); border-radius: .5rem; padding: .7rem .8rem;
+  }
+  .item.urgent { border-left-color: var(--error); }
+  .item.important { border-left-color: var(--accent); }
+  .item.resolved { opacity: .6; }
+  .item .meta {
+    display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  }
+  .item .meta .level { font-weight: 700; }
+  .item .meta .level.urgent { color: var(--error); }
+  .item { cursor: pointer; }
+  .item .question { margin: .35rem 0 0; overflow-wrap: anywhere; }
+  .item .discussion { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: .45rem 0 0; }
+  .item .resolution, .item .note {
+    margin: .4rem 0 0; padding-left: .6rem; border-left: 2px solid var(--line);
+    font-size: .9rem; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
   #login { max-width: 22rem; margin: 3rem auto; display: grid; gap: .6rem; }
   #login p { margin: 0; color: var(--muted); font-size: .85rem; }
   #login .problem { color: var(--error); }
@@ -71,6 +101,7 @@
 <body>
 <header>
   <h1>Jarvis Gateway</h1>
+  <button type="button" id="board-toggle" class="hidden">Scoreboard <span class="count" id="board-count"></span></button>
   <span id="status">offline</span>
 </header>
 
@@ -83,6 +114,7 @@
     <p id="login-problem" class="problem"></p>
   </form>
   <div id="transcript" class="hidden"></div>
+  <div id="board" class="hidden"></div>
 </main>
 
 <form class="composer hidden" id="composer">
@@ -102,6 +134,9 @@
     password: document.getElementById("password"),
     transcript: document.getElementById("transcript"),
     composer: document.getElementById("composer"),
+    board: document.getElementById("board"),
+    boardToggle: document.getElementById("board-toggle"),
+    boardCount: document.getElementById("board-count"),
     input: document.getElementById("input"),
     send: document.getElementById("send"),
     main: document.getElementById("main"),
@@ -142,17 +177,136 @@
   function showConversation() {
     els.login.classList.add("hidden");
     els.transcript.classList.remove("hidden");
+    els.board.classList.add("hidden");
     els.composer.classList.remove("hidden");
+    els.boardToggle.classList.remove("hidden");
+    els.boardToggle.firstChild.textContent = "Scoreboard ";
   }
 
   function showLogin(problem) {
     sessionStorage.removeItem(TOKEN_KEY);
     els.login.classList.remove("hidden");
     els.transcript.classList.add("hidden");
+    els.board.classList.add("hidden");
     els.composer.classList.add("hidden");
+    els.boardToggle.classList.add("hidden");
     els.loginProblem.textContent = problem || "";
     setStatus("offline");
   }
+
+  // The escalation levels of addendum 17 §10. Urgent is called out in the header
+  // because the notification channels that section defers to a later spec do not
+  // exist: an urgent item is seen when the Super User looks, so looking has to
+  // show it.
+  function renderCounts(counts) {
+    if (!counts) return;
+    const open = counts.urgent + counts.important + counts.informational;
+    els.boardCount.textContent = open === 0 ? "" : counts.urgent > 0 ? `${open} · ${counts.urgent} urgent` : `${open}`;
+    els.boardCount.className = "count" + (counts.urgent > 0 ? " urgent" : "");
+  }
+
+  function renderItem(item) {
+    const card = document.createElement("article");
+    card.className = "item " + item.importance + (item.status === "resolved" ? " resolved" : "");
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const parts = [
+      [`#${item.id}`, ""],
+      [item.importance, "level " + item.importance],
+      [item.blocking ? "blocking" : "non-blocking", ""],
+      [item.status, ""],
+    ];
+    if (item.related_spec) parts.push([item.related_spec, ""]);
+    if (item.related_component) parts.push([item.related_component, ""]);
+    for (const [text, className] of parts) {
+      const span = document.createElement("span");
+      span.textContent = text;
+      if (className) span.className = className;
+      meta.append(span);
+    }
+
+    const question = document.createElement("p");
+    question.className = "question";
+    question.textContent = item.question;
+    card.append(meta, question);
+
+    for (const note of item.notes || []) {
+      const line = document.createElement("p");
+      line.className = "note";
+      line.textContent = `${note.author}: ${note.note}`;
+      card.append(line);
+    }
+    if (item.resolution) {
+      const line = document.createElement("p");
+      line.className = "resolution";
+      line.textContent = "resolved: " + item.resolution;
+      card.append(line);
+    }
+
+    // The listing leaves notes out on purpose - twenty items each carrying a
+    // full discussion is not a list anybody reads - so an item's discussion is
+    // fetched when it is opened. Without this the discussion would exist in the
+    // database and nowhere a person could see it.
+    if (item.notes === undefined) {
+      card.addEventListener("click", async () => {
+        if (card.dataset.expanded) return;
+        card.dataset.expanded = "1";
+        const token = sessionStorage.getItem(TOKEN_KEY);
+        const response = await fetch(`/scoreboard/${item.id}`, {
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (!response.ok) return;
+        const full = await response.json();
+        const expanded = renderItem(full);
+        if ((full.notes || []).length === 0 && !full.resolution) {
+          const empty = document.createElement("p");
+          empty.className = "discussion";
+          empty.textContent = "no discussion yet";
+          expanded.append(empty);
+        }
+        card.replaceWith(expanded);
+      });
+    }
+    return card;
+  }
+
+  async function showBoard() {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    els.transcript.classList.add("hidden");
+    els.composer.classList.add("hidden");
+    els.board.classList.remove("hidden");
+    els.boardToggle.firstChild.textContent = "Conversation ";
+    els.board.replaceChildren();
+
+    let body;
+    try {
+      const response = await fetch("/scoreboard", { headers: { Authorization: "Bearer " + token } });
+      if (response.status === 401) return showLogin("Session expired. Sign in again.");
+      body = await response.json();
+    } catch (err) {
+      const problem = document.createElement("p");
+      problem.className = "empty";
+      problem.textContent = "Could not reach the Gateway.";
+      els.board.append(problem);
+      return;
+    }
+
+    renderCounts(body.open_counts);
+    if (body.items.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "Nothing on the board.";
+      els.board.append(empty);
+      return;
+    }
+    for (const item of body.items) els.board.append(renderItem(item));
+  }
+
+  els.boardToggle.addEventListener("click", () => {
+    if (els.board.classList.contains("hidden")) showBoard();
+    else showConversation();
+  });
 
   function connect(token) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -170,9 +324,15 @@
       if (frame.type === "ready") {
         showConversation();
         setStatus("connected", "live");
+        renderCounts(frame.open_counts);
         els.transcript.replaceChildren();
         for (const message of frame.messages) addTurn(message.role, message.text);
         els.main.scrollTop = els.main.scrollHeight;
+      } else if (frame.type === "tool") {
+        // The assistant just did something durable. Shown as it happens rather
+        // than only in the reply, because a filed item is a change to the
+        // project's record and should not arrive as a claim.
+        setStatus(frame.ok ? frame.name.replace(/_/g, " ") : frame.name + " failed", frame.ok ? "live" : "error");
       } else if (frame.type === "delta") {
         const wasAtBottom = atBottom();
         if (!streaming) streaming = addTurn("assistant", "");
@@ -181,6 +341,9 @@
       } else if (frame.type === "done") {
         streaming = null;
         els.send.disabled = false;
+        setStatus("connected", "live");
+        renderCounts(frame.open_counts);
+        if (!els.board.classList.contains("hidden")) showBoard();
       } else if (frame.type === "error") {
         streaming = null;
         els.send.disabled = false;

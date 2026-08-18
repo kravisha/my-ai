@@ -17,28 +17,52 @@ from gateway import auth, store
 class FakeProvider:
     """Streams a fixed reply and records what it was asked.
 
-    `complete` deliberately raises: G1's conversation is streaming-only, and a
-    silent fallback to a blocking call would hide a wiring mistake that matters
-    (a non-streaming Gateway fails addendum 16 §9 while still returning text)."""
+    `complete` deliberately raises: the Gateway conversation is streaming-only,
+    and a silent fallback to a blocking call would hide a wiring mistake that
+    matters (a non-streaming Gateway fails addendum 16 §9 while still returning
+    text).
 
-    def __init__(self, fragments=("Specification ", "leads ", "the code.")):
+    `tool_calls` queues turns that ask for a tool before answering, so a test can
+    drive the whole loop without a real model."""
+
+    def __init__(self, fragments=("Specification ", "leads ", "the code."), tool_calls=()):
         self.fragments = list(fragments)
+        self.tool_calls = list(tool_calls)
         self.calls = []
 
     def complete(self, system, messages, tools, max_tokens=2048):
         raise AssertionError("the Gateway conversation must stream, not complete")
 
-    def stream_text(self, system, messages, max_tokens=2048):
-        self.calls.append({"system": system, "messages": messages, "max_tokens": max_tokens})
-        yield from self.fragments
+    def stream(self, system, messages, tools, max_tokens=2048):
+        self.calls.append({
+            "system": system,
+            # A copy, because run_turn appends the assistant's turn to this same
+            # list once the stream ends - a stored reference would read back the
+            # mutated version and quietly assert nothing about what was sent.
+            "messages": [dict(message) for message in messages],
+            "tools": tools,
+            "max_tokens": max_tokens,
+        })
+        if self.tool_calls:
+            name, arguments = self.tool_calls.pop(0)
+            block = {"type": "tool_use", "id": f"tu_{len(self.calls)}", "name": name, "input": arguments}
+            yield {"type": "final", "content": [block], "stop_reason": "tool_use"}
+            return
+        for fragment in self.fragments:
+            yield {"type": "text", "text": fragment}
+        yield {
+            "type": "final",
+            "content": [{"type": "text", "text": "".join(self.fragments)}],
+            "stop_reason": "end_turn",
+        }
 
 
 class FailingProvider:
     def complete(self, *args, **kwargs):
         raise AssertionError("not used")
 
-    def stream_text(self, system, messages, max_tokens=2048):
-        yield "I can start "
+    def stream(self, system, messages, tools, max_tokens=2048):
+        yield {"type": "text", "text": "I can start "}
         raise RuntimeError("upstream refused")
 
 
@@ -336,10 +360,10 @@ def test_a_model_failure_is_reported_and_the_partial_reply_kept(
     ]
 
 
-def test_the_assistant_is_told_it_cannot_act_yet(gateway_client, gateway_token, fake_model):
-    """G1 has no tools. An assistant that implies it filed a Scoreboard item or
-    pushed to Git would be inventing the rest of the roadmap, so the system
-    prompt says so and this asserts it keeps saying so."""
+def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, fake_model):
+    """It has Scoreboard tools and nothing else. An assistant that implied it had
+    pushed to Git or queried the running system would be inventing the rest of
+    the roadmap, so the prompt says so and this asserts it keeps saying so."""
     socket, _ = authenticated_socket(gateway_client, gateway_token)
     try:
         socket.send_json({"type": "message", "text": "publish the spec"})
@@ -349,5 +373,14 @@ def test_the_assistant_is_told_it_cannot_act_yet(gateway_client, gateway_token, 
         socket.__exit__(None, None, None)
 
     system = fake_model.calls[0]["system"]
-    assert "not yet built" in system
-    assert "Git" in system and "Scoreboard" in system
+    assert "not built" in system
+    assert "Git" in system
+
+    offered = {tool["name"] for tool in fake_model.calls[0]["tools"]}
+    assert offered == {
+        "file_scoreboard_item",
+        "list_scoreboard_items",
+        "get_scoreboard_item",
+        "add_scoreboard_note",
+        "resolve_scoreboard_item",
+    }, "the assistant must not be handed a tool for something that is not built"
