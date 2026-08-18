@@ -276,8 +276,20 @@ conversation, the Scoreboard and Git all carry on; the system view says the
 backend did not answer and why. That is addendum 16 §23, and it is why the
 Gateway is a separate process with its own database.
 
+Finally, a **Technology and Architecture function** reviews the technical
+ecosystem periodically (addendum 17 §7-§9) and files structured recommendations
+onto the Scoreboard — evidence, risk, candidate replacement, costs, migration
+implications, priority. It reviews and recommends; it never acts. Ask it directly
+in conversation, or `GET /technology`. Its cadence is `GATEWAY_TECH_REVIEW_HOURS`
+(default 6, `0` disables it).
+
+Asked today whether to migrate from SQLite to PostgreSQL, it says no — and says
+that the concurrency question behind that decision is *unmeasured* rather than
+clean, because nothing in this system counts `SQLITE_BUSY`. That distinction is
+the point of the function.
+
 What does not work yet: voice, and pushing. `docs/SPEC_RECONCILIATION.md` §20 to
-§23 record why it is shaped this way and what the remaining increments are.
+§24 record why it is shaped this way and what the remaining increments are.
 
 ## Simulation
 
@@ -448,6 +460,10 @@ gateway/
   tools.py                What the assistant can actually do. Five Scoreboard tools and three
                          Git ones; failures come back as tool results the model can correct
                          itself from
+  technology.py           The Technology and Architecture function (addendum 17 §7-§9): checks
+                         that read real evidence, four verdicts including "no_evidence", and
+                         findings filed with a signature so a periodic producer cannot repeat
+                         itself onto the board
   jarvis.py               The window onto the running backend: read-only GETs, short timeouts,
                          and "unavailable" as an ordinary answer rather than an exception -
                          which is what addendum 16 §23's isolation actually requires

@@ -388,6 +388,7 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "publish_document",
         "jarvis_status",
         "jarvis_agent",
+        "technology_review",
     }, "the assistant must not be handed a tool for something that is not built"
 
     assert not any(

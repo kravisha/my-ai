@@ -7,7 +7,8 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Ten tools: five Scoreboard, three Git, two for the running Jarvis system. The
+Eleven tools: five Scoreboard, three Git, two for the running Jarvis system, one
+for the Technology and Architecture review. The
 system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
 because retiring or resuming an agent is a lifecycle action the Controller alone
 executes (addendum 11 §15) and a conversational model is not the right holder of
@@ -34,7 +35,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import jarvis, repositories, scoreboard
+from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -238,7 +239,34 @@ JARVIS_TOOLS = [
     },
 ]
 
-TOOLS = TOOLS + JARVIS_TOOLS
+TECHNOLOGY_TOOLS = [
+    {
+        "name": "technology_review",
+        "description": (
+            "Run the Technology and Architecture review (addendum 17 §7-§9): the "
+            "suitability of the databases, runtime, dependencies, capacity and "
+            "external tools, each with the evidence behind it. Read-only, and safe "
+            "to run whenever asked. Use it for questions like 'should we move to "
+            "PostgreSQL' - answer from its evidence, and say plainly when a verdict "
+            "is 'no_evidence' rather than filling the gap."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_findings": {
+                    "type": "boolean",
+                    "description": (
+                        "Also file anything needing a decision onto the Scoreboard. "
+                        "Repeat findings are not duplicated."
+                    ),
+                }
+            },
+            "required": [],
+        },
+    },
+]
+
+TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS
 
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
@@ -323,6 +351,12 @@ def execute(conn: Database, name: str, arguments: dict) -> dict:
 
         if name == "jarvis_agent":
             return jarvis.JarvisClient().agent(str(arguments["identity"]))
+
+        if name == "technology_review":
+            report = technology.review()
+            if arguments.get("file_findings"):
+                report["filed"] = technology.file_findings(conn, report)
+            return report
 
     except (scoreboard.ScoreboardError, repositories.RepositoryError) as refusal:
         return {"error": str(refusal)}

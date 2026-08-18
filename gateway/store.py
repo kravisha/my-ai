@@ -74,6 +74,28 @@ def init_schema(conn: Database) -> None:
     caller never has to know how many modules have tables in it."""
     conn.executescript(SCHEMA)
     scoreboard.init_schema(conn)
+    _apply_additive_migrations(conn)
+
+
+# Columns added after a database already existed. Additive only, matching the
+# schema rule backend/fi_db.py works under: a column is added, never renamed or
+# removed, so every historical row stays readable under the current layout.
+#
+# `CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there, so
+# without this an existing gateway.db would keep the old shape and every insert
+# naming the new column would fail - on the developer's machine only, which is
+# the worst place to find out.
+_ADDITIVE_COLUMNS = {
+    "scoreboard_items": {"signature": "TEXT"},
+}
+
+
+def _apply_additive_migrations(conn: Database) -> None:
+    for table, columns in _ADDITIVE_COLUMNS.items():
+        present = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
+        for column, declaration in columns.items():
+            if column not in present:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def _now() -> datetime:
