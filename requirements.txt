@@ -1,7 +1,15 @@
-anthropic
-python-dotenv
-openpyxl
-bcrypt
-fastapi
-uvicorn[standard]
-requests
+# Pinned to the versions the test suite passes against, not to the newest
+# available - the point of a pin is to reproduce a tested environment, and
+# "latest at install time" is exactly what it exists to stop.
+#
+# Raising one is a deliberate change with its own test run. Stale pins are their
+# own risk, so this file is meant to be revisited, not left alone forever; the
+# Technology and Architecture review (addendum 17 §7-§9, gateway/technology.py)
+# is what notices when it has been.
+anthropic==0.121.0
+python-dotenv==1.2.2
+openpyxl==3.1.5
+bcrypt==5.0.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+requests==2.34.2
