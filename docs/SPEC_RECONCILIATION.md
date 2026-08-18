@@ -1667,3 +1667,99 @@ file a second incident and a third.
 detected, one recovery, no escalation, exactly one detection rather than a loop,
 the workforce undisturbed, and nothing left believing it had crashed. Clean
 shutdown, no orphans.
+
+## 30. The architecture checkpoint, against what is built (2026-08-18)
+
+Addendum 20 names itself "the checkpoint baseline for subsequent gap analysis
+against the independently built simulation-engine implementation" and asks the
+comparison to "explicitly identify: keep, modify, add, and remove decisions". The
+Manifesto's §17 requires a disposition. Both are below.
+
+**Disposition: ACCEPT WITH MODIFICATIONS.** The architecture is right about where
+this system is thin - there is no historical engine, no live engine, no reference
+engine, no risk engine, and no strategy or model store - and right that the way in
+is a shared canonical contract rather than four independent ingest paths. Two
+things are modified: what "add" means for the parts that already exist under other
+names, and the order, because the checkpoint's own §5 (Foundation First) argues
+against building five engines in parallel.
+
+### KEEP - built, and the checkpoint describes it accurately
+
+| Checkpoint | Where it already lives |
+|---|---|
+| §12's continuous baseline simulation, state inherited between periods, measurable certification gates | `simulation/harness.py`, `simulation/world.py`, `simulation/certification.py` |
+| §16's "simulation uses normal organizational interfaces" | The harness starts the real server and lets the real Controller spawn real processes; it stubs nothing |
+| §10's ground truth the agents are not told | `providers/market_data.py` holds the anomaly it injects; `simulation/personnel.py` holds true competence |
+| §6's sampling-interval model | `simulation/cadences.py` is exactly this: 21 data classes with clock archetypes, publication lag, and a lookahead guard. `docs/MARKET_DATA_TAXONOMY.md` is its reasoning |
+| §9's opportunity injection | `SyntheticMarketDataProvider(seed, anomalies)` injects targeted skews per security |
+| §16's "every important capability should have simulation evidence appropriate to its risk" | Scenario properties, and now fault injection (§29) |
+
+**The sampling-interval work is the clearest case of the checkpoint asking for
+something already present.** §6's enumeration of horizons and its rule that each
+data type maps to appropriate intervals is `cadences.py`'s existing taxonomy, with
+one difference worth keeping: cadences carries *publication lag* as well as
+frequency, which §6 does not mention and which is what makes a lookahead guard
+possible.
+
+### MODIFY - the checkpoint's framing needs adjusting against reality
+
+1. **"Monte Carlo" is not what the current generator does, and that is fine for
+   now.** §2A says initial synthetic generation "will use Monte Carlo methods".
+   `providers/market_data.py` is deterministic-per-seed arithmetic over a static
+   surface, which is the right shape for a detector fixture and the wrong shape
+   for distributional training. Modification: Monte Carlo arrives with Stage 1
+   training (§11), not as a rewrite of the provider that currently makes the
+   detection pipeline testable.
+
+2. **The Knowledge Store already exists in part, and §4's description would
+   overwrite it.** `knowledge_records` holds lessons and unresolved questions with
+   real producers and a real consumer; `intelligence_artifacts` holds detection
+   lenses with a lifecycle. §4 describes the store as "validated lessons, patterns,
+   relationships, and explanatory knowledge" - the same organ. Modification: extend
+   these, do not introduce a parallel store.
+
+3. **Reference data is not absent, it is thin.** `security_universe` is a symbol
+   list with versioning. §2D wants issuers, identifiers, exchanges, sectors,
+   calendars, option specifications and corporate actions. Modification: this is a
+   widening of an existing table's remit, and the *first* real question is
+   identifier mapping (§3's "Jarvis-owned internal IDs mapped to external
+   identifiers"), because every later engine keys off it.
+
+### ADD - genuinely absent
+
+- **Historical Market Data Engine** (§2B) and **Live Market Data Engine** (§2C).
+  Nothing ingests anything real today. Both are the checkpoint's largest additions.
+- **Risk Engine** (§2E), and its rule that "no opportunity should ultimately exist
+  without an attached risk assessment". Nothing computes risk at all; `analysis_results`
+  carries confidence and uncertainty, which is not the same claim.
+- **Strategy Store and Model Store** (§4). Neither exists, and the Data → Knowledge
+  → Strategy flow has no third stage.
+- **The canonical event contract** (§3). Today the only producer is the synthetic
+  provider and the only consumers are Explorer and Speculator, so the contract is
+  implicit in a function signature. It has to become explicit before a second
+  producer exists, not after - which is precisely §5's Foundation First.
+- **Scenario taxonomy** (§8). Five scenarios exist against a list of fourteen
+  environment classes.
+
+### REMOVE - nothing
+
+Nothing in the checkpoint asks for the removal of anything built, and nothing
+built contradicts it.
+
+### The modification that matters most: order
+
+§5 says stabilize shared contracts before implementation, and §13 lists four
+engine specifications as parallel workstreams. Taken literally that builds four
+ingest paths against a contract that does not exist yet, which is the duplication
+Foundation First exists to prevent.
+
+**The order this project will follow, unless the owner directs otherwise:** the
+canonical event contract and identifier mapping first, because every engine keys
+off both; then one real ingest path end to end (historical, since it is replayable
+and needs no live credentials) to prove the contract against data the synthetic
+provider did not shape; then the remaining engines, each measured against the same
+contract. Risk last of the engines, because a risk assessment attached to an
+opportunity nothing yet produces from real data would be scaffolding.
+
+Recorded as Scoreboard items rather than as a plan here, so the sequence is
+visible where work is chosen from.

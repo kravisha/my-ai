@@ -73,6 +73,15 @@ organization.
 | [17 — Super User Gateway Architecture](addenda/addendum_17_gateway_super_user_architecture.md) | Scopes Gateway v1 to a single Super User. Its §7–§9 add the Technology and Architecture monitoring function — how evidence that a component is becoming unsuitable becomes a structured recommendation. Calls itself "Addendum 1"; that is its number in the Gateway sequence, not this one. |
 | [18 — Lifecycle-Managed Controller Initialization](addenda/addendum_18_controller_lifecycle_initialization.md) | Import-time side effects. **Already implemented** — see `SPEC_RECONCILIATION.md` §19 for the disposition and the two acceptance criteria deliberately not met. |
 
+**Data and engine architecture (20)** — a third lineage, supplied 2026-08-18:
+simulation, historical and live market data, reference data, and risk. Little of
+it is built; [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §30 records which
+parts already exist under other names and which are genuinely absent.
+
+| | |
+|---|---|
+| [20 — Simulation, Market Data and Core Engine Architecture](addenda/addendum_20_architecture_checkpoint.md) | The checkpoint baseline. Its §13 asks for a keep/modify/add/remove comparison against what is built; that comparison and the disposition are in [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §30. |
+
 **Financial Intelligence, third set (11–15)** — the current architecture.
 
 | | |
