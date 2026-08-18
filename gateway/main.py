@@ -36,12 +36,12 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.model_gateway import default_provider
-from gateway import auth, conversation, jarvis, scoreboard, store, technology
+from gateway import auth, conversation, exposure, jarvis, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -116,6 +116,37 @@ async def _technology_review_loop() -> None:
 
 app = FastAPI(title="AI Communication Gateway", lifespan=lifespan)
 
+# One limiter for the whole process, covering both ways a credential can be
+# offered: the login route and the WebSocket's opening frame. Limiting only the
+# route would leave the socket as an unlimited oracle for guessing tokens.
+login_limiter = exposure.AttemptLimiter(
+    limit=exposure.login_attempt_limit(), window_seconds=exposure.login_window_seconds()
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers for a service reachable from the internet (addendum 16 §12).
+
+    HSTS is sent only when the request actually arrived over TLS - behind the
+    tunnel that is `X-Forwarded-Proto: https`. Announcing it on a plain HTTP
+    response is how a developer locks themselves out of their own localhost."""
+    response = await call_next(request)
+    for header, value in exposure.SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers.setdefault(*exposure.HSTS_HEADER)
+    return response
+
+
+def caller_address(request: Request | WebSocket) -> str:
+    """Who to hold responsible for this attempt - see gateway/exposure.py for why
+    the forwarded header is only believed from a declared proxy."""
+    peer = request.client.host if request.client else None
+    return exposure.client_address(peer, request.headers.get("x-forwarded-for"))
+
 
 async def gateway_db_path():
     """Which database file this request works against.
@@ -188,22 +219,42 @@ async def index():
 
 
 @app.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest, conn=Depends(gateway_db)):
+async def login(request: LoginRequest, http_request: Request, conn=Depends(gateway_db)):
     """503 when no Super User is configured, 401 when the credential is wrong.
 
     Those are different situations and an operator who conflates them will spend
     the evening retyping a correct password. It is not an information leak worth
     avoiding: an unconfigured Gateway refuses everything either way."""
+    caller = caller_address(http_request)
+    if login_limiter.is_blocked(caller):
+        retry_after = login_limiter.retry_after_seconds(caller)
+        logger.warning("rate-limited login attempt from %s", caller)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     if not auth.is_configured():
-        logger.warning("login attempt against an unconfigured Gateway")
+        logger.warning("login attempt against an unconfigured Gateway from %s", caller)
         raise HTTPException(status_code=503, detail=auth.NOT_CONFIGURED_MESSAGE)
 
     if not auth.verify(request.username, request.password):
-        logger.warning("failed Super User login for %r", request.username)
+        # Counted, and logged with the address, because on a service reachable
+        # from the internet "somebody guessed wrong" and "somebody is guessing"
+        # are different events and only the count tells them apart.
+        failures = login_limiter.record_failure(caller)
+        logger.warning(
+            "failed Super User login for %r from %s (%d in the current window)",
+            request.username,
+            caller,
+            failures,
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    login_limiter.record_success(caller)
     token, expires_at = store.create_session(conn, auth.session_ttl_seconds())
-    logger.info("Super User logged in, session expires %s", expires_at)
+    logger.info("Super User logged in from %s, session expires %s", caller, expires_at)
     return {"token": token, "expires_at": expires_at}
 
 
@@ -369,12 +420,28 @@ async def conversation_socket(
         await websocket.close(code=WS_BAD_REQUEST)
         return
 
+    caller = caller_address(websocket)
+    if login_limiter.is_blocked(caller):
+        logger.warning("rate-limited WebSocket attempt from %s", caller)
+        await websocket.send_json({"type": "error", "error": "too many attempts"})
+        await websocket.close(code=WS_UNAUTHORIZED)
+        return
+
     token = payload.get("token") if payload.get("type") == "auth" else None
     if not token or not store.session_is_valid(conn, token):
-        logger.warning("unauthenticated WebSocket attempt")
+        # The same counter as the login route. A socket that accepted unlimited
+        # token guesses would be an oracle sitting beside a rate-limited door.
+        failures = login_limiter.record_failure(caller)
+        logger.warning(
+            "unauthenticated WebSocket attempt from %s (%d in the current window)",
+            caller,
+            failures,
+        )
         await websocket.send_json({"type": "error", "error": "unauthorized"})
         await websocket.close(code=WS_UNAUTHORIZED)
         return
+
+    login_limiter.record_success(caller)
 
     conversation_id = store.current_conversation_id(conn)
     await websocket.send_json({

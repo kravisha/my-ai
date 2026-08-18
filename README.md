@@ -218,8 +218,16 @@ Put the printed `GATEWAY_PASSWORD_HASH=...` line and a `GATEWAY_SUPER_USER=...`
 in `.env`, then:
 
 ```bash
-.venv/Scripts/python.exe -m uvicorn gateway.main:app --port 8100
+.venv/Scripts/python.exe -m gateway.run
 ```
+
+**Start it that way, not with a bare `uvicorn` command.** Uvicorn resolves the
+client address from `X-Forwarded-For` itself, by default, trusting loopback —
+which behind a tunnel means the address the application sees is whatever the
+caller claimed, and the per-caller rate limit becomes dodgeable by rotating a
+header. `gateway/run.py` turns that off so the decision belongs to one place with
+rules written down. `GATEWAY_PORT` overrides the port; the host is always
+loopback.
 
 Open <http://localhost:8100> and sign in. **Unset means nobody can log in** —
 an unconfigured Gateway refuses every attempt and says which variables are
@@ -288,8 +296,44 @@ that the concurrency question behind that decision is *unmeasured* rather than
 clean, because nothing in this system counts `SQLITE_BUSY`. That distinction is
 the point of the function.
 
+### Reaching it from a phone
+
+The Gateway binds to **127.0.0.1** and stays there. A tunnel terminates TLS and
+forwards to it, so nothing is opened on the router and the certificate is real
+(owner decision, 2026-08-18):
+
+```bash
+cloudflared tunnel --url http://localhost:8100
+```
+
+or, on a tailnet:
+
+```bash
+tailscale funnel 8100
+```
+
+Either prints an HTTPS address; open that on the phone. **Do not** substitute
+`--host 0.0.0.0` for the tunnel — that is the forwarded-port arrangement this
+decision rejected, and it exposes the service with no TLS in front of it.
+
+Behind a tunnel every request arrives from loopback, so the client's real address
+comes from `X-Forwarded-For` — and that header is believed **only** when the
+connection itself comes from a declared proxy:
+
+```bash
+GATEWAY_TRUSTED_PROXIES=127.0.0.1,::1   # the default, which is the tunnel case
+GATEWAY_LOGIN_ATTEMPTS=10               # failures per window, per caller
+GATEWAY_LOGIN_WINDOW_SECONDS=300
+```
+
+Failed logins are rate-limited per caller and logged with the address, and the
+WebSocket's opening frame counts against the same limit — a socket that accepted
+unlimited token guesses would be an oracle sitting beside a rate-limited door.
+Responses carry `nosniff`, `no-referrer` and `frame-ancestors 'none'`, and HSTS
+when the request actually arrived over TLS.
+
 What does not work yet: voice, and pushing. `docs/SPEC_RECONCILIATION.md` §20 to
-§24 record why it is shaped this way and what the remaining increments are.
+§25 record why it is shaped this way and what the remaining increments are.
 
 ## Simulation
 
@@ -460,6 +504,12 @@ gateway/
   tools.py                What the assistant can actually do. Five Scoreboard tools and three
                          Git ones; failures come back as tool results the model can correct
                          itself from
+  exposure.py             What changes when this is reachable from the internet: whose address
+                         to believe behind a tunnel, per-caller attempt limiting, and the
+                         security headers
+  run.py                  How to start it (`python -m gateway.run`): loopback only, and with
+                         uvicorn's own proxy-header handling off so exposure.py is the single
+                         place that decides whose address to believe
   technology.py           The Technology and Architecture function (addendum 17 §7-§9): checks
                          that read real evidence, four verdicts including "no_evidence", and
                          findings filed with a signature so a periodic producer cannot repeat
