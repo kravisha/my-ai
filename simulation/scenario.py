@@ -27,6 +27,8 @@ from pathlib import Path
 
 import yaml
 
+from simulation import faults as faults_module
+
 SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
 
 # DRAFT -> ACTIVE -> REGRESSION -> ARCHIVED. The proposal's VALIDATED and
@@ -62,6 +64,10 @@ class Scenario:
     config: dict[str, str]
     expected_properties: list[dict] = field(default_factory=list)
     requires_model: bool = False
+    # What goes wrong during the run, and when. Empty for every scenario
+    # that is about ordinary operation - see simulation/faults.py for why
+    # the actions are as few as they are.
+    faults: faults_module.FaultSchedule = field(default_factory=faults_module.FaultSchedule)
     source_path: Path | None = None
 
     @property
@@ -130,6 +136,12 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
 
     config = _validated_config(raw.get("config") or {}, where)
     properties = _validated_properties(raw.get("expected_properties") or [], where)
+    # Parsed at load time so an unspellable fault is refused now rather than at
+    # second 40 of a five-minute run that has already been wasted.
+    try:
+        schedule = faults_module.parse(raw.get("faults"))
+    except faults_module.FaultError as bad:
+        raise ScenarioError(f"{where}: {bad}") from bad
 
     return Scenario(
         id=scenario_id,
@@ -140,6 +152,7 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
         config=config,
         expected_properties=properties,
         requires_model=bool(raw.get("requires_model", False)),
+        faults=schedule,
         source_path=source_path,
     )
 

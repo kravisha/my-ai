@@ -53,7 +53,13 @@ from agents import coo
 from backend import fi_db
 from simulation import metrics as metrics_module
 from simulation import properties as properties_module
+from simulation import faults as faults_module
 from simulation.scenario import Scenario
+
+# How often the hold checks whether a fault is due. Fine enough that a
+# fault lands within a heartbeat of its declared moment, coarse enough to
+# cost nothing across a long run.
+FAULT_POLL_SECONDS = 0.25
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = Path(os.environ.get("FI_SIM_RUNS_DIR") or (REPO_ROOT / "simulation" / "runs"))
@@ -209,12 +215,27 @@ def latest_run(scenario_id: str | None = None, runs_dir: Path | None = None) -> 
     return max(candidates)[1] if candidates else None
 
 
-def _expected_population() -> set[str]:
+def _expected_population(config: dict[str, str] | None = None) -> set[str]:
     """Roles that must be running before a run counts as started.
 
     'controller' is the server process itself and 'coo' is bootstrapped directly
-    by it; the rest arrive through the directive queue."""
-    return {"controller", "coo", *coo.BASELINE_ROLES}
+    by it; the rest arrive through the directive queue.
+
+    **The scenario's own config decides the workforce.** `FI_BASELINE_<ROLE>`
+    reaches the backend as an environment variable, so a scenario that staffs a
+    role at zero gets an organization without it - and a readiness check reading
+    this process's defaults would then wait sixty seconds for an agent nobody
+    asked for and fail a run that had started correctly. Found by writing the
+    first scenario that changes the population: every scenario until now used the
+    default, so the harness had never been asked the question."""
+    baseline = {}
+    for role, default in coo.BASELINE_POPULATION.items():
+        raw = (config or {}).get(f"FI_BASELINE_{role.upper()}")
+        try:
+            baseline[role] = default if raw is None else max(0, int(raw))
+        except (TypeError, ValueError):
+            baseline[role] = default
+    return {"controller", "coo", *(role for role, count in baseline.items() if count > 0)}
 
 
 class SimulationRun:
@@ -334,7 +355,7 @@ class SimulationRun:
         measuring startup."""
         deadline = time.monotonic() + timeout
         began = time.monotonic()
-        expected = _expected_population()
+        expected = _expected_population(self.scenario.config)
         last_seen: set[str] = set()
 
         while time.monotonic() < deadline:
@@ -495,6 +516,34 @@ def summarise_run(directory: str | Path) -> dict:
     return summary
 
 
+def _hold(run: "SimulationRun", scenario: Scenario) -> None:
+    """Wait out the run, firing the scenario's faults as their moments arrive.
+
+    A plain sleep when nothing is scheduled, so an ordinary scenario pays nothing
+    for a feature it does not use. When faults *are* scheduled the wait becomes a
+    poll, because the alternative - sleeping to each fault in turn - drifts by the
+    execution time of every fault before it, and a fault that fires late in a
+    ninety-second run is a fault aimed at a different organization than the one
+    the scenario described.
+
+    Faults never raise. A target that has already died is an ordinary thing to
+    find during a fault run, and the manifest records what happened rather than
+    the run ending on it."""
+    if not scenario.faults:
+        time.sleep(scenario.duration_seconds)
+        return
+
+    started = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - started
+        for fault in scenario.faults.due(elapsed):
+            outcome = faults_module.fire(fault, run.db_path)
+            print(f"[harness] fault {fault.describe()}: {outcome}", flush=True)
+        if elapsed >= scenario.duration_seconds:
+            return
+        time.sleep(min(FAULT_POLL_SECONDS, scenario.duration_seconds - elapsed))
+
+
 def execute(
     scenario: Scenario, runs_dir: Path | None = None, inherit_from: Path | None = None
 ) -> RunResult:
@@ -508,7 +557,7 @@ def execute(
     try:
         run.start()
         run.wait_until_ready()
-        time.sleep(scenario.duration_seconds)
+        _hold(run, scenario)
     finally:
         graceful, detail = run.stop()
         finished_at = _now()
@@ -518,6 +567,7 @@ def execute(
             graceful_shutdown=graceful,
             shutdown_detail=detail,
             exit_code=run._process.returncode if run._process else None,
+            faults=scenario.faults.record(),
         )
         run.close()
 
