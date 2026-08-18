@@ -425,13 +425,46 @@ def test_voice_uses_the_browsers_own_speech_and_says_where_the_audio_goes(gatewa
     assert "Google" in body and "Apple" in body, "the disclosure must stay in the page"
 
 
-def test_the_barge_in_limitation_is_written_down_where_it_is_implemented(gateway_client):
-    """Listening pauses while speaking, because a microphone hearing the speaker
-    transcribes the assistant's own reply. The user can always interrupt; the
-    microphone cannot - and claiming otherwise would be the easy lie here."""
+def test_barge_in_listens_on_an_echo_cancelled_stream(gateway_client):
+    """The line the whole feature rests on. SpeechRecognition cannot be handed a
+    MediaStream, so its capture hears the phone speaker whatever else is done -
+    the trigger has to be a second capture the browser will echo-cancel."""
     body = gateway_client.get("/").text
 
-    assert "BARGE-IN IS BY TAP, NOT BY VOICE" in body
+    assert "echoCancellation: true" in body
+    assert "getUserMedia" in body
+
+
+def test_the_barge_in_threshold_is_measured_rather_than_guessed(gateway_client):
+    """Echo cancellation is uneven across phones and browsers. A fixed threshold
+    would be too deaf on one device and too jumpy on the next, so the trigger is
+    set from the residual each reply actually leaks."""
+    body = gateway_client.get("/").text
+
+    for knob in ("CALIBRATION_MS", "SUSTAIN_MS", "TRIGGER_MARGIN", "TRIGGER_FLOOR"):
+        assert knob in body, f"{knob} is part of the barge-in contract"
+
+
+def test_the_transcript_filter_is_independent_of_the_trigger(gateway_client):
+    """Two guards, not one: even where echo cancellation is poor and the trigger
+    never fires, a transcript that repeats what is being spoken must not be sent
+    to the model as though the user had said it."""
+    body = gateway_client.get("/").text
+
+    assert "function isEcho" in body
+    assert "ECHO_OVERLAP" in body
+
+
+def test_the_fallback_is_kept_and_declared(gateway_client):
+    """Without a microphone stream there is no trigger, and the old tap-only
+    behaviour is what remains. A user who believes barge-in is armed when it is
+    not will talk over the assistant and be ignored, so the page says which mode
+    is in force."""
+    body = gateway_client.get("/").text
+
+    assert 'id="interrupt"' in body, "the manual control stays as the fallback"
+    assert "Barge-in is off" in body
+    assert "speaking - tap Stop to interrupt" in body
 
 
 def test_adding_voice_did_not_add_an_external_request(gateway_client):

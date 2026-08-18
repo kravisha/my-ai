@@ -1420,3 +1420,74 @@ reading "speaking - tap Stop to interrupt" whenever listening could not resume.
 The assistant was not speaking; the line was believed; and a status line that
 describes something the system is not doing is worse than no status line. It now
 says what is actually true, including when voice is simply off.
+
+## 27. Barge-in by voice, superseding §26's limitation (2026-08-18)
+
+Addendum 16 §9 lists "user barge-in while AI is speaking". G6 delivered the
+user-facing half of that and said plainly which half was missing: interruption by
+tap, not by voice, because a microphone that hears the phone speaker transcribes
+the reply and the assistant interrupts itself forever. **That limitation is now
+removed at the owner's request, and §26 is superseded on this point only.**
+
+### Why recognition could not simply be left running
+
+`SpeechRecognition` cannot be handed a `MediaStream`. Its capture is opened by the
+browser, cannot be configured, and will keep hearing the speaker no matter what
+the page does. So the fix is not a better recognition setting - it is to stop
+using recognition as the trigger at all.
+
+### What the trigger actually is
+
+A second capture, opened through `getUserMedia` with `echoCancellation: true` and
+watched for energy alone. The browser subtracts its own rendered audio from that
+stream, so what survives during a reply is residual echo and room noise.
+
+Three properties make it usable rather than merely plausible:
+
+**The threshold is measured, not chosen.** For the first 350 ms of every utterance
+the loudest residual is observed, and the trigger is set at three times it. Echo
+cancellation is uneven across phones and browsers; a fixed threshold would be deaf
+on one device and jumpy on the next. Verified against synthetic levels: a device
+leaking 0.05 arms at 0.15 and one leaking 0.20 arms at 0.60, and neither fires on
+its own echo held for three seconds.
+
+**Energy must sustain for 200 ms**, so a door or a cough does not cut a reply off.
+A single loud sample followed by quiet does not fire.
+
+**A transcript filter runs independently of the trigger.** A phrase arriving while
+speaking that largely repeats what is being spoken is the speaker, not the user,
+and is dropped before it can be sent. This guards the send path even where echo
+cancellation is poor and the trigger never fired. Short phrases must match
+entirely, so "stop" is not swallowed merely because the reply contained it.
+
+Interruption is synchronous - `synth.cancel()` in the same tick the trigger fires
+- so the latency the user feels is the sustain window and nothing after it.
+
+### What it costs, and the case it still gets wrong
+
+A single word that also appears in the reply - "questions", while the assistant is
+saying the word - is treated as echo and dropped, on a device where the trigger
+never armed. In the normal path this cannot bite: the trigger fires, the reply is
+cancelled, and the spoken text is cleared before the user's words arrive. It is
+recorded because it is real rather than because it is likely.
+
+### The fallback is kept, and declared
+
+Without a microphone stream there is no trigger, and G6's behaviour is what
+remains: recognition pauses while speaking, Stop interrupts. The page says so **the
+first time the assistant speaks**, not when voice is switched on - at switch-on the
+message is either premature or plainly wrong, since a browser that refuses the
+microphone outright takes recognition down with it, and "barge-in is unavailable"
+arriving beside "voice is off" describes a feature of something that is not
+running. Found by watching the browser pane refuse a microphone, which is the
+only reason that ordering was ever exercised.
+
+### What verification could not reach
+
+The browser pane blocks microphone capture, so **no audio has been through this
+path**. What was verified is every decision behind it, driven directly: the
+calibration window, the adaptive threshold on two simulated devices, the sustain
+requirement against a transient, the floor in a silent room, the echo filter in
+both directions, and the two speaking modes taking different paths. Whether real
+echo cancellation on a real phone leaves a residual this scheme separates cleanly
+is the owner's test, and it is the one that matters.
