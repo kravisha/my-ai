@@ -83,6 +83,13 @@ organization.
 | [14 — Alpha Acceptance Specification](addenda/addendum_14_alpha_acceptance_specification.md) | What must demonstrably work before Alpha. Origin of the UQI and agent self-awareness requirements. |
 | 15 — Agent Rationality Monitoring — **held privately** | Behavioral health and sentinels. **Derived, not verbatim** — written from owner decisions in discussion. Nothing in it is built. |
 
+**Organizational resilience (19)** — a later document in the same organizational
+lineage, supplied 2026-08-18.
+
+| | |
+|---|---|
+| 19 — Fault Tolerance and Organizational Resilience — **held privately** | Who is responsible for noticing that somebody stopped working, how a detected failure acquires an owner, and what recovery must reconcile before resuming. Its §18 asked for a review before implementation; the disposition and what was built are in [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §28. |
+
 **Financial Intelligence, second set (5–10)** — canonical except where the newer set clarifies.
 
 | | |

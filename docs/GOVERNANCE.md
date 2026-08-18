@@ -10,7 +10,7 @@ organizational model are internal.
 
 ## What this means when reading the rest of these documents
 
-Other documents here reference the constitution and addenda 5, 11 and 15 by name and section. Those
+Other documents here reference the constitution and addenda 5, 11, 15 and 19 by name and section. Those
 references are accurate and deliberately left in place — the governance structure is real and should
 be visible even where its contents are not. A reference you cannot follow means the document is held
 privately, not that it is missing.
