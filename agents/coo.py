@@ -42,6 +42,14 @@ from agents.base import run_agent
 from backend import fi_db
 
 ROLE = "coo"
+
+# Who this agent is when it files an incident. COO is a singleton by
+# construction - the Controller spawns it directly as slot 1 and nothing
+# allocates a second (backend/controller.py's _slot_identity says why) - so the
+# identity is derivable rather than something work_fn has to be handed. The
+# alternative was widening `work_fn(conn)`, the contract every agent shares, to
+# carry an argument only this one needs. tests/test_coo.py pins the two together.
+IDENTITY = f"{ROLE}-1"
 # 'dummy' stays alongside the real Phase C roles: cheap, business-logic-free
 # diagnostic isolation if a new agent fails to spawn - if dummy comes up but
 # explorer/speculator/analysis don't, the problem is in the new agent code,
@@ -208,9 +216,41 @@ def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_S
     standing is the Controller's call alone (addendum 11 §15).
 
     stale_seconds is overridable (default HEALTH_STALE_THRESHOLD_SECONDS)
-    so tests can evaluate without waiting out the real threshold."""
+    so tests can evaluate without waiting out the real threshold.
+
+    Every detection also opens an incident (Fault Tolerance Framework §14), and
+    every agent that comes back closes the one it left open. Marking a registry
+    row 'crashed' says what is true *now*; the incident says what happened, who
+    noticed, and whether the capability returned - which is the difference
+    between a state and a record the organization can learn from. The two halves
+    live together here because a watcher that only ever files leaves a board of
+    failures that all look permanent."""
     for agent in fi_db.list_stale_active_agents(conn, stale_seconds):
         fi_db.mark_process_crashed(conn, agent["identity"])
+        fi_db.open_incident(
+            conn,
+            subject_identity=agent["identity"],
+            subject_role=agent["role"],
+            detected_by=IDENTITY,
+            symptom=f"heartbeat stopped advancing past the {stale_seconds}s threshold",
+            last_healthy_at=agent["last_heartbeat_at"],
+            evidence={"pid": agent["pid"]},
+        )
+
+    for incident in fi_db.list_incidents(conn, status="open"):
+        if incident["detected_by"] != IDENTITY:
+            # Somebody else's incident. §16: monitoring follows assigned
+            # responsibility, and closing another watcher's record would be
+            # claiming an observation this agent did not make.
+            continue
+        agent = fi_db.get_agent(conn, incident["subject_identity"])
+        if agent is None:
+            continue
+        age = fi_db.heartbeat_age_seconds(agent)
+        if age is not None and age < stale_seconds:
+            fi_db.record_recovery(
+                conn, incident["id"], f"heartbeat resumed ({round(age, 1)}s old)"
+            )
 
 
 def _evaluate_past_decisions(conn, grace_seconds: float = OBSERVATION_GRACE_SECONDS) -> None:

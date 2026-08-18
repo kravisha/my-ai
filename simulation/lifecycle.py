@@ -328,6 +328,41 @@ EVENTS = {
         "injectable": True,
         "handled_by": ["controller"],
     },
+    # --- Executive failure (Fault Tolerance and Organizational Resilience
+    # Framework). Every event below is one this code can actually cause, which is
+    # the entry rule for this catalogue.
+    "coo_disappears": {
+        "phase": "operation",
+        "trigger": "the COO process dies while the server keeps running",
+        "expected_response": "the Controller notices the silence within its watch interval, opens an incident, diagnoses it as a crash rather than dormancy, and starts a replacement under the same permanent identity",
+        "observable": "incidents.recovered",
+        "injectable": True,
+        "handled_by": ["controller"],
+    },
+    "coo_crash_loops": {
+        "phase": "operation",
+        "trigger": "the COO fails repeatedly inside the recovery window",
+        "expected_response": "the Controller stops respawning and escalates to a human owner, stating that the organization is running without an executive - no health evaluation and no baseline enforcement",
+        "observable": "incidents.escalated",
+        "injectable": True,
+        "handled_by": ["controller"],
+    },
+    "coo_survives_its_server": {
+        "phase": "creation",
+        "trigger": "the server dies uncleanly and its COO subprocess keeps running, then the server restarts",
+        "expected_response": "the restarting Controller adopts the live COO instead of spawning a second one under the same identity",
+        "observable": "population.respawns",
+        "injectable": True,
+        "handled_by": ["controller"],
+    },
+    "controller_disappears": {
+        "phase": "operation",
+        "trigger": "the server process dies while agents keep running",
+        "expected_response": "COO marks the Controller crashed, which is detection only - nothing inside the system can restart the server, and recovery belongs to the human operator named in backend/watch.py",
+        "observable": "population.crashed",
+        "injectable": True,
+        "handled_by": ["coo"],
+    },
     "organization_shuts_down": {
         "phase": "termination",
         "trigger": "the server is asked to stop",

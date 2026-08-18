@@ -518,7 +518,28 @@ def test_only_the_coo_bootstrap_spawns_outside_the_directive_queue():
                     and inner.func.attr == "Popen"):
                 spawners.add(node.name)
 
-    assert spawners == {"bootstrap_coo", "_handle_spawn"}, (
-        f"agent processes are started from {sorted(spawners)}. Every spawn but the COO bootstrap "
-        "must go through a directive, so COO decides need and the Controller executes."
+    assert spawners == {"respawn_coo", "_handle_spawn"}, (
+        f"agent processes are started from {sorted(spawners)}. Every spawn but the COO's must go "
+        "through a directive, so COO decides need and the Controller executes."
+    )
+
+    # The COO exception now covers recovery as well as bootstrap, which is a
+    # widening worth stating rather than absorbing: the Controller may start a COO
+    # when the server comes up *and* when the one it manages has gone silent.
+    # Both are the same exception - there is no COO to have filed the directive -
+    # and `respawn_coo` is the single place it lives. What must not grow is the
+    # set of callers, so it is pinned here.
+    callers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if (isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "respawn_coo"):
+                callers.add(node.name)
+
+    assert callers == {"bootstrap_coo", "_recover_coo"}, (
+        f"respawn_coo is called from {sorted(callers)}. It is the COO exception to the directive "
+        "queue, and it exists for exactly two reasons: there is no COO yet, or the COO is gone."
     )

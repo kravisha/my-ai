@@ -178,12 +178,24 @@ class JarvisClient:
                 if value in counts:
                     counts[value] += 1
 
+        # What the organization noticed about itself. Fetched with the roster
+        # rather than behind its own tool, because "who is running" and "what
+        # broke" are one question when the answer to the first is "fewer things
+        # than there should be" - and an escalated incident is the one state that
+        # is waiting on a person rather than on a watcher.
+        incidents = self._fetch("/admin/incidents")
+
         return {
             "available": True,
             "backend_url": backend_url(),
             "agents": agents,
             "counts": counts,
             "crashed": [a["identity"] for a in agents if a.get("process_state") == "crashed"],
+            "incidents": {
+                "open": incidents.get("open", 0),
+                "escalated": incidents.get("escalated", 0),
+                "recent": incidents.get("incidents", [])[:5],
+            } if incidents["available"] else {"unavailable": incidents["reason"]},
         }
 
     def agent(self, identity: str) -> dict:

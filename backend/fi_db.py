@@ -983,6 +983,50 @@ CREATE TABLE IF NOT EXISTS simulation_clock (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- What happened when something stopped doing its job (Fault Tolerance and
+-- Organizational Resilience Framework §14).
+--
+-- The framework lists fourteen fields. The ones here are the ones that have a
+-- writer today: a producer-less column is an empty schema, which is the failure
+-- this project has refused repeatedly. Recurrence, affected work and lessons
+-- learned arrive with the mechanisms that would fill them.
+--
+-- Two producers exist from the start, which is what makes this a record rather
+-- than a table:
+--   * the Controller, when the COO it is responsible for goes silent;
+--   * the COO, when an agent it is responsible for does.
+--
+-- `status` carries the framework's core rule - NO NOTICED FAILURE GOES OWNERLESS
+-- (§1). An incident is 'open' while its watcher is still working on it,
+-- 'recovered' when the capability came back, and 'escalated' when the watcher
+-- ran out of authority or attempts and handed it upward (§11). Nothing is ever
+-- deleted: §14's whole point is that the organization should be able to learn
+-- from the failure afterwards.
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_identity TEXT NOT NULL,
+    subject_role TEXT NOT NULL,
+    detected_by TEXT NOT NULL,
+    detected_at TEXT NOT NULL,
+    symptom TEXT NOT NULL,
+    last_healthy_at TEXT,
+    diagnosis TEXT,
+    action TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'recovered', 'escalated')),
+    resolved_at TEXT,
+    escalated_to TEXT,
+    evidence TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+-- One open incident per subject at a time. A watcher that filed a new incident
+-- on every pass would turn a single silence into a hundred rows and bury the
+-- one that mattered, so the guard is in the database rather than in whichever
+-- caller remembers it.
+CREATE UNIQUE INDEX IF NOT EXISTS incidents_one_open_per_subject
+    ON incidents (subject_identity) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS incidents_by_subject ON incidents (subject_identity, detected_at);
+
 CREATE VIEW IF NOT EXISTS performance_card AS
 SELECT
     r.identity,
@@ -2530,6 +2574,18 @@ def heartbeat_age_seconds(agent: dict) -> float | None:
     return (datetime.now(timezone.utc) - parse_timestamp(agent["last_heartbeat_at"])).total_seconds()
 
 
+def seconds_since(timestamp: str | None) -> float | None:
+    """Seconds since a recorded moment, or None if there is no moment.
+
+    Sits beside heartbeat_age_seconds because a watcher needs both: how long ago
+    an agent last *reported*, and how long ago it was *started*. An agent that has
+    never reported is a failure or a startup depending entirely on the second
+    question."""
+    if not timestamp:
+        return None
+    return (datetime.now(timezone.utc) - parse_timestamp(timestamp)).total_seconds()
+
+
 def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 45.0) -> dict | None:
     """Answers addendum 14 §6's fifteen questions for one agent.
 
@@ -3731,3 +3787,120 @@ def raise_corrective_actions(conn: Database, items, recorded_by: str = "complian
 
 def list_corrective_actions(conn: Database, status: str = KNOWLEDGE_ACTIVE) -> list[dict]:
     return list_knowledge(conn, record_kind=KNOWLEDGE_CORRECTIVE, status=status)
+
+
+# --- Incidents (Fault Tolerance Framework §8's lifecycle, §14's record) -------
+#
+# DETECTION -> DIAGNOSIS -> RECOVERY -> LEARNING, as four writes against one row
+# rather than four tables. The row is opened the moment expected behaviour stops,
+# and every later stage adds to it, so an incident always reads as the story of
+# one failure instead of fragments that have to be joined back together.
+
+
+def open_incident(
+    conn: Database,
+    subject_identity: str,
+    subject_role: str,
+    detected_by: str,
+    symptom: str,
+    last_healthy_at: str | None = None,
+    evidence: dict | None = None,
+) -> int | None:
+    """Records that something stopped doing its job. Returns the incident id, or
+    None if one is already open for this subject.
+
+    None rather than an exception, because "already noticed" is the normal case
+    on a watcher's second pass - a watcher polls, and the failure it is watching
+    has not gone away between ticks."""
+    existing = open_incident_for(conn, subject_identity)
+    if existing is not None:
+        return None
+    return conn.execute_returning_id(
+        """INSERT INTO incidents
+               (subject_identity, subject_role, detected_by, detected_at, symptom,
+                last_healthy_at, status, evidence, schema_version)
+           VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
+        (
+            subject_identity,
+            subject_role,
+            detected_by,
+            _now(),
+            symptom,
+            last_healthy_at,
+            json.dumps(evidence) if evidence else None,
+            SCHEMA_VERSION,
+        ),
+    )
+
+
+def open_incident_for(conn: Database, subject_identity: str) -> dict | None:
+    row = conn.fetchone(
+        "SELECT * FROM incidents WHERE subject_identity = ? AND status = 'open'",
+        (subject_identity,),
+    )
+    return dict(row) if row else None
+
+
+def record_diagnosis(conn: Database, incident_id: int, diagnosis: str) -> None:
+    """What the watcher decided the silence meant (§8 Diagnosis, §7's question:
+    is this intentional or is it failure?)."""
+    conn.execute("UPDATE incidents SET diagnosis = ? WHERE id = ?", (diagnosis, incident_id))
+
+
+def record_action(conn: Database, incident_id: int, action: str) -> None:
+    """What was attempted. Appended rather than replaced: a second attempt after a
+    first one failed is the history worth having, and overwriting it would leave
+    an escalated incident claiming a single try."""
+    row = conn.fetchone("SELECT action FROM incidents WHERE id = ?", (incident_id,))
+    previous = (row or {}).get("action")
+    combined = f"{previous}; {action}" if previous else action
+    conn.execute("UPDATE incidents SET action = ? WHERE id = ?", (combined, incident_id))
+
+
+def record_recovery(conn: Database, incident_id: int, action: str | None = None) -> None:
+    """The capability came back. Closes the incident."""
+    if action:
+        record_action(conn, incident_id, action)
+    conn.execute(
+        "UPDATE incidents SET status = 'recovered', resolved_at = ? WHERE id = ?",
+        (_now(), incident_id),
+    )
+
+
+def escalate_incident(conn: Database, incident_id: int, escalated_to: str, reason: str) -> None:
+    """The watcher could not restore the capability and has handed it upward
+    (§11). Escalation is a state, not a message: the incident stays visible with
+    an owner named on it, because the framework's rule is that a noticed failure
+    must acquire an owner rather than that somebody must be told."""
+    record_action(conn, incident_id, reason)
+    conn.execute(
+        "UPDATE incidents SET status = 'escalated', escalated_to = ?, resolved_at = ? WHERE id = ?",
+        (escalated_to, _now(), incident_id),
+    )
+
+
+def list_incidents(conn: Database, status: str | None = None, limit: int = 50) -> list[dict]:
+    """Newest first - the opposite of the Scoreboard, because an incident list is
+    read to find out what is wrong now, not to work through a backlog."""
+    if status:
+        rows = conn.fetchall(
+            "SELECT * FROM incidents WHERE status = ? ORDER BY id DESC LIMIT ?", (status, limit)
+        )
+    else:
+        rows = conn.fetchall("SELECT * FROM incidents ORDER BY id DESC LIMIT ?", (limit,))
+    return [dict(row) for row in rows]
+
+
+def count_incidents_since(conn: Database, subject_identity: str, since_seconds: float) -> int:
+    """How often this subject has failed recently - the input to a watcher's
+    decision to stop trying and escalate instead.
+
+    Counted from the durable record rather than from the watcher's memory on
+    purpose: a restart resets memory, and a crash loop that survives restarts is
+    exactly the condition a repeated-recovery guard exists to catch."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=since_seconds)).isoformat()
+    row = conn.fetchone(
+        "SELECT COUNT(*) AS n FROM incidents WHERE subject_identity = ? AND detected_at >= ?",
+        (subject_identity, cutoff),
+    )
+    return int(row["n"]) if row else 0

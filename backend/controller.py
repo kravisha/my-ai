@@ -38,7 +38,7 @@ import time
 import sys
 from pathlib import Path
 
-from backend import fi_db
+from backend import fi_db, watch
 
 # Environment every spawned agent gets on top of the Controller's own.
 #
@@ -60,6 +60,43 @@ AGENT_ENV = {"PYTHONUNBUFFERED": "1"}
 AGENT_STOP_GRACE_SECONDS = float(os.environ.get("FI_AGENT_STOP_GRACE_SECONDS", "5"))
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# How long the COO may go silent before the Controller treats it as failed rather
+# than busy. The same measured threshold the COO applies to everyone else - see
+# agents/coo.py, where it was raised to 45s after a real incident in which slow
+# model calls were mistaken for crashes and duplicates were spawned. Imported
+# lazily inside the watch to avoid a circular import at module level.
+COO_SILENCE_THRESHOLD_SECONDS = 45.0
+
+# How often the watch actually runs. The poll loop ticks about once a second, and
+# a registry read per tick would be work for nothing: silence is measured in tens
+# of seconds, so checking for it five times a minute is enough to notice within
+# one threshold.
+WATCH_INTERVAL_SECONDS = 12.0
+
+# A crash loop is not a failure to recover from; it is a failure to keep trying
+# at. Beyond this many incidents in the window, the Controller stops respawning
+# and escalates, which is the framework's §13 degraded state entered
+# deliberately rather than by exhaustion.
+MAX_RECOVERIES = 3
+RECOVERY_WINDOW_SECONDS = 600.0
+
+# How long a COO that has been started is still considered to be starting up.
+#
+# **A spawn in flight is not a failure**, and this constant is the difference
+# between a watcher and a fork bomb. The first version of this watch had no such
+# notion: the poll loop's first tick ran microseconds after bootstrap_coo, found
+# no registry row for a process that had existed for less than a millisecond,
+# declared it missing and started a second one. Verified against a real server, it
+# produced six COO processes under one permanent identity in under two minutes -
+# the exact duplicate-executive hazard this watch was written to prevent, caused
+# by the watch.
+#
+# The same value and the same reasoning as agents/coo.py's
+# SPAWN_IN_FLIGHT_WINDOW_SECONDS, which solves this problem for every agent COO
+# spawns. That precedent existed and was not applied here, which is the whole
+# lesson.
+COO_SPAWN_GRACE_SECONDS = 30.0
 
 CONTROLLER_ROLE = "controller"
 
@@ -106,6 +143,13 @@ class Controller:
         # in agent_registry, which also reflects agents from a prior run.
         self._processes: dict[str, subprocess.Popen] = {}
         self.identity = CONTROLLER_IDENTITY
+        # When the COO watch last ran. None means never, so the first poll tick
+        # checks immediately rather than waiting out an interval.
+        self._last_watch_at: float | None = None
+        # When this process last started a COO, so the watch can tell "coming up"
+        # from "gone". Per-process by nature; the registry's spawned_at covers the
+        # case where another process did the spawning.
+        self._coo_spawn_at: float | None = None
 
     def bootstrap_self(self) -> str:
         """Registers the Controller as an agent in its own right - the first
@@ -236,14 +280,225 @@ class Controller:
         fi_db.mark_process_stopped(self.conn, self.identity)
 
     def bootstrap_coo(self) -> str:
-        """The one spawn that bypasses the directive queue entirely -
-        there's no COO yet to have placed a directive, so the Controller
-        spawns it directly as its first action on server startup (addendum
-        6 §2 step 3: "the controller spawns the COO privileged client as
-        the first managed process"). Every other agent, including the
-        baseline population COO itself will ask for once running, goes
-        through the normal directive queue in process_next_directive."""
-        identity = _slot_identity("coo")
+        """The one spawn that bypasses the directive queue entirely - there's no
+        COO yet to have placed a directive, so the Controller spawns it directly
+        as its first action on server startup (addendum 6 §2 step 3: "the
+        controller spawns the COO privileged client as the first managed
+        process"). Every other agent, including the baseline population COO
+        itself will ask for once running, goes through the normal directive queue
+        in process_next_directive.
+
+        Now goes through respawn_coo, so startup cannot create a second COO
+        beside one that survived an unclean shutdown. A live COO is adopted
+        rather than duplicated, and the reconciliation is recorded rather than
+        assumed - see reconcile_on_start."""
+        identity = _slot_identity(watch.COO_ROLE)
+        try:
+            return self.respawn_coo(identity)
+        except RuntimeError:
+            # A COO is already alive and heartbeating. Adopting it is the correct
+            # outcome, not a failure: the organization has the executive it needs
+            # and this process simply did not start it.
+            return identity
+
+    # --- Duty of care toward the COO ------------------------------------
+    #
+    # The Fault Tolerance Framework's §4: management is not only authority over
+    # work, it is being able to notice when a subordinate stops producing it.
+    # The Controller is COO's manager (docs/organization.yaml) and the only thing
+    # that may start a process (addendum 11 §15), so detection and the authority
+    # to act sit on the same entity and no new authority had to be invented.
+    #
+    # Before this, nothing watched the COO at all. It was spawned once at startup
+    # and is deliberately not in BASELINE_POPULATION, so if it died the health
+    # evaluation that notices every *other* agent's silence died with it: crashed
+    # agents stayed marked 'running' forever, the baseline stopped being enforced,
+    # and nothing reported any of it.
+
+    def watch_coo(self, now: float | None = None) -> dict | None:
+        """One pass of the framework's DETECTION -> DIAGNOSIS -> RECOVERY cycle
+        over the one subordinate this Controller is responsible for.
+
+        Returns what it did, or None if the watch was not due yet. Rate-limited
+        internally rather than by the caller, so the poll loop stays a loop and
+        the cadence lives next to the threshold it is derived from."""
+        now = time.monotonic() if now is None else now
+        if self._last_watch_at is not None and now - self._last_watch_at < WATCH_INTERVAL_SECONDS:
+            return None
+        self._last_watch_at = now
+
+        identity = _slot_identity(watch.COO_ROLE)
+        agent = fi_db.get_agent(self.conn, identity)
+
+        # A spawn that has not landed yet is not a failure. Checked before
+        # anything else, because every other branch below reads a registry row
+        # that a starting process has not written yet.
+        if self._coo_spawn_in_flight(agent, now):
+            return {"action": "none", "reason": "a COO spawn is still coming up"}
+
+        if agent is None:
+            # Never registered, and long enough ago that it should have. The
+            # spawn either failed or the process died before its first heartbeat.
+            return self._recover_coo(
+                identity, symptom="COO has no registry row", last_healthy=None, now=now
+            )
+
+        # §7: intentional inactivity is not failure, and asking first is the
+        # whole difference between a watcher and a nuisance.
+        if agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT:
+            return {"action": "none", "reason": "COO is dormant, which is a decision rather than a fault"}
+
+        age = fi_db.heartbeat_age_seconds(agent)
+        threshold = watch.silence_threshold_seconds(watch.COO_ROLE, COO_SILENCE_THRESHOLD_SECONDS)
+
+        if age is not None and age < threshold:
+            # Healthy. If this Controller had an incident open on it, the
+            # capability is back and the incident is closed - the other half of
+            # the lifecycle, and the half a watcher that only ever files is
+            # missing.
+            incident = fi_db.open_incident_for(self.conn, identity)
+            if incident is not None:
+                fi_db.record_recovery(
+                    self.conn, incident["id"], f"heartbeat resumed ({round(age, 1)}s old)"
+                )
+                return {"action": "recovered", "incident": incident["id"]}
+            return {"action": "none", "reason": "COO is heartbeating"}
+
+        return self._recover_coo(
+            identity,
+            now=now,
+            symptom=(
+                "COO has never heartbeated"
+                if age is None
+                else f"COO heartbeat is {round(age, 1)}s old, past the {threshold}s threshold"
+            ),
+            last_healthy=agent["last_heartbeat_at"],
+            agent=agent,
+        )
+
+    def _coo_spawn_in_flight(self, agent, now: float) -> bool:
+        """Whether a COO is between "started" and "signalling".
+
+        Two sources, because one process's memory is not the whole truth. This
+        process knows what it started (`_coo_spawn_at`); the registry's
+        `spawned_at` covers a COO some other process started, which is exactly the
+        server-restart case. An agent that has already heartbeated is not coming
+        up any more, whichever source claimed it was."""
+        if self._coo_spawn_at is not None and now - self._coo_spawn_at < COO_SPAWN_GRACE_SECONDS:
+            if agent is None or agent["last_heartbeat_at"] is None:
+                return True
+
+        if agent is not None and agent["last_heartbeat_at"] is None:
+            age = fi_db.seconds_since(agent["spawned_at"])
+            if age is not None and age < COO_SPAWN_GRACE_SECONDS:
+                return True
+
+        return False
+
+    def _recover_coo(self, identity, symptom, last_healthy, agent=None, now=None) -> dict:
+        """Detection, diagnosis, and either recovery or escalation."""
+        incident = fi_db.open_incident_for(self.conn, identity)
+        if incident is None:
+            incident_id = fi_db.open_incident(
+                self.conn,
+                subject_identity=identity,
+                subject_role=watch.COO_ROLE,
+                detected_by=self.identity,
+                symptom=symptom,
+                last_healthy_at=last_healthy,
+                evidence={"process_state": (agent or {}).get("process_state")},
+            )
+        else:
+            incident_id = incident["id"]
+
+        # §8 Diagnosis: what does the silence mean? A clean stop is a different
+        # event from a crash, and the framework is explicit that recovery should
+        # not be disruptive until the difference has been established.
+        process_state = (agent or {}).get("process_state")
+        if process_state == fi_db.PROCESS_STOPPED:
+            diagnosis = "process stopped cleanly without being retired; the role is unstaffed"
+        elif agent is None:
+            diagnosis = "no registry row; the spawn never established itself"
+        else:
+            diagnosis = "process claims to be running but has stopped signalling; treating as crashed"
+        fi_db.record_diagnosis(self.conn, incident_id, diagnosis)
+
+        # A crash loop is not something to keep answering with another spawn.
+        recent = fi_db.count_incidents_since(self.conn, identity, RECOVERY_WINDOW_SECONDS)
+        if recent > MAX_RECOVERIES:
+            fi_db.escalate_incident(
+                self.conn,
+                incident_id,
+                escalated_to="human operator",
+                reason=(
+                    f"{recent} COO failures within {int(RECOVERY_WINDOW_SECONDS)}s; refusing to "
+                    f"respawn again. The organization is running without an executive: no agent "
+                    f"health evaluation and no baseline enforcement until this is resolved."
+                ),
+            )
+            return {"action": "escalated", "incident": incident_id, "failures": recent}
+
+        try:
+            self.respawn_coo(identity, now=now)
+        except Exception as failure:  # noqa: BLE001 - recorded, not swallowed
+            fi_db.escalate_incident(
+                self.conn,
+                incident_id,
+                escalated_to="human operator",
+                reason=f"respawn failed: {failure}",
+            )
+            return {"action": "escalated", "incident": incident_id, "error": str(failure)}
+
+        fi_db.record_action(self.conn, incident_id, "respawned COO")
+        return {"action": "respawned", "incident": incident_id}
+
+    def respawn_coo(self, identity: str | None = None, now: float | None = None) -> str:
+        """Start a COO process, having first established that one is not already
+        running.
+
+        The check is the point. `bootstrap_coo` used to spawn unconditionally,
+        which was harmless while it only ran at startup and catastrophic the
+        moment anything could call it twice: an unclean server death leaves the
+        COO subprocess alive - subprocess children outlive their parent - so a
+        restart produced *two* live processes under one permanent identity, both
+        evaluating health and both filing directives, with the registry showing
+        one pid.
+
+        Liveness is judged by heartbeat rather than by a Popen handle, because a
+        handle is per-process and the case that matters is precisely the one
+        where this process did not start the survivor."""
+        identity = identity or _slot_identity(watch.COO_ROLE)
+        agent = fi_db.get_agent(self.conn, identity)
+
+        # Two ways a second process would be one too many, and both refuse here
+        # rather than at the call site. A guard that lives in the caller is a
+        # guard the next caller does not have: the runaway that made this
+        # necessary came from a path where the *incident* was deduplicated and
+        # the *spawn* was not.
+        # `now` is threaded from the watch rather than read here, so the two
+        # cannot disagree about what time it is. They are the same clock in
+        # production and were not under test, which is how a caller that had
+        # already waited out the grace period was refused by a guard that had
+        # not.
+        if self._coo_spawn_in_flight(agent, time.monotonic() if now is None else now):
+            raise RuntimeError(
+                f"refusing to spawn a second {identity}: one was started less than "
+                f"{COO_SPAWN_GRACE_SECONDS}s ago and has not reported yet"
+            )
+
+        if agent is not None:
+            age = fi_db.heartbeat_age_seconds(agent)
+            threshold = watch.silence_threshold_seconds(watch.COO_ROLE, COO_SILENCE_THRESHOLD_SECONDS)
+            if age is not None and age < threshold:
+                raise RuntimeError(
+                    f"refusing to spawn a second {identity}: one is alive with a "
+                    f"{round(age, 1)}s-old heartbeat"
+                )
+            # Believed to be running, not signalling, and this process does not
+            # own it. Record what is true before replacing it.
+            if agent["process_state"] == fi_db.PROCESS_RUNNING:
+                fi_db.mark_process_crashed(self.conn, identity)
+
         fi_db.clear_process_stop(self.conn, identity)
         env = {**os.environ, "FI_DB_PATH": self.db_path, **AGENT_ENV}
         process = subprocess.Popen(
@@ -252,7 +507,28 @@ class Controller:
             env=env,
         )
         self._processes[identity] = process
+        self._coo_spawn_at = time.monotonic()
         return identity
+
+    def reconcile_on_start(self) -> dict:
+        """§10: a restarted process must not assume the world stayed frozen while
+        it was away.
+
+        The one question this Controller can answer cheaply and must not get
+        wrong: is there already a COO? An unclean shutdown leaves one running, and
+        the old unconditional spawn would have created a second."""
+        identity = _slot_identity(watch.COO_ROLE)
+        agent = fi_db.get_agent(self.conn, identity)
+        if agent is None:
+            return {"coo": "absent"}
+
+        age = fi_db.heartbeat_age_seconds(agent)
+        threshold = watch.silence_threshold_seconds(watch.COO_ROLE, COO_SILENCE_THRESHOLD_SECONDS)
+        if age is not None and age < threshold:
+            return {"coo": "adopted", "heartbeat_age_seconds": round(age, 1)}
+        if agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT:
+            return {"coo": "dormant"}
+        return {"coo": "stale", "heartbeat_age_seconds": None if age is None else round(age, 1)}
 
     def process_next_directive(self) -> bool:
         """Processes one pending directive if any exist. Returns True if a

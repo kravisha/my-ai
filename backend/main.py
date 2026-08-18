@@ -52,6 +52,12 @@ async def _controller_poll_loop(controller: Controller) -> None:
     while True:
         controller.record_self_heartbeat()
         controller.process_next_directive()
+        # The Controller's duty of care toward the one subordinate it manages
+        # (Fault Tolerance Framework §4). Rate-limits itself, so calling it every
+        # tick costs a comparison rather than a query - see Controller.watch_coo.
+        # Nothing watched the COO before this: if it died, the health evaluation
+        # that notices every other agent's silence died with it.
+        controller.watch_coo()
         await asyncio.sleep(CONTROLLER_POLL_INTERVAL_SECONDS)
 
 
@@ -79,6 +85,12 @@ async def lifespan(app: FastAPI):
     # directive queue, picked up by the poll loop above.
     controller = Controller()
     controller.bootstrap_self()
+    # §10: a restarting process must not assume the world stayed frozen while it
+    # was away. An unclean shutdown leaves the COO subprocess alive - children
+    # outlive their parent - and the old unconditional spawn would have started a
+    # second one under the same permanent identity.
+    reconciliation = controller.reconcile_on_start()
+    print(f"[controller] reconciled on start: {reconciliation}")
     controller.bootstrap_coo()
     poll_task = asyncio.create_task(_controller_poll_loop(controller))
     try:
@@ -710,6 +722,23 @@ def _require_agent(conn, identity: str) -> dict:
     if agent is None:
         raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
     return agent
+
+
+@app.get("/admin/incidents")
+def list_incidents(limit: int = 50, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """What stopped working, who noticed, and whether it came back (Fault
+    Tolerance Framework §14).
+
+    The framework's rule is that a noticed failure must acquire an owner, so the
+    open and escalated counts are returned alongside the rows: an escalated
+    incident is one a watcher could not resolve and handed upward, and it is the
+    only thing here that is waiting on a person."""
+    incidents = fi_db.list_incidents(conn, limit=limit)
+    return {
+        "incidents": incidents,
+        "open": sum(1 for incident in incidents if incident["status"] == "open"),
+        "escalated": sum(1 for incident in incidents if incident["status"] == "escalated"),
+    }
 
 
 @app.get("/admin/directives")

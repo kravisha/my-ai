@@ -27,6 +27,7 @@ roles:
     reports_to: null
     process: in_process          # the backend server itself, never spawned
     spawned_by_coo: false
+    watched_by: coo
 
   - id: coo
     status: implemented
@@ -34,6 +35,7 @@ roles:
     reports_to: controller
     process: subprocess
     spawned_by_coo: false        # bootstrapped by the Controller at startup
+    watched_by: controller
 
   - id: explorer
     status: implemented
@@ -41,6 +43,7 @@ roles:
     reports_to: coo
     process: subprocess
     spawned_by_coo: true
+    watched_by: coo
 
   - id: speculator
     status: implemented
@@ -48,6 +51,7 @@ roles:
     reports_to: coo
     process: subprocess
     spawned_by_coo: true
+    watched_by: coo
 
   - id: analysis
     status: implemented
@@ -55,6 +59,7 @@ roles:
     reports_to: coo
     process: subprocess
     spawned_by_coo: true
+    watched_by: coo
 
   - id: dummy
     status: implemented
@@ -62,6 +67,17 @@ roles:
     reports_to: coo
     process: subprocess
     spawned_by_coo: true
+    watched_by: coo
+
+# Who notices when somebody stops working (Fault Tolerance and Organizational
+# Resilience Framework §3, §5). `watched_by` is the role responsible for noticing
+# this one's silence; backend/watch.py holds the same map for the code, and
+# tests/test_organization_model.py asserts the two agree.
+#
+# The Controller's entry is the honest one: COO does notice its silence, but
+# nothing inside the system can restart the server process, so recovery has a
+# human owner rather than an agent one. That is recorded as a known gap below
+# rather than left to be discovered.
 
 flows:
   # --- authority -------------------------------------------------------------
