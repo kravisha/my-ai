@@ -1277,3 +1277,87 @@ path, the same arrangement `gateway/conversation.py` uses for the same reason.
 **Fifth time.** The pattern is no longer worth restating: anything in this project
 that touches a real process, a real API or a real thread boundary gets run before
 it is believed.
+
+## 25. How the phone reaches the Gateway (2026-08-18)
+
+**Owner decision: a tunnel.** `cloudflared` or Tailscale Funnel terminates TLS and
+forwards to the Gateway on loopback. Nothing is opened on the router, the
+certificate is real, and the service continues to bind to 127.0.0.1.
+
+The two alternatives and why they lost: a LAN-only self-signed certificate works
+only at home and requires trusting a certificate on the phone; a forwarded router
+port exposes a service with elevated authority over specifications and Git
+directly to the internet, which addendum 17 §14 ("a high-security boundary") is
+reason enough to decline.
+
+This settles the decision G2 was waiting on, and addendum 16 §12's TLS requirement
+is met by the tunnel rather than by the application - which is why the code in this
+increment is about being correct *behind a reverse proxy* rather than about
+terminating TLS.
+
+### The address problem the tunnel creates
+
+Behind a tunnel every request arrives from 127.0.0.1, so rate limiting on the peer
+address would put every phone, every attacker and the owner in one bucket. The
+real address has to come from `X-Forwarded-For`, which is also trivially forged.
+
+Resolution: the header is honoured **only** when the connection comes from a
+declared proxy (`GATEWAY_TRUSTED_PROXIES`, defaulting to loopback - the tunnel
+case), and the value taken is the rightmost entry that is not itself a declared
+proxy, since a client may prepend anything it likes to the left.
+
+### Limiting, and where it had to be applied
+
+Failed logins are counted per caller in a sliding window, and the **WebSocket's
+opening frame counts against the same limit**. Limiting only the login route would
+have left the socket as an unlimited oracle for guessing session tokens, beside a
+door that was carefully locked.
+
+Successes clear the count: what is being limited is guessing, not use.
+
+The counter lives in memory rather than in `gateway.db`. Login attempts are
+ephemeral and worthless after a restart, and writing each one to disk would put a
+durable record of failed guesses into a database whose purpose is durable project
+material. When this service ever runs as more than one process, the limiter moves
+to something shared - a change with a reason rather than a precaution without one.
+
+### What this increment does not claim
+
+**The tunnel itself has not been run here.** Standing one up requires the owner's
+Cloudflare or Tailscale account, and creating accounts or authenticating on the
+owner's behalf is not something this project's assistant does. Everything up to
+that line is verified: forwarded-header handling, spoofing refusal, the limiter,
+the headers, and HSTS appearing only on a request that arrived over TLS. The last
+step - open the tunnel, load the page on the phone, hold a conversation over
+HTTPS - is the owner's, and until it is done "reachable from a phone" is a
+configuration that has been prepared rather than a thing that has been observed.
+
+### The defect the verification found, which the guard itself could not
+
+With the trusted-proxy list deliberately set to a non-loopback address, three
+requests from loopback claiming three different `X-Forwarded-For` values each got
+their own rate-limit bucket. The per-caller limit was dodgeable by rotating a
+header, and `gateway/exposure.py` - the module written specifically to prevent
+that - was working perfectly.
+
+**Uvicorn had already resolved the address.** `proxy_headers` defaults to on and
+trusts loopback, so `request.client` was replaced with the claimed value before any
+application code ran. The tell was uvicorn's own access log printing a client of
+`1.1.1.1:0`, an address no socket came from. Every unit test passed, because in a
+test the ASGI scope carries the peer the module expects rather than one the server
+has already rewritten.
+
+Fixed by owning the server configuration: `python -m gateway.run` starts uvicorn
+with `proxy_headers=False` and an empty `forwarded_allow_ips`, so exactly one
+component decides whose address to believe. A flag in a README that somebody has
+to remember would have been the same defect with extra steps.
+
+Re-run afterwards, the identical rotation put all three attempts in one bucket and
+the third was refused; the legitimate tunnel case still distinguishes two phones
+behind the same loopback proxy.
+
+A strict `script-src` content-security policy was also considered and not adopted:
+the client is deliberately one file with its script and style inline (no build
+step, no external requests), so any such policy would have to carry
+`'unsafe-inline'` and would assert protection it does not provide. Splitting the
+page is the honest way to earn it, and is worth revisiting if the page grows.
