@@ -268,3 +268,107 @@ def test_the_ready_frame_carries_the_board_state(gateway_client, gateway_token, 
         assert ready["open_counts"] == {"urgent": 1, "important": 0, "informational": 0}
     finally:
         socket.__exit__(None, None, None)
+
+
+# --- Git through the conversation (G4) ---
+
+
+def test_publishing_lands_on_a_branch_during_a_turn(
+    gateway_client, gateway_token, private_repo
+):
+    """The §20 interaction, end to end: "publish the specification" becomes a real
+    commit, on a branch, without the Super User moving a file anywhere."""
+    provider = FakeProvider(
+        fragments=("Published to gateway/timing-spec.",),
+        tool_calls=[(
+            "publish_document",
+            {
+                "path": "docs/timing-spec.md",
+                "content": "# Timing\n\nThe measured drain time bounds the guard.\n",
+                "message": "Add the timing specification",
+            },
+        )],
+    )
+    model_gateway.set_provider(provider)
+    try:
+        socket, _ = authenticated_socket(gateway_client, gateway_token)
+        try:
+            socket.send_json({"type": "message", "text": "publish the timing spec"})
+            frames = []
+            while True:
+                frame = socket.receive_json()
+                frames.append(frame)
+                if frame["type"] == "done":
+                    break
+        finally:
+            socket.__exit__(None, None, None)
+    finally:
+        model_gateway.set_provider(None)
+
+    assert {"type": "tool", "name": "publish_document", "ok": True} in frames
+
+    import subprocess
+
+    committed = subprocess.run(
+        ["git", "show", "gateway/timing-spec:docs/timing-spec.md"],
+        cwd=private_repo.path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert committed.returncode == 0, committed.stderr
+    assert "The measured drain time bounds the guard." in committed.stdout
+
+    # And the model is told what happened, including that nothing was pushed.
+    result = provider.calls[1]["messages"][-1]["content"][0]
+    assert result["is_error"] is False
+    assert "gateway/timing-spec" in result["content"]
+    assert '"pushed":false' in result["content"].replace(" ", "")
+
+
+def test_a_public_publish_the_user_never_authorised_is_refused_mid_turn(
+    gateway_client, gateway_token, private_repo, public_repo
+):
+    """The hazard §20 does not know about. The model asking to publish publicly
+    without the user having said so comes back as a refusal it must act on, and
+    nothing reaches the public repository."""
+    provider = FakeProvider(
+        fragments=("I need you to confirm that explicitly.",),
+        tool_calls=[(
+            "publish_document",
+            {
+                "path": "docs/spec.md",
+                "content": "# Spec\n",
+                "message": "Add",
+                "repository": public_repo.name,
+            },
+        )],
+    )
+    model_gateway.set_provider(provider)
+    try:
+        socket, _ = authenticated_socket(gateway_client, gateway_token)
+        try:
+            socket.send_json({"type": "message", "text": "publish the spec"})
+            frames = []
+            while True:
+                frame = socket.receive_json()
+                frames.append(frame)
+                if frame["type"] == "done":
+                    break
+        finally:
+            socket.__exit__(None, None, None)
+    finally:
+        model_gateway.set_provider(None)
+
+    assert {"type": "tool", "name": "publish_document", "ok": False} in frames
+
+    import subprocess
+
+    branches = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        cwd=public_repo.path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+    assert "gateway/" not in branches

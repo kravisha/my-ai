@@ -7,9 +7,15 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Five tools, all Scoreboard. Git and system status are not here because they are
+Eight tools: five Scoreboard, three Git. System status is not here because it is
 not built; the system prompt says so, and an assistant with no tool for a thing
 cannot quietly pretend otherwise.
+
+**Publishing has a confirmation the model cannot supply on its own reasoning.**
+`publish_document` takes `confirm_public`, and `gateway/repositories.py` refuses a
+public target without it - so a spoken sentence cannot become a public commit
+through inference alone. The private repository is the default, and the guard
+that stands behind all of this is documented where it acts rather than here.
 
 **Every failure comes back as a tool result, not an exception.** The model reads
 these strings and is expected to correct itself from them - "importance must be
@@ -26,7 +32,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import scoreboard
+from gateway import repositories, scoreboard
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -134,6 +140,76 @@ TOOLS = [
     },
 ]
 
+GIT_TOOLS = [
+    {
+        "name": "list_repository_files",
+        "description": (
+            "List files tracked in a project repository, optionally under a path "
+            "prefix such as 'docs/addenda'. Use it to find a document before reading it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repository": {
+                    "type": "string",
+                    "description": "Which repository. Omit for the private one.",
+                },
+                "prefix": {"type": "string", "description": "Limit to this directory."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "read_repository_file",
+        "description": (
+            "Read a tracked text file from a project repository. Use it to answer "
+            "questions about what a specification or a module actually says, rather "
+            "than from memory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Repository-relative path."},
+                "repository": {"type": "string"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "publish_document",
+        "description": (
+            "Commit a document to a project repository on a new branch. Nothing is "
+            "pushed and the working tree is not touched; a person reviews the branch "
+            "and pushes it. Publishes to the private repository unless told otherwise. "
+            "Publishing to the public repository additionally requires confirm_public, "
+            "which you may only set when the user has explicitly said to publish there "
+            "- never infer it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repository-relative path, e.g. 'docs/addenda/foo.md'.",
+                },
+                "content": {"type": "string", "description": "The complete document."},
+                "message": {"type": "string", "description": "Commit message."},
+                "repository": {"type": "string"},
+                "confirm_public": {
+                    "type": "boolean",
+                    "description": (
+                        "Only when the user has explicitly named the public repository as the "
+                        "destination in this conversation."
+                    ),
+                },
+            },
+            "required": ["path", "content", "message"],
+        },
+    },
+]
+
+TOOLS = TOOLS + GIT_TOOLS
+
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
 
@@ -184,7 +260,35 @@ def execute(conn: Database, name: str, arguments: dict) -> dict:
                 )
             }
 
-    except scoreboard.ScoreboardError as refusal:
+        if name == "list_repository_files":
+            repo = repositories.resolve(arguments.get("repository"))
+            return {
+                "repository": repo.name,
+                "visibility": repo.visibility,
+                "files": repositories.tracked_files(repo, arguments.get("prefix")),
+            }
+
+        if name == "read_repository_file":
+            repo = repositories.resolve(arguments.get("repository"))
+            return {
+                "repository": repo.name,
+                "path": arguments["path"],
+                "content": repositories.read_file(repo, arguments["path"]),
+            }
+
+        if name == "publish_document":
+            repo = repositories.resolve(arguments.get("repository"))
+            return {
+                "published": repositories.publish(
+                    repo,
+                    path=arguments["path"],
+                    content=arguments.get("content", ""),
+                    message=arguments.get("message", ""),
+                    confirmed_public=bool(arguments.get("confirm_public", False)),
+                )
+            }
+
+    except (scoreboard.ScoreboardError, repositories.RepositoryError) as refusal:
         return {"error": str(refusal)}
     except (KeyError, TypeError, ValueError) as malformed:
         # A tool call with a missing or unusable argument. Reported the same way

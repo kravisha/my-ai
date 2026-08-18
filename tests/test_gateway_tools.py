@@ -6,7 +6,7 @@ the model can read and correct itself from. A tool that raises ends the turn; a
 tool that returns `{"error": ...}` lets the assistant try again.
 """
 
-from gateway import scoreboard, tools
+from gateway import repositories, scoreboard, tools
 
 
 def test_filing_through_a_tool_returns_the_item_it_created(gateway_conn):
@@ -138,6 +138,103 @@ def test_the_schemas_offer_only_values_the_store_accepts():
     assert _schema("list_scoreboard_items")["properties"]["status"]["enum"] == list(
         scoreboard.STATUSES
     )
+
+# --- Git (G4) ---
+#
+# The repository machinery itself is covered in tests/test_gateway_repositories.py
+# against real git repositories. What matters here is the dispatcher's half: that
+# a refusal reaches the model as something it can read, and that the confirmation
+# a public publish requires cannot be produced by the model's own reasoning about
+# the document.
+
+
+def test_the_git_tools_report_that_nothing_is_configured(gateway_conn, monkeypatch):
+    """Default closed. An unconfigured Gateway must say so rather than reaching
+    for a repository nobody named."""
+    monkeypatch.delenv(repositories.PRIVATE_REPO_ENV, raising=False)
+    monkeypatch.delenv(repositories.PUBLIC_REPO_ENV, raising=False)
+
+    for name in ("list_repository_files", "read_repository_file", "publish_document"):
+        result = tools.execute(gateway_conn, name, {"path": "docs/x.md", "content": "c", "message": "m"})
+        assert repositories.PRIVATE_REPO_ENV in result["error"]
+
+
+def test_reading_a_file_through_a_tool(gateway_conn, private_repo):
+    listed = tools.execute(gateway_conn, "list_repository_files", {"prefix": "docs"})
+    assert listed["files"] == ["docs/existing.md"]
+    assert listed["visibility"] == "private"
+
+    read = tools.execute(gateway_conn, "read_repository_file", {"path": "docs/existing.md"})
+    assert "Some text." in read["content"]
+
+
+def test_an_untracked_file_is_refused_through_the_tool(gateway_conn, private_repo):
+    """The .env case, reached the way the model would reach it."""
+    result = tools.execute(gateway_conn, "read_repository_file", {"path": "secret.env"})
+
+    assert "not tracked" in result["error"]
+
+
+def test_publishing_through_a_tool_defaults_to_the_private_repository(
+    gateway_conn, private_repo, public_repo
+):
+    result = tools.execute(
+        gateway_conn,
+        "publish_document",
+        {"path": "docs/spec.md", "content": "# Spec\n", "message": "Add the spec"},
+    )
+
+    assert result["published"]["repository"] == private_repo.name
+    assert result["published"]["visibility"] == "private"
+    assert result["published"]["pushed"] is False
+
+
+def test_a_public_publish_without_confirmation_is_refused_readably(
+    gateway_conn, private_repo, public_repo
+):
+    """The model gets told why, in terms that tell it what to do next: ask."""
+    result = tools.execute(
+        gateway_conn,
+        "publish_document",
+        {
+            "path": "docs/spec.md",
+            "content": "Technical content.\n",
+            "message": "Add",
+            "repository": public_repo.name,
+        },
+    )
+
+    assert "explicit confirmation" in result["error"]
+    assert "ask" in result["error"]
+
+
+def test_private_material_bound_for_the_public_repository_is_refused(
+    gateway_conn, private_repo, public_repo
+):
+    result = tools.execute(
+        gateway_conn,
+        "publish_document",
+        {
+            "path": "docs/principles.md",
+            "content": "The constitution's axioms govern how agents are judged.\n",
+            "message": "Add principles",
+            "repository": public_repo.name,
+            "confirm_public": True,
+        },
+    )
+
+    assert "constitution" in result["error"]
+    assert "do not work around this check" in result["error"]
+
+
+def test_the_publish_schema_makes_the_confirmation_a_deliberate_act():
+    """confirm_public is not required, so its absence is the safe path, and its
+    description tells the model the only condition under which it may be set."""
+    schema = _schema("publish_document")
+
+    assert "confirm_public" not in schema["required"]
+    assert "explicitly" in schema["properties"]["confirm_public"]["description"]
+
 
 
 def _schema(name: str) -> dict:

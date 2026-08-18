@@ -1085,3 +1085,69 @@ idempotent to re-run - an assistant that needs the list again asks again, which
 is also what stops it acting on a stale one. If a case appears where losing a
 tool result breaks the next turn, persisting content blocks is additive, and the
 reason to do it would be evidence rather than symmetry.
+
+## 22. Git, and the hazard §20 could not have known about (2026-08-18)
+
+G4 builds addendum 16 §14 and §20: the assistant reads repository artifacts, and
+"publish the specification" becomes a real commit. §3's rule is the reason - *"No
+approved specification should exist only inside an AI conversation."*
+
+### Three constraints the specification does not state, and why they are here
+
+**The working tree is never touched.** These are repositories the owner is
+actively working in. A service that ran `git checkout -b` in the background would
+sweep up half-finished edits and move HEAD under a running test. A publish
+therefore writes a blob, builds a tree in a temporary index *outside* the
+repository, commits against HEAD with `commit-tree`, and points a new ref at the
+result. Uncommitted work stays uncommitted and the checked-out branch stays
+checked out.
+
+**Nothing is pushed.** A local branch is reversible; a push to a public remote is
+not. §19 requires human review before significant changes land, and pushing on a
+spoken sentence would put the Gateway on the far side of that gate. The publish
+reports the branch and a person pushes it.
+
+**Only tracked files are readable.** Not a denylist - a denylist is a thing
+somebody forgets to update. `.env` is ignored, therefore untracked, therefore
+invisible, and nothing in this module had to know it holds an API key.
+
+### The hazard
+
+§20 wants *"that's approved, publish the specification"* to be one interaction. It
+was written before this project split its documentation: `docs/PUBLIC_PRIVATE_BOUNDARY.md`
+keeps organizational philosophy and strategic rationale in the private repository,
+and publishing publicly cannot be undone.
+
+So the private repository is the default; a public target requires explicit
+confirmation the model may not infer; and a screen runs over the content, path and
+message before any public write.
+
+**The screen is a tripwire, not a classifier.** It matches the vocabulary this
+project's private material actually uses - constitution, charter, axiom, manifesto,
+philosophy, guiding principles, INT-PHIL - and it will be wrong in both
+directions: a specification that merely mentions the constitution is stopped, and
+philosophy phrased in ordinary words passes. It is set to fail toward the private
+repository, because that failure is a person retyping a destination and the other
+one is not undoable. It does not run against the private repository at all, since
+that is precisely where such material belongs.
+
+The assistant is told, in its system prompt, not to rewrite a document to get it
+past the check but to report what was flagged and let the owner decide. Verified
+live: given explicit authorisation to publish a charter/axioms note publicly, the
+refusal held, the model named the flagged terms, offered to publish privately or
+write a public-appropriate version, and did not attempt to evade.
+
+### A defect that only a live call could find
+
+The provider converted the model's content blocks with `model_dump()` and sent
+them back on the next request of the tool loop. A response block and a request
+block are not the same shape - the dump carries response-only fields, and the API
+rejects them: `messages.7.content.0.text.parsed_output: Extra inputs are not
+permitted`. The whole unit suite passed throughout, because a stand-in provider
+emits exactly the fields its author thought of. `app/model_provider.py` now
+reduces each block to what may be replayed, and an unrecognised block type is
+passed through whole rather than silently stripped.
+
+**That is the fourth time in this project a defect has survived a green suite and
+been found by running the thing.** The pattern is now unmistakable for anything
+that talks to a real process or a real API.

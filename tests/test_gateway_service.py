@@ -383,4 +383,7 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "get_scoreboard_item",
         "add_scoreboard_note",
         "resolve_scoreboard_item",
+        "list_repository_files",
+        "read_repository_file",
+        "publish_document",
     }, "the assistant must not be handed a tool for something that is not built"

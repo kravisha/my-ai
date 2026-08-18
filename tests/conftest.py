@@ -41,6 +41,7 @@ docstring for why all three layers are worth having.
 import hashlib
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -105,6 +106,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.users import UserStore
 from backend import fi_db
+from gateway import repositories as gateway_repositories
 from gateway import store as gateway_store
 
 TEST_ACCOUNT_ID = "ACCT-TEST-99999"
@@ -440,6 +442,58 @@ def gateway_token(gateway_client):
     )
     assert response.status_code == 200, response.text
     return response.json()["token"]
+
+
+def _init_repository(path: Path, files: dict[str, str]) -> Path:
+    """A real git repository with one commit. Real rather than mocked because the
+    properties worth asserting about a publish - a branch exists, HEAD did not
+    move, an uncommitted file is still uncommitted - only exist in a real one."""
+    path.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        target = path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    def git(*arguments):
+        result = subprocess.run(
+            ["git", *arguments], cwd=path, capture_output=True, text=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr
+
+    git("init", "-q", ".")
+    git("config", "user.email", "tester@example.com")
+    git("config", "user.name", "Tester")
+    git("add", "-A")
+    git("commit", "-qm", "first")
+    return path
+
+
+@pytest.fixture
+def private_repo(tmp_path, monkeypatch):
+    """The default publish target, with an ignored file in it - `secret.env` is
+    how the suite checks that "tracked by git" is the access rule."""
+    path = _init_repository(
+        tmp_path / "jarvis-internal",
+        {
+            "docs/existing.md": "# Existing\n\nSome text.\n",
+            ".gitignore": "secret.env\n",
+        },
+    )
+    (path / "secret.env").write_text("ANTHROPIC_API_KEY=real-key\n", encoding="utf-8")
+
+    monkeypatch.setenv(gateway_repositories.PRIVATE_REPO_ENV, str(path))
+    monkeypatch.delenv(gateway_repositories.PUBLIC_REPO_ENV, raising=False)
+    return gateway_repositories.resolve(None)
+
+
+@pytest.fixture
+def public_repo(tmp_path, monkeypatch):
+    """The guarded one. Configured alongside the private repository, since a
+    Gateway with only a public target is a separate case with its own test."""
+    path = _init_repository(tmp_path / "my-ai", {"README.md": "# Public\n"})
+
+    monkeypatch.setenv(gateway_repositories.PUBLIC_REPO_ENV, str(path))
+    return gateway_repositories.resolve(path.name)
 
 
 @pytest.fixture
