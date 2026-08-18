@@ -1,0 +1,81 @@
+id: executive_failure
+version: 1
+description: >
+  The COO is killed mid-run, and the organization has to notice, diagnose,
+  recover and record it. The Fault Tolerance Framework's first scenario, and the
+  one that motivated the whole watch: before it existed, a dead COO meant crashed
+  agents stayed marked running forever and the baseline stopped being enforced,
+  with nothing reporting any of it.
+
+  Killed rather than stopped, deliberately. A retirement is a decision and must
+  NOT provoke a replacement; a kill is a failure and must. Telling those apart is
+  the two-axis lifecycle's whole purpose, so a fault suite that only ever killed
+  could not show the distinction holds.
+
+lifecycle: active
+
+# Long enough to contain the whole cycle rather than the first half of it: the
+# kill lands at 20s, the Controller's silence threshold is 45s, its watch runs
+# every 12s, and the replacement then needs time to register and heartbeat before
+# the incident can close. A shorter run would end mid-recovery and report a
+# failure that was still being fixed.
+duration_seconds: 120
+
+config:
+  # The workforce is not the subject here and every judgment agent costs real
+  # model calls. The executive and the reference agent are enough to show the
+  # baseline is still being enforced by a COO that came back.
+  FI_BASELINE_EXPLORER: "0"
+  FI_BASELINE_SPECULATOR: "0"
+  FI_BASELINE_ANALYSIS: "0"
+
+faults:
+  - at_seconds: 20
+    action: kill
+    target: coo-1
+
+expected_properties:
+  - name: the failure was noticed at all
+    metric: incidents.total
+    assert: at_least
+    value: 1
+    # Without this the run proves only that a process can be killed, which was
+    # never in doubt.
+
+  - name: the organization recovered without being told
+    metric: incidents.recovered
+    assert: at_least
+    value: 1
+    # `recovered` is the incident closing because the capability came back, not
+    # because anybody declared it fixed.
+
+  - name: nobody had to be escalated to
+    metric: incidents.escalated
+    assert: equals
+    value: 0
+    # Giving up is correct for a crash loop and wrong for a single kill.
+
+  - name: the failure was detected once, not in a loop
+    metric: incidents.total
+    assert: equals
+    value: 1
+    # The duplicate-executive check. Each incident closes when the capability
+    # returns, so a watch that kept respawning would file a second and a third -
+    # which is precisely how this watch behaved the first time it was built.
+    #
+    # Asserted on incidents rather than on population.respawns, because that
+    # metric counts completed spawn *directives* and a COO recovery deliberately
+    # bypasses the queue: it read 0 through a run that had killed and replaced an
+    # executive, and a property that passes whether or not the feature ran is
+    # worse than no property.
+
+  - name: the workforce was not disturbed by the executive's failure
+    metric: population.respawns
+    assert: equals
+    value: 0
+    # The other half of that reading: nothing *else* was respawned. A COO that
+    # came back and mistook the surviving agents for dead ones would show here.
+
+  - name: no agent ended the run believing it had crashed
+    metric: population.crashed
+    assert: is_empty
