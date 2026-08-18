@@ -172,33 +172,56 @@ def _real_database_change() -> str | None:
 
 
 _LEAK_MESSAGE = """\
-Some code path in this run wrote to the developer's real database:
+The developer's real database changed during this run:
 
   {path}
 
 {diff}
 
-The usual cause is a FastAPI dependency, or a module-level object constructed at
-import time, calling fi_db.get_connection() with no argument. Find it and give it
-an explicit path. See tests/conftest.py for the two layers that are supposed to
-make that impossible, and why each of them is not enough on its own."""
+Two very different things cause this, and the check cannot tell them apart -
+it sees a changed file, not who changed it. Rule out (1) before hunting (2):
+it is not a defect at all, and it costs one command to check.
+
+1. Something outside the suite is writing to it. A running backend
+   (`uvicorn backend.main:app`) heartbeats into this file about once a second,
+   and so does any agent process left over from an earlier run. If you have the
+   stack up, stop it and re-run before reading any further.
+
+2. A leak from the suite: a FastAPI dependency, or an object constructed at
+   import time, calling fi_db.get_connection() with no argument. Find it and give
+   it an explicit path. See tests/conftest.py for the two layers that are meant
+   to make that impossible, and why neither is enough on its own."""
+
+# Sentinel rather than None, since None is a real answer here - it means checked
+# and clean.
+_UNCHECKED = object()
+_leak_report_cached: str | None | object = _UNCHECKED
 
 
 def _leak_report() -> str | None:
-    diff = _real_database_change()
-    if diff is None:
-        return None
-    return _LEAK_MESSAGE.format(diff=diff, path=REAL_DB_PATH)
+    """The leak report for this session, computed once.
+
+    Cached because both hooks below ask, and they ask at slightly different
+    moments. Hashing twice would let the two answers disagree whenever anything
+    outside the suite is writing to the file - a heartbeat landing between the
+    two calls would print a report and exit 0, or exit 1 with nothing printed to
+    explain it. One answer per session, whichever hook gets there first."""
+    global _leak_report_cached
+    if _leak_report_cached is _UNCHECKED:
+        diff = _real_database_change()
+        _leak_report_cached = None if diff is None else _LEAK_MESSAGE.format(
+            diff=diff, path=REAL_DB_PATH
+        )
+    return _leak_report_cached
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """Reports the leak. The check runs in two hooks rather than one because
-    each can do only half the job: this one is guaranteed a place in the summary
-    but cannot change the exit status, and pytest_sessionfinish below can change
-    the exit status but has no guaranteed ordering against the terminal reporter,
-    so anything it printed might land above the summary or be swallowed. Both
-    re-derive the answer independently - hashing a few hundred KB twice is
-    cheaper than depending on plugin hook order."""
+    """Prints the leak report. Split from pytest_sessionfinish because each hook
+    can do only half the job: this one is guaranteed a place in the summary but
+    cannot change the exit status, and sessionfinish can change the exit status
+    but has no guaranteed ordering against the terminal reporter, so anything it
+    printed might land above the summary or be swallowed. They share one cached
+    answer, so which of them runs first changes nothing but the timing."""
     report = _leak_report()
     if report is not None:
         terminalreporter.section("REAL DATABASE MODIFIED", red=True, bold=True)
@@ -215,10 +238,10 @@ def pytest_sessionfinish(session, exitstatus):
     them."""
     if _leak_report() is not None:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
-    # ignore_errors because sqlite handles opened by module-level objects (see
-    # backend.main's Controller) are still open here, and Windows will not delete
-    # an open file. A few KB left in the system temp directory is not worth
-    # failing a green run over.
+    # ignore_errors rather than a guarantee that nothing holds these files: any
+    # connection a test opened against the default path lives here, and Windows
+    # will not delete an open file. A few KB left in the system temp directory is
+    # not worth failing an otherwise green run over.
     shutil.rmtree(_SESSION_DB_DIR, ignore_errors=True)
 
 
