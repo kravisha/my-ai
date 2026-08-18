@@ -1,10 +1,18 @@
 # Design Documents
 
-Everything governing this system's design, in one place. Twenty documents accumulated across several
-design sessions; this index says what each one is, which govern which, and what order to read them in.
+Everything governing this system's design, in one place. Twenty-four files here, accumulated across
+several design sessions, and four more held privately; this index says what each one is, which govern
+which, and what order to read them in.
 
-**Start here:** [`JARVIS_CONSTITUTION.md`](JARVIS_CONSTITUTION.md) for the principles,
-[`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) for what is actually built against them.
+**Four documents this index names are not in this repository** — the constitution and addenda 5, 11
+and 15. They are held privately, deliberately, and are named without links wherever they appear
+below. [`GOVERNANCE.md`](GOVERNANCE.md) explains the split and
+[`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) the rule it is maintained under. A
+reference you cannot follow means the document is private, not missing.
+
+**Start here:** [`GOVERNANCE.md`](GOVERNANCE.md) for what governs this system and how much of it is
+published, then [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) for what is actually built against
+it. The gap analysis is the single most useful file here, and it is public in full.
 
 ---
 
@@ -14,10 +22,10 @@ Documents disagree with each other, so the order matters. Higher layers win.
 
 | Layer | Document | Authority |
 |---|---|---|
-| **Constitutional** | [`JARVIS_CONSTITUTION.md`](JARVIS_CONSTITUTION.md) | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
+| **Constitutional** | `JARVIS_CONSTITUTION.md` — **held privately** | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
 | Architectural | [`addenda/`](addenda) 16–18 (Gateway lineage) | Canonical **for the external communication boundary and backend infrastructure only**. A separate subject from 2–15, not a newer set of it — these neither supersede nor are governed by the Financial Intelligence addenda. Where the two ever touch the same question, record it in `SPEC_RECONCILIATION.md` rather than assuming the higher number wins. |
-| Architectural | [`addenda/`](addenda) 11–15 (newest FI set) | Canonical. Where these conflict with 5–10, these win. |
-| Architectural | [`addenda/`](addenda) 5–10 | Canonical except where 11–15 clarify. |
+| Architectural | [`addenda/`](addenda) 11–15 (newest FI set) | Canonical. Where these conflict with 5–10, these win. 11 and 15 are held privately. |
+| Architectural | [`addenda/`](addenda) 5–10 | Canonical except where 11–15 clarify. 5 is held privately. |
 | Architectural | [`addenda/`](addenda) 2–4 | **Superseded** by 5–10. Historical only. |
 | Architectural | [`addenda/addendum_1_universal_agent.md`](addenda/addendum_1_universal_agent.md) | Base product (voice / universal agent). Unrelated to Financial Intelligence; historical. |
 | Implementation | The code | Reconciled against the above before each increment. |
@@ -30,11 +38,11 @@ those resolutions live, because the addenda themselves are marked do-not-edit.
 
 A distinction worth knowing before editing anything.
 
-- **Verbatim** — `addenda/` 1–14 are unedited copies of supplied specifications. They are the
-  authoritative source and are never changed; disagreements with them get recorded elsewhere.
-- **Maintained** — `JARVIS_GAP_ANALYSIS.md`, `SPEC_RECONCILIATION.md`, `TIMING_CONSTANTS.md`, and
-  `addenda/addendum_15_agent_rationality_monitoring.md` are this project's own records, edited as the
-  design and the code move.
+- **Verbatim** — `addenda/` 1–14 and 16–18 are unedited copies of supplied specifications. They are
+  the authoritative source and are never changed; disagreements with them get recorded elsewhere.
+- **Maintained** — `JARVIS_GAP_ANALYSIS.md`, `SPEC_RECONCILIATION.md`, `TIMING_CONSTANTS.md` and
+  `organization.yaml` are this project's own records, edited as the design and the code move.
+  Addendum 15 is maintained in the same sense, but privately.
 
 ---
 
@@ -42,11 +50,16 @@ A distinction worth knowing before editing anything.
 
 | Document | What it holds |
 |---|---|
-| [`JARVIS_CONSTITUTION.md`](JARVIS_CONSTITUTION.md) | The durable design authority: axioms, evidence discipline, governance, the direction from "My AI" toward JARVIS. |
+| `JARVIS_CONSTITUTION.md` — **held privately** | The durable design authority: axioms, evidence discipline, governance, the direction from "My AI" toward JARVIS. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | The running measurement of built-versus-constitution. Axiom scorecard, what is honored, what is absent, what closed and how it was verified. The most useful single file for understanding current state. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Where conflicts *between* specifications are resolved, and where owner decisions are recorded. Also lists what was declined, and why. |
 | [`TIMING_CONSTANTS.md`](TIMING_CONSTANTS.md) | Every constant whose correctness depends on a rate, what that rate is, and whether it has been *measured*. Three real defects were found this way. |
-| [`MY_AI_DESIGN_SPEC.md`](MY_AI_DESIGN_SPEC.md) | The original My AI product spec — permissioned action layer, data governance, client/server split. |
+| [`organization.yaml`](organization.yaml) | The organization as *implemented*, machine-readable. `tests/test_organization_model.py` asserts every claim in it against the code, so a role named here but not built — or built but not named — fails the suite. |
+| [`GOVERNANCE.md`](GOVERNANCE.md) | Which governing documents are held privately, why that is a split rather than an omission, and what remains public. |
+| [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) | The rule the split is maintained under, so it stays a practice rather than a one-off migration. What moves, what must never move, and how a public comment references private reasoning by identifier. |
+| [`MARKET_DATA_TAXONOMY.md`](MARKET_DATA_TAXONOMY.md) | What data an analysis organization can obtain from markets, organised by how it arrives in time rather than by asset class. |
+| [`DOCUMENTATION_RECONCILIATION_PLAN.md`](DOCUMENTATION_RECONCILIATION_PLAN.md) | The 2026-08-16 inventory that produced the public/private split. A proposal, since partly executed — read it as the record of that decision, not as a description of current structure. |
+| [`MY_AI_DESIGN_SPEC.md`](MY_AI_DESIGN_SPEC.md) | The original My AI product spec — permissioned action layer, data governance, client/server split. Governs `app/` accurately; stale as a description of the system as a whole. |
 
 ## The addenda
 
@@ -64,17 +77,17 @@ organization.
 
 | | |
 |---|---|
-| [11 — Agent-Driven Organizational Architecture](addenda/addendum_11_agent_driven_organizational_architecture.md) | The organizational constitution. Roles, authority boundaries, lifecycle, Bob as CEO. |
+| 11 — Agent-Driven Organizational Architecture — **held privately** | The organizational constitution. Roles, authority boundaries, lifecycle, Bob as CEO. |
 | [12 — Consolidated Architecture Specification](addenda/addendum_12_consolidated_architecture_specification.md) | The integration spec; its §21 Pre-Alpha task list drives current work. |
 | [13 — Training Agent Design](addenda/addendum_13_training_agent_design_specification.md) | Training, evaluation, reinforcement, knowledge preservation. |
 | [14 — Alpha Acceptance Specification](addenda/addendum_14_alpha_acceptance_specification.md) | What must demonstrably work before Alpha. Origin of the UQI and agent self-awareness requirements. |
-| [15 — Agent Rationality Monitoring](addenda/addendum_15_agent_rationality_monitoring.md) | Behavioral health and sentinels. **Derived, not verbatim** — written from owner decisions in discussion. Nothing in it is built. |
+| 15 — Agent Rationality Monitoring — **held privately** | Behavioral health and sentinels. **Derived, not verbatim** — written from owner decisions in discussion. Nothing in it is built. |
 
 **Financial Intelligence, second set (5–10)** — canonical except where the newer set clarifies.
 
 | | |
 |---|---|
-| [5 — System Constitution and Development Principles](addenda/addendum_5_system_constitution_and_development_principles.md) | |
+| 5 — System Constitution and Development Principles — **held privately** | Development principles, including the Conflict Rule every canonical document carries. |
 | [6 — Core Client/Server Agent Architecture](addenda/addendum_6_core_client_server_agent_architecture.md) | |
 | [7 — Continuous Opportunity Detection and Analysis](addenda/addendum_7_continuous_opportunity_detection_and_analysis.md) | The IV-surface detector, peer analysis, grading. |
 | [8 — Training, Simulation, Validation, Continuous Learning](addenda/addendum_8_training_simulation_validation_and_continuous_learning.md) | §4's test progression drives the graduation path. |
@@ -90,10 +103,12 @@ organization.
 
 ## Reading orders
 
-**To understand the intent:** constitution → addendum 11 → addendum 12.
+**To understand the intent:** constitution → addendum 11 → addendum 12. The first two are private;
+from this repository alone, `SPEC_RECONCILIATION.md` §2 carries the substance of what they settled,
+and addendum 12 is public in full.
 
-**To understand what exists:** gap analysis → `SPEC_RECONCILIATION.md` §2 (superseded statements) → the
-code.
+**To understand what exists:** gap analysis → `SPEC_RECONCILIATION.md` §2 (superseded statements) →
+`organization.yaml` → the code.
 
 **To pick up development:** gap analysis's closing recommendations → `SPEC_RECONCILIATION.md` §6 (open
 conflicts) → `TIMING_CONSTANTS.md` if touching anything rate-dependent.

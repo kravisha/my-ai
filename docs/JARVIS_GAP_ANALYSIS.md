@@ -1,8 +1,9 @@
 # JARVIS Constitutional Gap Analysis
 
-**Maintained document.** Measures what is actually built against `docs/JARVIS_CONSTITUTION.md`. The
-constitution is the durable design authority and sits above the architectural addenda; this file is
-the running record of how far the current system is from it, and what to build next.
+**Maintained document.** Measures what is actually built against `JARVIS_CONSTITUTION.md`, which is
+held privately — see [`GOVERNANCE.md`](GOVERNANCE.md). The constitution is the durable design
+authority and sits above the architectural addenda; this file is the running record of how far the
+current system is from it, and what to build next.
 
 Companion to `docs/SPEC_RECONCILIATION.md`, which handles conflicts *between* the architectural
 addenda. This file handles the constitutional layer above them.

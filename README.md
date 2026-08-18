@@ -4,11 +4,12 @@ A minimal, working slice of "My AI" — a personal, local, permissioned action
 layer that sits between the user and an external reasoning model. This README
 documents what's actually built and how to run it.
 
-**All design documents live in [`docs/`](docs/README.md)** — the constitution,
-the architectural addenda, and the maintained records of how they were
-reconciled against each other and against the code. That index explains which
-documents govern which, and what to read first depending on what you want to
-know. For the original product architecture specifically, see
+**The design documents live in [`docs/`](docs/README.md)** — the architectural
+addenda and the maintained records of how they were reconciled against each
+other and against the code. That index explains which documents govern which,
+and what to read first depending on what you want to know. The constitution and
+three addenda are held privately and named there without links; see
+[`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) for what that split is and why. For the original product architecture specifically, see
 [`docs/MY_AI_DESIGN_SPEC.md`](docs/MY_AI_DESIGN_SPEC.md).
 
 ## What this proves
