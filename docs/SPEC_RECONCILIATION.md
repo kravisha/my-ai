@@ -1151,3 +1151,67 @@ passed through whole rather than silently stripped.
 **That is the fourth time in this project a defect has survived a green suite and
 been found by running the thing.** The pattern is now unmistakable for anything
 that talks to a real process or a real API.
+
+## 23. The Gateway looks at Jarvis, and proves it does not need it (2026-08-18)
+
+G5 gives the Gateway addendum 17 §4's "project-wide status visibility", and then
+spends most of its effort on the harder half: demonstrating addendum 16 §23's
+failure isolation rather than asserting it.
+
+### Read-only, and enforced where it acts
+
+The Gateway issues GETs against the backend's `/admin` surface and nothing else.
+It cannot retire an agent, resume one, or file a directive. Addendum 11 §15 makes
+the Controller the exclusive executor of lifecycle changes, and the control panel
+already exists for a human to request them - giving a conversational model
+lifecycle authority over the organization is a far larger step than "show me what
+is running", and it is not this increment's to take.
+
+The restriction lives in `gateway/jarvis.py`, in the one method that reaches the
+network, rather than in a convention that future tools are trusted to follow. A
+test asserts the assistant is offered no `retire_agent`, `resume_agent`,
+`spawn_agent` or `push_branch`.
+
+### Being down is a value, not an exception
+
+§23 is not satisfied by catching exceptions somewhere upstream. It is satisfied by
+"the backend is unavailable" being an ordinary answer - `{"available": false,
+"reason": ...}` - so that the conversation, the Scoreboard and Git carry on
+without knowing anything is wrong. `/status` therefore answers **200** when the
+backend is down, not 502: a status page that fails when the thing it reports on
+fails has confused itself with its subject.
+
+Timeouts are two seconds to connect and five to answer, asserted in a test,
+because a backend that accepts a connection and never replies would otherwise hold
+a model turn open for as long as the socket allowed.
+
+### Both axes, still not merged
+
+`lifecycle_state` and `process_state` are reported separately all the way out to
+the phone. A dormant agent and a crashed one both have no process and only one is
+a fault - the distinction the two-axis model exists for, and one a status view
+would be very easy to flatten into a single word.
+
+### The session is held in memory
+
+The backend's sessions expire after seven days, so a static token in the
+environment would quietly stop working. The Gateway logs in with credentials and
+renews **once** on a 401 - renewing in a loop would turn a wrong password into a
+hammering of the login route. The token stays in the process: writing it into
+`gateway.db` would put a second copy of a live session on disk for no benefit.
+
+### What the live verification actually showed
+
+Both states, deliberately, against a real backend and a real agent population:
+
+- **Backend down.** `/status` answered 200 with `available: false` and named the
+  cause (`ConnectTimeout`). The Scoreboard accepted a new item over HTTP, a
+  conversation filed one and published a document to a real branch, and the
+  assistant, asked whether Jarvis was running, said it was not - without
+  speculating about why.
+- **Backend up.** Six agents reported with both axes and heartbeat ages;
+  `analysis-1` sat at 15 seconds while the rest were under one, which is the
+  known-good shape for an agent mid-LLM-call rather than a fault.
+- **A retirement, mid-run.** `dummy-1` retired through the panel route came back
+  as `dormant / stopped`, counted as dormant, and absent from `crashed` - the
+  distinction surviving the whole path from `agent_registry` to the browser.

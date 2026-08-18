@@ -386,4 +386,11 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "list_repository_files",
         "read_repository_file",
         "publish_document",
+        "jarvis_status",
+        "jarvis_agent",
     }, "the assistant must not be handed a tool for something that is not built"
+
+    assert not any(
+        name in offered
+        for name in ("retire_agent", "resume_agent", "spawn_agent", "push_branch")
+    ), "the system tools are read-only and the Git tools do not push; neither may grow an action"

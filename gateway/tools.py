@@ -7,9 +7,11 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Eight tools: five Scoreboard, three Git. System status is not here because it is
-not built; the system prompt says so, and an assistant with no tool for a thing
-cannot quietly pretend otherwise.
+Ten tools: five Scoreboard, three Git, two for the running Jarvis system. The
+system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
+because retiring or resuming an agent is a lifecycle action the Controller alone
+executes (addendum 11 §15) and a conversational model is not the right holder of
+that authority. Nothing here can push, either.
 
 **Publishing has a confirmation the model cannot supply on its own reasoning.**
 `publish_document` takes `confirm_public`, and `gateway/repositories.py` refuses a
@@ -32,7 +34,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import repositories, scoreboard
+from gateway import jarvis, repositories, scoreboard
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -210,6 +212,34 @@ GIT_TOOLS = [
 
 TOOLS = TOOLS + GIT_TOOLS
 
+JARVIS_TOOLS = [
+    {
+        "name": "jarvis_status",
+        "description": (
+            "The running Jarvis organization: which agents exist, their lifecycle "
+            "state (active or dormant) and process state (running, stopped or "
+            "crashed), and how stale each heartbeat is. Read-only. If the backend "
+            "is not running this returns available=false with a reason - report "
+            "that plainly rather than guessing at the state."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "jarvis_agent",
+        "description": (
+            "One agent in detail, by identity such as 'explorer-1' - its record, "
+            "health and history. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"identity": {"type": "string"}},
+            "required": ["identity"],
+        },
+    },
+]
+
+TOOLS = TOOLS + JARVIS_TOOLS
+
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
 
@@ -287,6 +317,12 @@ def execute(conn: Database, name: str, arguments: dict) -> dict:
                     confirmed_public=bool(arguments.get("confirm_public", False)),
                 )
             }
+
+        if name == "jarvis_status":
+            return jarvis.JarvisClient().status()
+
+        if name == "jarvis_agent":
+            return jarvis.JarvisClient().agent(str(arguments["identity"]))
 
     except (scoreboard.ScoreboardError, repositories.RepositoryError) as refusal:
         return {"error": str(refusal)}

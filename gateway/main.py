@@ -40,7 +40,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.model_gateway import default_provider
-from gateway import auth, conversation, scoreboard, store
+from gateway import auth, conversation, jarvis, scoreboard, store
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -273,6 +273,15 @@ async def resolve_scoreboard_item(
         return scoreboard.resolve_item(conn, item_id, request.resolution)
     except scoreboard.ScoreboardError as refusal:
         raise HTTPException(status_code=400, detail=str(refusal))
+
+
+@app.get("/status")
+async def jarvis_status(_: str = Depends(require_session)):
+    """Project-wide status visibility (addendum 17 §4), and the §23 promise in
+    one route: when the backend is down this answers 200 with available=false and
+    a reason, never 5xx. The Gateway's own liveness is not contingent on the
+    system it looks at."""
+    return jarvis.JarvisClient().status()
 
 
 @app.websocket("/ws")

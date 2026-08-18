@@ -92,6 +92,26 @@
     margin: .4rem 0 0; padding-left: .6rem; border-left: 2px solid var(--line);
     font-size: .9rem; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
   }
+  #status-toggle {
+    font: inherit; font-size: .78rem; font-weight: 600; color: var(--ink);
+    background: none; border: 1px solid var(--line); border-radius: 999px;
+    padding: .15rem .6rem; cursor: pointer;
+  }
+  #system { max-width: 46rem; margin: 0 auto; display: grid; gap: .5rem; }
+  #system .unavailable {
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--muted);
+    border-radius: .5rem; padding: .7rem .8rem; color: var(--muted);
+  }
+  .agent {
+    display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: .5rem; padding: .5rem .8rem;
+  }
+  .agent.crashed { border-left-color: var(--error); }
+  .agent.dormant { border-left-color: var(--muted); opacity: .7; }
+  .agent .identity { font-weight: 600; }
+  .agent .axis { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .agent .axis.bad { color: var(--error); font-weight: 700; }
   #login { max-width: 22rem; margin: 3rem auto; display: grid; gap: .6rem; }
   #login p { margin: 0; color: var(--muted); font-size: .85rem; }
   #login .problem { color: var(--error); }
@@ -102,6 +122,7 @@
 <header>
   <h1>Jarvis Gateway</h1>
   <button type="button" id="board-toggle" class="hidden">Scoreboard <span class="count" id="board-count"></span></button>
+  <button type="button" id="status-toggle" class="hidden">System</button>
   <span id="status">offline</span>
 </header>
 
@@ -115,6 +136,7 @@
   </form>
   <div id="transcript" class="hidden"></div>
   <div id="board" class="hidden"></div>
+  <div id="system" class="hidden"></div>
 </main>
 
 <form class="composer hidden" id="composer">
@@ -135,6 +157,8 @@
     transcript: document.getElementById("transcript"),
     composer: document.getElementById("composer"),
     board: document.getElementById("board"),
+    system: document.getElementById("system"),
+    statusToggle: document.getElementById("status-toggle"),
     boardToggle: document.getElementById("board-toggle"),
     boardCount: document.getElementById("board-count"),
     input: document.getElementById("input"),
@@ -178,9 +202,12 @@
     els.login.classList.add("hidden");
     els.transcript.classList.remove("hidden");
     els.board.classList.add("hidden");
+    els.system.classList.add("hidden");
     els.composer.classList.remove("hidden");
     els.boardToggle.classList.remove("hidden");
+    els.statusToggle.classList.remove("hidden");
     els.boardToggle.firstChild.textContent = "Scoreboard ";
+    els.statusToggle.textContent = "System";
   }
 
   function showLogin(problem) {
@@ -188,8 +215,10 @@
     els.login.classList.remove("hidden");
     els.transcript.classList.add("hidden");
     els.board.classList.add("hidden");
+    els.system.classList.add("hidden");
     els.composer.classList.add("hidden");
     els.boardToggle.classList.add("hidden");
+    els.statusToggle.classList.add("hidden");
     els.loginProblem.textContent = problem || "";
     setStatus("offline");
   }
@@ -302,6 +331,76 @@
     }
     for (const item of body.items) els.board.append(renderItem(item));
   }
+
+  // The system view. Its most important state is the one where there is nothing to
+  // show: addendum 16 §23 means an unreachable backend must read as a fact about
+  // Jarvis, not as a fault in the Gateway - so it renders the reason plainly and
+  // the rest of the page keeps working.
+  async function showSystem() {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    els.transcript.classList.add("hidden");
+    els.board.classList.add("hidden");
+    els.composer.classList.add("hidden");
+    els.system.classList.remove("hidden");
+    els.statusToggle.textContent = "Conversation";
+    els.system.replaceChildren();
+
+    let body;
+    try {
+      const response = await fetch("/status", { headers: { Authorization: "Bearer " + token } });
+      if (response.status === 401) return showLogin("Session expired. Sign in again.");
+      body = await response.json();
+    } catch (err) {
+      body = { available: false, reason: "Could not reach the Gateway." };
+    }
+
+    if (!body.available) {
+      const note = document.createElement("p");
+      note.className = "unavailable";
+      note.textContent = body.reason;
+      els.system.append(note);
+      return;
+    }
+
+    if (body.agents.length === 0) {
+      const note = document.createElement("p");
+      note.className = "unavailable";
+      note.textContent = "The backend is running and no agents are registered.";
+      els.system.append(note);
+      return;
+    }
+
+    for (const agent of body.agents) {
+      const row = document.createElement("div");
+      const crashed = agent.process_state === "crashed";
+      const dormant = agent.lifecycle_state === "dormant";
+      row.className = "agent" + (crashed ? " crashed" : dormant ? " dormant" : "");
+
+      const identity = document.createElement("span");
+      identity.className = "identity";
+      identity.textContent = agent.identity;
+      row.append(identity);
+
+      // Both axes, always, and never merged into one word - a dormant agent and
+      // a crashed one both have no process, and only one of them is a fault.
+      for (const [value, bad] of [
+        [agent.lifecycle_state, false],
+        [agent.process_state, crashed],
+        [agent.heartbeat_age_seconds === null ? "no heartbeat" : `${agent.heartbeat_age_seconds}s ago`, false],
+      ]) {
+        const span = document.createElement("span");
+        span.className = "axis" + (bad ? " bad" : "");
+        span.textContent = value;
+        row.append(span);
+      }
+      els.system.append(row);
+    }
+  }
+
+  els.statusToggle.addEventListener("click", () => {
+    if (els.system.classList.contains("hidden")) showSystem();
+    else showConversation();
+  });
 
   els.boardToggle.addEventListener("click", () => {
     if (els.board.classList.contains("hidden")) showBoard();
