@@ -395,3 +395,49 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         name in offered
         for name in ("retire_agent", "resume_agent", "spawn_agent", "push_branch")
     ), "the system tools are read-only and the Git tools do not push; neither may grow an action"
+
+
+# --- Voice (G6) ---
+#
+# The Web Speech API cannot be driven from a Python test, so what is asserted
+# here is what the page ships: the controls exist, the disclosure is present, and
+# the "no external requests" property survived a feature that could easily have
+# reached for a speech service. The behaviour itself is verified in a real
+# browser - see the increment's verification notes.
+
+
+def test_the_page_offers_voice_and_a_way_to_interrupt(gateway_client):
+    body = gateway_client.get("/").text
+
+    assert 'id="mic"' in body, "addendum 16 §9 makes voice a primary interface"
+    assert 'id="interrupt"' in body, "§9 requires interruption while the assistant speaks"
+    assert 'id="input"' in body, "§9 also requires text when the user wants it"
+
+
+def test_voice_uses_the_browsers_own_speech_and_says_where_the_audio_goes(gateway_client):
+    """The disclosure is the point of this test. Chrome's SpeechRecognition sends
+    audio to Google; a project whose purpose is controlling what leaves does not
+    get to leave that implicit."""
+    body = gateway_client.get("/").text
+
+    assert "webkitSpeechRecognition" in body
+    assert "speechSynthesis" in body
+    assert "Google" in body and "Apple" in body, "the disclosure must stay in the page"
+
+
+def test_the_barge_in_limitation_is_written_down_where_it_is_implemented(gateway_client):
+    """Listening pauses while speaking, because a microphone hearing the speaker
+    transcribes the assistant's own reply. The user can always interrupt; the
+    microphone cannot - and claiming otherwise would be the easy lie here."""
+    body = gateway_client.get("/").text
+
+    assert "BARGE-IN IS BY TAP, NOT BY VOICE" in body
+
+
+def test_adding_voice_did_not_add_an_external_request(gateway_client):
+    """The property the page has held since G1, re-checked against the feature
+    most likely to break it."""
+    body = gateway_client.get("/").text
+
+    for marker in ("http://", "https://", "//cdn", "integrity="):
+        assert marker not in body

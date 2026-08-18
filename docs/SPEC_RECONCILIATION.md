@@ -1361,3 +1361,62 @@ the client is deliberately one file with its script and style inline (no build
 step, no external requests), so any such policy would have to carry
 `'unsafe-inline'` and would assert protection it does not provide. Splitting the
 page is the honest way to earn it, and is worth revisiting if the page grows.
+
+## 26. Voice, and the two things it is honest about (2026-08-18)
+
+G6 completes the Gateway increments with addendum 16 §9: voice as a primary
+interface - natural speech, spoken replies, interruption, a visible transcript,
+text when wanted, and switching between the two without losing context.
+
+### Why the browser's own speech
+
+Recognition and synthesis are the Web Speech API rather than a server-side speech
+provider. No new dependency, no API key, no second bill, and no audio for this
+service to hold - on the first day of a feature §9 itself expects to be rebuilt
+once it has been used in anger. And because the *transcript* is what reaches the
+model, replacing this later changes one file and nothing else: no schema, no
+protocol, no server code.
+
+The client's "one file, no build step, no external requests" property survived,
+and a test re-checks it against precisely the feature most likely to have broken
+it.
+
+### The disclosure
+
+**In Chrome, speech recognition uploads audio to Google's servers; in Safari, to
+Apple's.** Speaking is local. For a project whose purpose is controlling what
+leaves, that cannot be an implementation detail - it is in the README, in the
+implementation comment, and asserted by a test that fails if the disclosure is
+removed from the page.
+
+### Barge-in is by tap, not by voice
+
+Recognition left running while the phone speaker plays a reply transcribes the
+reply, and the assistant interrupts itself forever. Open-mic interruption needs
+echo cancellation against the synthesised audio, which is real work and is not
+built.
+
+So listening pauses while speaking, and Stop - or the microphone button, or
+typing - cuts the reply off instantly. **The user can always interrupt; the
+microphone cannot.** §9 lists "user barge-in while AI is speaking", and this meets
+the user-facing half of it while saying plainly which half is missing rather than
+claiming the feature entire.
+
+### What verification could and could not reach
+
+The Browser pane blocks microphone capture, so **speech recognition itself was
+never exercised here** - that is the owner's test, on the phone, through the
+tunnel. What was verified in a real browser: the heard-sentence path end to end by
+calling the same handler the recognition event calls (transcript became a turn,
+the model answered, the reply was spoken); synthesis genuinely starting; Stop and
+typing each cutting speech off mid-sentence; and the permission-refused path
+switching voice off and saying so in the transcript.
+
+That last one was real rather than simulated: the pane denied the microphone, the
+error handler ran, and the page recovered exactly as designed.
+
+**One defect found by looking.** After a reply finished, the status line kept
+reading "speaking - tap Stop to interrupt" whenever listening could not resume.
+The assistant was not speaking; the line was believed; and a status line that
+describes something the system is not doing is worse than no status line. It now
+says what is actually true, including when voice is simply off.

@@ -332,8 +332,35 @@ unlimited token guesses would be an oracle sitting beside a rate-limited door.
 Responses carry `nosniff`, `no-referrer` and `frame-ancestors 'none'`, and HSTS
 when the request actually arrived over TLS.
 
-What does not work yet: voice, and pushing. `docs/SPEC_RECONCILIATION.md` §20 to
-§25 record why it is shaped this way and what the remaining increments are.
+### Voice
+
+Tap the microphone. Speech is recognised and replies are spoken, the transcript
+stays visible, and typing still works mid-conversation — the same conversation
+either way, which is what addendum 16 §9 asks for.
+
+Recognition and synthesis are the **browser's own** Web Speech API: no new
+dependency, no API key, no second bill, and no audio for this service to hold.
+
+**Where the audio goes.** In Chrome, speech recognition uploads audio to Google's
+servers to be transcribed; in Safari, to Apple's. Speaking is local to the device.
+That is a real disclosure for a project whose purpose is controlling what leaves,
+so it is stated here rather than left to be discovered. If that trade is
+unacceptable, the replacement is a server-side speech provider, and it changes one
+file — `gateway/static/index.html` — because the transcript is all that ever
+reaches the model.
+
+**Interruption is by tap, not by voice.** Stop, the microphone button, or simply
+typing cuts a reply off instantly. Listening pauses while the assistant speaks,
+because a microphone that hears the phone speaker transcribes the reply and the
+assistant then interrupts itself forever. Open-mic barge-in needs echo
+cancellation against the synthesised audio, which is not built.
+
+Voice needs a secure context, so it works on `localhost` and through the tunnel —
+not over plain HTTP to an IP address. Firefox has no `SpeechRecognition`; the
+button says so rather than failing quietly.
+
+What does not work yet: pushing to a remote. `docs/SPEC_RECONCILIATION.md` §20 to
+§26 record why the Gateway is shaped this way.
 
 ## Simulation
 

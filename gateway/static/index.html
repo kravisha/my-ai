@@ -112,6 +112,21 @@
   .agent .identity { font-weight: 600; }
   .agent .axis { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .agent .axis.bad { color: var(--error); font-weight: 700; }
+  /* Voice */
+  #mic {
+    background: none; border: 1px solid var(--line); color: var(--ink);
+    border-radius: .5rem; padding: .45rem .6rem; font-size: 1.05rem; line-height: 1;
+  }
+  #mic.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  #mic.unsupported { opacity: .4; }
+  #voice-bar {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .5rem 1rem; border-top: 1px solid var(--line); background: var(--panel);
+  }
+  #voice-state { font-size: .8rem; color: var(--muted); }
+  #voice-state.hearing { color: var(--accent); font-weight: 600; }
+  #voice-state.speaking { color: var(--ink); font-weight: 600; }
+  #interrupt { margin-left: auto; padding: .35rem .8rem; font-size: .8rem; }
   #login { max-width: 22rem; margin: 3rem auto; display: grid; gap: .6rem; }
   #login p { margin: 0; color: var(--muted); font-size: .85rem; }
   #login .problem { color: var(--error); }
@@ -140,9 +155,14 @@
 </main>
 
 <form class="composer hidden" id="composer">
+  <button type="button" id="mic" title="Voice" aria-label="Voice">🎙</button>
   <textarea id="input" rows="1" placeholder="Message" autocapitalize="sentences"></textarea>
   <button type="submit" id="send">Send</button>
 </form>
+<div id="voice-bar" class="hidden">
+  <span id="voice-state">listening…</span>
+  <button type="button" id="interrupt">Stop</button>
+</div>
 
 <script>
 (() => {
@@ -156,6 +176,10 @@
     password: document.getElementById("password"),
     transcript: document.getElementById("transcript"),
     composer: document.getElementById("composer"),
+    mic: document.getElementById("mic"),
+    voiceBar: document.getElementById("voice-bar"),
+    voiceState: document.getElementById("voice-state"),
+    interrupt: document.getElementById("interrupt"),
     board: document.getElementById("board"),
     system: document.getElementById("system"),
     statusToggle: document.getElementById("status-toggle"),
@@ -204,6 +228,7 @@
     els.board.classList.add("hidden");
     els.system.classList.add("hidden");
     els.composer.classList.remove("hidden");
+    if (voice.enabled) els.voiceBar.classList.remove("hidden");
     els.boardToggle.classList.remove("hidden");
     els.statusToggle.classList.remove("hidden");
     els.boardToggle.firstChild.textContent = "Scoreboard ";
@@ -217,6 +242,7 @@
     els.board.classList.add("hidden");
     els.system.classList.add("hidden");
     els.composer.classList.add("hidden");
+    els.voiceBar.classList.add("hidden");
     els.boardToggle.classList.add("hidden");
     els.statusToggle.classList.add("hidden");
     els.loginProblem.textContent = problem || "";
@@ -407,6 +433,185 @@
     else showConversation();
   });
 
+
+  // ------------------------------------------------------------------ voice
+  //
+  // Addendum 16 §9: voice is a primary interface, not an optional enhancement -
+  // natural speech, streaming, low latency, interruption, a visible transcript,
+  // text when wanted, and switching between the two without losing context.
+  //
+  // Recognition and synthesis are the browser's own (Web Speech API). Three
+  // reasons, and one cost that has to be stated rather than buried:
+  //
+  //   * No new dependency, no API key, no second bill, and no audio for this
+  //     service to hold. A server-side speech provider would be more code and
+  //     more secrets on the first day of a feature that §9 itself expects to be
+  //     rebuilt once it has been used in anger.
+  //   * It works in the phone browser addendum 16 §8 targets.
+  //   * The transcript is what reaches the model either way, so moving to a
+  //     server-side provider later changes this file and nothing else.
+  //
+  // THE COST: in Chrome, SpeechRecognition sends audio to Google's servers to be
+  // transcribed; in Safari, to Apple's. That is a real disclosure for a project
+  // whose point is controlling what leaves, and it is in the README rather than
+  // left for somebody to discover. Speaking is local to the device.
+  //
+  // BARGE-IN IS BY TAP, NOT BY VOICE, deliberately. Recognition left running
+  // while the phone speaker plays a reply transcribes the reply - the assistant
+  // interrupts itself, forever. Open-mic interruption needs echo cancellation
+  // against the synthesised audio, which is real work and is not built. So
+  // listening pauses while speaking, and Stop - or the microphone button, or
+  // sending text - cuts the reply off instantly and hands the turn back. The
+  // user can always interrupt; the microphone cannot.
+  const speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+
+  const voice = {
+    enabled: false,
+    recognizer: null,
+    speaking: false,
+    supported: Boolean(speech && synth),
+  };
+
+  function setVoiceState(text, kind) {
+    els.voiceState.textContent = text;
+    els.voiceState.className = kind || "";
+  }
+
+  function startListening() {
+    if (voice.speaking) return;
+    // The indicator has to stop saying "speaking" the moment speech ends, even
+    // when listening cannot resume - found in verification, where the label sat
+    // on "speaking - tap Stop to interrupt" long after the reply had finished.
+    // A status line that describes something the assistant is not doing is worse
+    // than no status line, because it is believed.
+    if (!voice.enabled || !voice.recognizer) {
+      setVoiceState("voice is off - tap the microphone to start");
+      return;
+    }
+    try {
+      voice.recognizer.start();
+      setVoiceState("listening...", "hearing");
+    } catch (err) {
+      // start() throws when it is already running, which is not a problem.
+      setVoiceState("listening...", "hearing");
+    }
+  }
+
+  function speak(text) {
+    if (!voice.enabled || !(text || "").trim()) return;
+    stopSpeaking();
+    voice.speaking = true;
+    try {
+      voice.recognizer && voice.recognizer.stop();
+    } catch (err) {}
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = utterance.onerror = () => {
+      voice.speaking = false;
+      startListening();
+    };
+    setVoiceState("speaking - tap Stop to interrupt", "speaking");
+    synth.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if (synth && (synth.speaking || synth.pending)) synth.cancel();
+    voice.speaking = false;
+  }
+
+  function handleTranscript(text) {
+    // The one place a heard sentence becomes a turn, so voice and typing share a
+    // path: §9's "switching between voice and text without losing context" is
+    // then true by construction rather than by effort.
+    const said = (text || "").trim();
+    if (!said) return;
+    els.input.value = said;
+    els.composer.requestSubmit();
+  }
+
+  function enableVoice() {
+    if (!voice.supported) return;
+    voice.enabled = true;
+    els.mic.classList.add("on");
+    els.voiceBar.classList.remove("hidden");
+
+    voice.recognizer = new speech();
+    voice.recognizer.lang = navigator.language || "en-US";
+    voice.recognizer.interimResults = false;
+    voice.recognizer.continuous = false;
+
+    voice.recognizer.addEventListener("result", (event) => {
+      const last = event.results[event.results.length - 1];
+      if (last.isFinal) handleTranscript(last[0].transcript);
+    });
+    // Recognition ends after every utterance and after every silence. Restarting
+    // is what makes it feel continuous; without this the microphone goes deaf
+    // after one sentence and the user is left tapping it again.
+    voice.recognizer.addEventListener("end", () => {
+      if (voice.enabled && !voice.speaking) startListening();
+    });
+    voice.recognizer.addEventListener("error", (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        disableVoice();
+        addTurn("error", "Microphone permission was refused, so voice is off.");
+      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        setVoiceState("recognition error: " + event.error);
+      }
+    });
+
+    startListening();
+  }
+
+  function disableVoice() {
+    voice.enabled = false;
+    stopSpeaking();
+    try {
+      voice.recognizer && voice.recognizer.abort();
+    } catch (err) {}
+    voice.recognizer = null;
+    els.mic.classList.remove("on");
+    els.voiceBar.classList.add("hidden");
+  }
+
+  els.mic.addEventListener("click", () => {
+    if (!voice.supported) {
+      addTurn(
+        "error",
+        "This browser has no Web Speech API, so voice is unavailable here. " +
+          "Text still works; Chrome and Safari support voice."
+      );
+      return;
+    }
+    // Tapping the microphone while the assistant is talking is an interruption,
+    // not a request to switch voice off.
+    if (voice.enabled && voice.speaking) {
+      stopSpeaking();
+      startListening();
+      return;
+    }
+    voice.enabled ? disableVoice() : enableVoice();
+  });
+
+  els.interrupt.addEventListener("click", () => {
+    stopSpeaking();
+    startListening();
+  });
+
+  if (!voice.supported) els.mic.classList.add("unsupported");
+
+  // A seam for verification: the speech APIs cannot be driven from a test, so the
+  // handlers they call are reachable directly. Not a second code path - these are
+  // the same functions the events call.
+  window.jarvisVoice = {
+    state: voice,
+    speak,
+    stopSpeaking,
+    handleTranscript,
+    enable: enableVoice,
+    disable: disableVoice,
+  };
+
   function connect(token) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${scheme}//${location.host}/ws`);
@@ -438,11 +643,16 @@
         streaming.textContent += frame.text;
         scroll(wasAtBottom);
       } else if (frame.type === "done") {
+        // Spoken when the turn is complete rather than per delta: a synthesiser
+        // fed fragments reads each as its own sentence, and the result is a
+        // stutter that sounds like a fault.
+        const spoken = streaming ? streaming.textContent : "";
         streaming = null;
         els.send.disabled = false;
         setStatus("connected", "live");
         renderCounts(frame.open_counts);
         if (!els.board.classList.contains("hidden")) showBoard();
+        speak(spoken);
       } else if (frame.type === "error") {
         streaming = null;
         els.send.disabled = false;
@@ -491,6 +701,9 @@
     event.preventDefault();
     const text = els.input.value.trim();
     if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+    // Sending anything interrupts a reply in progress - typing over the
+    // assistant is as much an interruption as tapping Stop.
+    stopSpeaking();
     addTurn("user", text);
     socket.send(JSON.stringify({ type: "message", text }));
     els.input.value = "";
