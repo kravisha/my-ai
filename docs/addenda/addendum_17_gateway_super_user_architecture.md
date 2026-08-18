@@ -8,7 +8,7 @@ Note on numbering: this document calls itself **Addendum 1** — meaning the fir
 
 Extends addendum 16 by scoping Version 1 to a single Super User, and adds the Technology and Architecture monitoring function (§7–§9) — the mechanism by which evidence of a component becoming unsuitable, SQLite write contention being its worked example, becomes a structured recommendation rather than an ad-hoc decision.
 
-Substantially restates addendum 16 on one-hop interaction, the Scoreboard, and "the human should make decisions, not transport messages." Both are kept verbatim; the overlap is recorded once in `docs/SPEC_RECONCILIATION.md` §16 rather than reconciled here.
+Substantially restates addendum 16 on one-hop interaction, the Scoreboard, and "the human should make decisions, not transport messages." Both are kept verbatim; the overlap is recorded once in `docs/SPEC_RECONCILIATION.md` §19 rather than reconciled here.
 
 Nothing in this document is built.
 

@@ -6,7 +6,7 @@ Status: Draft specification, August 2026. Provided by the user via `C:\Users\Kri
 
 First document of the **Gateway lineage** (addenda 16–18), which is a different subject from the Financial Intelligence addenda (2–15) and carries no authority over them. This one defines the external communication boundary: a single externally exposed service, voice-first phone client, Git as the durable artifact exchange, and the Scoreboard for deferred discussion. Addendum 17 narrows Version 1 to the Super User; addendum 18 is a targeted infrastructure spec that arrived alongside them.
 
-Nothing in this document is built. See `docs/SPEC_RECONCILIATION.md` §16 for status and for the overlap with addendum 17.
+Nothing in this document is built. See `docs/SPEC_RECONCILIATION.md` §19 for status and for the overlap with addendum 17.
 
 ---
 

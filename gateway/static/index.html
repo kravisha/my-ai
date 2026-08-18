@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Jarvis Gateway</title>
+<!--
+  The Super User client (addendum 16 §8: a phone-accessible web client; a native
+  app is explicitly not required for the first implementation).
+
+  One file, no build step, no external requests. This repository has no frontend
+  toolchain and a single-user page does not justify introducing one; and a page
+  that fetches nothing from a third party cannot leak a session to one. It is
+  written mobile-first because §8's target client is a phone browser, and voice
+  (§9) will be added to this same page at G6.
+-->
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #fff; --ink: #17181a; --muted: #6b6f76;
+    --line: #e2e2df; --accent: #2f6f4f; --user: #eceef1; --error: #a3312a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --panel: #1e1f23; --ink: #ecedee; --muted: #9aa0a6;
+      --line: #2c2e33; --accent: #7fc8a0; --user: #26282d; --error: #f08a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header {
+    display: flex; align-items: baseline; gap: .6rem;
+    padding: .7rem 1rem; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  #status { font-size: .78rem; color: var(--muted); margin-left: auto; }
+  #status.live { color: var(--accent); }
+  #status.error { color: var(--error); }
+  main { flex: 1; overflow-y: auto; padding: 1rem; }
+  .turn { max-width: 46rem; margin: 0 auto 1rem; }
+  .turn .who { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: .25rem; }
+  .turn .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .turn.user .text { background: var(--user); padding: .6rem .8rem; border-radius: .6rem; }
+  .turn.error .text { color: var(--error); }
+  form.composer {
+    display: flex; gap: .5rem; padding: .7rem 1rem;
+    border-top: 1px solid var(--line); background: var(--panel);
+  }
+  textarea, input {
+    flex: 1; font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; padding: .55rem .7rem;
+  }
+  textarea { resize: none; max-height: 8rem; }
+  button {
+    font: inherit; font-weight: 600; color: var(--bg); background: var(--ink);
+    border: 0; border-radius: .5rem; padding: .55rem 1rem; cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  #login { max-width: 22rem; margin: 3rem auto; display: grid; gap: .6rem; }
+  #login p { margin: 0; color: var(--muted); font-size: .85rem; }
+  #login .problem { color: var(--error); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Jarvis Gateway</h1>
+  <span id="status">offline</span>
+</header>
+
+<main id="main">
+  <form id="login">
+    <p>Super User sign-in.</p>
+    <input id="username" name="username" autocomplete="username" placeholder="username" autocapitalize="none">
+    <input id="password" name="password" type="password" autocomplete="current-password" placeholder="password">
+    <button type="submit">Sign in</button>
+    <p id="login-problem" class="problem"></p>
+  </form>
+  <div id="transcript" class="hidden"></div>
+</main>
+
+<form class="composer hidden" id="composer">
+  <textarea id="input" rows="1" placeholder="Message" autocapitalize="sentences"></textarea>
+  <button type="submit" id="send">Send</button>
+</form>
+
+<script>
+(() => {
+  "use strict";
+
+  const els = {
+    status: document.getElementById("status"),
+    login: document.getElementById("login"),
+    loginProblem: document.getElementById("login-problem"),
+    username: document.getElementById("username"),
+    password: document.getElementById("password"),
+    transcript: document.getElementById("transcript"),
+    composer: document.getElementById("composer"),
+    input: document.getElementById("input"),
+    send: document.getElementById("send"),
+    main: document.getElementById("main"),
+  };
+
+  // sessionStorage, not localStorage: the token dies with the tab. This service
+  // is specified as a high-security boundary (addendum 17 §14), and the
+  // conversation itself is held server-side, so persisting the credential would
+  // buy convenience with the only thing worth protecting here.
+  const TOKEN_KEY = "jarvis-gateway-token";
+  let socket = null;
+  let streaming = null;   // the assistant turn currently being received
+
+  const setStatus = (text, kind) => {
+    els.status.textContent = text;
+    els.status.className = kind || "";
+  };
+
+  const atBottom = () => els.main.scrollHeight - els.main.scrollTop - els.main.clientHeight < 60;
+  const scroll = (wasAtBottom) => { if (wasAtBottom) els.main.scrollTop = els.main.scrollHeight; };
+
+  function addTurn(role, text) {
+    const wasAtBottom = atBottom();
+    const turn = document.createElement("div");
+    turn.className = "turn " + role;
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = role === "user" ? "you" : role === "error" ? "gateway" : "assistant";
+    const body = document.createElement("div");
+    body.className = "text";
+    body.textContent = text;
+    turn.append(who, body);
+    els.transcript.append(turn);
+    scroll(wasAtBottom);
+    return body;
+  }
+
+  function showConversation() {
+    els.login.classList.add("hidden");
+    els.transcript.classList.remove("hidden");
+    els.composer.classList.remove("hidden");
+  }
+
+  function showLogin(problem) {
+    sessionStorage.removeItem(TOKEN_KEY);
+    els.login.classList.remove("hidden");
+    els.transcript.classList.add("hidden");
+    els.composer.classList.add("hidden");
+    els.loginProblem.textContent = problem || "";
+    setStatus("offline");
+  }
+
+  function connect(token) {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    socket = new WebSocket(`${scheme}//${location.host}/ws`);
+    setStatus("connecting…");
+
+    socket.addEventListener("open", () => {
+      // The token goes in the first frame rather than the URL: a query string
+      // lands in server logs, proxy logs and history. See gateway/main.py.
+      socket.send(JSON.stringify({ type: "auth", token }));
+    });
+
+    socket.addEventListener("message", (event) => {
+      const frame = JSON.parse(event.data);
+      if (frame.type === "ready") {
+        showConversation();
+        setStatus("connected", "live");
+        els.transcript.replaceChildren();
+        for (const message of frame.messages) addTurn(message.role, message.text);
+        els.main.scrollTop = els.main.scrollHeight;
+      } else if (frame.type === "delta") {
+        const wasAtBottom = atBottom();
+        if (!streaming) streaming = addTurn("assistant", "");
+        streaming.textContent += frame.text;
+        scroll(wasAtBottom);
+      } else if (frame.type === "done") {
+        streaming = null;
+        els.send.disabled = false;
+      } else if (frame.type === "error") {
+        streaming = null;
+        els.send.disabled = false;
+        if (frame.error === "unauthorized") showLogin("Session expired. Sign in again.");
+        else addTurn("error", frame.error);
+      }
+    });
+
+    socket.addEventListener("close", (event) => {
+      socket = null;
+      streaming = null;
+      els.send.disabled = false;
+      if (event.code === 4401) showLogin("Session expired. Sign in again.");
+      else setStatus("disconnected — reload to reconnect", "error");
+    });
+
+    socket.addEventListener("error", () => setStatus("connection error", "error"));
+  }
+
+  els.login.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    els.loginProblem.textContent = "";
+    let response;
+    try {
+      response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: els.username.value, password: els.password.value }),
+      });
+    } catch (err) {
+      els.loginProblem.textContent = "Gateway unreachable.";
+      return;
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      els.loginProblem.textContent = body.detail || `Sign-in failed (${response.status}).`;
+      return;
+    }
+    const { token } = await response.json();
+    sessionStorage.setItem(TOKEN_KEY, token);
+    els.password.value = "";
+    connect(token);
+  });
+
+  els.composer.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = els.input.value.trim();
+    if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+    addTurn("user", text);
+    socket.send(JSON.stringify({ type: "message", text }));
+    els.input.value = "";
+    els.input.style.height = "auto";
+    els.send.disabled = true;
+  });
+
+  // Enter sends, Shift+Enter breaks the line — but not on a touch keyboard,
+  // where Enter is the only newline the user has.
+  els.input.addEventListener("keydown", (event) => {
+    const touch = window.matchMedia("(pointer: coarse)").matches;
+    if (event.key === "Enter" && !event.shiftKey && !touch) {
+      event.preventDefault();
+      els.composer.requestSubmit();
+    }
+  });
+
+  els.input.addEventListener("input", () => {
+    els.input.style.height = "auto";
+    els.input.style.height = Math.min(els.input.scrollHeight, 128) + "px";
+  });
+
+  const existing = sessionStorage.getItem(TOKEN_KEY);
+  if (existing) connect(existing); else showLogin();
+})();
+</script>
+</body>
+</html>

@@ -6,7 +6,7 @@ Status: Proposed / Approved for implementation. Provided by the user via `C:\Use
 
 **This one is already implemented.** The work landed on branch `fix/test-db-isolation` before the specification was filed — the two arrived at the same objective independently. `import backend.main` no longer constructs a Controller, opens a database, or runs schema DDL; construction moved into the FastAPI `lifespan` context manager.
 
-Two acceptance criteria in §7 were **not** met as written, both deliberately, and §9 of this document explicitly invites that: the FI_DB_PATH test redirect was kept rather than removed, and no `app.state` accessor was added because no route needed one. The disposition §9 asks for, and the reasoning for both deviations, is recorded in `docs/SPEC_RECONCILIATION.md` §16.
+Two acceptance criteria in §7 were **not** met as written, both deliberately, and §9 of this document explicitly invites that: the FI_DB_PATH test redirect was kept rather than removed, and no `app.state` accessor was added because no route needed one. The disposition §9 asks for, and the reasoning for both deviations, is recorded in `docs/SPEC_RECONCILIATION.md` §19.
 
 ---
 

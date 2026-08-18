@@ -3,18 +3,17 @@ test module is imported, and both are for the same structural reason: the code
 under test reads its configuration once, at *its* import time, so a fixture is
 already too late.
 
-ANTHROPIC_API_KEY: app.model_gateway constructs the Anthropic client at import
-time (`_client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])`) - without
-this, merely importing app.main would crash in a clean environment with no
-.env file. No real network call is ever made in these tests; call_reasoning_model
-itself is always mocked out, so the key's value never matters, only its presence.
-
 FI_DB_PATH: fi_db.DB_PATH is `Path(os.environ.get("FI_DB_PATH") or <project
 root>/financial_intelligence.db)`, evaluated once when backend.fi_db is first
 imported. Redirecting it here - above every import in this file - is therefore
 the only point at which the suite can decide what "the default database" means
 for the process; by the time the first fixture runs, every module that cared has
 already read it.
+
+GATEWAY_DB_PATH: the same statement about gateway.store.DB_PATH, redirected for
+the same reason and defended by the same session guard below. The Gateway is a
+second service with a second database (see gateway/store.py for why it is
+separate), so it is a second file the suite must not write to.
 
 What made that decisive: backend/main.py used to construct `controller =
 Controller()` at module level, and Controller.__init__ runs fi_db.init_schema, so
@@ -48,35 +47,44 @@ from pathlib import Path
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
 
 # Resolved before the redirect below, since afterwards nothing in the process
-# can still name the real database. Deliberately not fi_db.DB_PATH: this is the
-# file on disk that must not change, independent of what any module thinks its
-# database is.
+# can still name the real databases. Deliberately not fi_db.DB_PATH or
+# store.DB_PATH: these are the files on disk that must not change, independent of
+# what any module thinks its database is.
 REAL_DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
+REAL_GATEWAY_DB_PATH = Path(__file__).resolve().parent.parent / "gateway.db"
 
-# Session-wide stand-in for the real database, for every code path that resolves
+# Session-wide stand-in for the real databases, for every code path that resolves
 # the default rather than being handed a path. One directory for the whole
 # session, not per test: it exists to be harmless, not to isolate tests from
 # each other - per-test isolation is what tmp_path fixtures are for.
 _SESSION_DB_DIR = Path(tempfile.mkdtemp(prefix="my-ai-test-fi-db-"))
 os.environ["FI_DB_PATH"] = str(_SESSION_DB_DIR / "financial_intelligence.db")
+os.environ["GATEWAY_DB_PATH"] = str(_SESSION_DB_DIR / "gateway.db")
 
 
 def real_database_fingerprint() -> dict[str, str | None]:
-    """Content hash of the real database and its WAL sidecar, or None per file
+    """Content hash of each real database and its WAL sidecar, or None per file
     if absent.
 
     The sidecar is included because a leaked write need not reach the main file
-    to be a leaked write: the database runs in WAL mode, so an uncheckpointed
+    to be a leaked write: the databases run in WAL mode, so an uncheckpointed
     commit lands in financial_intelligence.db-wal and leaves the .db bytes
     identical. Hashing only the .db would miss precisely the fast, partial leak
     most likely to slip through. -shm is skipped - it is a scratch index into the
-    WAL, and its bytes churn on plain reads."""
+    WAL, and its bytes churn on plain reads.
+
+    Both databases are watched by one function so that adding a third service
+    means adding a path, not a second guard that somebody forgets to call. The
+    module globals are read on every call rather than captured in a constant,
+    which is what lets tests/test_db_isolation.py point the guard at a stand-in
+    and prove it still detects a change."""
     fingerprint: dict[str, str | None] = {}
-    for path in (REAL_DB_PATH, REAL_DB_PATH.with_name(REAL_DB_PATH.name + "-wal")):
-        try:
-            fingerprint[path.name] = hashlib.md5(path.read_bytes()).hexdigest()
-        except FileNotFoundError:
-            fingerprint[path.name] = None
+    for database in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH):
+        for path in (database, database.with_name(database.name + "-wal")):
+            try:
+                fingerprint[path.name] = hashlib.md5(path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                fingerprint[path.name] = None
     return fingerprint
 
 
@@ -86,6 +94,7 @@ def real_database_fingerprint() -> dict[str, str | None]:
 # would already have written.
 _REAL_DB_AT_START = real_database_fingerprint()
 
+import bcrypt
 import pytest
 from openpyxl import Workbook
 
@@ -96,6 +105,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.users import UserStore
 from backend import fi_db
+from gateway import store as gateway_store
 
 TEST_ACCOUNT_ID = "ACCT-TEST-99999"
 
@@ -172,9 +182,9 @@ def _real_database_change() -> str | None:
 
 
 _LEAK_MESSAGE = """\
-The developer's real database changed during this run:
+One of the developer's real databases changed during this run:
 
-  {path}
+  {paths}
 
 {diff}
 
@@ -188,9 +198,10 @@ it is not a defect at all, and it costs one command to check.
    stack up, stop it and re-run before reading any further.
 
 2. A leak from the suite: a FastAPI dependency, or an object constructed at
-   import time, calling fi_db.get_connection() with no argument. Find it and give
-   it an explicit path. See tests/conftest.py for the two layers that are meant
-   to make that impossible, and why neither is enough on its own."""
+   import time, calling fi_db.get_connection() or gateway.store.get_connection()
+   with no argument. Find it and give it an explicit path. See tests/conftest.py
+   for the two layers that are meant to make that impossible, and why neither is
+   enough on its own."""
 
 # Sentinel rather than None, since None is a real answer here - it means checked
 # and clean.
@@ -210,7 +221,7 @@ def _leak_report() -> str | None:
     if _leak_report_cached is _UNCHECKED:
         diff = _real_database_change()
         _leak_report_cached = None if diff is None else _LEAK_MESSAGE.format(
-            diff=diff, path=REAL_DB_PATH
+            diff=diff, paths="\n  ".join(str(p) for p in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH))
         )
     return _leak_report_cached
 
@@ -362,6 +373,73 @@ def panel_client(panel_conn, tmp_path):
         yield TestClient(backend_main.app)
     finally:
         backend_main.app.dependency_overrides.clear()
+
+
+# The Gateway's Super User credential for tests. Hashed once at conftest import
+# rather than per test: bcrypt is deliberately slow (~100ms a hash at the default
+# cost), which is the point of using it and a waste of a second across a suite
+# that logs in dozens of times with the same password.
+GATEWAY_TEST_USER = "test-super-user"
+GATEWAY_TEST_PASSWORD = "correct-horse-battery-staple"
+GATEWAY_TEST_PASSWORD_HASH = bcrypt.hashpw(
+    GATEWAY_TEST_PASSWORD.encode("utf-8"), bcrypt.gensalt()
+).decode("ascii")
+
+
+@pytest.fixture
+def gateway_conn(tmp_path):
+    """File-backed, like panel_conn and for the same reason: the Gateway's routes
+    open their own connection through a dependency, so a test that wants to see
+    what a route wrote has to share a file with it rather than a connection."""
+    connection = gateway_store.get_connection(tmp_path / "gateway.db")
+    gateway_store.init_schema(connection)
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+def gateway_client(tmp_path, monkeypatch, gateway_conn):
+    """TestClient for the Gateway, with a configured Super User and its database
+    pointed at this test's file - the same one gateway_conn holds open.
+
+    Deliberately not a context manager: `with TestClient(...)` runs the app's
+    lifespan, which opens the *default* database to create its schema. Nothing in
+    these tests needs lifespan, and the routes take their connection from the
+    overridden dependency, so leaving it unentered keeps the suite off that path
+    entirely."""
+    from fastapi.testclient import TestClient
+
+    import gateway.main as gateway_main
+    from gateway import auth as gateway_auth
+
+    monkeypatch.setenv(gateway_auth.SUPER_USER_ENV, GATEWAY_TEST_USER)
+    monkeypatch.setenv(gateway_auth.PASSWORD_HASH_ENV, GATEWAY_TEST_PASSWORD_HASH)
+
+    async def _gateway_db():
+        connection = gateway_store.get_connection(tmp_path / "gateway.db")
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    gateway_main.app.dependency_overrides[gateway_main.gateway_db] = _gateway_db
+    try:
+        yield TestClient(gateway_main.app)
+    finally:
+        gateway_main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def gateway_token(gateway_client):
+    """A live Super User session, obtained through the real login route rather
+    than by inserting a row - so every test that needs a session also exercises
+    the way one is actually issued."""
+    response = gateway_client.post(
+        "/auth/login",
+        json={"username": GATEWAY_TEST_USER, "password": GATEWAY_TEST_PASSWORD},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
 
 
 @pytest.fixture
