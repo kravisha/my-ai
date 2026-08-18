@@ -1,12 +1,12 @@
 -r requirements.txt
-pytest
-httpx
+pytest==9.1.1
+httpx==0.28.1
 # tests/test_organization_model.py reads docs/organization.yaml. Present today only
 # as a transitive dependency of uvicorn[standard]; named here so the drift test does
 # not silently start skipping if that changes.
-pyyaml
+pyyaml==6.0.3
 
 # tests/test_gateway_streaming.py uses anyio's pytest plugin to run async tests.
 # Present today only as a transitive dependency of starlette; named here for the
 # same reason pyyaml is, so those tests do not vanish if that changes.
-anyio
+anyio==4.14.2
