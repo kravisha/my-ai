@@ -349,11 +349,22 @@ unacceptable, the replacement is a server-side speech provider, and it changes o
 file — `gateway/static/index.html` — because the transcript is all that ever
 reaches the model.
 
-**Interruption is by tap, not by voice.** Stop, the microphone button, or simply
-typing cuts a reply off instantly. Listening pauses while the assistant speaks,
-because a microphone that hears the phone speaker transcribes the reply and the
-assistant then interrupts itself forever. Open-mic barge-in needs echo
-cancellation against the synthesised audio, which is not built.
+**Just talk over it.** The microphone stays live while the assistant speaks, and
+genuine speech stops the reply and becomes your next turn — no button, no pause.
+Stop, the microphone button and typing all still interrupt, and are the only way
+in if barge-in cannot arm.
+
+How it avoids interrupting itself on its own voice: the trigger is a second
+microphone stream opened with echo cancellation, watched for energy only, with
+the threshold **measured per reply** — the first 350 ms of each utterance samples
+what that device actually leaks into the microphone, and the trigger sits at three
+times that. Energy must hold for 200 ms, so a door or a cough does not cut the
+assistant off. Independently, a transcript that arrives while speaking and largely
+repeats what is being spoken is discarded as echo rather than sent.
+
+If the browser refuses a microphone stream, barge-in is off and the page says so
+the first time the assistant speaks — a user who thinks they can interrupt, and
+cannot, will talk into a void.
 
 Voice needs a secure context, so it works on `localhost` and through the tunnel —
 not over plain HTTP to an IP address. Firefox has no `SpeechRecognition`; the

@@ -436,41 +436,89 @@
 
   // ------------------------------------------------------------------ voice
   //
-  // Addendum 16 §9: voice is a primary interface, not an optional enhancement -
-  // natural speech, streaming, low latency, interruption, a visible transcript,
-  // text when wanted, and switching between the two without losing context.
+  // Addendum 16 §9: voice is a primary interface - natural speech, streaming,
+  // low latency, interruption, user barge-in while the assistant is speaking, a
+  // visible transcript, text when wanted, and switching between the two without
+  // losing context.
   //
-  // Recognition and synthesis are the browser's own (Web Speech API). Three
-  // reasons, and one cost that has to be stated rather than buried:
-  //
-  //   * No new dependency, no API key, no second bill, and no audio for this
-  //     service to hold. A server-side speech provider would be more code and
-  //     more secrets on the first day of a feature that §9 itself expects to be
-  //     rebuilt once it has been used in anger.
-  //   * It works in the phone browser addendum 16 §8 targets.
-  //   * The transcript is what reaches the model either way, so moving to a
-  //     server-side provider later changes this file and nothing else.
+  // Recognition and synthesis are the browser's own (Web Speech API): no new
+  // dependency, no API key, no audio for this service to hold, and the
+  // transcript is what reaches the model either way, so moving to a server-side
+  // provider later changes this file and nothing else.
   //
   // THE COST: in Chrome, SpeechRecognition sends audio to Google's servers to be
   // transcribed; in Safari, to Apple's. That is a real disclosure for a project
   // whose point is controlling what leaves, and it is in the README rather than
   // left for somebody to discover. Speaking is local to the device.
   //
-  // BARGE-IN IS BY TAP, NOT BY VOICE, deliberately. Recognition left running
-  // while the phone speaker plays a reply transcribes the reply - the assistant
-  // interrupts itself, forever. Open-mic interruption needs echo cancellation
-  // against the synthesised audio, which is real work and is not built. So
-  // listening pauses while speaking, and Stop - or the microphone button, or
-  // sending text - cuts the reply off instantly and hands the turn back. The
-  // user can always interrupt; the microphone cannot.
+  // ## Barge-in: why it takes a second microphone path
+  //
+  // The obvious implementation - leave recognition running and treat any heard
+  // words as an interruption - fails immediately, because the microphone hears
+  // the phone speaker. The assistant transcribes its own reply and interrupts
+  // itself, forever. That is why this was tap-only until now.
+  //
+  // SpeechRecognition cannot be handed a MediaStream, so its capture cannot be
+  // configured and it will keep hearing the speaker whatever we do. The fix is
+  // not to make recognition smarter but to stop using it as the trigger:
+  //
+  //   1. TRIGGER - a second capture opened through getUserMedia with
+  //      echoCancellation on, watched for energy only. The browser subtracts its
+  //      own rendered audio from this stream, so what survives during a reply is
+  //      residual echo and room noise, and genuine speech rises above it.
+  //
+  //   2. THRESHOLD - measured, not guessed. For the first CALIBRATION_MS of each
+  //      utterance the loudest residual is observed and the trigger is set at a
+  //      multiple of it. Echo cancellation is uneven across phones and browsers;
+  //      a fixed threshold would be too deaf on one device and too jumpy on the
+  //      next, while a floor that rises to sit above whatever is actually
+  //      leaking adapts to the device it finds itself on.
+  //
+  //   3. SUSTAIN - energy must hold for SUSTAIN_MS. A door, a cough or a
+  //      keyboard should not cut the assistant off mid-sentence.
+  //
+  //   4. TRANSCRIPT FILTER - independent of all of the above. A transcript that
+  //      arrives while speaking and largely repeats what is being spoken is the
+  //      speaker, not the user, and is dropped. This guards the *send* path even
+  //      where echo cancellation is poor and the trigger never fired.
+  //
+  // Interruption itself is synchronous: synth.cancel() stops the audio in the
+  // same tick the trigger fires, so the latency the user feels is the sustain
+  // window and nothing else.
+  //
+  // WITHOUT A MICROPHONE STREAM there is no trigger, and the old behaviour is
+  // what remains: recognition pauses while speaking, and Stop, the microphone
+  // button or typing interrupts. The voice bar says which mode is in force,
+  // because a user who believes barge-in is armed when it is not will talk over
+  // the assistant and be ignored.
   const speech = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis;
+
+  // How long each reply's residual echo is measured before the trigger arms.
+  const CALIBRATION_MS = 350;
+  // How long speech must hold above the trigger before the reply is cut off.
+  const SUSTAIN_MS = 200;
+  // How far above the measured residual counts as somebody talking.
+  const TRIGGER_MARGIN = 3.0;
+  // A floor for the trigger, for a silent room where the residual measures ~0.
+  const TRIGGER_FLOOR = 0.012;
+  // How much of a heard phrase must appear in what is being spoken to call it
+  // the speaker rather than the user.
+  const ECHO_OVERLAP = 0.5;
+  // How often the energy monitor samples, in milliseconds.
+  const MONITOR_INTERVAL_MS = 50;
 
   const voice = {
     enabled: false,
     recognizer: null,
     speaking: false,
     supported: Boolean(speech && synth),
+    // The barge-in path, absent until getUserMedia succeeds.
+    monitor: null,
+    bargeInArmed: false,
+    warnedNoBargeIn: false,
+    spokenText: "",
+    vad: { startedAt: null, floor: null, threshold: null, above: null, fired: false },
   };
 
   function setVoiceState(text, kind) {
@@ -478,46 +526,129 @@
     els.voiceState.className = kind || "";
   }
 
-  function startListening() {
-    if (voice.speaking) return;
-    // The indicator has to stop saying "speaking" the moment speech ends, even
-    // when listening cannot resume - found in verification, where the label sat
-    // on "speaking - tap Stop to interrupt" long after the reply had finished.
-    // A status line that describes something the assistant is not doing is worse
-    // than no status line, because it is believed.
-    if (!voice.enabled || !voice.recognizer) {
-      setVoiceState("voice is off - tap the microphone to start");
-      return;
-    }
+  function listeningLabel() {
+    return voice.bargeInArmed ? "listening - just talk to interrupt" : "listening...";
+  }
+
+  // --- the energy monitor -------------------------------------------------
+
+  async function startMonitor() {
+    if (voice.monitor) return true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return false;
+
+    let stream;
     try {
-      voice.recognizer.start();
-      setVoiceState("listening...", "hearing");
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          // The whole feature rests on this line: without it the capture hears
+          // the speaker at full volume and no threshold can separate the user
+          // from the reply.
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch (err) {
-      // start() throws when it is already running, which is not a problem.
-      setVoiceState("listening...", "hearing");
+      return false;
     }
+
+    const context = new AudioContextClass();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0;
+    context.createMediaStreamSource(stream).connect(analyser);
+
+    const samples = new Float32Array(analyser.fftSize);
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i += 1) sum += samples[i] * samples[i];
+      considerLevel(Math.sqrt(sum / samples.length), performance.now());
+    }, MONITOR_INTERVAL_MS);
+
+    voice.monitor = { stream, context, analyser, timer };
+    voice.bargeInArmed = true;
+    return true;
   }
 
-  function speak(text) {
-    if (!voice.enabled || !(text || "").trim()) return;
+  function stopMonitor() {
+    if (!voice.monitor) return;
+    clearInterval(voice.monitor.timer);
+    voice.monitor.stream.getTracks().forEach((track) => track.stop());
+    voice.monitor.context.close().catch(() => {});
+    voice.monitor = null;
+    voice.bargeInArmed = false;
+  }
+
+  // Exposed and pure enough to drive from a test: given a level and a moment, it
+  // says whether the user is talking over the reply. The microphone cannot be
+  // driven from a test, but this decision is the part that can be wrong.
+  function considerLevel(rms, at) {
+    const vad = voice.vad;
+    if (!voice.speaking) {
+      vad.startedAt = null;
+      vad.floor = null;
+      vad.above = null;
+      return false;
+    }
+    if (vad.startedAt === null) vad.startedAt = at;
+
+    if (at - vad.startedAt < CALIBRATION_MS) {
+      // Still measuring what this reply leaks into the microphone.
+      vad.floor = Math.max(vad.floor === null ? 0 : vad.floor, rms);
+      return false;
+    }
+
+    vad.threshold = Math.max((vad.floor || 0) * TRIGGER_MARGIN, TRIGGER_FLOOR);
+    if (rms < vad.threshold) {
+      vad.above = null;
+      return false;
+    }
+    if (vad.above === null) {
+      vad.above = at;
+      return false;
+    }
+    if (at - vad.above < SUSTAIN_MS) return false;
+
+    if (!vad.fired) {
+      vad.fired = true;
+      bargeIn();
+    }
+    return true;
+  }
+
+  function bargeIn() {
+    // Synchronous on purpose: the audio stops in this tick, so what the user
+    // experiences is the sustain window and nothing after it.
     stopSpeaking();
-    voice.speaking = true;
-    try {
-      voice.recognizer && voice.recognizer.stop();
-    } catch (err) {}
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = utterance.onerror = () => {
-      voice.speaking = false;
-      startListening();
-    };
-    setVoiceState("speaking - tap Stop to interrupt", "speaking");
-    synth.speak(utterance);
+    setVoiceState("go ahead", "hearing");
+    startListening();
   }
 
-  function stopSpeaking() {
-    if (synth && (synth.speaking || synth.pending)) synth.cancel();
-    voice.speaking = false;
+  // --- transcripts --------------------------------------------------------
+
+  function normalise(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  // The second guard, independent of the trigger: is this the assistant's own
+  // voice coming back through the microphone?
+  function isEcho(transcript) {
+    if (!voice.speaking || !voice.spokenText) return false;
+    const heard = normalise(transcript);
+    if (!heard.length) return true;
+    const spoken = new Set(normalise(voice.spokenText));
+    const shared = heard.filter((word) => spoken.has(word)).length;
+    // A short phrase has to match entirely. "Stop" appearing inside a long reply
+    // is not evidence that the user did not also say it.
+    if (heard.length <= 2) return shared === heard.length;
+    return shared / heard.length >= ECHO_OVERLAP;
   }
 
   function handleTranscript(text) {
@@ -526,30 +657,111 @@
     // then true by construction rather than by effort.
     const said = (text || "").trim();
     if (!said) return;
+    if (isEcho(said)) return;
+    stopSpeaking();
     els.input.value = said;
     els.composer.requestSubmit();
   }
 
-  function enableVoice() {
+  // --- listening and speaking ---------------------------------------------
+
+  function startListening() {
+    if (!voice.enabled || !voice.recognizer) {
+      // The indicator has to stop saying "speaking" the moment speech ends, even
+      // when listening cannot resume. A status line that describes something the
+      // assistant is not doing is worse than none, because it is believed.
+      setVoiceState("voice is off - tap the microphone");
+      return;
+    }
+    try {
+      voice.recognizer.start();
+    } catch (err) {
+      // start() throws when it is already running, which is not a problem.
+    }
+    setVoiceState(listeningLabel(), "hearing");
+  }
+
+  function speak(text) {
+    if (!voice.enabled || !(text || "").trim()) return;
+    stopSpeaking();
+    voice.speaking = true;
+    voice.spokenText = text;
+    voice.vad.startedAt = null;
+    voice.vad.floor = null;
+    voice.vad.above = null;
+    voice.vad.fired = false;
+
+    // With a trigger, recognition keeps running so the user's first words are
+    // already being transcribed when the reply stops. Without one, it pauses -
+    // otherwise the assistant transcribes itself.
+    if (!voice.bargeInArmed) {
+      try {
+        voice.recognizer && voice.recognizer.stop();
+      } catch (err) {}
+      // Said here rather than when voice was switched on, and once. At switch-on
+      // it is either premature or plain wrong: a microphone the browser refuses
+      // outright takes recognition down with it, and "barge-in is unavailable"
+      // arriving beside "voice is off" tells the user about a feature of
+      // something that is not running. It matters at the only moment it can be
+      // acted on - the assistant is about to talk, and the user might try to
+      // talk over it.
+      if (!voice.warnedNoBargeIn) {
+        voice.warnedNoBargeIn = true;
+        addTurn(
+          "error",
+          "Barge-in is off: this browser would not give a microphone stream, so talking " +
+            "over the assistant will not interrupt it. Stop still does."
+        );
+      }
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = utterance.onerror = () => {
+      voice.speaking = false;
+      voice.spokenText = "";
+      startListening();
+    };
+    setVoiceState(
+      voice.bargeInArmed ? "speaking - talk over me to interrupt" : "speaking - tap Stop to interrupt",
+      "speaking"
+    );
+    synth.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if (synth && (synth.speaking || synth.pending)) synth.cancel();
+    voice.speaking = false;
+    voice.spokenText = "";
+  }
+
+  // --- enable / disable ---------------------------------------------------
+
+  async function enableVoice() {
     if (!voice.supported) return;
     voice.enabled = true;
     els.mic.classList.add("on");
     els.voiceBar.classList.remove("hidden");
 
+    await startMonitor();
+
     voice.recognizer = new speech();
     voice.recognizer.lang = navigator.language || "en-US";
     voice.recognizer.interimResults = false;
-    voice.recognizer.continuous = false;
+    // Continuous, so there is no restart gap for the user's first words to fall
+    // into when they interrupt.
+    voice.recognizer.continuous = true;
 
     voice.recognizer.addEventListener("result", (event) => {
       const last = event.results[event.results.length - 1];
       if (last.isFinal) handleTranscript(last[0].transcript);
     });
-    // Recognition ends after every utterance and after every silence. Restarting
-    // is what makes it feel continuous; without this the microphone goes deaf
-    // after one sentence and the user is left tapping it again.
+    // Recognition ends after silence whatever `continuous` claims. Restarting is
+    // what makes it feel continuous; without this the microphone goes deaf after
+    // one sentence and the user is left tapping it again.
     voice.recognizer.addEventListener("end", () => {
-      if (voice.enabled && !voice.speaking) startListening();
+      if (!voice.enabled) return;
+      if (voice.speaking && !voice.bargeInArmed) return;
+      startListening();
     });
     voice.recognizer.addEventListener("error", (event) => {
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
@@ -566,12 +778,17 @@
   function disableVoice() {
     voice.enabled = false;
     stopSpeaking();
+    stopMonitor();
     try {
       voice.recognizer && voice.recognizer.abort();
     } catch (err) {}
     voice.recognizer = null;
     els.mic.classList.remove("on");
     els.voiceBar.classList.add("hidden");
+    // The bar is hidden, but it can be shown again - and a label left reading
+    // "listening" for a microphone that is off is the same lie the speaking
+    // label told before G6 corrected it.
+    setVoiceState("voice is off - tap the microphone");
   }
 
   els.mic.addEventListener("click", () => {
@@ -593,6 +810,8 @@
     voice.enabled ? disableVoice() : enableVoice();
   });
 
+  // Kept as the fallback the request asks for, and as the only interruption
+  // available when no microphone stream could be opened.
   els.interrupt.addEventListener("click", () => {
     stopSpeaking();
     startListening();
@@ -600,16 +819,26 @@
 
   if (!voice.supported) els.mic.classList.add("unsupported");
 
-  // A seam for verification: the speech APIs cannot be driven from a test, so the
-  // handlers they call are reachable directly. Not a second code path - these are
-  // the same functions the events call.
+  // A seam for verification: a microphone cannot be driven from a test, but the
+  // decisions that sit behind it can. These are the same functions the events
+  // call, not a second code path.
   window.jarvisVoice = {
     state: voice,
     speak,
     stopSpeaking,
     handleTranscript,
+    considerLevel,
+    isEcho,
     enable: enableVoice,
     disable: disableVoice,
+    tuning: {
+      CALIBRATION_MS,
+      SUSTAIN_MS,
+      TRIGGER_MARGIN,
+      TRIGGER_FLOOR,
+      ECHO_OVERLAP,
+      MONITOR_INTERVAL_MS,
+    },
   };
 
   function connect(token) {
