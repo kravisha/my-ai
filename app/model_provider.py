@@ -42,6 +42,35 @@ load_dotenv()
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
+# What each content block may carry when it is sent *back* as part of a message
+# list. A response block and a request block are not the same shape: the SDK's
+# `model_dump()` includes response-only fields, and the API rejects them on the
+# way in.
+#
+# Found by a real tool loop, not by the suite: a turn that called a tool and then
+# replayed the assistant's own message failed with
+# `messages.7.content.0.text.parsed_output: Extra inputs are not permitted`. The
+# unit tests passed throughout, because a stand-in provider produces exactly the
+# fields the test author thought of.
+#
+# A block type not listed here is passed through unchanged - dropping fields from
+# a block nobody anticipated would be a worse failure than forwarding one, since
+# it would corrupt the turn silently rather than loudly.
+_REPLAYABLE_BLOCK_FIELDS = {
+    "text": ("type", "text"),
+    "tool_use": ("type", "id", "name", "input"),
+    "thinking": ("type", "thinking", "signature"),
+    "redacted_thinking": ("type", "data"),
+}
+
+
+def replayable_block(block: dict) -> dict:
+    """One content block, reduced to what may be sent back to the API."""
+    allowed = _REPLAYABLE_BLOCK_FIELDS.get(block.get("type"))
+    if allowed is None:
+        return block
+    return {key: value for key, value in block.items() if key in allowed}
+
 
 class ModelProvider(Protocol):
     """What the rest of the system may assume about a model, whoever supplies it."""
@@ -115,6 +144,6 @@ class AnthropicProvider:
 
         yield {
             "type": "final",
-            "content": [block.model_dump() for block in final.content],
+            "content": [replayable_block(block.model_dump()) for block in final.content],
             "stop_reason": final.stop_reason,
         }

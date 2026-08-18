@@ -156,3 +156,62 @@ def test_set_provider_replaces_the_process_wide_default():
 
     assert model_gateway.default_provider() is not substitute
     assert type(model_gateway.default_provider()) is type(original)
+
+
+def test_response_only_fields_are_stripped_before_a_block_is_replayed():
+    """The regression a live tool loop found and the suite did not.
+
+    `messages.stream` returns text blocks whose `model_dump()` carries
+    response-only fields; sending that dictionary back as part of the assistant's
+    turn fails with `content.0.text.parsed_output: Extra inputs are not
+    permitted`. Every unit test passed throughout, because a stand-in provider
+    emits exactly the fields its author thought of - only a real call has the
+    ones nobody did."""
+    block = MagicMock()
+    block.model_dump.return_value = {
+        "type": "text",
+        "text": "hello",
+        "parsed_output": {"anything": True},
+        "citations": None,
+    }
+    provider = AnthropicProvider(model="test-model")
+    provider._client = MagicMock(
+        messages=MagicMock(stream=_fake_stream([], content=[block], stop_reason="tool_use"))
+    )
+
+    final = list(provider.stream("system", [], []))[-1]
+
+    assert final["content"] == [{"type": "text", "text": "hello"}]
+
+
+def test_a_tool_use_block_keeps_everything_the_loop_needs():
+    """Stripping must not take the id: without it the tool_result cannot be
+    matched to its call, and the turn dies a different way."""
+    block = MagicMock()
+    block.model_dump.return_value = {
+        "type": "tool_use",
+        "id": "tu_1",
+        "name": "publish_document",
+        "input": {"path": "docs/x.md"},
+        "some_response_only_field": "…",
+    }
+    provider = AnthropicProvider(model="test-model")
+    provider._client = MagicMock(
+        messages=MagicMock(stream=_fake_stream([], content=[block], stop_reason="tool_use"))
+    )
+
+    final = list(provider.stream("system", [], []))[-1]
+
+    assert final["content"] == [
+        {"type": "tool_use", "id": "tu_1", "name": "publish_document", "input": {"path": "docs/x.md"}}
+    ]
+
+
+def test_an_unrecognised_block_type_is_passed_through_whole():
+    """Dropping fields from a block nobody anticipated would corrupt a turn
+    silently; forwarding it fails loudly and visibly instead."""
+    from app.model_provider import replayable_block
+
+    unknown = {"type": "something_new", "payload": 1, "nested": {"a": 2}}
+
+    assert replayable_block(unknown) == unknown

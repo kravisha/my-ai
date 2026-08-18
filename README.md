@@ -240,10 +240,30 @@ An urgent item sorts first and is counted in the header. **Nothing rings a
 phone**: addendum 17 §10 defers notification channels to a separate
 specification, so an urgent item is seen when you look.
 
-What does not work yet: voice, Git, and any call into the backend at all — this
-service still does not touch the rest of Jarvis. `docs/SPEC_RECONCILIATION.md`
-§20 and §21 record why it is shaped this way and what the remaining increments
-are.
+It also reaches **Git** (G4). The assistant reads tracked files from the project
+repositories — a question about what a specification says is answered by reading
+it — and can publish a document. A publish commits to a **new branch**, pushes
+nothing, and never touches the working tree: it builds the commit with git
+plumbing against HEAD, so uncommitted work stays uncommitted and the checked-out
+branch stays checked out. A person reviews the branch and pushes it.
+
+Configure the repositories it may reach, or it has none:
+
+```bash
+GATEWAY_PRIVATE_REPO=C:/path/to/private-repo
+GATEWAY_PUBLIC_REPO=C:/path/to/public-repo
+```
+
+**Publishing defaults to the private repository.** A public target needs explicit
+confirmation, and a screen refuses content that reads like the organizational
+philosophy `docs/PUBLIC_PRIVATE_BOUNDARY.md` keeps private — because publishing
+publicly cannot be undone. Only files git is *tracking* can be read, which is why
+`.env` is invisible to it.
+
+What does not work yet: voice, pushing, and any call into the backend at all —
+this service still does not touch the rest of Jarvis.
+`docs/SPEC_RECONCILIATION.md` §20, §21 and §22 record why it is shaped this way
+and what the remaining increments are.
 
 ## Simulation
 
@@ -411,9 +431,13 @@ gateway/
   scoreboard.py           The Project Scoreboard (addendum 16 §16): deferred questions, their
                          discussion, and the order they come back in - which is the routing
                          policy addendum 17 §6 puts on the Gateway
-  tools.py                What the assistant can actually do. Five Scoreboard tools and nothing
-                         else, because nothing else is built; failures come back as tool
-                         results the model can correct itself from
+  tools.py                What the assistant can actually do. Five Scoreboard tools and three
+                         Git ones; failures come back as tool results the model can correct
+                         itself from
+  repositories.py         Git as the artifact exchange (addendum 16 §14/§20): tracked-files-only
+                         reads, and publishes that commit to a new branch via plumbing - no
+                         checkout, no push, no working-tree writes. Holds the public/private
+                         boundary guard
   streaming.py            Runs the blocking model stream on a worker thread so the event loop
                          stays free to read the socket while a reply is being produced
   static/index.html       The whole client: one file, no build step, no external requests

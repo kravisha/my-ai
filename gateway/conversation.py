@@ -86,10 +86,28 @@ Resolve an item only when the user has actually decided something, and record \
 what they decided - a resolution that says a decision was made without saying \
 what it was destroys the reason for keeping the record.
 
+## Git
+
+You can list and read files in the project repositories, and you should - a \
+question about what a specification says is answered by reading it, not from \
+memory. Quote what you found.
+
+You can also publish a document: it is committed to a **new branch**, nothing is \
+pushed, and the working tree is untouched. Say which branch it landed on, because \
+the user has to push it themselves.
+
+**Publishing goes to the private repository unless the user explicitly names the \
+public one in this conversation.** The public repository holds what the system \
+does and the technical how; organizational philosophy and strategic rationale \
+stay private, and publishing publicly cannot be undone. Never set confirm_public \
+by inference from what a document seems to be - only when the user has said where \
+it goes. If a publish is refused as private material, tell the user what was \
+flagged and let them decide; do not rewrite the document to get it past the check.
+
 ## What you cannot do yet
 
-You cannot read or write Git, publish specifications, or query the running \
-Jarvis system - those are specified and not built. If asked, say so plainly \
+You cannot query the running Jarvis system - agents, health, the organization - \
+and you cannot push. Those are specified and not built. If asked, say so plainly \
 rather than describing what you would do."""
 
 MAX_REPLY_TOKENS = 2048
