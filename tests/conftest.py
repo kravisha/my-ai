@@ -415,14 +415,14 @@ def gateway_client(tmp_path, monkeypatch, gateway_conn):
     monkeypatch.setenv(gateway_auth.SUPER_USER_ENV, GATEWAY_TEST_USER)
     monkeypatch.setenv(gateway_auth.PASSWORD_HASH_ENV, GATEWAY_TEST_PASSWORD_HASH)
 
-    async def _gateway_db():
-        connection = gateway_store.get_connection(tmp_path / "gateway.db")
-        try:
-            yield connection
-        finally:
-            connection.close()
+    # Only the path is overridden. gateway_db builds its connection from it, and
+    # a turn's tool calls open their own from the same value on the worker
+    # thread - so one override covers every way this test's database is reached,
+    # and there is no second place to forget.
+    async def _gateway_db_path():
+        return tmp_path / "gateway.db"
 
-    gateway_main.app.dependency_overrides[gateway_main.gateway_db] = _gateway_db
+    gateway_main.app.dependency_overrides[gateway_main.gateway_db_path] = _gateway_db_path
     try:
         yield TestClient(gateway_main.app)
     finally:

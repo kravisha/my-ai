@@ -9,14 +9,15 @@ interface looked more complete:
   This is what the agents and `backend/main.py`'s `/chat` have always done, and
   they need the raw object because they read `stop_reason` and walk `content`
   blocks to run tool loops.
-- `stream_text` — incremental text for a conversational interface. Addendum 16
-  §9 asks for streaming responses and low latency, and a Gateway that waited for
-  a complete reply before showing anything would fail that on the first turn.
+- `stream` — the same call, delivered incrementally, and able to ask for tools.
+  Addendum 16 §9 asks for streaming responses and low latency, and a Gateway that
+  waited for a complete reply before showing anything would fail that on the
+  first turn.
 
-`stream_text` deliberately returns text only. A streaming tool-use surface is
-real work and nothing consumes it yet; the Gateway's assistant gains tools when
-the Scoreboard and Git actions exist to call. Adding the wider contract now
-would be an interface with no implementation worth testing.
+`stream` yields plain dictionaries rather than the SDK's event objects, and its
+final event carries content blocks already converted to dictionaries. That is
+what keeps §24 true in practice: a caller that walked SDK types would be written
+against Anthropic no matter what the interface claimed.
 
 **The client is constructed on first use, not at import.** This module was split
 out of `app/model_gateway.py`, which held `_client = Anthropic(api_key=os.environ[
@@ -49,8 +50,17 @@ class ModelProvider(Protocol):
         """One reply, as the provider's own response object."""
         ...
 
-    def stream_text(self, system: str, messages: list, max_tokens: int = 2048) -> Iterator[str]:
-        """The reply as it arrives, in text fragments."""
+    def stream(
+        self, system: str, messages: list, tools: list, max_tokens: int = 2048
+    ) -> Iterator[dict]:
+        """The reply as it arrives:
+
+            {"type": "text", "text": "..."}                  zero or more
+            {"type": "final", "content": [...], "stop_reason": "..."}   exactly one, last
+
+        `content` is the assistant's full turn as plain dictionaries - text and
+        tool_use blocks alike - so a caller can append it to the message list and
+        continue a tool loop without touching a vendor type."""
         ...
 
 
@@ -82,17 +92,29 @@ class AnthropicProvider:
             tools=tools,
         )
 
-    def stream_text(self, system: str, messages: list, max_tokens: int = 2048) -> Iterator[str]:
-        """Yields text fragments in arrival order.
+    def stream(
+        self, system: str, messages: list, tools: list, max_tokens: int = 2048
+    ) -> Iterator[dict]:
+        """Yields text fragments as they arrive, then one final event.
 
         The SDK's context manager owns the HTTP connection, so the generator must
         stay inside it while yielding - which also means an abandoned generator
-        closes the connection when it is collected, rather than leaking it."""
+        closes the connection when it is collected, rather than leaking it. The
+        final message is read inside the block for the same reason: it is only
+        complete once the stream has been consumed."""
         with self.client().messages.stream(
             model=self.model,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
+            tools=tools,
         ) as stream:
             for fragment in stream.text_stream:
-                yield fragment
+                yield {"type": "text", "text": fragment}
+            final = stream.get_final_message()
+
+        yield {
+            "type": "final",
+            "content": [block.model_dump() for block in final.content],
+            "stop_reason": final.stop_reason,
+        }

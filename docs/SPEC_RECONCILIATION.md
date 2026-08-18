@@ -1021,3 +1021,67 @@ leak was found: `app/model_gateway.py` constructed its Anthropic client at modul
 it raised `KeyError` without an API key in the environment. It is the same class of defect as the
 import-time Controller, found the same way — by reading what the tests had to work around. The
 public contract of `call_reasoning_model` is unchanged.
+
+## 21. The Scoreboard, and what it deliberately does not hold (2026-08-18)
+
+G3 builds addendum 16 §16's deferred discussion mechanism. Two surfaces onto one
+board: REST routes for producers that are not the conversation (addendum 17 §6 has
+Jarvis departments publishing findings into the Gateway rather than inventing
+their own notification channels), and tools the assistant calls mid-turn.
+
+### Filing has to happen in the turn, not after it
+
+§16 §10's one-hop requirement, applied to the board itself. "Put that on the
+board" files it; a reply *describing* an item the Super User then files somewhere
+would be the manual relay §26 exists to remove, with an extra step rather than one
+fewer. This is why the assistant has tools at all, and why G1 did not: there was
+nothing yet for a tool to do.
+
+### The fields are §16's list, minus two with no producer
+
+§16 names thirteen fields and says the detailed schema belongs to a later
+specification. Two are absent:
+
+- **Related commits.** Nothing in this system touches Git until G4. A nullable
+  column nothing writes is an empty schema.
+- **Decision, as distinct from Resolution.** Collapsed into one field, because
+  nothing today can tell them apart. A decision recorded while an item stays open
+  is a real distinction; when something needs it, it separates. The schema rule is
+  additive, so both cost one line when they have a writer.
+
+### Importance and blocking are separate, and stay separate
+
+§16 lists both and §17 turns on the difference. Importance is how much attention
+something deserves; blocking is whether work stopped. An urgent security question
+can be non-blocking and a trivial ambiguity can block, so one field cannot say
+both. Importance uses addendum 17 §10's three escalation levels unchanged.
+
+### The escalation gap, stated rather than papered over
+
+§10's urgent level calls for "the highest-priority notification mechanism
+available to the Gateway," and §10 itself defers notification channels to a
+separate specification. There is no such mechanism here: an urgent item sorts
+first and is counted in the header, and nothing rings a phone. **An item filed
+urgent today is seen when the Super User looks.** That is a real limitation of
+this increment, not an oversight, and it is what the routing policy in
+`gateway/scoreboard.py` currently amounts to.
+
+### Provenance the filer does not control
+
+`file_scoreboard_item` has no `source` parameter. An item filed through the
+conversation is attributed to the conversation, because a model able to name its
+own source could file something as though a monitoring agent had raised it, and
+provenance the filer chooses is not provenance. The REST route *does* take one: a
+caller holding the Super User session is trusted to name itself, which is how a
+department's finding will arrive under its own name.
+
+### Tool results are not persisted
+
+The transcript holds the human-readable turns. Tool calls and their results live
+for one turn and are then dropped, so a later turn sees the assistant's own
+summary of what the board said rather than the raw result. Deliberate: it keeps
+the stored conversation readable and renderable, and the tools are cheap and
+idempotent to re-run - an assistant that needs the list again asks again, which
+is also what stops it acting on a stale one. If a case appears where losing a
+tool result breaks the next turn, persisting content blocks is additive, and the
+reason to do it would be evidence rather than symmetry.

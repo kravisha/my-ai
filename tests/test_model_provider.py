@@ -75,43 +75,71 @@ def test_complete_forwards_every_argument_to_the_sdk():
     )
 
 
-def test_stream_text_yields_fragments_in_order():
-    """The SDK hands back a context manager whose text_stream is the sequence of
-    fragments; this asserts the wrapper yields them unchanged and in order rather
-    than accumulating and returning one string, which would defeat streaming
-    while still passing a naive content check."""
+def _fake_stream(fragments, content=None, stop_reason="end_turn", captured=None):
+    """Stands in for the SDK's streaming context manager: a text_stream to
+    iterate and a final message to read once it is exhausted."""
 
     @contextmanager
-    def fake_stream(**kwargs):
-        yield MagicMock(text_stream=iter(["Spec", "ification", " leads"]))
+    def factory(**kwargs):
+        if captured is not None:
+            captured.update(kwargs)
+        blocks = content
+        if blocks is None:
+            blocks = [MagicMock(**{"model_dump.return_value": {"type": "text", "text": "".join(fragments)}})]
+        final = MagicMock(content=blocks, stop_reason=stop_reason)
+        yield MagicMock(text_stream=iter(fragments), get_final_message=lambda: final)
 
+    return factory
+
+
+def test_stream_yields_fragments_in_order_then_a_final_event():
+    """The wrapper must yield fragments unchanged and in order rather than
+    accumulating and returning one string, which would defeat streaming while
+    still passing a naive content check - and it must end with exactly one final
+    event, which is what lets a caller run a tool loop."""
     provider = AnthropicProvider(model="test-model")
-    provider._client = MagicMock(messages=MagicMock(stream=fake_stream))
+    provider._client = MagicMock(
+        messages=MagicMock(stream=_fake_stream(["Spec", "ification", " leads"]))
+    )
 
-    fragments = list(provider.stream_text("system", [{"role": "user", "content": "hi"}]))
+    events = list(provider.stream("system", [{"role": "user", "content": "hi"}], []))
 
-    assert fragments == ["Spec", "ification", " leads"]
+    assert [event["text"] for event in events[:-1]] == ["Spec", "ification", " leads"]
+    assert events[-1]["type"] == "final"
+    assert events[-1]["stop_reason"] == "end_turn"
 
 
-def test_stream_text_passes_the_model_and_token_budget():
+def test_the_final_event_carries_plain_dictionaries_not_sdk_objects():
+    """§24 in practice: a caller that had to walk SDK types would be written
+    against Anthropic no matter what the interface claimed."""
+    block = MagicMock()
+    block.model_dump.return_value = {"type": "tool_use", "id": "tu_1", "name": "x", "input": {}}
+    provider = AnthropicProvider(model="test-model")
+    provider._client = MagicMock(
+        messages=MagicMock(stream=_fake_stream([], content=[block], stop_reason="tool_use"))
+    )
+
+    final = list(provider.stream("system", [], []))[-1]
+
+    assert final["content"] == [{"type": "tool_use", "id": "tu_1", "name": "x", "input": {}}]
+    assert final["stop_reason"] == "tool_use"
+
+
+def test_stream_passes_the_model_tools_and_token_budget():
     captured = {}
-
-    @contextmanager
-    def fake_stream(**kwargs):
-        captured.update(kwargs)
-        yield MagicMock(text_stream=iter([]))
-
     provider = AnthropicProvider(model="test-model")
-    provider._client = MagicMock(messages=MagicMock(stream=fake_stream))
+    provider._client = MagicMock(messages=MagicMock(stream=_fake_stream([], captured=captured)))
 
     messages = [{"role": "user", "content": "hi"}]
-    list(provider.stream_text("system", messages, max_tokens=1234))
+    tools = [{"name": "file_scoreboard_item"}]
+    list(provider.stream("system", messages, tools, max_tokens=1234))
 
     assert captured == {
         "model": "test-model",
         "max_tokens": 1234,
         "system": "system",
         "messages": messages,
+        "tools": tools,
     }
 
 

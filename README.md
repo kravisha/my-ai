@@ -225,12 +225,25 @@ Open <http://localhost:8100> and sign in. **Unset means nobody can log in** —
 an unconfigured Gateway refuses every attempt and says which variables are
 missing, rather than defaulting open.
 
-What works today (increment G1): the boundary, Super User sessions, and a
-streaming text conversation with the analysis model over a WebSocket, persisted
-so closing the tab and returning resumes the same conversation. What does not:
-voice, Git, the Scoreboard, and any call into the backend at all — this service
-does not yet touch the rest of Jarvis. `docs/SPEC_RECONCILIATION.md` §20 records
-why it is shaped this way and what the remaining increments are.
+What works today: the boundary, Super User sessions, and a streaming
+conversation with the analysis model over a WebSocket, persisted so closing the
+tab and returning resumes it (G1); and the **Project Scoreboard** — questions and
+concerns that deserve a decision later rather than an interruption now (G3).
+
+The Scoreboard is reachable two ways, and both land on the same board. Saying
+"put that on the board as important and blocking" files it during the turn, which
+is the point: the Super User decides, rather than transporting the decision
+somewhere to be recorded. And `POST /scoreboard` is there for producers that are
+not the conversation — a monitoring agent files under its own name.
+
+An urgent item sorts first and is counted in the header. **Nothing rings a
+phone**: addendum 17 §10 defers notification channels to a separate
+specification, so an urgent item is seen when you look.
+
+What does not work yet: voice, Git, and any call into the backend at all — this
+service still does not touch the rest of Jarvis. `docs/SPEC_RECONCILIATION.md`
+§20 and §21 record why it is shaped this way and what the remaining increments
+are.
 
 ## Simulation
 
@@ -391,9 +404,16 @@ gateway/
                          transcript. Separate from financial_intelligence.db so the Gateway
                          survives the backend being down, which addendum 16 §23 requires
   auth.py                 Who the Super User is, from the environment. Unset means nobody
-  conversation.py         The analysis assistant's system prompt and one turn's mechanics.
-                         Not backend/main.py's /chat - that is the user's permissioned personal
-                         assistant; this one answers about the project
+  conversation.py         The analysis assistant's system prompt and one turn's mechanics,
+                         including the tool loop. Not backend/main.py's /chat - that is the
+                         user's permissioned personal assistant; this one answers about the
+                         project
+  scoreboard.py           The Project Scoreboard (addendum 16 §16): deferred questions, their
+                         discussion, and the order they come back in - which is the routing
+                         policy addendum 17 §6 puts on the Gateway
+  tools.py                What the assistant can actually do. Five Scoreboard tools and nothing
+                         else, because nothing else is built; failures come back as tool
+                         results the model can correct itself from
   streaming.py            Runs the blocking model stream on a worker thread so the event loop
                          stays free to read the socket while a reply is being produced
   static/index.html       The whole client: one file, no build step, no external requests
