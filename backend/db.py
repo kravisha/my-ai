@@ -21,7 +21,24 @@ functions, passing the connection object through opaquely.
 """
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+def now_iso() -> str:
+    """The one clock. Here rather than in backend/fi_db.py because two modules
+    needed it and the second one importing the first created a cycle - identity
+    is a lower layer than the financial-intelligence schema, and a timestamp is
+    lower than both."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def parse_timestamp(value: str) -> datetime:
+    """Normalizes the two timestamp shapes this system produces: Python's own
+    now_iso() (e.g. '...+00:00') and SQL's strftime (e.g. '...Z'). Comparing
+    them as raw strings is fragile - this is the one place that difference gets
+    handled, instead of every call site reimplementing the same fix."""
+    return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
 class Database:
