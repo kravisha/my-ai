@@ -1499,11 +1499,14 @@ The **Fault Tolerance and Organizational Resilience Framework** (supplied
 NOTICED FAILURE GOES OWNERLESS.* Its §18 requires a review before implementation
 and an explicit disposition.
 
-**Disposition: ACCEPT WITH MODIFICATIONS.** The document itself is not yet filed
-as an addendum - it is constitutional in kind, like addenda 11 and 15, and where
-it lives is an open public/private decision. The disposition and what was built
-are recorded here regardless, so the reasoning does not live only in a
-conversation.
+**Disposition: ACCEPT WITH MODIFICATIONS.** The document is **addendum 19**, held
+privately with addenda 5, 11 and 15 (owner decision, 2026-08-18): it is
+organizational in kind - duty of care, who is responsible for noticing whom, how a
+failure acquires an owner - which is the material `PUBLIC_PRIVATE_BOUNDARY.md`
+keeps out of this repository. The disposition and everything built from it are
+recorded here, because technical consequences stay public even where the governing
+document does not. A reference you cannot follow means the document is private,
+not missing - see `GOVERNANCE.md`.
 
 ### What was already built, and is not owed to this framework
 
