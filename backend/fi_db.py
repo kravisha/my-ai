@@ -49,7 +49,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, novelty, triage
+from backend import competency, compliance, identifiers, iteration, novelty, observations, triage
 from backend import db as db_module
 from backend.db import Database
 
@@ -1140,6 +1140,10 @@ def init_schema(conn: Database) -> None:
     # it - but it is created here so a caller never has to know how many modules
     # own tables in one database.
     identifiers.init_schema(conn)
+    # Likewise the Data Store (addendum 20 §4): canonical observations, kept.
+    # Arrived with the Historical Market Data Engine, the first thing with
+    # observations to keep.
+    observations.init_schema(conn)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
