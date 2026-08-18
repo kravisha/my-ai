@@ -883,3 +883,82 @@ was built for.
 
 The last entry criterion closes. Certification remains **5/10**, and its five outstanding items are the
 organization's real problems rather than missing scaffolding.
+
+## 16. The Gateway lineage arrives, and one of it is already built (2026-08-17)
+
+Three documents supplied together: the AI Communication Gateway specification (addendum 16), its Super
+User addendum (17), and a Lifecycle-Managed Controller Initialization specification (18). All three are
+filed verbatim. The first two describe a system that does not exist yet. The third describes work that
+had already landed.
+
+### A separate lineage, not a newer set
+
+16–18 are numbered after 15 but do not supersede it. They are about the external communication boundary
+and backend infrastructure; 2–15 are about the agent organization. Nothing in the Gateway documents
+claims authority over the Financial Intelligence architecture, and the higher number must not be read
+as winning a conflict — `docs/README.md`'s precedence table now says so explicitly, because the
+convention up to now has been that a higher addendum number is a later revision of the same subject.
+
+### The overlap between 16 and 17, recorded once
+
+Addendum 17 restates a good deal of 16: one-hop interaction, the Scoreboard, "the human should make
+decisions, not transport messages," the prohibition on external clients reaching internal services.
+Both are kept verbatim per the house rule, so the repetition stays on the page. It is noted here rather
+than reconciled because the two do not actually disagree anywhere — 17 narrows 16's audience to one
+user and adds a monitoring function, and the restated material is restated identically.
+
+What 17 adds that 16 does not have is §7–§9: a Technology and Architecture function that periodically
+reviews component suitability and raises *structured recommendations* rather than making changes. Its
+worked example is SQLite to PostgreSQL, on evidence of write contention. That is the process by which a
+database migration is supposed to be proposed here, and it is worth knowing it exists before anyone
+opens that question informally.
+
+### Addendum 18: disposition
+
+The specification's §9 asks for an explicit disposition. **APPROVE WITH MODIFICATIONS.**
+
+Its objective was already met before it was filed. `backend/main.py` no longer constructs a Controller
+at module scope; construction moved into the FastAPI `lifespan` context manager, which already owned
+`bootstrap_self`/`bootstrap_coo`/`close()` and so was already the de facto owner of the lifetime. The
+two documents reached the same conclusion independently, which is a useful corroboration and not a
+coincidence worth reading anything into — the import-time write was reachable by measurement.
+
+Two of §7's acceptance criteria were deliberately not met as written. §9 invites exactly this
+("Do not accept this specification blindly if the current code proves an assumption wrong").
+
+**"Tests no longer need import-time database-path redirection to protect the developer database."**
+Not adopted. The redirect stays. The criterion assumes the redirect existed to work around the
+import-time Controller, and that removing the cause removes the need. It does not: the redirect defends
+a *class* — any code resolving the default database path rather than being handed one — and the
+import-time Controller was one instance of that class, found only because someone hashed the file by
+hand. `agents/base.py` and `simulation/harness.py` both resolve `FI_DB_PATH` independently of anything
+`backend.main` does. Removing the redirect would leave the suite one import-time constructor away from
+the same leak, with the session guard catching it only after the write had happened. The cost of
+keeping it is three lines and a docstring; the cost of being wrong is the developer's database.
+
+**"The application exposes the active Controller to routes without relying on construction at module
+import."** Not adopted, because no route needs the Controller. The one route that referenced it —
+`retire_agent`, refusing to retire `controller-1` — was comparing against `controller.identity`, which
+is fixed by the role and identical for every instance ever constructed. It became a public
+`CONTROLLER_IDENTITY` constant, so the route asks a name question and gets a name without a database
+being opened to answer it. Adding an `app.state` accessor or a FastAPI dependency with zero consumers
+would be precisely the "unnecessary abstraction" §8 forbids. The `lifespan` docstring records that
+`app.state` is where a future route should reach for it, so the next person does not reintroduce a
+module global instead.
+
+Three of §6's six test requirements were also not written, for the same reason in one case and a better
+one in the others. "Route access" (4) has nothing to test while no route consumes the instance.
+"Startup — verify exactly one Controller is initialized" (2) and "Shutdown — verify cleanup occurs" (5)
+are only reachable through a real server: nothing in the suite runs the app as a context manager, so a
+unit test would be asserting against a lifespan that never ran. Both are covered end to end by the
+`simulation`-marked tests, which boot a real uvicorn against `backend.main:app` and assert the
+population comes up, shuts down gracefully, and leaves no process running. What was added instead is
+the requirement §6 leads with and the one that actually holds the line: import safety, checked in a
+subprocess with `FI_DB_PATH` aimed at a path that does not exist, asserting no file appears.
+
+### What is built, and what is not
+
+Addendum 18 is built. Addenda 16 and 17 are not, and nothing in this repository is a Gateway. No
+external service, no phone client, no voice interface, no Scoreboard, no Technology and Architecture
+function. The `/admin` routes and the UQI are the closest existing things, and they are an internal
+panel behind session auth — not the single externally exposed boundary 16 §7 requires.

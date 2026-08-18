@@ -15,7 +15,8 @@ Documents disagree with each other, so the order matters. Higher layers win.
 | Layer | Document | Authority |
 |---|---|---|
 | **Constitutional** | [`JARVIS_CONSTITUTION.md`](JARVIS_CONSTITUTION.md) | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
-| Architectural | [`addenda/`](addenda) 11–15 (newest set) | Canonical. Where these conflict with 5–10, these win. |
+| Architectural | [`addenda/`](addenda) 16–18 (Gateway lineage) | Canonical **for the external communication boundary and backend infrastructure only**. A separate subject from 2–15, not a newer set of it — these neither supersede nor are governed by the Financial Intelligence addenda. Where the two ever touch the same question, record it in `SPEC_RECONCILIATION.md` rather than assuming the higher number wins. |
+| Architectural | [`addenda/`](addenda) 11–15 (newest FI set) | Canonical. Where these conflict with 5–10, these win. |
 | Architectural | [`addenda/`](addenda) 5–10 | Canonical except where 11–15 clarify. |
 | Architectural | [`addenda/`](addenda) 2–4 | **Superseded** by 5–10. Historical only. |
 | Architectural | [`addenda/addendum_1_universal_agent.md`](addenda/addendum_1_universal_agent.md) | Base product (voice / universal agent). Unrelated to Financial Intelligence; historical. |
@@ -48,6 +49,16 @@ A distinction worth knowing before editing anything.
 | [`MY_AI_DESIGN_SPEC.md`](MY_AI_DESIGN_SPEC.md) | The original My AI product spec — permissioned action layer, data governance, client/server split. |
 
 ## The addenda
+
+**Project Jarvis Gateway (16–18)** — a separate lineage, supplied 2026-08-17. Nothing in 16 or 17 is
+built; 18 is built. These govern the external boundary and backend infrastructure, not the agent
+organization.
+
+| | |
+|---|---|
+| [16 — AI Communication Gateway Specification](addenda/addendum_16_gateway_specification.md) | The external communication boundary. One externally exposed service, voice-first phone client, Git as the durable artifact exchange, the Scoreboard for deferred discussion. |
+| [17 — Super User Gateway Architecture](addenda/addendum_17_gateway_super_user_architecture.md) | Scopes Gateway v1 to a single Super User. Its §7–§9 add the Technology and Architecture monitoring function — how evidence that a component is becoming unsuitable becomes a structured recommendation. Calls itself "Addendum 1"; that is its number in the Gateway sequence, not this one. |
+| [18 — Lifecycle-Managed Controller Initialization](addenda/addendum_18_controller_lifecycle_initialization.md) | Import-time side effects. **Already implemented** — see `SPEC_RECONCILIATION.md` §16 for the disposition and the two acceptance criteria deliberately not met. |
 
 **Financial Intelligence, third set (11–15)** — the current architecture.
 
