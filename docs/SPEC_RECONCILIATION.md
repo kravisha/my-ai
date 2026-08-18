@@ -1215,3 +1215,65 @@ Both states, deliberately, against a real backend and a real agent population:
 - **A retirement, mid-run.** `dummy-1` retired through the panel route came back
   as `dormant / stopped`, counted as dormant, and absent from `crashed` - the
   distinction surviving the whole path from `agent_registry` to the browser.
+
+## 24. The function that reviews, and does not act (2026-08-18)
+
+G7 builds addendum 17 §7-§9's Technology and Architecture function: a periodic
+review of the technical ecosystem that raises **structured recommendations** and
+performs none of them. §9 is explicit - *"The monitoring function does NOT
+independently perform the migration"* - and §7 twice says what it is not: not
+high-frequency, not heavyweight.
+
+### Every check measures something that exists
+
+The temptation in a function like this is to invent metrics, because numbers look
+like evidence. Each check reads something real off the machine or out of the
+running system - database and WAL sizes, unpinned dependencies, Python version,
+free disk, whether a git binary exists, and the concurrency the backend reports -
+and a check with nothing to read returns `no_evidence` rather than a guess.
+
+Four verdicts: `suitable`, `watch`, `unsuitable`, `no_evidence`. **Only `watch` and
+`unsuitable` reach the Scoreboard.** A board that filed an item every time
+something was fine would bury the ones that are not.
+
+### §9's worked example, answered honestly
+
+SQLite versus PostgreSQL is the recommendation this kind of function is most
+likely to make enthusiastically and wrongly, and §9 uses it as the example. What
+this one reports: the number of processes sharing the database, whether any
+heartbeat is stale - and that **nothing in this system counts SQLITE_BUSY or times
+a blocked write**, so the absence of contention is *unmeasured rather than
+observed*.
+
+The verdict today is therefore "suitable, do not migrate", with the limitation
+stated in the evidence rather than hidden by it, and a recommendation whose
+`expected_future_risk` says what would change the answer: instrument first, then
+ask again. A monitoring function whose first act is to decline to raise an alarm -
+and to say exactly how confident it is entitled to be - is the strongest available
+demonstration that it is evidence-driven rather than decorative.
+
+Verified live through a conversation: asked whether to move to PostgreSQL, the
+assistant answered no, cited the database size and disk headroom, and separately
+flagged that the concurrency question was `no_evidence` rather than clean -
+*"those are different things and I'm not papering over the gap."*
+
+### Repetition would destroy the board
+
+A periodic producer that refiles the same finding every interval makes the
+Scoreboard useless within a day. `scoreboard_items` gained a `signature` column
+(additive, with a migration for existing databases), and a finding whose signature
+already has an **open** item is skipped. Resolved items do not suppress: a finding
+that was dealt with and has recurred is news again. Items filed by people carry no
+signature, because a person filing the same concern twice usually means something.
+
+### The defect this increment found by running
+
+The periodic loop opened its SQLite connection on the event loop thread and handed
+it to a worker thread, which sqlite3 refuses. It failed on **every pass**,
+survivably - the loop catches everything so the service stayed up - and therefore
+silently. The whole pass now crosses the thread boundary as one call taking a
+path, the same arrangement `gateway/conversation.py` uses for the same reason.
+
+**Fifth time.** The pattern is no longer worth restating: anything in this project
+that touches a real process, a real API or a real thread boundary gets run before
+it is believed.

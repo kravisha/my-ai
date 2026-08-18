@@ -27,6 +27,13 @@ so an urgent item sorts first and is counted in the header, and nothing rings a
 phone. That gap is stated rather than papered over: an item filed urgent today
 will be seen when the Super User looks.
 
+`signature` is the one field §16 does not name. A periodic producer - the
+Technology and Architecture function of addendum 17 §7 - would otherwise file the
+same finding every time it ran, and a board that repeats itself is a board nobody
+reads. It is a stable key for "this finding, again", nothing more: items filed by
+a human or by the assistant carry no signature, because a person filing the same
+concern twice usually means something.
+
 `blocking` is separate from importance on purpose (§16 lists both, §17 turns on
 the difference). Importance is how much attention it deserves; blocking is
 whether work stopped. An urgent non-blocking security question and a trivial
@@ -58,7 +65,8 @@ CREATE TABLE IF NOT EXISTS scoreboard_items (
     related_spec TEXT,
     related_component TEXT,
     resolution TEXT,
-    resolved_at TEXT
+    resolved_at TEXT,
+    signature TEXT
 );
 
 CREATE TABLE IF NOT EXISTS scoreboard_notes (
@@ -109,6 +117,7 @@ def file_item(
     blocking: bool = False,
     related_spec: str | None = None,
     related_component: str | None = None,
+    signature: str | None = None,
 ) -> int:
     """Records a question or concern. Returns its id.
 
@@ -130,8 +139,8 @@ def file_item(
     return conn.execute_returning_id(
         """INSERT INTO scoreboard_items
                (created_at, source, question, importance, blocking, status,
-                related_spec, related_component)
-           VALUES (?, ?, ?, ?, ?, 'open', ?, ?)""",
+                related_spec, related_component, signature)
+           VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
         (
             _now(),
             source,
@@ -140,8 +149,22 @@ def file_item(
             1 if blocking else 0,
             (related_spec or "").strip() or None,
             (related_component or "").strip() or None,
+            (signature or "").strip() or None,
         ),
     )
+
+
+def open_item_with_signature(conn: Database, signature: str) -> dict | None:
+    """An already-open item for the same finding, if there is one.
+
+    What a periodic producer checks before filing. Only *open* items count: a
+    finding that was resolved and has recurred is news again, and suppressing it
+    because it was once dealt with is how a board starts lying."""
+    row = conn.fetchone(
+        "SELECT id FROM scoreboard_items WHERE signature = ? AND status = 'open' ORDER BY id LIMIT 1",
+        (signature,),
+    )
+    return get_item(conn, row["id"]) if row else None
 
 
 def get_item(conn: Database, item_id: int) -> dict | None:

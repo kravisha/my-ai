@@ -30,6 +30,7 @@ Nothing is constructed at import - the database is opened in `lifespan`, the
 lesson `tests/test_db_isolation.py` was written to keep.
 """
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -40,7 +41,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.model_gateway import default_provider
-from gateway import auth, conversation, jarvis, scoreboard, store
+from gateway import auth, conversation, jarvis, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -74,10 +75,43 @@ async def lifespan(app: FastAPI):
     if not auth.is_configured():
         logger.warning(auth.NOT_CONFIGURED_MESSAGE)
     app.state.db = conn
+
+    reviewer = asyncio.create_task(_technology_review_loop())
     try:
         yield
     finally:
+        reviewer.cancel()
         conn.close()
+
+
+async def _technology_review_loop() -> None:
+    """The periodic half of addendum 17 §7, at the cadence §7 asks for: low.
+
+    Each pass opens its own connection, because this task outlives no request and
+    shares no thread with one. The whole body is defensive - a review that raised
+    would take the task with it and the function would stop existing silently,
+    which is the failure mode a monitoring component can least afford."""
+    interval_hours = technology.review_interval_hours()
+    if interval_hours <= 0:
+        logger.info("technology review disabled (%s=0)", technology.REVIEW_INTERVAL_ENV)
+        return
+
+    while True:
+        await asyncio.sleep(interval_hours * 3600)
+        try:
+            # One crossing, not two. Opening the connection here and handing it to
+            # a worker thread raised sqlite3's thread-affinity error on every pass
+            # - survivably, because of the catch below, and therefore silently.
+            report, filed = await asyncio.to_thread(technology.review_and_file, store.DB_PATH)
+            logger.info(
+                "technology review: %s; filed %d item(s)",
+                report["counts"],
+                len([f for f in filed if "item_id" in f and "skipped" not in f]),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed review must not end the loop
+            logger.exception("technology review failed; will try again next interval")
 
 
 app = FastAPI(title="AI Communication Gateway", lifespan=lifespan)
@@ -282,6 +316,22 @@ async def jarvis_status(_: str = Depends(require_session)):
     a reason, never 5xx. The Gateway's own liveness is not contingent on the
     system it looks at."""
     return jarvis.JarvisClient().status()
+
+
+@app.get("/technology")
+async def technology_review(
+    file_findings: bool = False,
+    _: str = Depends(require_session),
+    conn=Depends(gateway_db),
+):
+    """The Technology and Architecture review on demand (addendum 17 §7-§9).
+
+    `file_findings` is opt-in even here: reading the review is a question, and
+    putting items on the Super User's board is an act."""
+    report = technology.review()
+    if file_findings:
+        report["filed"] = technology.file_findings(conn, report)
+    return report
 
 
 @app.websocket("/ws")
