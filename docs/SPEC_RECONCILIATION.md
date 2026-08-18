@@ -1763,3 +1763,78 @@ opportunity nothing yet produces from real data would be scaffolding.
 
 Recorded as Scoreboard items rather than as a plan here, so the sequence is
 visible where work is chosen from.
+
+## 31. Iterative excellence, encoded rather than promised (2026-08-18)
+
+An owner directive supplied in conversation: explore broadly, treat the first
+coherent solution as raw material, refine where refinement matters, stop at
+diminishing returns. Held privately with the Manifesto as
+`governance/directive_iterative_excellence_2026-08-18.md`; what was built from it
+is public and is here.
+
+**Disposition: ACCEPT WITH MODIFICATIONS.**
+
+### The requirement that ruled out the easy implementation
+
+Its §10 says the principle must not be implemented "solely as a Claude prompt or a
+creative-agent behavior" — it should be organizational, so agents inherit it.
+
+A sentence in the Gateway system prompt would have satisfied the principle and
+failed the directive. So the budget lives in `backend/iteration.py` and is
+surfaced through `describe_agent`, the mechanism the UQI already uses to answer an
+agent's questions about itself. An agent asked what standard it works to can now
+state one, and a test asserts that every role which exists has a declared budget
+rather than falling silently to a default.
+
+The Gateway assistant gets the stance too: conversational work gets one good
+answer, because latency is part of the quality of a spoken reply, while design and
+analysis through the same interface do not inherit that brevity.
+
+### Modification 1: the numbers are conventions, and say so
+
+The budgets are the directive's own ordering made concrete — conversational under
+operational under analytical under architectural under high-risk. Nothing has
+measured the quality gain from a second analysis pass in this system.
+
+`TIMING_CONSTANTS.md` exists because this project separates measured constants
+from assumed ones, so `budget_for()` returns `measured: False` and the module says
+plainly that these are conventions. §8's stopping rule cannot be *enforced* until
+somebody measures what a pass is worth; until then it is a standard people can be
+held to rather than a threshold a machine can check.
+
+### Modification 2: nothing was made to iterate whose iteration costs money
+
+§5 assigns analytical work "multiple evaluation and challenge passes". Analysis
+performs one deep model call per report today; giving it three would multiply
+model spend per cycle and change what running the pipeline costs.
+
+That is a decision with a price, not a constant to be edited — so it is a
+Scoreboard item rather than something smuggled in behind a policy module. What
+this increment does is make the standard stated, inheritable and queryable, so
+adopting it later is honouring a declared standard rather than inventing one.
+
+### What it changes about this project's own practice
+
+The session that received the directive had already been working this way in one
+respect — every increment carries what was rejected and why — and not in another:
+the first coherent implementation has usually been the delivered one, with
+refinement driven by defects found in verification rather than by a deliberate
+second pass.
+
+The honest reading is that §2 raises the standard for architectural work
+specifically, and that where it will show is in proposals arriving with their
+discarded alternatives attached, rather than in more polish on the accepted one.
+
+### A recurrence that proves the directive's §9
+
+Writing this section, a shell command carrying backticks was substituted by bash
+and produced a mangled document — **the second time in one session**, after the
+first was noticed, fixed, and described to the owner as a lesson.
+
+That is exactly what the Manifesto's §7 warns about: the first occurrence was
+treated as a defect to repair rather than as evidence about how the work is done,
+so nothing changed and it recurred within the hour. The lesson is now written
+where it can be read again rather than remembered: **file content goes through the
+file tools, never through a shell string** — the shell is for running things, and
+any content containing backticks, `$`, or heredoc terminators will be transformed
+in transit.

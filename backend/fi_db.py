@@ -49,7 +49,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, novelty, triage
+from backend import competency, compliance, identifiers, iteration, novelty, triage
+from backend import db as db_module
 from backend.db import Database
 
 # FI_DB_PATH is honoured here, not only in agents/base.py. backend/controller.py
@@ -1042,16 +1043,15 @@ FROM agent_registry r;
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return db_module.now_iso()
 
 
 def parse_timestamp(value: str) -> datetime:
-    """Normalizes the two timestamp shapes this module produces: Python's
-    own _now() (e.g. '...+00:00') and the SQL archive trigger's strftime
-    (e.g. '...Z'). Comparing them as raw strings is fragile - this is the
-    one place that difference gets handled, instead of every call site
-    reimplementing the same .replace("Z", "+00:00") fix."""
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    """Re-exported from backend/db.py, which is where it moved when a second
+    module needed it. Kept as a name here because well over a hundred call sites
+    reach for fi_db.parse_timestamp, and renaming them would be churn with no
+    reader served."""
+    return db_module.parse_timestamp(value)
 
 
 def set_simulation_clock(
@@ -1135,6 +1135,11 @@ def get_connection(db_path: str | Path = DB_PATH) -> Database:
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+    # Entity identity lives in its own module because it is a different subject -
+    # what the world calls a thing, versus what this organization observes about
+    # it - but it is created here so a caller never has to know how many modules
+    # own tables in one database.
+    identifiers.init_schema(conn)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -2632,6 +2637,12 @@ def describe_agent(conn: Database, identity: str, stale_after_seconds: float = 4
         "not_allowed": charter.get("not_allowed", []),
         "competencies": charter.get("competencies", []),
         "work_mechanism": charter.get("work_mechanism"),
+        # What this role owes a piece of work before delivering it (Iterative
+        # Excellence §5, §10). Derived from the role rather than stored on the
+        # charter so there is one definition - and surfaced here so an agent asked
+        # what it is can state its own standard, which is what "agents inherit it
+        # by default" has to mean if it means anything.
+        "iteration": iteration.budget_for(agent["role"]),
         "lifecycle_state": agent["lifecycle_state"],
         "process_state": agent["process_state"],
         "healthy": healthy,

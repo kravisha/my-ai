@@ -103,6 +103,47 @@ class SyntheticMarketDataProvider:
             self._cache[security] = self._generate(security)
         return self._cache[security]
 
+    def observe(self, security: str, entity_id: str, observed_at: str, run_id: str | None = None,
+                scenario_id: str | None = None):
+        """The same surface, in the canonical contract (addendum 20 §3).
+
+        A second method rather than a replacement for `get_option_surface`:
+        Explorer and Speculator consume the surface object directly and rewriting
+        them is a separate change with its own verification. What this proves is
+        that the contract has a real producer - a contract nothing emits is a
+        proposal, not a foundation.
+
+        `entity_id` is passed in rather than looked up here, because a provider
+        has no business owning identity resolution: it knows what it generated,
+        not what the organization calls it. `backend/identifiers.py` owns that,
+        and a historical provider will need the resolution done *as of the
+        observation's own date* rather than as of now.
+
+        Origin is fixed at 'synthetic' and cannot be overridden. That is §15
+        structurally rather than by convention: this provider makes data up, and
+        there is no argument that would make its output historical."""
+        from backend.canonical import Observation, Provenance
+
+        surface = self.get_option_surface(security, as_of=observed_at)
+        return Observation(
+            entity_id=entity_id,
+            data_class="option_surface",
+            observed_at=observed_at,
+            payload={
+                "security": surface.security,
+                "points": [
+                    {"strike": point.strike, "expiry_days": point.expiry_days, "iv": point.iv}
+                    for point in surface.points
+                ],
+            },
+            provenance=Provenance(
+                origin="synthetic",
+                source=f"SyntheticMarketDataProvider(seed={self._seed})",
+                run_id=run_id,
+                scenario_id=scenario_id,
+            ),
+        )
+
     def _generate(self, security: str) -> OptionSurface:
         rng = random.Random(f"{self._seed}:{security}")
         anomaly_config = self._anomalies.get(security)
