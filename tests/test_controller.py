@@ -25,9 +25,26 @@ from backend.controller import Controller
 
 @pytest.fixture
 def controller(tmp_path):
+    """A Controller on its own temp database, guaranteed to leave no process
+    behind.
+
+    shutdown_agents() before close() is the same pair backend/main.py's lifespan
+    runs, and it is here for the same reason: Popen children outlive their
+    parent. Without it, cleanup lived in the body of whichever test spawned
+    something, so any failure before that cleanup - an assertion, an error, a
+    KeyError - orphaned every agent the test had started. That is not
+    hypothetical; it is how 28 agent processes were found still running and still
+    heartbeating after a run of this file under CPU load.
+
+    shutdown_agents() is the right call rather than terminating handles directly
+    because it already handles the case the failure depended on: an agent Popen'd
+    but not yet registered. It re-asserts the stop flag on every pass until the
+    process is gone, so it needs no registry row to work, and force-terminates
+    stragglers as a fallback."""
     db_path = str(tmp_path / "fi_test.db")
     coord = Controller(db_path=db_path)
     yield coord
+    coord.shutdown_agents()
     coord.close()
 
 
@@ -255,36 +272,55 @@ def test_real_coo_bootstrap_establishes_baseline_population(controller, monkeypa
     while controller.process_next_directive():
         pass
 
-    # known_process_identities() (populated the instant subprocess.Popen
-    # returns) is the source of truth for what's actually running now that
-    # the queue above is fully drained - not agent_registry, which could
-    # still be missing a just-spawned identity's registration write for a
-    # brief window (real registration takes well under 1s in practice).
-    # Wait for all of them to actually register before deciding who to
-    # retire - an identity Popen'd but not yet registered would fail
-    # _handle_retire's unknown-identity check and leak instead.
-    registration_deadline = time.time() + 5
+    # Retire only what has actually registered. known_process_identities() is
+    # populated the instant subprocess.Popen returns, but _handle_retire rejects
+    # an identity with no agent_registry row, so retiring one that has not
+    # registered yet does nothing at all except leave its process running.
+    #
+    # The gap between Popen and registration is not the brief window this once
+    # assumed. Measured: explorer-1 takes ~2.2s to register on an idle machine,
+    # and under CPU contention (48 busy workers on 16 cores) explorer, speculator
+    # and analysis did not register within 45s while dummy managed 5s. The old
+    # code waited 5s, fell through when the deadline passed, and retired the full
+    # Popen list anyway - which raised KeyError below on the identity that had no
+    # registry row, and orphaned the three processes it had just failed to
+    # retire.
+    #
+    # So: wait generously, then retire exactly the registered set. Anything still
+    # unregistered is the fixture's problem, and shutdown_agents() handles it
+    # without needing a registry row at all.
+    to_retire: list[str] = []
+    registration_deadline = time.time() + 30
     while time.time() < registration_deadline:
-        if all(fi_db.get_agent(controller.conn, identity) is not None for identity in controller.known_process_identities()):
+        spawned = controller.known_process_identities()
+        to_retire = [i for i in spawned if fi_db.get_agent(controller.conn, i) is not None]
+        if len(to_retire) == len(spawned):
             break
         time.sleep(0.2)
-    to_retire = list(controller.known_process_identities())
+
+    # The one this test is actually about. Everything else in the baseline
+    # population is incidental to the assertion above, and a slow machine failing
+    # to start explorer says nothing about whether COO establishes a population.
+    assert dummy_identity in to_retire, (
+        f"the dummy this test is about never registered; registered: {to_retire}"
+    )
+
     for identity in to_retire:
         fi_db.enqueue_directive(controller.conn, "retire", "coo", target_identity=identity)
     while controller.process_next_directive():
         pass
 
-    deadline = time.time() + 10
+    deadline = time.time() + 30
     while time.time() < deadline:
         agents = {a["identity"]: a for a in fi_db.list_agents(controller.conn)}
         if all(agents[identity]["process_state"] == fi_db.PROCESS_STOPPED for identity in to_retire):
             break
         time.sleep(0.2)
     else:
-        pytest.fail("not all spawned agents retired cleanly within timeout")
+        pytest.fail(f"not all spawned agents retired cleanly within timeout: {to_retire}")
 
     for identity in to_retire:
-        controller._processes[identity].wait(timeout=5)
+        controller._processes[identity].wait(timeout=30)
 
 
 # --- Controller as an agent in its own right (Pre-Alpha step 2) ---
