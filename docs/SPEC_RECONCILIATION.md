@@ -1613,3 +1613,57 @@ spawn is evidenced by the incident record and the code path, not by that count.
 The escalation path is covered by tests rather than by a live run: reaching it
 takes four failures at 45 seconds apiece, and the wall-clock cost buys nothing the
 unit tests do not already pin.
+
+## 29. Faults that can actually be injected (2026-08-18)
+
+The lifecycle catalogue has carried an `injectable` flag since it was written -
+"whether a scenario can cause this on demand in a live run" - and for thirty-six
+events the answer was yes in the catalogue and no in fact. The fault-tolerance
+work made that worse: four executive-failure events were declared injectable, so
+the machinery that notices a dead COO had no way to be exercised by the machinery
+meant to prove it works. The Fault Tolerance Framework §15 is explicit that the
+purpose is "not merely to prove that processes restart" but to prove the
+organization notices, assigns responsibility, recovers and learns.
+
+### Three actions, because three are real
+
+`simulation/faults.py` implements **kill** (abrupt termination, taskkill /F
+rather than a signal the process could handle cleanly - a clean exit is the one
+thing this fault must not cause), **stop** (retirement through the ordinary path,
+which exists as the control case: a suite that only ever kills cannot show that a
+watcher tells a decision apart from a failure), and **lock_database** (an
+exclusive write lock, §15's "database temporarily unavailable" and the closest
+thing this architecture has to a network partition, since SQLite is the only
+coordination channel).
+
+Named as absent rather than left to be assumed: hanging a process needs a suspend
+primitive Windows does not offer without a debugger or a third dependency;
+network partition has no network to partition; simultaneous multi-failure is
+composition, which a schedule already expresses.
+
+Targets are named by identity and resolved through `agent_registry`, so a fault
+that cannot find its target says so rather than killing something else. Faults are
+parsed at scenario load rather than at the moment they fire, because a fault that
+turns out to be unspellable at second 40 of a five-minute run has wasted the run.
+
+### Two defects the first fault scenario found
+
+**The harness could not run any scenario that changed the population.** Readiness
+was computed from this process's `BASELINE_POPULATION` defaults, so a scenario
+staffing judgment at zero waited sixty seconds for agents nobody had asked for and
+failed a run that had started correctly. Every scenario until then used the
+default, so the harness had never been asked the question.
+
+**A property that passed without measuring anything.** `population.respawns`
+counts completed spawn *directives*, and a COO recovery deliberately bypasses the
+queue - so it read 0 through a run that had killed and replaced an executive. The
+assertion now sits on `incidents.total`, where a watch that kept respawning would
+file a second incident and a third.
+
+### Verified
+
+`executive_failure` run against a live organization: the fault fired at +20s
+(`killed coo-1 (pid 35116)`), and all six properties passed - one incident
+detected, one recovery, no escalation, exactly one detection rather than a loop,
+the workforce undisturbed, and nothing left believing it had crashed. Clean
+shutdown, no orphans.
