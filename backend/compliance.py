@@ -160,6 +160,20 @@ EVALUATION_RULES = (
         exempt=True,
         reason="the consumer is a person, and nothing lets a human record an evaluation",
     ),
+    # Addendum 20 §2E's rule with teeth: no opportunity ultimately exists
+    # without an attached risk assessment. The evaluator is COO's cycle step
+    # (agents/coo.py's _coo_work calls risk.assess_unassessed before the
+    # remediation sweep); a violation here means the step is broken or
+    # stopped, not that somebody forgot.
+    EvaluationRule(
+        name="analysis result (risk-assessed)",
+        table="analysis_results",
+        key="id",
+        completed_at="created_at",
+        producer="producer_identity",
+        evaluation=(TABLE, "risk_assessments", "analysis_result_id"),
+        consumer="COO's risk assessment step",
+    ),
 )
 
 # Paths deliberately outside the check, and paths that cannot currently meet it.
