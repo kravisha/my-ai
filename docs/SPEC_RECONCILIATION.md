@@ -1896,3 +1896,105 @@ vendor-independence argument arriving as experience rather than principle.
 standing at midday 2008-09-16, the 15th's flight-to-safety plunge (3.74 → 3.47)
 is visible and the 16th's close is not. Scratch database, removed afterwards; the
 real one untouched.
+
+## 33. The knowledge store's missing mechanism was succession (2026-08-18)
+
+Scoreboard #11 asked for the knowledge store to be extended — models, assumptions
+and transformations as record kinds, plus the expiry conditions that make a lens
+conditionally valid. A survey of what exists (run as a delegated inventory,
+verified before use) showed the framing was two days stale in both directions:
+
+**More exists than the gap analysis's scorecard says.** Expiry is built and live —
+both arms: performance (grades joined through `lens_artifact_id`, thin-evidence
+guard, staleness on mean score or worth-the-compute rate) and regime (bind a
+baseline, detect drift, stale on divergence). The grades→lens-quality loop the
+gap analysis said "reaches nothing" has reached `mark_artifact_stale` since
+2026-08-16. Both detection thresholds already live in `intelligence_artifacts`
+and the agents resolve them from the store each cycle, config as seed only.
+
+**And the cycle is half a cycle.** Stale → nothing. `get_active_artifact` returns
+None for a stale lens, Explorer falls back to the hardcoded seed — deliberately,
+and the fallback is right — but nothing could ever *renew* the lens: the two
+functions that would (`record_intelligence_artifact`, `supersede_artifact`) had
+zero production callers. Expiry without succession demotes the organization to
+its config constants one staleness at a time, permanently, with attribution
+(`lens_artifact_id`) going dark for the whole seeded era.
+
+### What was built: propose → adjudicate → adopt
+
+- `propose_artifact_revision` — a new version of an existing name, status
+  `proposed`, rationale mandatory ("a revision without a rationale is a magic
+  number changing"), validity conditions carried forward (a revision proposes a
+  new value, not new validity semantics), one open proposal per name.
+- `adopt_artifact_revision` — proposed → active; every prior active or stale
+  version → superseded, linked forward via `superseded_by`. From the next agent
+  cycle the new value is in force: no restart, no config edit.
+- `reject_artifact_revision` — kept, not deleted, with the reason appended: a
+  rejected proposal and its reason are evidence.
+- Admin routes for all three plus the proposal list on `/admin/intelligence` —
+  **the Trainer's seat, held by a human**. Addendum 13's Trainer would propose
+  from evidence; until Phase D exists, the operator reads `lens_performance` and
+  `staleness_reason` on the same panel and proposes the correction. What matters
+  is that the act is recorded — proposer, rationale, adjudication — so a Trainer
+  inherits a recorded practice rather than a blank.
+
+Also wired: `raise_corrective_actions` into the live COO cycle. Governance
+computed corrective items on every panel request and persisted them never — the
+writer had no production caller, so "corrective work becomes ordinary tasks" was
+true only in tests. `knowledge_exists` makes the call idempotent per cause.
+
+### Declined, and why
+
+- **New record kinds (models, assumptions, transformations).** No producers. A
+  `record_kind` nothing writes is the empty schema this project refuses, and the
+  succession chain — value, rationale, evidence, `superseded_by` links,
+  adjudication — *is* the Manifesto §12 transformation record: what changed, why,
+  and what evidence caused it, without a parallel store.
+- **Automatic proposal from performance data.** That is the Trainer's judgment
+  (addendum 13), explicitly Phase D. A statistical auto-proposer would be an
+  unvalidated learner wired directly into the organization's most consequential
+  constants.
+- **Widening the remaining constants** (`NEIGHBORHOOD_*`, `PEER_MIN_COOCCURRING`)
+  into artifacts. Each needs its own attribution path before its performance is
+  measurable, and an artifact whose performance cannot be measured can expire
+  only by opinion.
+
+### Known cost, restated
+
+During a stale-lens window, reports carry no `lens_artifact_id`, so the seeded
+era is invisible to `lens_performance`. With succession the window is bounded by
+the operator's response time rather than infinite, which is why the fallback
+behaviour was left untouched.
+
+### Verified
+
+1321 passed (was 1305). Live, against a running organization (sandboxed database,
+Explorer cycling, Analysis and Speculator staffed at zero): the seeded lens v1
+(2.0) marked stale — `get_active_artifact` returned None, the seed-fallback era
+beginning — then through the real admin routes: propose v2 (2.5, with rationale
+and evidence), a second open proposal refused with the first one's id, the
+proposal visible on `/admin/intelligence`, adopt, and v2 active organization-wide
+with the chain reading `v2 active / v1 superseded-by-9`. Explorer heartbeating
+throughout — the new value in force with no restart.
+
+### The wiring's first production run filed three real records
+
+The verification script predicted zero corrective actions on a clean sandbox and
+got three — the compliance rules firing on the startup window, where early COO
+directives complete before evaluation machinery has anything to evaluate
+("1 of 2 completions carry no evaluation"; "too few completions to attribute").
+They are idempotent, few, and now on the record, which is the point of the
+wiring; whether startup-transient states deserve a grace window before compliance
+counts them is a tuning question that now has evidence behind it instead of
+nothing. Left as filed rather than suppressed: a rule that fires on day one is
+examined, not silenced.
+
+### Division of labour, per the tiering directive
+
+The codebase survey and the spec-driven implementation ran as delegated subagent
+work on a lesser model; the design, the spec, the review of both results, the
+live verification and this record are the top model's. The survey's one wrong
+detail (it claimed the succession functions had no callers *including tests*;
+they had test callers, no production callers) was caught in review — which is
+what the review step is for.
+

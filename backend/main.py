@@ -498,7 +498,94 @@ def list_intelligence(conn=Depends(panel_db), admin: str = Depends(require_admin
             "performance": fi_db.lens_performance(conn, artifact["id"]),
             "created_at": artifact["created_at"],
         })
-    return {"artifacts": artifacts}
+    proposals = [
+        _artifact_json(artifact)
+        for artifact in fi_db.list_intelligence_artifacts(conn, status="proposed")
+    ]
+    return {"artifacts": artifacts, "proposals": proposals}
+
+
+def _artifact_json(artifact: dict) -> dict:
+    """Shared shape for an intelligence_artifacts row across the read routes
+    below, so a proposal and an adopted/rejected row serialize identically."""
+    return {
+        "id": artifact["id"],
+        "name": artifact["name"],
+        "version": artifact["version"],
+        "artifact_kind": artifact["artifact_kind"],
+        "value": _parse_json_field(artifact["value"]),
+        "status": artifact["status"],
+        "rationale": artifact["rationale"],
+        "validity_conditions": _parse_json_field(artifact["validity_conditions"], {}),
+        "producer_identity": artifact["producer_identity"],
+        "created_at": artifact["created_at"],
+    }
+
+
+# --- Artifact succession (the Trainer's seat, held by a human) --------------
+#
+# The expiry cycle (active -> stale, agents/coo.py) flags a lens that evidence
+# says no longer holds, but flagging alone leaves the organization on that
+# flagged value forever, or dropped to the hardcoded seed once it goes stale
+# (agents/explorer.py's fallback). These three routes are the other half:
+# proposing and adjudicating a successor.
+#
+# The Trainer's seat, held by a human. Addendum 13's Trainer would propose
+# from evidence; until Phase D, the operator reads lens_performance and the
+# staleness_reason on this same panel and proposes the correction. What
+# matters is that the act is recorded - proposer, rationale, adjudication -
+# so when a Trainer exists it inherits a recorded practice, not a blank.
+
+class ProposeRevisionRequest(BaseModel):
+    value: Any
+    rationale: str
+    evidence_ref: str | None = None
+
+
+class RejectRevisionRequest(BaseModel):
+    reason: str
+
+
+@app.post("/admin/intelligence/{name}/proposals")
+def propose_intelligence_revision(name: str, request: ProposeRevisionRequest,
+                                   conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """File a candidate revision for an existing lens, attributed to the admin
+    who filed it. 400s on the same refusals propose_artifact_revision makes -
+    no prior artifact by this name, no rationale, or an open proposal already
+    in flight - because those are operator mistakes worth reporting, not
+    server errors."""
+    try:
+        revision_id = fi_db.propose_artifact_revision(
+            conn, name, request.value, request.rationale, proposed_by=admin,
+            evidence_ref=request.evidence_ref,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _artifact_json(conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (revision_id,)))
+
+
+@app.post("/admin/intelligence/proposals/{revision_id}/adopt")
+def adopt_intelligence_revision(revision_id: int, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Adjudicate a proposal in: it becomes active, its predecessor(s) become
+    superseded, and the next agent cycle resolves it through
+    get_active_artifact with no restart and no config edit."""
+    try:
+        adopted = fi_db.adopt_artifact_revision(conn, revision_id, adopted_by=admin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _artifact_json(adopted)
+
+
+@app.post("/admin/intelligence/proposals/{revision_id}/reject")
+def reject_intelligence_revision(revision_id: int, request: RejectRevisionRequest,
+                                  conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Adjudicate a proposal out, with a reason on the record - a rejection
+    without one teaches nothing to whoever reads this later."""
+    try:
+        fi_db.reject_artifact_revision(conn, revision_id, rejected_by=admin, reason=request.reason)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _artifact_json(conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (revision_id,)))
 
 
 @app.get("/admin/knowledge")
