@@ -901,6 +901,9 @@ CREATE INDEX IF NOT EXISTS personnel_events_by_name ON personnel_events (name, o
 --   'stale'      - evidence says it no longer holds; still readable, and its
 --                  value is NOT changed automatically (see coo.py)
 --   'superseded' - replaced by another artifact, linked via superseded_by
+--   'proposed'   - a candidate revision awaiting adjudication
+--   'rejected'   - a candidate that was declined, kept because a rejected
+--                  proposal and its reason are evidence
 CREATE TABLE IF NOT EXISTS intelligence_artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -919,6 +922,14 @@ CREATE TABLE IF NOT EXISTS intelligence_artifacts (
     schema_version INTEGER NOT NULL DEFAULT 1,
     UNIQUE(name, version)
 );
+
+-- One open proposal per name at a time. A second proposal while the first is
+-- still awaiting adjudication would be two candidates racing for the same
+-- succession, with no rule for which one adopt_artifact_revision should
+-- resolve against - so propose_artifact_revision checks this ahead of the
+-- insert for a readable error, and the index is the backstop against a race.
+CREATE UNIQUE INDEX IF NOT EXISTS intelligence_one_open_proposal
+    ON intelligence_artifacts (name) WHERE status = 'proposed';
 
 -- The system's *estimate* of current market conditions, inferred from the
 -- surfaces Explorer observes. Deliberately a current-state table (one row per
@@ -2455,6 +2466,118 @@ def supersede_artifact(conn: Database, old_artifact_id: int, new_artifact_id: in
     conn.execute(
         "UPDATE intelligence_artifacts SET status = 'superseded', superseded_by = ? WHERE id = ?",
         (new_artifact_id, old_artifact_id),
+    )
+
+
+def propose_artifact_revision(
+    conn: Database,
+    name: str,
+    value,
+    rationale: str,
+    proposed_by: str,
+    evidence_ref: str | None = None,
+) -> int:
+    """The Trainer's act, with a human in the Trainer's seat until Phase D
+    builds one. A proposal is a fact about what someone believed should
+    change and why - which is why a rejected one is kept, not deleted.
+
+    Refuses three ways, each because the refused thing would corrupt the
+    succession chain rather than merely be untidy: a revision to a name that
+    never existed is not a revision at all (record_intelligence_artifact is
+    the function for a new name); a revision with no rationale is a magic
+    number changing, which is exactly what validity_conditions and staleness
+    exist to prevent; and a second open proposal for a name that already has
+    one would leave adopt_artifact_revision no way to know which candidate
+    the adjudication was even about."""
+    prior = conn.fetchone(
+        "SELECT * FROM intelligence_artifacts WHERE name = ? ORDER BY version DESC LIMIT 1",
+        (name,),
+    )
+    if prior is None:
+        raise ValueError(
+            f"no artifact named {name!r} has ever existed; a revision revises something - "
+            "use record_intelligence_artifact for a new name"
+        )
+    if not rationale or not rationale.strip():
+        raise ValueError("a revision without a rationale is a magic number changing")
+    existing_proposal = conn.fetchone(
+        "SELECT id FROM intelligence_artifacts WHERE name = ? AND status = 'proposed'",
+        (name,),
+    )
+    if existing_proposal is not None:
+        raise ValueError(
+            f"an open proposal already exists for {name!r} (id {existing_proposal['id']}); "
+            "adjudicate it before proposing another"
+        )
+
+    if evidence_ref:
+        rationale = f"{rationale}\n\nEvidence: {evidence_ref}"
+
+    return conn.execute_returning_id(
+        "INSERT INTO intelligence_artifacts "
+        "(created_at, artifact_kind, name, version, value, rationale, validity_conditions, status, "
+        "producer_identity, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)",
+        (
+            _now(), prior["artifact_kind"], name, prior["version"] + 1, json.dumps(value), rationale,
+            # Carried forward, not re-derived: a revision proposes a new value,
+            # not new validity semantics. Changing what would invalidate a lens
+            # is a different act from changing the lens.
+            prior["validity_conditions"],
+            proposed_by, SCHEMA_VERSION,
+        ),
+    )
+
+
+def adopt_artifact_revision(conn: Database, revision_id: int, adopted_by: str) -> dict:
+    """Adoption supersedes the stale predecessor, which completes the cycle
+    expiry started: active -> stale -> superseded-by-a-successor. From the
+    next agent cycle get_active_artifact resolves the new version - no agent
+    restart, no config edit."""
+    revision = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (revision_id,))
+    if revision is None or revision["status"] != "proposed":
+        status = revision["status"] if revision is not None else "nonexistent"
+        raise ValueError(f"only a proposed revision can be adopted; this one is {status}")
+
+    conn.execute("UPDATE intelligence_artifacts SET status = 'active' WHERE id = ?", (revision_id,))
+    predecessors = conn.fetchall(
+        "SELECT id FROM intelligence_artifacts WHERE name = ? AND status IN ('active', 'stale') AND id != ?",
+        (revision["name"], revision_id),
+    )
+    for predecessor in predecessors:
+        supersede_artifact(conn, predecessor["id"], revision_id)
+
+    conn.execute(
+        "UPDATE intelligence_artifacts SET rationale = rationale || ? WHERE id = ?",
+        (f"\n\nAdopted by {adopted_by}.", revision_id),
+    )
+    return conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (revision_id,))
+
+
+def reject_artifact_revision(conn: Database, revision_id: int, rejected_by: str, reason: str) -> None:
+    """Declines a proposal without discarding it. A rejection is adjudication,
+    and adjudication without a reason on the record teaches nothing to
+    whoever reads this later - Trainer or human."""
+    revision = conn.fetchone("SELECT * FROM intelligence_artifacts WHERE id = ?", (revision_id,))
+    if revision is None or revision["status"] != "proposed":
+        status = revision["status"] if revision is not None else "nonexistent"
+        raise ValueError(f"only a proposed revision can be rejected; this one is {status}")
+    if not reason or not reason.strip():
+        raise ValueError("a rejection without a reason teaches nothing")
+
+    conn.execute(
+        "UPDATE intelligence_artifacts SET status = 'rejected', rationale = rationale || ? WHERE id = ?",
+        (f"\n\nRejected by {rejected_by}: {reason}", revision_id),
+    )
+
+
+def list_artifact_revisions(conn: Database, name: str) -> list[dict]:
+    """The succession chain - what the value was, what it became, who changed
+    it and why. This is the manifesto §12 transformation record: preserved
+    change, not a new record kind."""
+    return conn.fetchall(
+        "SELECT * FROM intelligence_artifacts WHERE name = ? ORDER BY version DESC",
+        (name,),
     )
 
 

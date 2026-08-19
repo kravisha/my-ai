@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import fi_db
+from backend import fi_db, remediation
 
 ROLE = "coo"
 
@@ -446,6 +446,12 @@ def _coo_work(conn) -> None:
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     _evaluate_intelligence_health(conn)
+    # The remediation findings were computed on every panel request and
+    # persisted never - raise_corrective_actions had no production caller, so
+    # "corrective work becomes ordinary tasks" was true only in tests.
+    # knowledge_exists makes this idempotent per cause, so running it every
+    # cycle files each judgment once.
+    fi_db.raise_corrective_actions(conn, remediation.corrective_items(conn))
     # Source standings are recomputed here rather than by Speculator, for the
     # same reason lens health is COO's: the producer of evidence must not be
     # the judge of its own sources (addendum 11 §8).
