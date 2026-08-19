@@ -287,12 +287,12 @@ def parse_fred_csv(text: str, series_id: str, source: str) -> tuple[list[dict], 
 def ingest_fred_series(conn: Database, text: str, series_id: str, source: str) -> IngestReport:
     """One FRED series into the store, as canonical historical observations.
 
-    The subject entity is the series itself, under its FRED id - `SP500` is not a
-    tradeable security, and pretending it is one would be the identity confusion
-    backend/identifiers.py exists to prevent. When the Reference Data Engine
-    widens entity types (Scoreboard #5), these become first-class series entities;
-    until then they are securities in name only, and this comment is the
-    disclosure."""
+    The subject entity is the series itself, entity_type 'series' - an index
+    level or a yield is observed like a security but is not a tradeable
+    instrument. This replaces the earlier admitted misuse that minted these as
+    'security'; rows created under the old type in scratch databases keep their
+    recorded type, because identity rows record what was done, not what should
+    have been."""
     series_id = series_id.strip().upper()
     if series_id not in FRED_SERIES:
         raise HistoricalError(
@@ -303,7 +303,7 @@ def ingest_fred_series(conn: Database, text: str, series_id: str, source: str) -
     data_class = FRED_SERIES[series_id]
     points, problems, empty = parse_fred_csv(text, series_id, source)
 
-    entity_id = identifiers.ensure_security(conn, series_id, source=source)
+    entity_id = identifiers.ensure_entity(conn, "symbol", series_id, "series", source=source)
     report = IngestReport(symbol=series_id, entity_id=entity_id, source=source,
                           skipped=len(problems), problems=problems)
     for point in points:

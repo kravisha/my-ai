@@ -1998,3 +1998,91 @@ detail (it claimed the succession functions had no callers *including tests*;
 they had test callers, no production callers) was caught in review — which is
 what the review step is for.
 
+## 34. Reference data began with two foundation repairs (2026-08-18)
+
+Scoreboard #5 said "widen security_universe into the Reference Data Engine." The
+survey (delegated, verified before use) showed that sentence resting on a false
+premise and standing over two structural defects, so the increment is smaller in
+glamour and larger in foundation than the item asked for.
+
+### The false premise
+
+**`security_universe` had zero production consumers.** It is created, seeded, and
+versioned — and Explorer scans `discovery_config.PEER_GROUP_SECURITIES`, a
+hardcoded parallel list, instead. Two universes, one decorative. "Widening" a
+table nothing reads would have been enlarging the decoration.
+
+The repair chosen is authority-by-assertion rather than rewiring: every universe
+member gets an entity at seed time, and a containment test pins
+`PEER_GROUP_SECURITIES ⊆ security_universe` — the universe is the authoritative
+list, the peer groups are a *grouping* of it, and a scanned symbol outside the
+universe now fails a test instead of drifting silently. Rewiring Explorer to read
+the universe directly is declined here: co-occurrence semantics live in the
+groups, and flattening them is peer-group design work, not reference-data work.
+
+### The two structural defects
+
+**Modular schemas had no modular migrations.** `apply_additive_migrations` parsed
+only `fi_db.SCHEMA`, so the moment table ownership split across modules (#19's
+identifiers, #20's observations), those tables silently lost migration support
+entirely — a column added to their DDL would exist on fresh databases and be
+missing on every deployed one. The walker now sees every module's DDL. This
+defect had bitten nobody yet only because both modules are days old.
+
+**A CHECK constraint on a growing vocabulary.** `entities.entity_type` carried a
+CHECK hand-duplicated from `ENTITY_TYPES`, unreachable by any migration (SQLite
+cannot widen a CHECK), so every future entity type would have required a table
+rebuild. The CHECK is gone — one detect-and-rebuild migration for databases
+created in the intervening days — and validation lives in `create_entity`, where
+a refusal can name the valid types. `observations.origin` keeps its CHECK
+deliberately: that vocabulary is fixed at three forever. The difference is not
+taste; it is whether the set is closed.
+
+### What was then buildable honestly
+
+- **`series` entity type**, and the end of an admitted misuse: `ingest_fred_series`
+  had been minting `SP500` and `DGS10` as `security` and saying so in its
+  docstring. `ensure_entity` generalizes `ensure_security`; FRED series are now
+  what they are. Rows created under the old type in scratch databases keep their
+  recorded type — identity rows record what was done, not what should have been.
+- **Market holidays** — the first reference-data table with a real consumer.
+  `simulation/clock.py` had stayed calendar-free deliberately ("a holiday
+  calendar is a lookup table that changes nothing structurally") and the survey
+  found exactly one seam where session enforcement already reads the database:
+  `market_is_open`. US holidays 2025–2027 seeded as public facts; equity and bond
+  sessions consult the calendar, futures and fx do not — they trade through most
+  US holidays, and a session with no calendar is itself information. A Tuesday
+  July 4th passes the weekday-and-hours test and the market is closed anyway.
+
+### Declined, with reasons
+
+Issuers, sectors, and option contract specifications — confirmed absent from the
+codebase in every form, meaning no producer and no consumer. They arrive with the
+engines that need them (live options data for contract specs; any fundamental
+ingest for issuers), not as empty tables built to make the Reference Data Engine
+look finished.
+
+### The defect the review caught in the delegated work
+
+The rebuild migration was correct on the clean path and had a crash window:
+`Database.execute` commits per statement, so rename-recreate-copy-drop is four
+transactions, and a death between any two left the holding pen orphaned while the
+guard under it saw a fresh CHECK-less table and skipped — stranding every row out
+of view. Recovery now runs before detection (`INSERT OR IGNORE` over the primary
+key makes the copy idempotent), so the sequence resumes from any crash point, and
+a test constructs the exact post-crash state and asserts the stranded row comes
+back. Blast radius today was near zero — the real database has no `entities`
+table yet — but this migration is the pattern every future rebuild will copy,
+which is why the window mattered more than its odds.
+
+### Verified
+
+1329 passed (was 1321). The delegated implementation verified the rebuild against
+a hand-built old-shape database (old CHECK genuinely refused a 'series' insert;
+after `init_schema` the row survived, 'series' succeeded, second run a no-op).
+The containment test did its job on first contact: peer groups spanned SYN1–10
+against a universe seeded SYN1–4, and the universe was reconciled upward rather
+than the test weakened. Division of labour as before: survey and implementation
+delegated to a lesser model; design, spec, review — which caught the crash
+window — and this record by the top model.
+

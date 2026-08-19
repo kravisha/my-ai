@@ -1160,3 +1160,49 @@ def test_the_starvation_guard_reaches_reports_the_ranking_would_bury(conn):
 def test_an_empty_queue_returns_nothing_rather_than_raising(conn):
     assert fi_db.prioritised_pending_reports(conn) == []
     assert fi_db.fetch_prioritised_report(conn) is None
+
+
+# --- Market holidays: the calendar market_is_open consults --------------------
+#
+# 2026-07-03 is Independence Day observed (July 4th, 2026 falls on a Saturday)
+# and is itself a Friday - so at 15:00 UTC the equity session's weekday-and-
+# hours test alone says open, and the holiday calendar is the only thing that
+# can say otherwise. 2026-07-06 is the following Monday, an ordinary trading
+# day. Both land mid-session (14:30-21:00 UTC) with hours of margin, so the
+# wall-clock drift between set_simulation_clock and the assertion - scale 1,
+# started_at defaulted to now - cannot push the moment across a session or day
+# boundary; the holiday check itself only reads the DATE, so it would not
+# matter even if it did.
+
+
+def test_a_market_holiday_closes_a_session_that_would_otherwise_be_open(conn):
+    fi_db.set_simulation_clock(conn, "2026-07-03T15:00:00+00:00", scale=1, enforce_sessions=True)
+
+    assert fi_db.market_is_open(conn, "option_surface") is False
+
+
+def test_the_next_business_day_is_open(conn):
+    fi_db.set_simulation_clock(conn, "2026-07-06T15:00:00+00:00", scale=1, enforce_sessions=True)
+
+    assert fi_db.market_is_open(conn, "option_surface") is True
+
+
+def test_enforce_sessions_off_ignores_holidays_entirely(conn):
+    fi_db.set_simulation_clock(conn, "2026-07-03T15:00:00+00:00", scale=1, enforce_sessions=False)
+
+    assert fi_db.market_is_open(conn, "option_surface") is True
+
+
+def test_is_market_holiday_names_the_day_or_says_none(conn):
+    assert fi_db.is_market_holiday(conn, "2026-07-03") == "Independence Day (observed)"
+    assert fi_db.is_market_holiday(conn, "2026-07-06") is None
+
+
+def test_a_session_with_no_calendar_is_unaffected_by_the_same_holiday(conn):
+    """Futures trade through most US holidays - SESSION_CALENDARS has no entry
+    for 'futures', so the holiday that closes the equity session must leave a
+    futures cadence exactly as its own session says, on the same simulated
+    moment."""
+    fi_db.set_simulation_clock(conn, "2026-07-03T15:00:00+00:00", scale=1, enforce_sessions=True)
+
+    assert fi_db.market_is_open(conn, "futures_price") is True

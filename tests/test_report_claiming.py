@@ -181,7 +181,7 @@ def test_table_constraints_are_not_mistaken_for_columns():
     """`UNIQUE(name, version)` has no space after the keyword, so the first token
     is `UNIQUE(name,` - an equality check let it through and produced a syntax
     error at migration time."""
-    declared = fi_db._declared_columns()
+    declared = fi_db._declared_columns((fi_db.SCHEMA,))
     for table, columns in declared.items():
         for name, _ in columns:
             assert not name.upper().startswith(fi_db._TABLE_CONSTRAINTS), (
@@ -190,7 +190,7 @@ def test_table_constraints_are_not_mistaken_for_columns():
 
 
 def test_every_declared_table_is_parsed():
-    declared = fi_db._declared_columns()
+    declared = fi_db._declared_columns((fi_db.SCHEMA,))
     assert set(declared) == set(fi_db.list_tables_in_schema())
     assert all(columns for columns in declared.values())
 

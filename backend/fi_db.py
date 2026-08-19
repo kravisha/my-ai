@@ -46,6 +46,7 @@ carries... schema version" requirement without contradicting it.
 import json
 import os
 import re
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -106,9 +107,56 @@ AGENT_NAME_POOL = (
 # "Create a configurable, expandable, versioned Security Universe of assets
 # the organization may monitor." Inclusion means an asset MAY be monitored -
 # it implies nothing about whether it is attractive or investable.
+#
+# Default widened from SYN1-4 to SYN1-10 by universe-authority reconciliation
+# (tests/test_universe_authority.py): agents/discovery_config.py's
+# PEER_GROUP_SECURITIES already scanned SYN1-10 across three peer groups, so
+# the universe - now the authoritative list every peer group must be contained
+# in - had to actually contain what was already being scanned rather than the
+# other way round.
 SECURITY_UNIVERSE_VERSION = 1
 SECURITY_UNIVERSE_SEED = [
-    s.strip() for s in os.environ.get("FI_SECURITY_UNIVERSE", "SYN1,SYN2,SYN3,SYN4").split(",") if s.strip()
+    s.strip() for s in os.environ.get(
+        "FI_SECURITY_UNIVERSE", "SYN1,SYN2,SYN3,SYN4,SYN5,SYN6,SYN7,SYN8,SYN9,SYN10"
+    ).split(",") if s.strip()
+]
+
+# US market holidays market_is_open consults through SESSION_CALENDARS/
+# is_market_holiday below. (day, name) pairs, seeded under calendar='us' for
+# 2025-2027. Observed dates (a holiday landing on a weekend, shifted to the
+# adjacent business day) are named accordingly so the two are never confused
+# when read back.
+MARKET_HOLIDAYS_US = [
+    ("2025-01-01", "New Year's Day"),
+    ("2026-01-01", "New Year's Day"),
+    ("2027-01-01", "New Year's Day"),
+    ("2025-01-20", "Martin Luther King Jr. Day"),
+    ("2026-01-19", "Martin Luther King Jr. Day"),
+    ("2027-01-18", "Martin Luther King Jr. Day"),
+    ("2025-02-17", "Presidents Day"),
+    ("2026-02-16", "Presidents Day"),
+    ("2027-02-15", "Presidents Day"),
+    ("2025-04-18", "Good Friday"),
+    ("2026-04-03", "Good Friday"),
+    ("2027-03-26", "Good Friday"),
+    ("2025-05-26", "Memorial Day"),
+    ("2026-05-25", "Memorial Day"),
+    ("2027-05-31", "Memorial Day"),
+    ("2025-06-19", "Juneteenth"),
+    ("2026-06-19", "Juneteenth"),
+    ("2027-06-18", "Juneteenth (observed)"),
+    ("2025-07-04", "Independence Day"),
+    ("2026-07-03", "Independence Day (observed)"),
+    ("2027-07-05", "Independence Day (observed)"),
+    ("2025-09-01", "Labor Day"),
+    ("2026-09-07", "Labor Day"),
+    ("2027-09-06", "Labor Day"),
+    ("2025-11-27", "Thanksgiving"),
+    ("2026-11-26", "Thanksgiving"),
+    ("2027-11-25", "Thanksgiving"),
+    ("2025-12-25", "Christmas Day"),
+    ("2026-12-25", "Christmas Day"),
+    ("2027-12-25", "Christmas Day"),
 ]
 
 # --- Intelligence artifacts (JARVIS Constitution §3, gap analysis §4.11) ---
@@ -959,6 +1007,20 @@ CREATE TABLE IF NOT EXISTS security_universe (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- The first reference-data table with a real consumer: market_is_open.
+-- Holidays are public facts that change nothing structurally
+-- (simulation/clock.py says exactly this), which is why the sessions stayed
+-- calendar-free until a consumer existed - and market_is_open is that
+-- consumer, the one seam where session enforcement already reads the
+-- database.
+CREATE TABLE IF NOT EXISTS market_holidays (
+    day TEXT NOT NULL,
+    calendar TEXT NOT NULL,
+    name TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (day, calendar)
+);
+
 -- The simulated clock every process reads, so they agree about what time it is
 -- in the world.
 --
@@ -1110,6 +1172,21 @@ def simulated_now(conn: Database, wall: datetime | None = None) -> datetime:
     return parse_timestamp(clock["epoch"]) + timedelta(seconds=elapsed * clock["scale"])
 
 
+# Which holiday calendar a session consults, if any. Futures and fx trade
+# through most US holidays and 'always'/'none' are not markets; a session
+# absent here has no holiday calendar, which is itself information.
+SESSION_CALENDARS = {"equity": "us", "bond": "us"}
+
+
+def is_market_holiday(conn: Database, day: str, calendar: str = "us") -> str | None:
+    """The holiday's name if `day` ('YYYY-MM-DD') is one on `calendar`, else None."""
+    row = conn.fetchone(
+        "SELECT name FROM market_holidays WHERE day = ? AND calendar = ?",
+        (day, calendar),
+    )
+    return row["name"] if row else None
+
+
 def market_is_open(conn: Database, data_class: str, wall: datetime | None = None) -> bool:
     """Whether this class of data can be produced right now.
 
@@ -1127,7 +1204,18 @@ def market_is_open(conn: Database, data_class: str, wall: datetime | None = None
     cadence = CADENCES.get(data_class)
     if cadence is None:
         return True
-    return SESSIONS[cadence.session].is_open(simulated_now(conn, wall))
+
+    moment = simulated_now(conn, wall)
+    if not SESSIONS[cadence.session].is_open(moment):
+        return False
+
+    # A Tuesday July 4th passes the weekday-and-hours test and the market is
+    # closed anyway; the session knows the shape of an ordinary week, the
+    # calendar knows which days are not ordinary.
+    calendar = SESSION_CALENDARS.get(cadence.session)
+    if calendar is not None and is_market_holiday(conn, moment.date().isoformat(), calendar) is not None:
+        return False
+    return True
 
 
 def list_tables_in_schema() -> list[str]:
@@ -1163,29 +1251,37 @@ def init_schema(conn: Database) -> None:
 _TABLE_CONSTRAINTS = ("UNIQUE", "PRIMARY", "FOREIGN", "CHECK", "CONSTRAINT")
 
 
-def _declared_columns() -> dict[str, list[tuple[str, str]]]:
-    """Every column SCHEMA declares, as {table: [(name, full definition)]}.
+def _declared_columns(schemas: Iterable[str]) -> dict[str, list[tuple[str, str]]]:
+    """Every column any of `schemas` declares, as {table: [(name, full definition)]}.
 
     Parsed from the DDL rather than kept in a second hand-maintained list. A
     registry of "columns added later" is a thing somebody forgets to update, and
-    the failure mode is silent."""
+    the failure mode is silent.
+
+    Takes an iterable of schema strings, not one, and merges the result across
+    all of them - see `apply_additive_migrations`'s docstring for why a single
+    SCHEMA stopped being enough the moment table ownership split across
+    modules. Table names are disjoint across the schemas this project has
+    today, so "merge" is simple union; nothing here assumes they must stay
+    disjoint, it just has no reason yet to define what a collision would mean."""
     declared: dict[str, list[tuple[str, str]]] = {}
-    for table, body in re.findall(
-        r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", SCHEMA, re.S
-    ):
-        columns = []
-        for line in body.splitlines():
-            line = line.strip().rstrip(",")
-            if not line or line.startswith("--"):
-                continue
-            name = line.split()[0]
-            # `startswith`, not equality: a table-level constraint is written
-            # `UNIQUE(name, version)` with no space, so the first token is
-            # `UNIQUE(name,` and an equality check lets it through as a column.
-            if name.upper().startswith(_TABLE_CONSTRAINTS):
-                continue
-            columns.append((name, line))
-        declared[table] = columns
+    for schema in schemas:
+        for table, body in re.findall(
+            r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", schema, re.S
+        ):
+            columns = []
+            for line in body.splitlines():
+                line = line.strip().rstrip(",")
+                if not line or line.startswith("--"):
+                    continue
+                name = line.split()[0]
+                # `startswith`, not equality: a table-level constraint is written
+                # `UNIQUE(name, version)` with no space, so the first token is
+                # `UNIQUE(name,` and an equality check lets it through as a column.
+                if name.upper().startswith(_TABLE_CONSTRAINTS):
+                    continue
+                columns.append((name, line))
+            declared[table] = columns
     return declared
 
 
@@ -1252,9 +1348,17 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     dangerous convenience. This closes the case that was silently broken.
 
     Returns what it changed, so a caller can log a migration rather than have one
-    happen invisibly."""
+    happen invisibly.
+
+    Reads `SCHEMA`, `identifiers.SCHEMA` and `observations.SCHEMA`, not just this
+    module's own. The additive mechanism parsed only this module's SCHEMA, so
+    the moment table ownership was split across modules, identifiers- and
+    observations-owned tables silently lost migration support entirely - a
+    column added to their DDL would exist on fresh databases and be missing on
+    every deployed one. Modular schemas require the migration walker to see
+    every module's DDL, or modularity quietly becomes divergence."""
     applied = _reconcile_triggers(conn)
-    for table, columns in _declared_columns().items():
+    for table, columns in _declared_columns((SCHEMA, identifiers.SCHEMA, observations.SCHEMA)).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
             continue  # table did not exist; executescript just created it in full
@@ -1301,6 +1405,21 @@ def _seed_static_metadata(conn: Database) -> None:
             "INSERT OR IGNORE INTO security_universe (symbol, added_at, active, note, universe_version, schema_version) "
             "VALUES (?, ?, 1, ?, ?, ?)",
             (symbol, _now(), "seeded synthetic universe", SECURITY_UNIVERSE_VERSION, SCHEMA_VERSION),
+        )
+        # Every universe member gets an entity the moment the universe is
+        # seeded, so symbol-space and entity-space cannot drift apart at the
+        # root. The universe is the authoritative list; discovery_config's peer
+        # groups are a *grouping* of it, and the containment test is what keeps
+        # that sentence true.
+        identifiers.ensure_security(conn, symbol, source="security_universe")
+    # US market holidays. INSERT OR IGNORE keyed on (day, calendar) makes this
+    # idempotent and safe to widen (adding a year to MARKET_HOLIDAYS_US) without
+    # touching rows already held.
+    for day, holiday_name in MARKET_HOLIDAYS_US:
+        conn.execute(
+            "INSERT OR IGNORE INTO market_holidays (day, calendar, name, schema_version) "
+            "VALUES (?, 'us', ?, ?)",
+            (day, holiday_name, SCHEMA_VERSION),
         )
     # The starting lenses. INSERT OR IGNORE on UNIQUE(name, version) makes this
     # idempotent *and* non-destructive: once a lens exists - including one that
