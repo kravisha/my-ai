@@ -656,8 +656,10 @@ def discovery_activity(limit: int = 25, conn=Depends(panel_db), admin: str = Dep
     """What the discovery slice has actually produced: the pending queue, and
     the most recent analyses with their grades."""
     results = conn.fetchall(
-        "SELECT a.*, g.overall_score, g.worth_the_compute, g.rationale AS grade_rationale "
+        "SELECT a.*, g.overall_score, g.worth_the_compute, g.rationale AS grade_rationale, "
+        "r.overall AS risk_overall, r.factors AS risk_factors "
         "FROM analysis_results a LEFT JOIN grades g ON g.analysis_result_id = a.id "
+        "LEFT JOIN risk_assessments r ON r.analysis_result_id = a.id "
         "ORDER BY a.id DESC LIMIT ?", (limit,)
     )
     return {

@@ -62,6 +62,18 @@ def report(conn, graded: bool):
             "0.5, 0.5, 0.5, 1, 0.5, 1)",
             (report_id, report_id),
         )
+        # Risk-assessed too, or "graded" would stop meaning "fully processed" -
+        # the risk-assessed rule joined EVALUATION_RULES alongside grading, and
+        # an ungraded-in-every-other-sense report must not also read as an
+        # unassessed one, which would inflate these counts with a second,
+        # unrelated cause.
+        conn.execute(
+            "INSERT INTO risk_assessments (analysis_result_id, security, overall, factors, "
+            "assessed_by, created_at, schema_version) VALUES "
+            "(?, 'SYN1', 'low', '{\"factors\": [], \"measured\": false}', 'coo-1', "
+            "'2026-08-17T00:01:00+00:00', 1)",
+            (report_id,),
+        )
     return report_id
 
 

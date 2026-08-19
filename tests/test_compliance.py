@@ -50,6 +50,17 @@ def complete_report(conn, report_id, graded=True, producer="speculator-1", outco
             "0.5, 0.5, 0.5, 1, 0.5, 1)",
             (report_id, report_id),
         )
+        # Risk-assessed too, or "a graded report raises no finding" would stop
+        # being true the moment the risk-assessed rule joined EVALUATION_RULES -
+        # graded here means fully processed, and COO's cycle now includes
+        # assessing risk as part of that.
+        conn.execute(
+            "INSERT INTO risk_assessments (analysis_result_id, security, overall, factors, "
+            "assessed_by, created_at, schema_version) "
+            "VALUES (?, 'SYN1', 'low', '{\"factors\": [], \"measured\": false}', 'coo-1', "
+            "'2026-08-17T00:01:00+00:00', 1)",
+            (report_id,),
+        )
 
 
 def analysis_with_grader(conn, analysis_id, producer, grader):

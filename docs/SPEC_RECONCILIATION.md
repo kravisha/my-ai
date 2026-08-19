@@ -2086,3 +2086,98 @@ than the test weakened. Division of labour as before: survey and implementation
 delegated to a lesser model; design, spec, review — which caught the crash
 window — and this record by the top model.
 
+## 35. The Risk Engine's first slice: the rule with teeth (2026-08-18)
+
+Scoreboard #6, addendum 20 §2E. The section's one enforceable sentence — *"No
+opportunity/recommendation should ultimately exist without an attached risk
+assessment"* — is now true by machinery rather than by intention, and the rest of
+the section waits for the things it describes to exist.
+
+### Who assesses, and why it is not an agent
+
+Risk is assessed in the COO cycle, not by Analysis and not by a new agent role.
+The reasoning is the organization's own, twice over: *the producer of an
+opportunity must not be the judge of its risk* — the same house rule (addendum 11
+§8) that put source reliability and lens health in COO's cycle rather than in the
+agents whose work they judge. And the Manifesto's §8: new organizational machinery
+only when it solves a real problem better than a simpler mechanism. A risk *agent*
+would have needed a charter, a watcher, spawn machinery and an org-model entry, to
+run the same deterministic functions on the same cycle.
+
+### Four factors, and the refusal of a score
+
+Each factor reads something the organization actually records, carries the
+numbers it read, and returns a level it can defend: **regime instability**
+(dispersion relative to mean, from `market_regime`), **lens trust** (a detection
+fired on a seed-era fallback constant is high risk by construction; an unproven
+or since-staled lens is elevated), **corroboration** (a cross-check that was
+answered, silent, or never answered — silence is not corroboration), and
+**historical stress** (the 30-day move in the deepest series held, DGS10 back to
+1962 — with an honest `no_evidence` when no corpus is held).
+
+**The overall level is the worst factor.** A weighted score over four judgments
+would be arithmetic wearing authority it has not earned; a chain is its weakest
+link, and pretending otherwise requires evidence nobody has. Thresholds are
+conventions and every assessment says so (`measured: False`) — the same
+disclosure discipline as the iteration budgets and `TIMING_CONSTANTS.md`.
+
+### Enforcement fell out of existing machinery
+
+"Not yet assessed" is the absence of a `risk_assessments` row — the same idiom
+`grades` established — so the compliance rule is one `EvaluationRule` tuple
+against the generic TABLE shape, and violations flow through the corrective-
+actions path wired in §33. **The ordering is the grace period**: risk assessment
+runs before the compliance sweep in the same COO cycle, so a result is never
+counted unassessed merely because judgment ran second.
+
+### A layering constraint worth recording
+
+`backend/risk.py` sits below `fi_db` in the module order — `fi_db.init_schema`
+creates its table — so it must not import `fi_db`, and it re-states the
+`lens_performance` join in SQL rather than importing it, with a comment saying
+so. Third instance of the same lesson (canonical, identifiers, now risk): the
+module that owns schema creation is an upper layer, whatever the file sizes
+suggest.
+
+### Declined, with reasons
+
+- **Portfolio, strategy, and agent-level risk** (§2E's full breadth): nothing
+  holds a portfolio or executes a strategy yet. Risk attached to things that do
+  not exist is scaffolding.
+- **Monte Carlo for risk** (§2E: "may be reused"): *may* is not *must*, and a
+  distributional risk model over a deterministic synthetic fixture would be
+  precision theatre. It arrives with the Monte Carlo generator (#8), if evidence
+  wants it.
+- **Re-assessment under changed conditions**: one assessment per result, UNIQUE.
+  Overwriting a judgment would destroy the record of what was believed when the
+  opportunity was fresh; re-assessment is a future design with its own reason.
+
+### The rule showed teeth before it shipped
+
+Adding the compliance rule broke three pre-existing tests whose planted "fully
+processed" rows lacked assessments — the delegated implementation fixed the
+*plants* to match what COO's cycle actually does, not the rule. A rule that fires
+on the test suite's own idea of "done" is measuring something real.
+
+### Verified
+
+1358 passed (was 1329; +29 risk tests). Live, against a running organization: a
+planted opportunity — unstable regime (cv 0.30), an unanswered cross-check, a
+seed-era detection — was picked up by the **real COO cycle** within seconds, with
+no direct call from the verification script:
+
+    assessed by coo-1 | overall: high
+      regime         high        dispersion/mean ratio 0.3000 at or above 0.25
+      lens           high        fired on a fallback seed constant, no history
+      corroboration  elevated    the peer never answered; silence is not corroboration
+      stress         no_evidence no historical corpus held; ingest DGS10 to enable
+
+Zero compliance findings for the risk rule after the cycle — the ordering was the
+grace period — and the panel's `/admin/discovery` carries `risk_overall: high` on
+the row. One spec error surfaced and adapted honestly: the cross-check outcome
+vocabulary is `evidence`/`no_evidence`/`unanswered`, not the `answered` the spec
+guessed; the survey had it right and the spec-writer did not re-read it.
+
+Division of labour as established: survey and implementation delegated; design,
+spec, review, live verification and the record by the top model.
+

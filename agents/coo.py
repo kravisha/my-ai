@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import fi_db, remediation
+from backend import fi_db, remediation, risk
 
 ROLE = "coo"
 
@@ -446,6 +446,12 @@ def _coo_work(conn) -> None:
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     _evaluate_intelligence_health(conn)
+    # Risk is assessed here rather than by Analysis, for the same reason source
+    # standings are COO's: the producer of an opportunity must not be the judge
+    # of its risk (addendum 11 §8). Placed before the compliance sweep below so
+    # a result is never counted unassessed merely because judgment ran first in
+    # the same cycle - the order is the grace period.
+    risk.assess_unassessed(conn, IDENTITY)
     # The remediation findings were computed on every panel request and
     # persisted never - raise_corrective_actions had no production caller, so
     # "corrective work becomes ordinary tasks" was true only in tests.
