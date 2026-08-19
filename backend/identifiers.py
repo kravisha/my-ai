@@ -46,7 +46,12 @@ from backend.db import Database, now_iso, parse_timestamp
 # What an entity can be. Deliberately short: these are the kinds something in the
 # system actually refers to today, and §2D's remaining kinds join the list when
 # something produces them.
-ENTITY_TYPES = ("security", "issuer", "exchange")
+#
+# 'series': a published data series - an index level, a treasury yield - which
+# is observed like a security but is not a tradeable instrument; added for the
+# FRED ingest, which was minting these as 'security' and saying so in its
+# docstring.
+ENTITY_TYPES = ("security", "issuer", "exchange", "series")
 
 # Identifier schemes this organization understands. `symbol` is the one in use;
 # the rest are named because the mapping table is worthless if the vocabulary has
@@ -56,9 +61,17 @@ SCHEMES = ("symbol", "isin", "cusip", "figi", "internal_legacy")
 
 SCHEMA = """
 -- The thing itself, independent of whatever the world is currently calling it.
+--
+-- entity_type carries no CHECK constraint. The CHECK was the wrong tool:
+-- entity_type is a vocabulary designed to grow, and SQLite cannot widen a
+-- CHECK - every addition would need the same table rebuild `init_schema`
+-- performs below, forever. observations.origin keeps its CHECK because that
+-- vocabulary is fixed at three forever; the difference is not taste, it is
+-- whether the set is closed. Validation lives in create_entity, where a
+-- refusal can say what the valid types are.
 CREATE TABLE IF NOT EXISTS entities (
     entity_id TEXT PRIMARY KEY,
-    entity_type TEXT NOT NULL CHECK (entity_type IN ('security', 'issuer', 'exchange')),
+    entity_type TEXT NOT NULL,
     display_name TEXT,
     created_at TEXT NOT NULL,
     note TEXT,
@@ -94,6 +107,53 @@ class IdentifierError(ValueError):
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+    _rebuild_entities_if_legacy_check(conn)
+
+
+def _rebuild_entities_if_legacy_check(conn: Database) -> None:
+    """One-time rebuild for a database created before the CHECK was removed.
+
+    `CREATE TABLE IF NOT EXISTS` above does nothing when `entities` already
+    exists, so a database made under the old DDL keeps its CHECK forever unless
+    something notices and fixes it - this is that something, run on every
+    `init_schema` call and a no-op the moment the table is already the new
+    shape. Detected by reading the table's own stored DDL back from
+    `sqlite_master` rather than trying an insert and catching the failure: that
+    would mean minting and discarding a real 'series' row just to find out, and
+    would misfire under an empty transaction where nothing has been created yet.
+
+    SQLite cannot ALTER a CHECK off a column, so the fix is the standard SQLite
+    rename-recreate-copy-drop sequence: the old table becomes a holding pen
+    under a new name, the CREATE TABLE IF NOT EXISTS above (re-run) creates the
+    new shape in `entities`'s place, every row is copied across - the column
+    list did not change, only the constraint, so `SELECT *` is safe - and the
+    holding pen is dropped. Nothing is lost; the CHECK is."""
+    # Recovery before detection. Database.execute commits per statement, so the
+    # rename-recreate-copy-drop below is four transactions, and a crash between
+    # any two of them leaves the holding pen orphaned while the guard under it
+    # sees a fresh CHECK-less table and skips - stranding every row out of view.
+    # Completing an interrupted copy first makes the whole sequence resumable
+    # from any crash point: INSERT OR IGNORE is idempotent over the primary key,
+    # so rows already copied are skipped and rows only in the pen come across.
+    orphan = conn.fetchone(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entities_legacy_check'"
+    )
+    if orphan is not None:
+        conn.executescript(SCHEMA)  # ensure the new-shape table exists to copy into
+        conn.execute("INSERT OR IGNORE INTO entities SELECT * FROM entities_legacy_check")
+        conn.execute("DROP TABLE entities_legacy_check")
+
+    row = conn.fetchone(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'entities'"
+    )
+    if row is None or row["sql"] is None or "CHECK" not in row["sql"]:
+        return
+    conn.execute("ALTER TABLE entities RENAME TO entities_legacy_check")
+    conn.executescript(SCHEMA)  # entity_identifiers/indexes already exist and are
+                                 # no-ops; entities does not, so this recreates it
+                                 # in the new shape.
+    conn.execute("INSERT OR IGNORE INTO entities SELECT * FROM entities_legacy_check")
+    conn.execute("DROP TABLE entities_legacy_check")
 
 
 def _next_entity_id(conn: Database) -> str:
@@ -213,6 +273,25 @@ def get_entity(conn: Database, entity_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def ensure_entity(conn: Database, scheme: str, value: str, entity_type: str, source: str) -> str:
+    """The bridge from a name-keyed world to the entity-keyed one, for any
+    entity_type.
+
+    Resolve an existing (scheme, value) identifier, or mint a new entity of the
+    given type and attach the identifier to it. This is what `ensure_security`
+    did, narrowed to `entity_type="security"` and `scheme="symbol"` - the
+    narrowing was fine while security was the only kind anything minted, and
+    stopped being fine the moment the FRED ingest needed the same bridge for a
+    'series' instead of reaching for the nearest existing function and getting
+    the wrong type."""
+    existing = resolve(conn, scheme, value)
+    if existing is not None:
+        return existing
+    entity_id = create_entity(conn, entity_type, display_name=value)
+    add_identifier(conn, entity_id, scheme, value, source=source)
+    return entity_id
+
+
 def ensure_security(conn: Database, symbol: str, source: str = "security_universe") -> str:
     """The bridge from the symbol-keyed world to the entity-keyed one.
 
@@ -220,10 +299,8 @@ def ensure_security(conn: Database, symbol: str, source: str = "security_univers
     report and analysis names a security by symbol. Rewriting all of that at once
     would be a migration with no consumer asking for it; this gives each symbol an
     entity the moment anything needs one, so the two schemes can coexist while
-    the entity-keyed side grows."""
-    existing = resolve(conn, "symbol", symbol)
-    if existing is not None:
-        return existing
-    entity_id = create_entity(conn, "security", display_name=symbol)
-    add_identifier(conn, entity_id, "symbol", symbol, source=source)
-    return entity_id
+    the entity-keyed side grows.
+
+    Now a one-line wrapper over `ensure_entity`, kept under its own name and
+    signature because every existing call site names a security specifically."""
+    return ensure_entity(conn, "symbol", symbol, "security", source)
