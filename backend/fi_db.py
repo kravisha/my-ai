@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, novelty, observations, risk, triage
+from backend import competency, compliance, identifiers, iteration, novelty, observations, risk, strategy, triage
 from backend import db as db_module
 from backend.db import Database
 
@@ -1255,6 +1255,12 @@ def init_schema(conn: Database) -> None:
     # identifiers and observations own theirs, created here so a caller never
     # has to know how many modules own tables in one database.
     risk.init_schema(conn)
+    # The Strategy Store (addendum 20 §4's third stage) owns strategies the
+    # same way. Its init_schema also seeds the baseline playbook - and that
+    # seed's knowledge_refs name the two lenses _seed_static_metadata seeds
+    # below, *after* this call. strategy's seed does not validate refs, so
+    # seeding before the lenses exist is safe; create_strategy validates.
+    strategy.init_schema(conn)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1362,18 +1368,19 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     Returns what it changed, so a caller can log a migration rather than have one
     happen invisibly.
 
-    Reads `SCHEMA`, `identifiers.SCHEMA`, `observations.SCHEMA` and
-    `risk.SCHEMA`, not just this module's own. The additive mechanism parsed
-    only this module's SCHEMA, so the moment table ownership was split across
-    modules, identifiers- and observations-owned tables silently lost
+    Reads `SCHEMA`, `identifiers.SCHEMA`, `observations.SCHEMA`, `risk.SCHEMA`
+    and `strategy.SCHEMA`, not just this module's own. The additive mechanism
+    parsed only this module's SCHEMA, so the moment table ownership was split
+    across modules, identifiers- and observations-owned tables silently lost
     migration support entirely - a column added to their DDL would exist on
     fresh databases and be missing on every deployed one. Modular schemas
     require the migration walker to see every module's DDL, or modularity
     quietly becomes divergence. risk.SCHEMA joined the tuple the day
-    risk_assessments arrived, for the same reason."""
+    risk_assessments arrived, for the same reason; strategy.SCHEMA joined it
+    the day strategies did."""
     applied = _reconcile_triggers(conn)
     for table, columns in _declared_columns(
-        (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA)
+        (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

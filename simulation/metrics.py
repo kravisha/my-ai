@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend import fi_db
+from backend import fi_db, strategy
 
 FAMILIES = (
     "pipeline", "queue", "cross_check", "population", "intelligence", "resource", "incidents",
@@ -400,6 +400,17 @@ def _intelligence(conn) -> dict:
         "securities_observed": len(regimes),
         "regime_observations": sum(row["observation_count"] for row in regimes),
         "knowledge_records": conn.fetchone("SELECT COUNT(*) AS n FROM knowledge_records")["n"],
+        "strategies_active": conn.fetchone(
+            "SELECT COUNT(*) AS n FROM strategies WHERE status = 'active'"
+        )["n"],
+        # The unhealthy join (active strategy, inactive knowledge) is logic
+        # that must not be duplicated here in raw SQL - strategy.unhealthy is
+        # the one place it lives. metrics.py is simulation-side, above
+        # backend/, and already imports fi_db for the same reason this file's
+        # raw-SQL style exists (deriving numbers from tables the organization
+        # already writes) - importing strategy for the one query that is not
+        # "raw SQL by design" is the same kind of import, not a new layer.
+        "strategies_unhealthy": len(strategy.unhealthy(conn)),
     }
 
 

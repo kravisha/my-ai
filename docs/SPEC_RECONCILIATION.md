@@ -2464,3 +2464,134 @@ verification and this record by the top model.
 lens blind spot (measured), and closing the training loop — Stage 1 scores
 becoming evidence for `propose_artifact_revision`, with adoption staying
 human-gated per addendum 13 §14.*
+
+---
+
+## §38 — The Strategy Store opens with a true statement; the Model Store waits for a model (Scoreboard #9)
+
+Addendum 20 §4 names five stores. Three existed under their own or other names
+(reference data, the Data Store, the knowledge organs); the Scoreboard's #9
+asked for the remaining two: Strategy and Model. This section records why one
+was built and one was declined-for-now — and why that split is the same
+decision made twice, not one build and one omission.
+
+### Strategy: prescriptive, versioned, and seeded with reality
+
+§4's distinction is the load-bearing one: knowledge is descriptive ("what we
+have learned"), strategy is prescriptive ("what we do"). The organization has
+had the descriptive half for weeks — lenses with lifecycles, lessons with
+succession. What it never had was the prescription written down: the discovery
+playbook existed only as the emergent behavior of five agents' code.
+
+`backend/strategy.py` is the fourth instance of the module-owned-schema
+layering rule (canonical, identifiers, risk, now strategy): `fi_db.init_schema`
+creates its table, so it imports only `backend.db` and re-states the one
+`intelligence_artifacts` query it needs. Strategies carry name/version with
+UNIQUE succession, a prescriptive statement, and `knowledge_refs` — the JSON
+list of intelligence artifacts the strategy rests on. A strategy must say what
+knowledge justifies it, or the health rule below has nothing to check.
+
+**The store opens with a true statement.** The seeded
+`baseline_discovery_playbook` is the pipeline the organization already
+executes — scan through the active lens, judge before trusting, cross-check
+because silence is not corroboration, file only after judgment, conclude-
+challenge-revise, risk-assess before complete — reverse-documented and linked
+to both seeded lenses. Not an aspiration: a record of what is. The
+alternative, an empty strategies table waiting for someone to have a strategy,
+would have been the scaffolding this project keeps declining.
+
+### The rule with teeth: no active strategy on expired premises
+
+An active strategy resting on knowledge that is no longer active is being
+executed on faith. `strategy.unhealthy()` finds every such case and names
+every broken premise in one finding per strategy — per cause, matching
+remediation's per-rule grouping, so the adjudication is one decision rather
+than a drip.
+
+The wiring reuses the whole existing enforcement chain: findings become
+`CorrectiveItem`s in the COO cycle, flow through `raise_corrective_actions`,
+and land as corrective knowledge records with per-statement idempotency — no
+new mechanism, the third consumer of the path #21 built. Three choices worth
+recording:
+
+- **Ordering-as-grace-period, pointed the other way.** Strategy health runs
+  after `_evaluate_intelligence_health`, so a lens marked stale in this cycle
+  is visible to the strategy check in the same cycle. Risk's ordering exists
+  so fresh work is never punished for judgment running second; this one
+  exists so stale premises are caught the cycle they stale, not one later.
+- **Classified systemic, always.** A strategy governs every piece of work done
+  under it; a broken premise is never attributable to one agent.
+- **Assigned to the owner seat.** Re-linking, superseding, or retiring a
+  strategy is an adjudication — addendum 13 §14's validation gate — not a task
+  an agent may claim. The producer of work under a strategy must not be the
+  one who quietly rewrites the strategy.
+
+### No 'proposed' status for strategies
+
+Intelligence artifacts have a proposal lifecycle because a Trainer seat
+produces candidates and a human adjudicates them. Nothing produces strategy
+candidates today. A `proposed` state nobody can fill would be machinery ahead
+of need (Manifesto §8); supersession is the adoption act, and the record shows
+who adopted what over what.
+
+### The Model Store waits for a model
+
+Declined-for-now, with the reasoning §30 already supplied. §30's MODIFY #2
+ruled that where a store exists under another name, the move is to extend it,
+not to introduce a parallel one — and the survey confirmed the fact that
+decides this: `detection_lens` is the *only* artifact kind ever written.
+`intelligence_artifacts` — versioned, with propose/adopt/reject succession,
+staleness, and regime binding — already **is** the store for every trained
+value the organization possesses.
+
+What §4's Model Store adds beyond that is a home for trained artifacts that
+are not values: serialized models, fitted parameters with training-data
+provenance, content hashes, evaluation metrics. Nothing in the organization
+produces such an artifact today. Stage 1 (#8) produces exercise evidence;
+#18's loop-closing produces *proposals into intelligence_artifacts*; a future
+fidelity-fitted generator (addendum 8 §3) would be the first genuine blob
+model. The Model Store arrives with that first artifact — built against a real
+payload, the way every store in this project has been — rather than as an
+empty registry pretending otherwise. Same decision as the §35 risk declines
+and as strategy's own missing `proposed` state: machinery arrives with its
+need.
+
+### Verification
+
+**1382 passed** (was 1373; +9). One review finding on the delegated
+implementation: `strategy.py` re-stated `SCHEMA_VERSION = 7` as a mirror of
+`fi_db`'s — a constant that must be kept in sync by hand is a drift waiting to
+be found the hard way. Corrected to module-owned version 1, the `risk.py`
+precedent.
+
+Live, real organization (real backend, real Controller, real COO cycle;
+minimal population, no LLM calls needed), isolated run DB via the harness:
+
+```
+organization up (run strategy-health-verify-20260820T223618-85d21f)
+seed strategy present: v1, refs ['iv_ratio_threshold', 'speculator_confidence_threshold']
+unhealthy before: []
+iv_ratio lens marked stale; waiting for the real COO cycle...
+CORRECTIVE ACTION (by compliance): Strategy 'baseline_discovery_playbook' v1
+  is active but rests on knowledge that is not: 'iv_ratio_threshold' (stale).
+  Re-link it to current knowledge, supersede it, or retire it.
+strategy corrective rows after further cycles: 1 (must stay 1)
+shutdown: clean - teardown ran and no agent is left running
+```
+
+The real COO cycle — not the verification script — noticed within seconds that
+the active playbook rested on stale knowledge; the finding names the strategy,
+the broken premise, its actual status, and the three adjudication options; and
+per-statement idempotency held across further cycles without a new mechanism.
+The rule showed teeth against the seeded strategy itself, which is the point:
+the first strategy the store holds is already under the same law as any future
+one.
+
+Division of labour per the tiering directive: survey and implementation by a
+lesser model (one honest contradiction reported — `_intelligence(conn)` takes
+no `since` — and adapted correctly); design, spec, review (one finding), live
+verification and this record by the top model.
+
+*Scoreboard #9 resolved: the Strategy Store built with real content and real
+enforcement; the Model Store recorded as arriving with the first trained
+artifact that is not a value.*

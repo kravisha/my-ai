@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import fi_db, remediation, risk
+from backend import fi_db, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -441,6 +441,35 @@ def _evaluate_lens_regime(conn, artifact: dict, conditions: dict, performing_acc
         )
 
 
+def _strategy_corrective_items(conn) -> list[remediation.CorrectiveItem]:
+    """An active strategy whose linked knowledge is no longer active, as
+    corrective work. Classified systemic - a strategy governs every piece of
+    work done under it, so a broken premise is never attributable to one
+    agent. Assigned to the owner seat: re-linking, superseding, or retiring a
+    strategy is an adjudication (addendum 13 §14's validation gate), not a
+    task any agent may claim. The statement is stable per (strategy, refs,
+    statuses) so raise_corrective_actions' per-statement idempotency holds
+    across cycles without a new mechanism."""
+    items = []
+    for finding in strategy.unhealthy(conn):
+        broken = ", ".join(f"'{ref['name']}' ({ref['status']})" for ref in finding["broken_refs"])
+        items.append(remediation.CorrectiveItem(
+            rule="strategy (knowledge-current)",
+            classification="systemic",
+            findings=len(finding["broken_refs"]),
+            opportunities=1,
+            assigned_to="owner",
+            statement=(
+                f"Strategy '{finding['name']}' v{finding['version']} is active but rests on "
+                f"knowledge that is not: {broken}. Re-link it to current knowledge, supersede "
+                f"it, or retire it."
+            ),
+            rationale="An active strategy resting on inactive knowledge is being executed on faith.",
+            evidence_ref=f"strategies:{finding['strategy_id']}",
+        ))
+    return items
+
+
 def _coo_work(conn) -> None:
     _evaluate_agent_health(conn)
     _ensure_baseline_population(conn)
@@ -457,7 +486,13 @@ def _coo_work(conn) -> None:
     # "corrective work becomes ordinary tasks" was true only in tests.
     # knowledge_exists makes this idempotent per cause, so running it every
     # cycle files each judgment once.
-    fi_db.raise_corrective_actions(conn, remediation.corrective_items(conn))
+    #
+    # Strategy health is checked after _evaluate_intelligence_health so a
+    # lens marked stale in THIS cycle is already visible - the same
+    # ordering-as-grace-period reasoning as risk above, pointed the other
+    # way: staleness must land before the thing that reads it.
+    items = list(remediation.corrective_items(conn)) + _strategy_corrective_items(conn)
+    fi_db.raise_corrective_actions(conn, items)
     # Source standings are recomputed here rather than by Speculator, for the
     # same reason lens health is COO's: the producer of evidence must not be
     # the judge of its own sources (addendum 11 §8).
