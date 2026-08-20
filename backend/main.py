@@ -29,7 +29,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import fi_db
+from backend import fi_db, strategy
 from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
 
@@ -503,6 +503,19 @@ def list_intelligence(conn=Depends(panel_db), admin: str = Depends(require_admin
         for artifact in fi_db.list_intelligence_artifacts(conn, status="proposed")
     ]
     return {"artifacts": artifacts, "proposals": proposals}
+
+
+@app.get("/admin/strategies")
+def list_strategies(conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Every strategy, any status, plus which active ones rest on knowledge
+    that is no longer active.
+
+    Mirrors /admin/intelligence's shape: all rows are returned rather than
+    only active ones, for the same reason a stale lens is shown there - a
+    retired or superseded strategy is part of the organization's history,
+    and hiding it would leave the panel showing only what still looks
+    fine."""
+    return {"strategies": strategy.list_strategies(conn), "unhealthy": strategy.unhealthy(conn)}
 
 
 def _artifact_json(artifact: dict) -> dict:
