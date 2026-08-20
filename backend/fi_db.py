@@ -833,6 +833,13 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     confidence REAL,
     uncertainty TEXT,
     peer_classification TEXT,
+    -- How many iteration passes produced this conclusion (Iterative Excellence,
+    -- adopted 2026-08-19), and what the challenge pass found. NULL on rows from
+    -- before adoption - absence is history, not zero. passes_used beside grades
+    -- is what makes Scoreboard #15's measurement possible: one-pass and
+    -- multi-pass conclusions are now comparable by their graded quality.
+    passes_used INTEGER,
+    challenge_summary TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -3740,18 +3747,24 @@ def record_analysis_result(
     confidence: float,
     uncertainty: str,
     peer_classification: str | None = None,
+    passes_used: int | None = None,
+    challenge_summary: str | None = None,
 ) -> int:
     """peer_classification: addendum_7 §5's "classify the event" -
     'common_factor' | 'idiosyncratic' | 'not_applicable' (no peer context
     at all, e.g. a Speculator-sourced report) - Analysis's own reasoned
     judgment, populated from the peer_context agents/explorer.py surfaced
     into this report's context, not a mechanical copy of detector_events'
-    scope column."""
+    scope column.
+
+    passes_used / challenge_summary: how many Iterative Excellence passes
+    (adopted 2026-08-19) produced this conclusion, and what the challenge
+    pass found - both None for callers that predate the iteration budget."""
     return conn.execute_returning_id(
         "INSERT INTO analysis_results "
-        "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, passes_used, challenge_summary, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_id, security, thesis, evidence_summary, confidence, uncertainty, peer_classification, passes_used, challenge_summary, SCHEMA_VERSION),
     )
 
 

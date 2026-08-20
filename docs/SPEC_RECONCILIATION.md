@@ -2181,3 +2181,125 @@ guessed; the survey had it right and the spec-writer did not re-read it.
 Division of labour as established: survey and implementation delegated; design,
 spec, review, live verification and the record by the top model.
 
+
+---
+
+## §36 — Analysis adopts its declared budget: the 3-pass loop (Scoreboard #14)
+
+**Owner decision, 2026-08-19: "adopt the 3-pass budget for analysis."**
+
+Since PR #18, `backend/iteration.py` has *declared* that analytical work carries a
+3-pass budget with the stance "Reach a conclusion, then challenge it: what would
+make this wrong, what evidence is missing, what alternative reading fits the same
+facts. Deliver the conclusion that survived." Analysis kept running one pass — the
+declaration was honest about being aspiration (`measured: False`), and the gap was
+filed as Scoreboard #14 at ~3× model spend, an owner decision. The owner decided.
+
+### The stance is now the control flow
+
+- **Pass 1** — the existing deep analysis, unchanged.
+- **Pass 2** — a challenge pass (`_run_challenge`): given the same report context
+  and pass 1's conclusion, attack it — what would make the thesis wrong, what
+  evidence is missing or overweighted, what alternative reading fits the same
+  facts, is the confidence justified. Verdict vocabulary is closed:
+  `stands | revise`. The prompt says explicitly that endorsing a sound conclusion
+  is a legitimate outcome, not a failure to find something — without that
+  sentence, a model told to challenge will manufacture objections, and the third
+  pass becomes a quota after all.
+- **Pass 3** — a revision pass (`_run_revision`), run **only** on a material
+  challenge. It receives context, conclusion and challenge, and is told to
+  preserve what survived and fix what was found — and that the challenge is
+  input, not authority: if part of it is wrong on reflection, keep the original
+  judgment and say so.
+
+The budget is a **ceiling with §8's stopping rule inside it, not a quota**:
+typical cost is 2 calls (analyze + a challenge that stands), worst case 3. The
+challenge runs at 1024 max tokens — a critique needs room to name problems, not
+to restate the thesis — so the marginal spend of the typical case is well under
+the ~3× the scoreboard item priced.
+
+### Refinement must not destroy the core
+
+A challenge or revision that itself fails — malformed JSON, model error — is
+logged and the pass-1 conclusion is delivered; only the primary analysis failing
+fails the report. The directive's §4 (first draft as raw material, preserve the
+core) applied to failure semantics: a broken *improvement step* must never turn a
+sound conclusion into a failed report.
+
+### A heartbeat before every pass
+
+Three sequential model calls is exactly the duplicate-agent defect class this
+project has already paid for twice (the 45s health threshold vs. real model
+latency). `record_heartbeat` now runs immediately before **each** LLM call, not
+just the first — a slow-but-alive agent mid-refinement must not be declared
+crashed and respawned into a duplicate.
+
+### What is recorded, and what it enables
+
+`analysis_results` gains two additive columns: `passes_used INTEGER` and
+`challenge_summary TEXT`. NULL on pre-adoption rows — absence is history, not
+zero. This is what makes Scoreboard **#15** (measure the value of extra passes)
+possible rather than aspirational: `passes_used` now sits beside the grades, so
+one-pass, two-pass and three-pass conclusions are comparable by their graded
+quality. The engine that measures whether the budget earns its cost can now be
+built on data the organization actually holds.
+
+The grade recorded is the **final** result's — a revision's scores stand, since
+grade and analysis are one response by design; grading the superseded draft
+would attach judgment to a conclusion nobody delivered.
+
+### The override that is not an escape hatch
+
+`FI_ANALYSIS_MAX_PASSES` (default 3, floor 1) exists for cost-bounded simulation
+runs — a scenario harness driving dozens of reports through the loop should be
+able to pay 1× — not for quietly unadopting the budget. The constant's comment
+says so, in those words.
+
+### Verification
+
+**1365 passed** (was 1358; +7). The migration was proven against a **copy of the
+deployed database** — both columns added by `apply_additive_migrations`,
+pre-adoption rows reading NULL, the real database untouched (md5 unchanged) —
+because the DDL comment sits inside the CREATE TABLE body and the additive
+parser had to be read to confirm it skips `--` lines before trusting it.
+
+Live, sandbox DB, **real model calls** — for this feature the prompts are the
+design, and only a live model can show whether the challenge pass returns valid
+JSON and is willing to say "stands":
+
+```
+planted report 1 (synthetic spread/equity divergence, JE-TEST01)
+passes_used: 2          <- challenge verdict "stands"; §8 stopped the loop
+heartbeats during work: 2   (one per pass)
+confidence: 0.1
+challenge: "The first-pass conclusion correctly identifies the dominant issue
+  (synthetic/test identifier undermining actionability) and appropriately
+  assigns low confidence given a 5-session, 2-series sample with no peer
+  corroboration and no catalyst..."
+archived: outcome 'analyzed' by analysis-1; grade recorded from final result
+```
+
+The stopping rule fired on its first real datum: the model endorsed a sound
+low-confidence conclusion rather than manufacturing objections, and the
+typical-cost prediction (2 calls, not 3) held. The pass-1 conclusion had itself
+noticed the identifier was synthetic — the challenge agreed that was the
+dominant issue, which is what a challenge endorsing honest work looks like.
+
+**What was not observed live:** pass 3. A real revision requires a genuinely
+flawed first conclusion, which cannot be honestly planted — forcing the model
+to produce a bad analysis on purpose would verify nothing about real behaviour.
+The revise path is mock-verified (different thesis delivered, revision's grades
+stand, `passes_used=3`), and `passes_used` will record the first production
+revision when one happens — which is precisely the data #15 waits for.
+
+A verification-script error along the way was the machinery working: the
+"missing" analyzed report had been moved to `discovery_reports_completed` by
+the archive trigger, exactly as designed; the script had queried the live table.
+
+Division of labour per the tiering directive: implementation and tests by a
+lesser model against a full spec (zero deviations reported, and the review
+found none — a first); design, prompts, spec, review, migration proof, live
+verification and this record by the top model.
+
+*Scoreboard #14 resolved. #15 (measure the value of the extra passes) is now
+buildable on data the organization actually records.*

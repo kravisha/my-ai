@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from dotenv import dotenv_values
 
-from agents.analysis import _analysis_work, _assemble_context
+from agents.analysis import _analysis_work, _assemble_context, _run_challenge
 from backend import fi_db
 from backend.controller import PROJECT_ROOT
 
@@ -301,3 +301,175 @@ def test_context_without_a_cross_check_is_unchanged(conn):
     fi_db.enqueue_report(conn, "explorer-1", "T0", "explorer", "SYN1", summary="s")
     context = _assemble_context(conn, fi_db.fetch_next_pending_report(conn))
     assert "Cross-check" not in context
+
+
+# --- Iterative Excellence: the adopted 3-pass conclude/challenge/revise budget ---
+
+
+CHALLENGE_STANDS = {
+    "verdict": "stands",
+    "challenge_summary": "The confidence looks calibrated to the stated evidence; no material gap found.",
+    "material_problems": [],
+}
+
+CHALLENGE_REVISE = {
+    "verdict": "revise",
+    "challenge_summary": "The thesis overweights the IV spike without addressing the upcoming earnings catalyst.",
+    "material_problems": ["earnings catalyst not addressed"],
+}
+
+REVISED_RESULT = {
+    "thesis": "Revised: earnings proximity plausibly explains the IV spike; downgrading conviction accordingly.",
+    "evidence_summary": "Peak IV 2.4x local baseline, but earnings print in 3 days.",
+    "confidence": 0.35,
+    "uncertainty": "Whether the post-earnings IV crush fully explains the move.",
+    "relevance_score": 0.5,
+    "novelty_score": 0.4,
+    "evidence_quality_score": 0.55,
+    "worth_the_compute": True,
+    "rationale": "Revision after the challenge surfaced the earnings catalyst.",
+    "peer_classification": "idiosyncratic",
+}
+
+MALFORMED_RESPONSE = FakeResponse([FakeBlock("text", text="not json")])
+
+
+def _seed_pending_report(conn):
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0,
+    )
+    return fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        summary="anomaly", detector_event_id=event_id, evidence_ids=[],
+    )
+
+
+def test_a_conclusion_that_stands_costs_two_passes(conn, monkeypatch):
+    call_model = MagicMock(side_effect=[
+        analysis_response(VALID_RESULT),
+        analysis_response(CHALLENGE_STANDS),
+    ])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    _seed_pending_report(conn)
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    assert call_model.call_count == 2
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert len(results) == 1
+    assert results[0]["passes_used"] == 2
+    assert results[0]["challenge_summary"] == CHALLENGE_STANDS["challenge_summary"]
+    assert results[0]["thesis"] == VALID_RESULT["thesis"]
+
+
+def test_a_material_challenge_triggers_revision(conn, monkeypatch):
+    call_model = MagicMock(side_effect=[
+        analysis_response(VALID_RESULT),
+        analysis_response(CHALLENGE_REVISE),
+        analysis_response(REVISED_RESULT),
+    ])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", summary="anomaly")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    assert call_model.call_count == 3
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert results[0]["passes_used"] == 3
+    assert results[0]["thesis"] == REVISED_RESULT["thesis"]
+    assert results[0]["confidence"] == REVISED_RESULT["confidence"]
+
+    grades = fi_db.list_grades_for_identity(conn, "explorer-1")
+    assert len(grades) == 1
+    assert grades[0]["relevance_score"] == REVISED_RESULT["relevance_score"]
+    assert grades[0]["novelty_score"] == REVISED_RESULT["novelty_score"]
+    assert grades[0]["evidence_quality_score"] == REVISED_RESULT["evidence_quality_score"]
+
+
+def test_a_failed_challenge_never_destroys_the_primary_result(conn, monkeypatch):
+    """Refinement must not destroy the core - only the primary analysis
+    failing fails the report."""
+    call_model = MagicMock(side_effect=[
+        analysis_response(VALID_RESULT),
+        MALFORMED_RESPONSE,
+    ])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", summary="anomaly")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["outcome"] == "analyzed"
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert results[0]["passes_used"] == 1
+    assert results[0]["challenge_summary"] is None
+    assert results[0]["thesis"] == VALID_RESULT["thesis"]
+
+
+def test_a_failed_revision_falls_back_to_the_challenged_conclusion(conn, monkeypatch):
+    call_model = MagicMock(side_effect=[
+        analysis_response(VALID_RESULT),
+        analysis_response(CHALLENGE_REVISE),
+        MALFORMED_RESPONSE,
+    ])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", summary="anomaly")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert results[0]["thesis"] == VALID_RESULT["thesis"]
+    assert results[0]["passes_used"] == 2
+    assert results[0]["challenge_summary"] == CHALLENGE_REVISE["challenge_summary"]
+
+
+def test_the_budget_is_a_ceiling_the_environment_can_lower(conn, monkeypatch):
+    """For cost-bounded simulation runs - not for quietly unadopting the
+    budget."""
+    monkeypatch.setattr("agents.analysis.ANALYSIS_MAX_PASSES", 1)
+    call_model = MagicMock(side_effect=[analysis_response(VALID_RESULT)])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", summary="anomaly")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    assert call_model.call_count == 1
+    results = fi_db.list_recent_analysis_results(conn, "SYN1", since_seconds=999)
+    assert results[0]["passes_used"] == 1
+
+
+def test_a_heartbeat_precedes_every_pass(conn, monkeypatch):
+    """Three sequential model calls is exactly the duplicate-agent defect
+    class already paid for twice; the heartbeat before each pass is what
+    keeps a slow-but-alive agent from being declared crashed mid-refinement."""
+    real_heartbeat = fi_db.record_heartbeat
+    heartbeat_calls = []
+
+    def spy_heartbeat(conn_, identity, *args, **kwargs):
+        heartbeat_calls.append(identity)
+        return real_heartbeat(conn_, identity, *args, **kwargs)
+
+    monkeypatch.setattr(fi_db, "record_heartbeat", spy_heartbeat)
+    call_model = MagicMock(side_effect=[
+        analysis_response(VALID_RESULT),
+        analysis_response(CHALLENGE_REVISE),
+        analysis_response(REVISED_RESULT),
+    ])
+    monkeypatch.setattr("agents.analysis.call_reasoning_model", call_model)
+    fi_db.enqueue_report(conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1", summary="anomaly")
+
+    _analysis_work(conn, "analysis-1", "2026-01-01T00:01:00+00:00")
+
+    assert len(heartbeat_calls) >= 3
+
+
+def test_verdict_vocabulary_is_enforced(monkeypatch):
+    bad_challenge = dict(CHALLENGE_STANDS)
+    bad_challenge["verdict"] = "maybe"
+    monkeypatch.setattr(
+        "agents.analysis.call_reasoning_model",
+        MagicMock(return_value=analysis_response(bad_challenge)),
+    )
+    with pytest.raises(ValueError):
+        _run_challenge("some report context", VALID_RESULT)
