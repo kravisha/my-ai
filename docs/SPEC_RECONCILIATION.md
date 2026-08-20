@@ -2303,3 +2303,164 @@ verification and this record by the top model.
 
 *Scoreboard #14 resolved. #15 (measure the value of the extra passes) is now
 buildable on data the organization actually records.*
+
+---
+
+## §37 — Stage 1 training: Monte Carlo samples the configuration, the fixture renders it (Scoreboard #8)
+
+Addendum 20 §2A says initial synthetic generation "will use Monte Carlo methods";
+§30 modified that into a commitment with an order: Monte Carlo arrives **with
+Stage 1 training** (§11), not as a rewrite of the deterministic provider that
+makes the detection pipeline testable. This section records the arrival.
+
+### The design decision: sample the configuration space, not the prices
+
+The survey settled it. `SyntheticMarketDataProvider` already accepts everything
+a world needs — per-security anomaly placement, height and width; regime
+parameters; a seed — and every one of those knobs was already env-addressable.
+So the Monte Carlo layer does not generate prices at all. It **draws worlds**:
+which securities are dislocated, how strongly, where on the surface, under what
+regime — and hands each drawn world to the deterministic provider to render,
+through the same env inheritance every scenario already uses. §30's "not a
+rewrite" position made literal: the fixture is the rendering layer.
+
+This is also addendum 20 §9's layered composition, mapped onto what exists:
+the base generator is the provider's skew/term/noise arithmetic; the scenario
+modifier is the sampled regime; the opportunity injector is the sampled plant
+set; the ground truth is the answer key. One new module, no duplicated
+generation logic — which is §9's own stated reason for the layering.
+
+### The answer key is the organization's own detector, run offline
+
+The one genuinely new idea in the slice. For every security in every sampled
+world — planted or not — the sampler renders the surface with the real provider
+and runs the real `scan_for_anomaly` against the seed threshold, offline. Every
+security therefore carries two truth bits: *planted* and *detectable by the
+current lens*. Scoring against both distinguishes six outcomes:
+
+| planted | detectable | detected | outcome |
+|---|---|---|---|
+| yes | — | yes | **hit** |
+| yes | yes | no | **miss** — the organization failed to see what its own lens resolves |
+| yes | no | no | **beyond_lens** — correct restraint; the plant is below the lens, by design |
+| no | yes | yes | **artifact_detection** — sampled noise formed a real spike; the lens fired as specified |
+| no | no | yes | **false_positive** — fired where the ideal detector would not; a genuine defect |
+| no | — | no | **clean** |
+
+Without the offline benchmark, a miss on a sub-threshold plant would be scored
+as failure (it is the lens's limit, not the agent's), and a detection on a noise
+artifact would be scored as false positive (the lens worked exactly as
+specified; the question it raises belongs to the judgment gate). An organization
+should not be blamed for missing what its lens cannot resolve, and should not be
+credited for firing on noise. Using the org's own `scan_for_anomaly` rather than
+a reimplementation is what keeps the benchmark from drifting away from the thing
+it benchmarks.
+
+Plant heights are sampled from below any honest lens's resolution (0.02 over
+noise) to unmissable (0.60), and some worlds carry **zero** plants — §10's
+demand that agents meet subtle opportunities, false positives and varying signal
+strength, so they learn discernment rather than rote pattern matching. All
+sampling ranges are conventions, labeled as such.
+
+### Where the answer key lives
+
+Returned to the caller; written only into the exercise summary after the runs
+complete; never into the run database. `simulation/personnel.py` stated the
+rule first: a table holding the answer is a table something can accidentally
+read. The plants necessarily reach the agent *processes* (the provider must
+render them — true today of `FORCE_ANOMALY_SECURITIES` too); the boundary is
+that no detector code reads the provider's anomaly dict, and no database table
+holds it.
+
+### What was added around the sampler
+
+- **`FI_ANOMALY_SPEC`** — JSON env giving per-security bump parameters.
+  `FORCE_ANOMALY_SECURITIES` could only say *that* a security is dislocated;
+  a sampled world needs to say *how much and where*. JSON rather than another
+  comma micro-grammar: the payload is nested and typed.
+- **`python -m simulation stage1 --worlds N --seed S`** — samples N worlds,
+  runs each through the real harness (real backend, real Controller, real
+  agents), scores each, writes the aggregate.
+- **`anomaly_burst.yaml`** — `baseline_steady_state.yaml` referenced this
+  scenario before it existed (found by the survey). It is now the deterministic
+  library counterpart of a sampled world — one unmissable plant, one
+  near-threshold — and grows #10 by one, with a run behind it.
+
+### Declined, with reasons
+
+- **Path-through-time simulation** (GBM, regime switching, evolving surfaces):
+  the provider's `as_of` is accepted-but-unused today, and the detector reads
+  one surface at a time. Time evolution arrives when a detector exists that
+  needs it; sampled static worlds already vary everything the current detector
+  can see.
+- **Automatic lens retraining from scores**: the propose/adopt/reject lifecycle
+  is human-gated by design (addendum 13 §14: "production behavior changes
+  remain validation-gated"). Stage 1 produces the evidence; adopting it stays
+  a decision. Filed as a new Scoreboard item rather than built silently.
+- **A Training Agent process**: addendum 13 §2 explicitly allows one agent —
+  or here, one module — to perform the loop while the responsibilities stay
+  logically separable. Sampling, orchestration and scoring are separate
+  functions in one file; a charter, watcher and org-model entry would be
+  machinery ahead of a demonstrated need (Manifesto §8, the same reasoning
+  that kept risk out of an agent).
+
+### The measurement that changed a constant before any run was paid for
+
+The first offline preview exposed a sampling problem *and* a lens finding at
+once: with widths drawn from (0.3, 1.0), almost nothing sampled was
+detectable. Measured across 300 offline worlds (472 plants): 18.2% detectable
+overall — 39% at width 0.30–0.45, 35% at 0.45–0.60, 7% at 0.60–0.80, and
+**0/133 at width 0.80–1.00**. The cause is structural: a wide bump raises its
+own local baseline (the neighborhood mean includes the bump's shoulders), so
+the peak/baseline ratio collapses as width grows. **The iv-ratio lens is blind
+to wide dislocations by construction** — a real finding about the
+organization's only detection lens, produced by the answer key before a single
+harness run existed. Filed as a Scoreboard item.
+
+`WIDTH_RANGE` was capped at 0.7 — bringing the detectable fraction to 32.2%,
+a usable mix of hits-to-be-had and restraint-to-be-shown — and the constant's
+comment carries the measurement (`measured: True`), which makes it the first
+sampling range in the module to graduate from convention to measurement.
+
+### Verification
+
+**1373 passed** (was 1365; +8). Live, real harness, real model — with the
+prediction registered before the run: seed 20260820 draws world 0 with two
+detectable plants and one sub-threshold, world 1 empty, world 2 with two
+sub-threshold plants, so the exercise should score 2 hits, 0 misses, 3
+beyond_lens, 0 false positives.
+
+```
+world  0: hits 2 misses 0 beyond_lens 1 artifact_detections 0 false_positives 0 clean 7
+world  1: hits 0 misses 0 beyond_lens 0 artifact_detections 0 false_positives 0 clean 10
+world  2: hits 0 misses 0 beyond_lens 2 artifact_detections 0 false_positives 0 clean 8
+aggregate: hits 2 misses 0 beyond_lens 3 false_positives 0 clean 25
+detection rate: 1.000        (all three runs graceful)
+```
+
+**The prediction held exactly.** The organization found precisely what its
+lens can resolve and stayed silent everywhere else — including the
+deliberately empty world, which is the false-positive test passing by
+producing nothing.
+
+Cross-checked independently of the scoring code: world 0's run database holds
+detector events for SYN2 (ratio 2.201) and SYN6 (2.192) only — matching the
+offline answer key's ratios **to the third decimal**, which is the "same
+functions, not a reimplementation" claim proven rather than asserted.
+
+`anomaly_burst` ran live as well: 58 detector events from the unmissable SYN3
+plant, the subtle SYN9 correctly below threshold, property 1/1, clean
+shutdown. (`analyses 0` in a 60s window is the 3-pass loop being honest about
+its cost — the saturation scenarios exist to study that, and this scenario's
+property is detection.) The dangling `anomaly_burst` reference in
+`baseline_steady_state.yaml` is now a true statement.
+
+Division of labour per the tiering directive: survey and implementation by a
+lesser model (implementation reported zero deviations beyond three sensible,
+disclosed ones); design, spec, review, the detectability measurement, live
+verification and this record by the top model.
+
+*Scoreboard #8 resolved. Two items filed from findings: the wide-dislocation
+lens blind spot (measured), and closing the training loop — Stage 1 scores
+becoming evidence for `propose_artifact_revision`, with adoption staying
+human-gated per addendum 13 §14.*

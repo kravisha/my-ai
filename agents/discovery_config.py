@@ -10,6 +10,7 @@ ten-security graduation suite - a later increment changes PEER_GROUP_SIZE-
 adjacent defaults, not the classification logic itself.
 """
 
+import json
 import os
 
 # Peer groups must be explicit and versioned so tests are reproducible
@@ -123,6 +124,18 @@ if os.environ.get("FI_MARKET_NOISE_AMPLITUDE"):
 FORCE_ANOMALY_SECURITIES = [
     s.strip() for s in os.environ.get("FI_FORCE_ANOMALY_SECURITIES", "").split(",") if s.strip()
 ]
+
+# Per-security anomaly parameters, as JSON: FI_ANOMALY_SPEC='{"SYN3": {"strike_idx": 2,
+# "expiry_idx": 1, "height": 0.18, "width": 0.6}}' (each field optional - see
+# providers/market_data.py's _generate defaults). FORCE_ANOMALY_SECURITIES can only say
+# *that* a security is dislocated; this says *how much and where*, which is what lets a
+# sampled world plant subtle, off-center, or deceptive opportunities rather than only the
+# one default obvious bump. JSON rather than another micro-grammar: the payload is nested
+# and typed, and inventing a comma format for it would be a parser nobody needs.
+ANOMALY_SPEC = {
+    security: dict(params)
+    for security, params in json.loads(os.environ.get("FI_ANOMALY_SPEC", "{}")).items()
+}
 
 # How far back (seconds) Analysis looks at its own recent results for the
 # same security as a recency/novelty check against that security's own
