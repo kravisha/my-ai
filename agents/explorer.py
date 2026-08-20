@@ -340,6 +340,7 @@ def main() -> None:
         raise SystemExit(1)
     identity = sys.argv[1]
     anomalies = {security: {} for security in config.FORCE_ANOMALY_SECURITIES}
+    anomalies.update(config.ANOMALY_SPEC)
     provider = SyntheticMarketDataProvider(
         seed=config.MARKET_PROVIDER_SEED, anomalies=anomalies, regime=config.MARKET_REGIME,
     )

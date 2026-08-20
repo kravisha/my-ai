@@ -1,0 +1,41 @@
+id: anomaly_burst
+version: 1
+lifecycle: active
+description: >
+  The dislocation baseline_steady_state's control run cannot exhibit: two forced
+  anomalies on the synthetic_alpha/synthetic_gamma peer groups, planted via
+  FI_ANOMALY_SPEC (agents/discovery_config.py) rather than
+  FI_FORCE_ANOMALY_SECURITIES, so each gets its own strike/expiry/height rather
+  than the shared default bump.
+
+  SYN3 is planted unmissable: default center cell, default height (0.40), the
+  same shape agents/explorer.py's own tests already show clears the ~2.0 seed
+  ratio threshold with room to spare (~2.4). Its job is to guarantee this
+  scenario's one property actually reaches the pipeline every run, deterministically.
+
+  SYN9 is planted subtle and off-center: strike idx 1, expiry idx 3, height 0.08
+  - a fifth of SYN3's, away from the grid's middle. It stays under the seed
+  threshold by design; whether a future lens should be sensitive enough to catch
+  it is exactly the kind of question Stage 1's Monte Carlo scoring
+  (simulation/stage1.py) exists to answer with a real detectable/not-detectable
+  verdict instead of a guess. Here it is present only so the fixture is not one
+  obvious bump alone - a detector calibrated against a single shape generalizes
+  to nothing.
+
+duration_seconds: 60
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_ANOMALY_SPEC: '{"SYN3": {"height": 0.40}, "SYN9": {"height": 0.08, "strike_idx": 1, "expiry_idx": 3}}'
+
+requires_model: true
+
+expected_properties:
+  # The minimal proof a detection actually reached the pipeline, not a claim
+  # about how many. SYN3 alone is sized to guarantee at least this one - see
+  # the description above for the ratio math.
+  - name: a detector event fired
+    metric: pipeline.detector_events
+    assert: at_least
+    value: 1

@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from simulation import harness, scenario as scenario_module
+from simulation import harness, scenario as scenario_module, stage1
 
 
 def _cmd_list(args) -> int:
@@ -161,6 +161,37 @@ def _print_summary(summary: dict, verbose: bool = False) -> None:
         print(f"    [{mark}] {result['name']}: {result['detail']}")
 
 
+def _cmd_stage1(args) -> int:
+    """Sample `args.worlds` Monte Carlo worlds from `args.seed`, run each
+    through the real harness, and score against the precomputed answer key."""
+    summary = stage1.run_exercise(
+        master_seed=args.seed, count=args.worlds, duration_seconds=args.duration,
+    )
+
+    for entry in summary["worlds"]:
+        counts = entry["score"]["counts"]
+        status = "graceful" if entry["graceful"] else "NOT CLEAN"
+        print(
+            f"world {entry['world']['index']:>2} (run {entry['run_id']}, {status}): "
+            f"hits {counts['hit']} misses {counts['miss']} beyond_lens {counts['beyond_lens']} "
+            f"artifact_detections {counts['artifact_detection']} "
+            f"false_positives {counts['false_positive']} clean {counts['clean']}"
+        )
+
+    agg = summary["aggregate_counts"]
+    rate = summary["overall_detection_rate"]
+    rate_str = f"{rate:.3f}" if rate is not None else "n/a (no detectable plants)"
+    print(
+        f"\naggregate: hits {agg['hit']} misses {agg['miss']} beyond_lens {agg['beyond_lens']} "
+        f"artifact_detections {agg['artifact_detection']} false_positives {agg['false_positive']} "
+        f"clean {agg['clean']}"
+    )
+    print(f"detection rate: {rate_str}")
+    print(f"summary written to {summary['summary_path']}")
+
+    return 0 if all(entry["graceful"] for entry in summary["worlds"]) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m simulation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -188,6 +219,13 @@ def main(argv: list[str] | None = None) -> int:
     summarise_parser.add_argument("directory", help="a run directory, or a run_id under simulation/runs")
     summarise_parser.add_argument("-v", "--verbose", action="store_true", help="dump every metric")
     summarise_parser.set_defaults(func=_cmd_summarise)
+
+    stage1_parser = sub.add_parser(
+        "stage1", help="Monte Carlo Stage 1 training exercise: sample worlds, run, score")
+    stage1_parser.add_argument("--worlds", type=int, default=3, help="how many worlds to sample")
+    stage1_parser.add_argument("--seed", type=int, required=True, help="master seed for the draw")
+    stage1_parser.add_argument("--duration", type=float, default=45.0, help="seconds per world's run")
+    stage1_parser.set_defaults(func=_cmd_stage1)
 
     args = parser.parse_args(argv)
     return args.func(args)
