@@ -17,6 +17,7 @@ Normally launched by backend/controller.py as a subprocess, not by hand.
 """
 
 import json
+import os
 import sys
 
 from agents import discovery_config as config
@@ -26,6 +27,17 @@ from backend import fi_db
 
 ROLE = "analysis"
 ANALYSIS_MAX_TOKENS = 4096
+
+# The adopted iteration budget (owner decision, 2026-08-19; Iterative Excellence
+# §5). Three is a ceiling with §8's stopping rule inside it, not a quota: the
+# challenge pass may answer "stands", and endorsing a sound conclusion is a
+# legitimate outcome, not a failure to find something. Overridable for
+# cost-bounded simulation runs - not for quietly unadopting the budget.
+ANALYSIS_MAX_PASSES = max(1, int(os.environ.get("FI_ANALYSIS_MAX_PASSES", "3")))
+
+# The challenge is a critique, not a second analysis - it needs room to name
+# problems, not to restate the thesis.
+CHALLENGE_MAX_TOKENS = 1024
 
 REQUIRED_FIELDS = (
     "thesis", "evidence_summary", "confidence", "uncertainty",
@@ -244,42 +256,122 @@ def _source_note(conn, source) -> str:
     )
 
 
-def _run_analysis(report_context: str) -> dict:
-    system = (
-        "You are Analysis, the deep-reasoning role in a financial-opportunity "
-        "discovery pipeline. You receive one queued report (from a "
-        "deterministic Explorer detector or a Speculator social-evidence "
-        "scan) and must produce both a client-facing analysis and a grade "
-        "of the upstream report in a single response. This is informational "
-        "only - no trade is executed. Reply with strict JSON only, no other "
-        "text, with exactly these fields: "
-        '{"thesis": "...", "evidence_summary": "...", "confidence": <0.0-1.0>, '
-        '"uncertainty": "...", "relevance_score": <0.0-1.0>, "novelty_score": <0.0-1.0>, '
-        '"evidence_quality_score": <0.0-1.0>, "worth_the_compute": <true or false>, '
-        '"resolved_question_ids": [<numbers of any open questions listed in the context that this '
-        'analysis genuinely answers - use [] when in doubt, since carrying a settled question costs '
-        'little and closing a live one loses it>], '
-        '"rationale": "...", "peer_classification": "common_factor" or "idiosyncratic" or '
-        '"not_applicable"}. thesis should include reasons the idea could be wrong. '
-        'peer_classification: "common_factor" if the context says peers also triggered '
-        '(market/sector-wide), "idiosyncratic" if the context says the anomaly is isolated, '
-        '"not_applicable" if the context has no peer-analysis information at all (e.g. a '
-        "Speculator-sourced report with no detector event)."
-    )
-    response = call_reasoning_model(
-        system=system,
-        messages=[{"role": "user", "content": report_context}],
-        tools=[],
-        max_tokens=ANALYSIS_MAX_TOKENS,
-    )
-    text = _extract_text(response)
-    parsed = json.loads(text)
+ANALYSIS_SYSTEM = (
+    "You are Analysis, the deep-reasoning role in a financial-opportunity "
+    "discovery pipeline. You receive one queued report (from a "
+    "deterministic Explorer detector or a Speculator social-evidence "
+    "scan) and must produce both a client-facing analysis and a grade "
+    "of the upstream report in a single response. This is informational "
+    "only - no trade is executed. Reply with strict JSON only, no other "
+    "text, with exactly these fields: "
+    '{"thesis": "...", "evidence_summary": "...", "confidence": <0.0-1.0>, '
+    '"uncertainty": "...", "relevance_score": <0.0-1.0>, "novelty_score": <0.0-1.0>, '
+    '"evidence_quality_score": <0.0-1.0>, "worth_the_compute": <true or false>, '
+    '"resolved_question_ids": [<numbers of any open questions listed in the context that this '
+    'analysis genuinely answers - use [] when in doubt, since carrying a settled question costs '
+    'little and closing a live one loses it>], '
+    '"rationale": "...", "peer_classification": "common_factor" or "idiosyncratic" or '
+    '"not_applicable"}. thesis should include reasons the idea could be wrong. '
+    'peer_classification: "common_factor" if the context says peers also triggered '
+    '(market/sector-wide), "idiosyncratic" if the context says the anomaly is isolated, '
+    '"not_applicable" if the context has no peer-analysis information at all (e.g. a '
+    "Speculator-sourced report with no detector event)."
+)
+
+
+def _validate_analysis_result(parsed: dict) -> dict:
     missing = [f for f in REQUIRED_FIELDS if f not in parsed]
     if missing:
         raise ValueError(f"analysis response missing fields: {missing}")
     if parsed["peer_classification"] not in PEER_CLASSIFICATIONS:
         raise ValueError(f"analysis response has invalid peer_classification: {parsed['peer_classification']!r}")
     return parsed
+
+
+def _run_analysis(report_context: str) -> dict:
+    response = call_reasoning_model(
+        system=ANALYSIS_SYSTEM,
+        messages=[{"role": "user", "content": report_context}],
+        tools=[],
+        max_tokens=ANALYSIS_MAX_TOKENS,
+    )
+    text = _extract_text(response)
+    parsed = json.loads(text)
+    return _validate_analysis_result(parsed)
+
+
+def _run_challenge(report_context: str, first: dict) -> dict:
+    system = (
+        "You are the challenge pass over another analyst's conclusion, in a "
+        "financial-opportunity discovery pipeline. You are given the "
+        "original report context and the conclusion a first pass produced. "
+        "Your job is to attack it: what would make the thesis wrong, what "
+        "evidence is missing or overweighted, what alternative reading fits "
+        "the same facts, and whether the stated confidence is justified by "
+        "the stated evidence. You are not asked to be contrarian - "
+        "endorsing a sound conclusion is a legitimate outcome, not a "
+        "failure to find something. Reply with strict JSON only: "
+        '{"verdict": "stands" or "revise", "challenge_summary": "one '
+        "paragraph: the strongest objection you found and why it does or "
+        'does not change the conclusion", "material_problems": ["each '
+        "problem that would change the thesis, materially move the "
+        'confidence, or change the peer classification - empty if none"]}. '
+        'Use "revise" only for material problems; style, phrasing and '
+        "minor hedging are not material."
+    )
+    first_summary = {
+        key: first[key]
+        for key in ("thesis", "evidence_summary", "confidence", "uncertainty", "peer_classification")
+    }
+    user_content = (
+        report_context
+        + "\n\n--- FIRST-PASS CONCLUSION TO CHALLENGE ---\n"
+        + json.dumps(first_summary)
+    )
+    response = call_reasoning_model(
+        system=system,
+        messages=[{"role": "user", "content": user_content}],
+        tools=[],
+        max_tokens=CHALLENGE_MAX_TOKENS,
+    )
+    text = _extract_text(response)
+    parsed = json.loads(text)
+    missing = [f for f in ("verdict", "challenge_summary", "material_problems") if f not in parsed]
+    if missing:
+        raise ValueError(f"challenge response missing fields: {missing}")
+    if parsed["verdict"] not in ("stands", "revise"):
+        raise ValueError(f"challenge response has invalid verdict: {parsed['verdict']!r}")
+    return parsed
+
+
+def _run_revision(report_context: str, first: dict, challenge: dict) -> dict:
+    system = (
+        ANALYSIS_SYSTEM
+        + " You are the revision pass: a first conclusion and a challenge "
+        "to it are provided after the report context. Preserve what "
+        "survived the challenge - do not rewrite what was not attacked - "
+        "and fix what was found: the thesis, confidence, classification or "
+        "grades only insofar as the material problems demand. The "
+        "challenge is input, not authority; if on reflection part of it is "
+        "wrong, say so in the rationale and keep the original judgment on "
+        "that point."
+    )
+    user_content = (
+        report_context
+        + "\n\n--- FIRST-PASS CONCLUSION ---\n"
+        + json.dumps(first)
+        + "\n\n--- CHALLENGE ---\n"
+        + json.dumps(challenge)
+    )
+    response = call_reasoning_model(
+        system=system,
+        messages=[{"role": "user", "content": user_content}],
+        tools=[],
+        max_tokens=ANALYSIS_MAX_TOKENS,
+    )
+    text = _extract_text(response)
+    parsed = json.loads(text)
+    return _validate_analysis_result(parsed)
 
 
 def _overall_score(result: dict) -> float:
@@ -372,10 +464,29 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
         # get wrongly marked 'crashed' and duplicated mid-call.
         fi_db.record_heartbeat(conn, identity)
         result = _run_analysis(context)
+        passes_used = 1
+        challenge_summary = None
+        # Refinement must never destroy a sound primary result: a challenge or
+        # revision that itself fails (malformed reply, model error) is logged
+        # and the pass-1 conclusion is delivered - only the primary analysis
+        # failing fails the report. The directive's §4: preserve the core.
+        if ANALYSIS_MAX_PASSES >= 2:
+            try:
+                fi_db.record_heartbeat(conn, identity)  # every pass is a slow call
+                challenge = _run_challenge(context, result)
+                passes_used = 2
+                challenge_summary = challenge["challenge_summary"]
+                if challenge["verdict"] == "revise" and ANALYSIS_MAX_PASSES >= 3:
+                    fi_db.record_heartbeat(conn, identity)
+                    result = _run_revision(context, result, challenge)
+                    passes_used = 3
+            except Exception as refinement_failure:  # noqa: BLE001
+                print(f"[analysis] refinement pass failed, delivering the pass-1 conclusion: {refinement_failure}")
         analysis_result_id = fi_db.record_analysis_result(
             conn, identity, spawned_at, report["id"], report["security"],
             result["thesis"], result["evidence_summary"], result["confidence"], result["uncertainty"],
             peer_classification=result["peer_classification"],
+            passes_used=passes_used, challenge_summary=challenge_summary,
         )
         fi_db.record_grade(
             conn, identity, spawned_at, report["id"], analysis_result_id,
