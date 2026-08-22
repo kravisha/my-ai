@@ -105,6 +105,10 @@ CADENCES: dict[str, Cadence] = {
     # --- traded, continuous -------------------------------------------------
     "equity_price": _c("equity_price", CONTINUOUS, "equity"),
     "option_surface": _c("option_surface", CONTINUOUS, "equity"),
+    # Addendum 25's parity-mission chains (simulation/parity_world.py): a
+    # full listed chain with executable bid/ask per leg, distinct from
+    # option_surface's fitted IV surface.
+    "option_chain": _c("option_chain", CONTINUOUS, "equity"),
     "etf_price": _c("etf_price", CONTINUOUS, "equity"),
     "index_price": _c("index_price", CONTINUOUS, "equity"),
     "government_yield": _c("government_yield", CONTINUOUS, "bond"),

@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from simulation import harness, scenario as scenario_module, stage1
+from simulation import harness, parity_world, scenario as scenario_module, stage1
 
 
 def _cmd_list(args) -> int:
@@ -192,6 +192,52 @@ def _cmd_stage1(args) -> int:
     return 0 if all(entry["graceful"] for entry in summary["worlds"]) else 1
 
 
+def _cmd_parity(args) -> int:
+    """The Market Data Simulation Engine's Version 1 mission (addendum 25):
+    put-call parity training worlds, refusing outright if reference data
+    is not READY (fail closed, addendum 25 SS3, visibly rather than silently)."""
+    from backend import fi_db
+
+    db_path = Path(args.db) if args.db else fi_db.DB_PATH
+    conn = fi_db.get_connection(db_path)
+    try:
+        fi_db.init_schema(conn)
+        config = parity_world.MissionConfig(
+            mission_id=f"parity-cli-{args.seed}",
+            run_mode="simulation",
+            strategy="put_call_parity_arbitrage",
+            seed=args.seed,
+            n_scenarios=args.scenarios,
+        )
+        try:
+            report = parity_world.run_parity_exercise(conn, config)
+        except parity_world.ReferenceNotReady as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 2
+    finally:
+        conn.close()
+
+    print(f"{'scenario':<24} {'variant':<16} {'symbol':<8} outcome")
+    for entry in report["scenarios"]:
+        gt = entry["ground_truth"]
+        print(f"{entry['scenario_id']:<24} {gt['variant']:<16} {gt['symbol']:<8} {entry['outcome']}")
+
+    m = report["metrics"]
+    rate = f"{m['pass_rate']:.3f}" if m["pass_rate"] is not None else "n/a"
+    print(
+        f"\nassets_simulated={m['assets_simulated']} contracts_generated={m['contracts_generated']} "
+        f"opportunities_injected={m['opportunities_injected']} chatter_items={m['chatter_items']}"
+    )
+    print(
+        f"detected={m['detected']} missed={m['missed']} false_positives={m['false_positives']} "
+        f"pass_rate={rate} strategy_exercised={m['strategy_exercised']}"
+    )
+    print(f"final state: {report['states'][-1]}")
+    print(f"summary written to {report['summary_path']}")
+
+    return 0 if report["states"][-1] == parity_world.COMPLETED else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m simulation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -226,6 +272,14 @@ def main(argv: list[str] | None = None) -> int:
     stage1_parser.add_argument("--seed", type=int, required=True, help="master seed for the draw")
     stage1_parser.add_argument("--duration", type=float, default=45.0, help="seconds per world's run")
     stage1_parser.set_defaults(func=_cmd_stage1)
+
+    parity_parser = sub.add_parser(
+        "parity", help="Market Data Simulation Engine: put-call parity arbitrage mission (addendum 25)")
+    parity_parser.add_argument("--seed", type=int, required=True, help="mission seed")
+    parity_parser.add_argument("--scenarios", type=int, default=12, help="how many scenarios to generate")
+    parity_parser.add_argument("--db", metavar="PATH", default=None,
+                               help="financial_intelligence.db path (default: FI_DB_PATH / the repo's own db)")
+    parity_parser.set_defaults(func=_cmd_parity)
 
     args = parser.parse_args(argv)
     return args.func(args)
