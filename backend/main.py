@@ -29,7 +29,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import fi_db, strategy
+from backend import fi_db, reference_data, strategy
 from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
 
@@ -91,6 +91,14 @@ async def lifespan(app: FastAPI):
     # second one under the same permanent identity.
     reconciliation = controller.reconcile_on_start()
     print(f"[controller] reconciled on start: {reconciliation}")
+    # Day Zero rule (addendum 26 §3): reference data precedes waking any
+    # operational agent. Runs on every startup, not just the first - it is
+    # idempotent (backend/reference_data.py's run_reference_engine) and an
+    # existing database still deserves a fresh certification rather than a
+    # trusted stale one.
+    reference_readiness = reference_data.run_reference_engine(controller.conn)
+    print(f"[reference_data] readiness: {reference_readiness['readiness']['status']} "
+          f"({reference_readiness['readiness']['focus_asset_count']} focus assets)")
     controller.bootstrap_coo()
     poll_task = asyncio.create_task(_controller_poll_loop(controller))
     try:
@@ -614,6 +622,14 @@ def knowledge(limit: int = 50, include_history: bool = False,
         "lessons": fi_db.list_knowledge(conn, record_kind=fi_db.KNOWLEDGE_LESSON, status=status, limit=limit),
         "open_questions": fi_db.list_knowledge(conn, record_kind=fi_db.KNOWLEDGE_OPEN_QUESTION, status=status, limit=limit),
     }
+
+
+@app.get("/admin/reference")
+def reference_status(conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """The Reference Data Engine's dashboard shape (addendum 24 §19): ready
+    state, the latest certification, and enough counts that an operator does
+    not need to read terminal output to know what happened at startup."""
+    return reference_data.status(conn)
 
 
 @app.get("/admin/sources")
