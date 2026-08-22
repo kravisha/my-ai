@@ -2821,3 +2821,102 @@ nothing, recorded nothing, and re-certified; retiring one symbol's live
 identifier flipped certification to FAILED naming `required_identifiers`,
 with `validation_status='invalid'` stamped on exactly the failing row —
 fail-closed exercised against real data, not only fixtures.
+
+
+---
+
+## §41 — The parity training world, and the detector that is its answer key (2026-08-22)
+
+Addendum 25's Version 1 mission, second of the two Day Zero builds §39
+ordered. Three new modules — `simulation/pricing.py` (stdlib Black-Scholes,
+`math.erf`, no new dependency), `backend/arbitrage.py` (ARB-001), and
+`simulation/parity_world.py` (the engine) — plus `option_chain` in the
+cadence taxonomy and a `parity` CLI subcommand beside the existing
+simulation commands.
+
+### ARB-001 before the library
+
+Addendum 27's thirty detectors are roadmap; ARB-001 ships now because the
+simulation's evaluation loop needs it as the answer key — the same
+organization's-own-detector principle as Stage 1's key (§37), so scoring
+can never drift from what a real deployment would run. The detector obeys
+27's implementation contract: a pure deterministic function over a
+snapshot, returning `Opportunity` or `NoOpportunity(reason_codes)`;
+**no code path reads a mid price**. Data-quality hard stops are collected,
+not short-circuited (stale, crossed, invalid bid, non-European style).
+Conversion classifies A, reversal B — the borrow assumption is the
+difference — and an unknown borrow fee makes the reversal direction
+*unavailable* with `missing_borrow` said out loud, never priced at zero
+(27 §10's "never silently substitute missing reference data").
+
+### The world
+
+- **Activation and identity, fail-closed.** `run_mode` must be
+  `"simulation"` (25 §2, enforced at the engine boundary until mission
+  control has a UI — §39's disposition), and the engine refuses to start
+  unless the Reference Data Engine certified READY with focus assets to
+  offer (25 §3). Every simulated security carries the canonical entity_id
+  and symbol from `list_focus_assets` — the engine never invents identity.
+  §40's "first true dependent" is now real.
+- **Parity holds by construction, except where a scenario says otherwise.**
+  Chains price from Black-Scholes under a seeded skew shape (eight named
+  shapes, flat through localized distortion), same inputs both sides, so an
+  uninjected chain is arbitrage-free — and the property test proves the
+  engine and detector agree on that across seeds, which is addendum 25
+  §25's parity-consistency test pointed at both components at once.
+- **Six scenario variants** (25 §9/§21): genuine, spread_artifact,
+  carry_effect, borrow_cost, stale_quote, none. Genuine injections are
+  floored against the detector's own cost config so "genuine" is
+  executable by construction; each trap is engineered to be erased by
+  exactly the friction it teaches. Ground truth records variant, affected
+  pair, deviation and expected direction — returned to the caller and
+  written only to the run summary under `simulation/runs/`, never to a
+  table (the §37 rule).
+- **Determinism as a property, not a hope.** All timestamps derive from
+  the config's `base_time`, never the wall clock (the one wall-clock read
+  names the summary file); same config, same world, test-enforced.
+- **Chatter synchronized to the same world** (25 §11/§12): Reddit-style
+  items on the affected security at a configured signal ratio, noise on
+  other focus securities, all resolving to canonical entity_ids, emitted
+  under the existing `social_post` class. Explorer's feed is canonical
+  `option_chain` Observations whose payload carries no ground-truth
+  marker — test-enforced isolation.
+- **Evaluation and coverage** (25 §16–§18): per-scenario
+  PASS/PARTIAL/FAIL against the key; a run whose genuine scenarios were
+  never detected — or that never drew one — ends RETRY_REQUIRED, not
+  COMPLETED. A strategy-training run that never exercised the strategy
+  does not get to call itself finished.
+
+### Deferred, with reasons
+
+Agent wiring — Explorer consuming `observations()`, Speculator the
+chatter, Analyst the candidates, and with them 25 §17's full completion
+loop — is the next increment, deliberately: this one proves the world and
+its own answer key against each other first, exactly as Stage 1 did before
+agents consumed its worlds. Difficulty progression stays deferred per §39.
+The mission-control UI remains panel work.
+
+### Division of labour, and what review changed
+
+Implementation delegated per the tiering directive; design, spec, review,
+live verification and this record by the top model. The delegated work
+disclosed one honest tail risk rather than hiding it — an injector's 0.02
+mid floor could clip a large drawn deviation and silently plant a weaker
+shift than ground truth recorded. Review closed it: injectors now fall
+back to the unclippable direction (the RNG stream unchanged, so seeded
+worlds are preserved), with a regression test that forces deviations
+larger than most put mids and demands every genuine scenario stay
+detected. Review also corrected the state record: WAITING_FOR_REFERENCE_DATA
+now appears in a run's traversal only when the gate actually blocked.
+
+### Verified
+
+1440 passing (was 1404; +35 delegated, +1 review regression test). Live,
+via the CLI against a scratch copy of the real database: the engine
+first **refused** — the real database has never run the new startup, so no
+readiness certification existed, and the refusal named
+WAITING_FOR_REFERENCE_DATA — which is the fail-closed dependency chain
+exercising itself unprompted. After certifying the copy: eight scenarios
+(one genuine, traps, all variants drawn), 216 contracts, 24 chatter items,
+genuine detected, zero trap leaks, pass rate 1.000, strategy exercised,
+final state COMPLETED, summary written and gitignored.
