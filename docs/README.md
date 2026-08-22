@@ -1,11 +1,11 @@
 # Design Documents
 
-Everything governing this system's design, in one place. Twenty-four files here, accumulated across
-several design sessions, and four more held privately; this index says what each one is, which govern
+Everything governing this system's design, in one place. Thirty files here, accumulated across
+several design sessions, and five more held privately; this index says what each one is, which govern
 which, and what order to read them in.
 
-**Four documents this index names are not in this repository** — the constitution and addenda 5, 11
-and 15. They are held privately, deliberately, and are named without links wherever they appear
+**Five documents this index names are not in this repository** — the constitution and addenda 5, 11,
+15 and 22. They are held privately, deliberately, and are named without links wherever they appear
 below. [`GOVERNANCE.md`](GOVERNANCE.md) explains the split and
 [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) the rule it is maintained under. A
 reference you cannot follow means the document is private, not missing.
@@ -23,6 +23,7 @@ Documents disagree with each other, so the order matters. Higher layers win.
 | Layer | Document | Authority |
 |---|---|---|
 | **Constitutional** | `JARVIS_CONSTITUTION.md` — **held privately** | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
+| Architectural | [`addenda/`](addenda) 21–27 (Day Zero lineage) | Canonical **for Day Zero startup, reference data, the simulation training world, and the arbitrage library**. Builds on 20's engine architecture. 22 is held privately. Within the lineage, 24 governs 26 where they differ. Where these touch other lineages, record the disposition in `SPEC_RECONCILIATION.md` §39 rather than assuming the higher number wins. |
 | Architectural | [`addenda/`](addenda) 16–18 (Gateway lineage) | Canonical **for the external communication boundary and backend infrastructure only**. A separate subject from 2–15, not a newer set of it — these neither supersede nor are governed by the Financial Intelligence addenda. Where the two ever touch the same question, record it in `SPEC_RECONCILIATION.md` rather than assuming the higher number wins. |
 | Architectural | [`addenda/`](addenda) 11–15 (newest FI set) | Canonical. Where these conflict with 5–10, these win. 11 and 15 are held privately. |
 | Architectural | [`addenda/`](addenda) 5–10 | Canonical except where 11–15 clarify. 5 is held privately. |
@@ -38,7 +39,7 @@ those resolutions live, because the addenda themselves are marked do-not-edit.
 
 A distinction worth knowing before editing anything.
 
-- **Verbatim** — `addenda/` 1–14 and 16–18 are unedited copies of supplied specifications. They are
+- **Verbatim** — `addenda/` 1–14, 16–18 and 20–27 are unedited copies of supplied specifications. They are
   the authoritative source and are never changed; disagreements with them get recorded elsewhere.
 - **Maintained** — `JARVIS_GAP_ANALYSIS.md`, `SPEC_RECONCILIATION.md`, `TIMING_CONSTANTS.md` and
   `organization.yaml` are this project's own records, edited as the design and the code move.
@@ -81,6 +82,23 @@ parts already exist under other names and which are genuinely absent.
 | | |
 |---|---|
 | [20 — Simulation, Market Data and Core Engine Architecture](addenda/addendum_20_architecture_checkpoint.md) | The checkpoint baseline. Its §13 asks for a keep/modify/add/remove comparison against what is built; that comparison and the disposition are in [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §30. |
+
+**Day Zero (21–27)** — a fourth lineage, supplied 2026-08-21: the startup world.
+Bootstrap order, the Reference Data Engine, the Market Data Simulation Engine
+whose Version 1 mission is put-call parity arbitrage, and the options arbitrage
+library that mission exists to teach. [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md)
+§39 records what already existed under other names and what the lineage's build
+increments added.
+
+| | |
+|---|---|
+| [21 — Day Zero Bootstrap & Metadata Engine](addenda/addendum_21_day_zero_bootstrap_metadata_engine.md) | The startup sequence: Bootstrap → Controller → schema → Reference Data Engine → data world → wake agents. Lifecycle (Pre-Alpha/Alpha/Beta/Live) belongs to orchestration only. |
+| 22 — Constitution & Governance checkpoint — **held privately** | The durable philosophical seed: rule of law, universal accountability, rights thresholds, dissent, due process, adaptive confidence. |
+| [23 — Organization & Agent Architecture](addenda/addendum_23_organization_agent_architecture.md) | Who acts, advises, evaluates, governs, orchestrates: Controller, COO, Explorer, Speculator, Analyst, Evaluator, and the training loop. |
+| [24 — Reference Data Engine (Specification 01)](addenda/addendum_24_reference_data_engine_specification.md) | The canonical reference-data engine spec: Asset Universe / Capability Set / Current Focus, Security Master, Assets table, ingestion, validation, fail-closed readiness. Governs 26 where they differ. |
+| [25 — Market Data Simulation Engine (Specification 02)](addenda/addendum_25_market_data_simulation_engine_specification.md) | The training-world generator: option chains, skew generator, parity opportunity injection with genuine and trap variants, hidden ground truth, the evaluation loop. |
+| [26 — Day Zero Reference Data Engine](addenda/addendum_26_day_zero_reference_data_engine.md) | Sibling of 24, less detailed; kept for the statements 24 lacks (dependency chain, Explorer's initial volatility-surface focus). |
+| [27 — Full Options Arbitrage Library](addenda/addendum_27_options_arbitrage_library_specification.md) | ARB-001 through ARB-030, the executable-price discipline, cost model, A/B/C/D classification, and the pure-detector implementation contract. Mostly roadmap; ARB-001 is the first consumer. |
 
 **Financial Intelligence, third set (11–15)** — the current architecture.
 
