@@ -2595,3 +2595,129 @@ verification and this record by the top model.
 *Scoreboard #9 resolved: the Strategy Store built with real content and real
 enforcement; the Model Store recorded as arriving with the first trained
 artifact that is not a value.*
+
+
+---
+
+## §39 — The Day Zero lineage arrives: seven documents, one private (2026-08-22)
+
+Seven documents supplied 2026-08-21, saved as addenda 21–27. Addendum 22
+(Constitution & Governance checkpoint) is constitutional philosophy and is held
+privately per the boundary rule; the public lineage is 21 and 23–27. Owner
+instruction on arrival: *assimilate all of these documents and start creating
+the next components — priority is the Reference Data Engine, then the
+Simulation Engine.* This section is the assimilation; §40 and §41 are the two
+builds.
+
+### What the lineage is
+
+Day Zero: the minimum viable world before operational agents begin work.
+Bootstrap → Controller → schema → **Reference Data Engine** (readiness
+certification) → mission data engine (**Market Data Simulation Engine** in
+Pre-Alpha) → wake agents. The lineage's first operational mission is narrow by
+design: put-call parity arbitrage (addendum 25 §1), and addendum 27 supplies
+the library that mission is the first member of — ARB-001, with its
+non-negotiable rule that a theoretical violation at mid prices is not
+executable arbitrage.
+
+### What already exists under other names — keep, no rework
+
+- **The startup chain is the built one.** Addendum 21's "Bootstrap →
+  Controller → COO → engines → wake agents" matches `backend/main.py`'s
+  lifespan, Controller-as-the-server (§2 of this file, commit `a577889`), and
+  COO as the operational orchestrator. Addendum 23 §1's Controller duties are
+  the built Controller's duties. No conflict.
+- **"Analyst" is the `analysis` role.** Addendum 23 §6 names what
+  `agents/analysis.py` does — candidate investigation, thesis testing, an
+  analytical conclusion. The repo keeps its role name; the addenda's noun maps
+  to it. Same for "the Evaluator" (addendum 23 §7): its mechanism exists
+  today as the grading chain (`grades`), Stage 1's planted-ground-truth
+  scoring (`simulation/stage1.py`), and COO's compliance rules. A distinct
+  Evaluator *agent* is not built and is not needed until something an
+  existing mechanism cannot evaluate exists.
+- **Lifecycle stays at orchestration.** Addendum 21 §8 and addendum 24 §15
+  restate the interface principle this codebase already enforces: agents
+  consume domain interfaces, only orchestration knows
+  simulation/historical/live. The canonical Observation contract
+  (`backend/canonical.py`) is that principle made structural — uniform shape,
+  mandatory provenance — and predates this lineage.
+- **Identifier architecture.** Addendum 24 §6–7's canonical-internal-ID rule
+  ("external identifiers are mappings around the canonical ID"; "must not
+  assume CUSIP exists") is `backend/identifiers.py`, built in §19 and repaired
+  in §34. The Day Zero build widens it; it does not rival it.
+- **Trading calendars.** Addendum 24 §10 lists them; market holidays exist
+  with a real consumer (§34).
+- **Constitutional principles (addendum 22).** The standing private
+  constitution already carries rule-of-law, accountability, dissent and
+  adaptive-confidence principles; the checkpoint adds explicit amendment
+  thresholds (~90% rights-reducing, ~two-thirds rights-expanding) and the
+  rights-impact test. Recorded privately with the document; nothing in code
+  turns on it today.
+
+### Genuinely absent — the two builds this lineage orders
+
+1. **Reference Data Engine as an engine** (addendum 24, with 26 subordinate
+   where they differ — 24 is the fuller, later statement of the same design).
+   What exists is identity plumbing; what does not exist is the engine around
+   it: the Asset Universe / Capability Set / Current Focus registries at
+   asset-class level, a Security Master record per instrument, the Assets
+   work-discovery table, adapter-shaped ingestion, validation, and a
+   **fail-closed readiness certification** the COO consumes before dependent
+   engines start. §40.
+2. **Market Data Simulation Engine for the parity mission** (addendum 25).
+   The existing simulation package generates IV surfaces, org-level worlds and
+   Stage 1 exercises — nothing generates *option chains with executable
+   bid/ask quotes*, parity-coherent pricing, controlled parity deviations with
+   genuine/trap variants, or ground truth in ARB-001's executable terms. §41.
+
+### Precedence decisions
+
+- **Within the lineage**: 24 governs 26 (same engine, 24 fuller). Both agree
+  on every load-bearing point checked; 26 uniquely carries the dependency
+  chain diagram and the Explorer volatility-surface note, which is why it is
+  kept rather than discarded.
+- **Against addendum 20**: no conflict found. 20 §3's canonical format, §2D's
+  reference-data list and §11's Stage 1 are what 21–27 elaborate. Where 25's
+  simulation states duplicate 20's, 25 is the more specific and governs the
+  parity mission.
+- **Against addenda 11–15**: the org roles map (above); no authority boundary
+  moves. Addendum 24 §3's "COO instantiates and supervises the Reference Data
+  Engine" is honored with the engine as a *callable domain module* invoked
+  from the server's startup orchestration — an engine, not an agent (24 §1:
+  "an engine, not an autonomous organizational authority"), so no charter, no
+  watcher, no spawn machinery. Same reasoning as §35's refusal of a risk
+  agent.
+- **Addendum 25 §2's activation rule** (engine starts only when the user
+  selects RUN MODE = SIMULATION from mission control): the mission-control
+  *interface* is panel work not yet built; until it exists, the engine is
+  activated programmatically with `run_mode="simulation"` required in the
+  mission config — the rule enforced at the engine boundary, the UI to follow.
+
+### Declined or deferred, with reasons
+
+- **Free/public reference sources (EDGAR, OpenFIGI, exchange directories)** —
+  addendum 24 §11. The adapter pipeline is built and the seed universe flows
+  through it as the first adapter, but no network source adapter ships in §40:
+  the Current Focus for the Pre-Alpha mission is the synthetic universe, whose
+  coverage requirement a network fetch cannot improve, and an ingest nothing
+  consumes is the empty machinery this project refuses. The FRED ingest
+  (`providers/historical.py`) already demonstrates the pattern against a real
+  free source. EDGAR/OpenFIGI arrive with the Alpha (historical) focus
+  universe, behind the same adapter interface.
+- **Issuer Master, corporate-action metadata, venue-specific identifier
+  rules** — same reasoning as §34: no producer, no consumer yet. The registry
+  schema accommodates them; empty tables do not ship.
+- **ARB-002 through ARB-030** — roadmap. ARB-001 ships in §41 because the
+  simulation's evaluation loop needs it as the answer key; the rest arrive
+  with addendum 27's own phase ordering (§11: Phase 1 is
+  001/2/3/6/7/8/9/10/11/13) when detection against real chains is the work.
+  ARB-026/27 stay out of the arbitrage namespace entirely per 27 §11.
+- **Difficulty progression** (addendum 25 §13's "obvious early, subtler
+  later") — the magnitude/noise knobs exist in the mission config; a staged
+  curriculum is training-loop design that belongs with the Stage 1 lineage,
+  deferred until a first pass of the parity mission has produced evidence
+  about what "too subtle" measures as.
+- **A separate Evaluator agent** — see the role mapping above.
+
+*Owner decisions recorded: assimilate the seven documents; build the Reference
+Data Engine first, the Simulation Engine second.*
