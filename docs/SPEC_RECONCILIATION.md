@@ -2721,3 +2721,103 @@ executable arbitrage.
 
 *Owner decisions recorded: assimilate the seven documents; build the Reference
 Data Engine first, the Simulation Engine second.*
+
+
+---
+
+## §40 — The Reference Data Engine: certification before agents (2026-08-22)
+
+Addendum 24 (26 subordinate), first of the two Day Zero builds §39 ordered.
+`backend/reference_data.py` — an engine, not an agent, by 24 §1's own words
+and §35's precedent: pure functions over the database, no charter, no
+watcher, no organization.yaml entry.
+
+### The shape
+
+- **Three registries, one table.** Asset Universe / Capability Set / Current
+  Focus are three membership flags on one `asset_classes` row per class, not
+  three tables — they are questions about the same eleven classes. Seeded:
+  everything in the Universe; `stock` and `stock_option` alone in Capability
+  and Focus (the parity mission's scope). Widening a mission later is a flag
+  flip. The subset invariants (focus ⊆ capability ⊆ universe) are enforced by
+  validation, not CHECK — the §34 lesson about constraints on growing
+  vocabularies.
+- **`security_master` sits on the entity layer**, one row per entity_id,
+  never minting identity — `identifiers.py` owns that. `identifier_rules`
+  makes identifier requirements metadata (24 §7): symbol required for the
+  focus classes, isin/cusip/figi optional, validated against
+  `identifiers.SCHEMES` at seed time.
+- **The Assets table is a view** (24 §9). Same house precedent as
+  `performance_card`: a work-discovery list that cannot drift from the
+  master because it is derived from it. `CREATE VIEW IF NOT EXISTS` has the
+  trigger trap (§34's family), so the view is reconciled by normalized-SQL
+  comparison and drop/recreate, mirroring `_reconcile_triggers`.
+- **Adapter pipeline with one adapter.** `SourceAdapter` protocol,
+  `SeedUniverseAdapter` flowing the seeded universe through the full
+  Acquire→Resolve→Reconcile→Merge→Provenance path. Conflict rules: a source
+  never silently overwrites a held value; equal-or-lower authority records a
+  `reference_conflicts` row and changes nothing; strictly higher authority
+  overwrites *and still records the row* (the prior value is what the audit
+  needs). One row per distinct disagreement, not per run — the pipeline runs
+  at every startup, and re-recording an identical open disagreement adds no
+  fact.
+- **Fail-closed certification.** Seven validation checks; READY only when
+  all pass; every certification — READY or FAILED — appended to
+  `reference_readiness`, so the history survives, not just the answer.
+  `focus_coverage`'s minimum (4) is a disclosed convention, not a
+  measurement. `unresolved_conflicts` is always ok=True by design:
+  a disagreement is data, not a blocker.
+
+### Startup wiring, and what deliberately does not block yet
+
+`backend/main.py`'s lifespan runs the engine after Controller reconciliation
+and **before `bootstrap_coo`** — the Day Zero rule's ordering. A FAILED
+certification currently logs loudly rather than halting agent bootstrap:
+today's agents scan `discovery_config` peer groups and consume nothing from
+the Assets view, so blocking them on a certification they do not yet depend
+on would be enforcement theatre. The first true dependent is §41's
+simulation mission, which refuses to start without READY. Wiring Explorer's
+work discovery to `list_focus_assets` — and with it, making FAILED actually
+block — is the increment where that dependency becomes real.
+
+`GET /admin/reference` serves the dashboard shape (24 §19). The engine's
+fine-grained progress states (INGESTING/NORMALIZING/…) are collapsed into
+the certification result: a DB-only run over ten instruments completes in
+milliseconds, and a state machine nobody can observe mid-flight is
+decoration. They become real states when a network adapter gives the run a
+duration.
+
+### Declined or deferred
+
+- Network source adapters (EDGAR, OpenFIGI, exchange directories) — §39's
+  reasoning stands; the interface is real, the seed universe flows through
+  it, and a network fetch cannot improve coverage of a synthetic focus
+  universe. They arrive with the Alpha focus universe.
+- Issuer Master, corporate-action metadata, venue tables — no producer, no
+  consumer; the registry schema accommodates them.
+- `underlying_entity_id` is set at creation only; the NULL-fill/conflict
+  contract covers the five scalar fields the spec names. The options
+  adapter that needs richer underlying handling does not exist yet.
+
+### Division of labour, and what review caught
+
+Implementation delegated per the tiering directive; design, spec, review and
+this record by the top model. The delegated work corrected the spec once,
+rightly — the spec repeated a stale claim that `/admin/*` routes are
+unauthenticated; the code has required admin auth since the panel arrived,
+and the new route follows the code. Review caught two defects in the
+delegated work: conflict rows re-recorded on every rerun of a disagreeing
+adapter (unbounded growth at startup cadence — now deduped per distinct
+disagreement, with a regression test), and the assets view picking among
+multiple live symbol identifiers without an ORDER BY (nondeterministic
+`primary_identifier` — now ordered by validity start).
+
+### Verified
+
+Full suite green after review fixes (1404 passing, was 1382). Live
+verification against a scratch copy of the real `financial_intelligence.db`:
+ten universe symbols ingested and certified READY; a second run created
+nothing, recorded nothing, and re-certified; retiring one symbol's live
+identifier flipped certification to FAILED naming `required_identifiers`,
+with `validation_status='invalid'` stamped on exactly the failing row —
+fail-closed exercised against real data, not only fixtures.
