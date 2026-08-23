@@ -3065,3 +3065,103 @@ evaluator implementation delegated (one connection loss mid-task, resumed
 with context intact); design, specs, review — which caught the event spam,
 the store collision, and drove the two live runs that caught the watcher
 hole — and this record by the top model.
+
+
+---
+
+## §43 — Diagnosis: the offline detector as the differential (2026-08-23)
+
+Addendum 25 §19, the last stage §42 deferred: when evaluation does not pass,
+distinguish the cause, name the component, and say what a rerun would need
+to prove anything. `simulation/parity_diagnosis.py`, plus a
+`parity-diagnose` CLI. The completion loop now reads, in full and in code:
+mission → reference READY → world stored → agents work it blind → Evaluator
+grades → **diagnosis → correction guidance → rerun → completion
+certification**.
+
+### The core idea
+
+**The simulator's own offline detector is the differential diagnostic.**
+Explorer runs `detect_arb001` over `StoredChainProvider` snapshots; the
+diagnosis re-runs the identical detector over the identical stored rows.
+Agreement means the defect is downstream of detection (escalation,
+cross-check, Analysis); disagreement means it is upstream of Explorer
+entirely — the world never carried an executable edge, or still carries one
+it should not. That split requires no judgment call, which is why this is a
+pure function over the database (no LLM, no new agent — §39's Evaluator
+disposition, third application) and why it reuses Explorer's own read path
+rather than a reimplementation that could drift from it.
+
+Sixteen causes cover §19's vocabulary in this mission's terms: world causes
+(`world_not_stored`, `insufficient_signal`, `trap_not_erased`,
+`world_not_clean`, `detector_interface_drift`), agent causes
+(`explorer_missed`, `explorer_filing_failure`, `explorer_escalation_failure`,
+`explorer_selection_error`, `analysis_stalled`, `analysis_lost`),
+evaluation causes (`ground_truth_direction_error`,
+`direction_indeterminate` — where expected, agent and offline directions
+all differ, the module refuses to guess and says so), and in-flight
+non-causes (`cross_check_in_flight`, `recency_suppressed`,
+`analysis_in_flight`) — the diagnosis distinguishes suppression by a
+design guard from failure, which is what keeps a healthy pipeline's
+patience from being misread as a defect. There is no Speculator cause:
+an unanswered cross-check still escalates by design (§42's
+suppression-prevention rule), so Speculator silence cannot strand a lead —
+the wiring's own law closed that failure mode before diagnosis existed.
+
+### Correction, in this increment's honest form
+
+`remediation.py`'s discipline, followed to the letter: corrective work is
+**per cause, not per finding** (three stalled scenarios are one item, not
+three); diagnosis is **read-only** (its only write is its own JSON beside
+the evaluation — deciding work and creating it are separate acts with
+separate authority); and there is deliberately still no corrective task
+queue — naming the component and the concrete remedy *is* §19's correction
+step until something asks for dispatch machinery. Actual agent *training*
+remains future work with its own design. One judgment call recorded rather
+than left implicit: `detector_interface_drift` classifies as `world` by
+remediation.py's own SYSTEMIC test — Explorer called the same detector
+over the same rows and got a different answer; no choice it made explains
+that, so the remedy is a design fix, not correction owed to an agent.
+
+### Retry and certification
+
+`retry_guidance` carries §18's decision structure: `rerun_same_seed` when
+causes are agent/evaluation only (the same world re-tests the correction),
+`adjust_world_first` when any world cause exists ("adjust scenario
+generation if required"), and neither when everything outstanding is in
+flight — a run that needs time gets `wait_and_reevaluate`, not a rerun.
+`mission_certified_complete` is §17's completion certification **as a
+statement in the record, deliberately not a gate** — nothing downstream is
+permitted or withheld by it, and `simulation/certification.py`'s own
+warning about gates that bind nothing is cited where the choice is made.
+The CLI exits 0 on certified-or-in-flight, 2 on retry-recommended, so an
+operator's script can branch on the verdict.
+
+### Verified, on real artifacts and a real rerun
+
+1494 passing (was 1482; +12). Then the loop, live, twice over:
+
+- **Diagnosis over §42's real run.** Its three INCONCLUSIVE scenarios —
+  reports stranded when that organization shut down — diagnosed as one
+  `analysis_stalled` corrective item across all three, classification
+  agent, remedy "check whether Analysis is alive" (literally correct: it
+  is not), verdict retry-recommended with `rerun_same_seed=True` and no
+  world adjustment. Exit code 2.
+- **A rerun to certification.** A fresh live organization (real LLM),
+  four scenarios (two genuine, two stale-quote traps): both genuine
+  chains ran detection → cross-check → report → Analysis to completion,
+  both traps stayed clean, the Evaluator graded 4/4 PASS, and the
+  diagnosis pronounced `mission_certified_complete: True` with zero
+  corrective items — the completion loop's last arrow, exercised end to
+  end against a real workforce. Graceful shutdown, no orphans, both runs.
+
+Division of labour per the tiering directive: implementation delegated;
+design, spec, review and both live runs by the top model.
+
+### Deferred, with reasons
+
+Corrective-task dispatch and agent training machinery (nothing asks for
+them yet — remediation.py's own recorded posture); automated rerun
+orchestration (the CLI verdict is the hook; wiring it to a scheduler is an
+operator decision); the mission-control UI and difficulty progression,
+unchanged from §39.

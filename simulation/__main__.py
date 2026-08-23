@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from simulation import harness, parity_evaluation, parity_world, scenario as scenario_module, stage1
+from simulation import harness, parity_diagnosis, parity_evaluation, parity_world, scenario as scenario_module, stage1
 
 
 def _cmd_list(args) -> int:
@@ -294,6 +294,58 @@ def _cmd_parity_evaluate(args) -> int:
     return 0 if m["strategy_exercised"] else 1
 
 
+def _cmd_parity_diagnose(args) -> int:
+    """The diagnosis stage's own CLI entry point (simulation/parity_diagnosis.py,
+    addendum 25 §19): walk the differential for every non-PASS scenario in an
+    evaluation, print what it found, and say whether a rerun is worth it.
+
+    Exit code 0 when the mission is certified complete or the only causes in
+    play are in_flight (the run needs time, not a rerun); 2 when a retry is
+    recommended - mirroring parity-evaluate's exit-code convention of making
+    the verdict visible to a caller's script, not only to a human reading the
+    printed table."""
+    from backend import fi_db
+
+    db_path = Path(args.db) if args.db else fi_db.DB_PATH
+    conn = fi_db.get_connection(db_path)
+    try:
+        diagnosis = parity_diagnosis.diagnose_mission(conn, args.evaluation_path)
+    finally:
+        conn.close()
+
+    print(f"{'scenario':<24} {'variant':<16} {'outcome':<12} {'component':<18} causes")
+    for entry in diagnosis["scenarios"]:
+        causes = ", ".join(entry["causes"]) or "(none)"
+        print(f"{entry['scenario_id']:<24} {entry['variant']:<16} {entry['outcome']:<12} {entry['component']:<18} {causes}")
+
+    if diagnosis["corrective_items"]:
+        print("\ncorrective items:")
+        for item in diagnosis["corrective_items"]:
+            print(f"  [{item['classification']:<10}] {item['cause']} ({len(item['scenarios'])} scenario(s): "
+                  f"{', '.join(item['scenarios'])})")
+            print(f"               {item['remedy']}")
+    else:
+        print("\nno corrective items")
+
+    if diagnosis["mission_certified_complete"]:
+        print("\nVERDICT: mission certified complete - every scenario PASS")
+    elif diagnosis["retry_recommended"]:
+        guidance = diagnosis["retry_guidance"]
+        print(f"\nVERDICT: retry recommended - {guidance['reason']}")
+        print(f"         rerun_same_seed={guidance['rerun_same_seed']} adjust_world_first={guidance['adjust_world_first']}")
+    elif diagnosis["wait_and_reevaluate"]:
+        print(f"\nVERDICT: wait and re-evaluate - {diagnosis['retry_guidance']['reason']}")
+    else:
+        print(f"\nVERDICT: {diagnosis['retry_guidance']['reason']}")
+
+    print(f"\ndiagnosis written to {diagnosis['diagnosis_path']}")
+
+    # certified-complete and "nothing but in_flight" both leave
+    # retry_recommended False (in_flight causes are excluded from it by
+    # construction), so this one check covers both 0-exit cases at once.
+    return 2 if diagnosis["retry_recommended"] else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m simulation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -347,6 +399,14 @@ def main(argv: list[str] | None = None) -> int:
     parity_evaluate_parser.add_argument("--db", metavar="PATH", default=None,
                                         help="financial_intelligence.db path (default: FI_DB_PATH / the repo's own db)")
     parity_evaluate_parser.set_defaults(func=_cmd_parity_evaluate)
+
+    parity_diagnose_parser = sub.add_parser(
+        "parity-diagnose",
+        help="diagnose a graded parity mission's non-PASS scenarios against the offline detector (addendum 25 SS19)")
+    parity_diagnose_parser.add_argument("evaluation_path", help="path to a parity-<mission>-<ts>.evaluation.json file")
+    parity_diagnose_parser.add_argument("--db", metavar="PATH", default=None,
+                                        help="financial_intelligence.db path (default: FI_DB_PATH / the repo's own db)")
+    parity_diagnose_parser.set_defaults(func=_cmd_parity_diagnose)
 
     args = parser.parse_args(argv)
     return args.func(args)
