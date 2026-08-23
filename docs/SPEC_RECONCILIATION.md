@@ -3165,3 +3165,111 @@ them yet — remediation.py's own recorded posture); automated rerun
 orchestration (the CLI verdict is the hook; wiring it to a scheduler is an
 operator decision); the mission-control UI and difficulty progression,
 unchanged from §39.
+
+
+---
+
+## §44 — Mission control: the user chooses, the boundary decides (2026-08-23)
+
+Addendum 25 §4's mission-control interface and §22's dashboard, closing
+§39's own IOU ("the mission-control interface is panel work not yet built").
+Two halves: `backend/missions.py` with five `/admin/mission*` routes, and a
+Mission Control tab in the Controller control panel.
+
+### The mission registry
+
+`missions` is the durable record of every mission the operator asked for:
+config, status, note, artifact paths, cached metrics. Ground truth stays in
+the summary file — the table holds its *path*, never its content. The §22
+status vocabulary is reused from the engine's own STATES; the generation
+states collapse into the transition (store_world is a synchronous
+millisecond-scale write — §40's argument, third use), so the statuses a
+mission actually passes through are WAITING_FOR_REFERENCE_DATA,
+AGENTS_RUNNING, RETRY_REQUIRED, COMPLETED, FAILED.
+
+Route semantics worth recording:
+
+- **All three run modes are offered; the boundary decides.** §4 says the
+  interface offers Simulation/Historical/Live; §2 says only Simulation
+  activates this engine. The panel does not pre-filter — choosing
+  Historical gets the backend's honest refusal, matched against
+  `MissionConfig`'s own validation message so the two rules can never
+  drift. The refusal creates no row; a *blocked* mission
+  (reference data not READY) does create one, in
+  WAITING_FOR_REFERENCE_DATA with the reason — §23's visible failure as a
+  dashboard row rather than a transient error. Re-POSTing the same
+  mission_id retries a WAITING/FAILED mission; a mission that stored a
+  world refuses re-storage with a conflict.
+- **Evaluate is a button, and the verdict moves the status**: COMPLETED on
+  certified, RETRY_REQUIRED on retry-recommended, and AGENTS_RUNNING kept
+  when the diagnosis says wait — a run that needs time keeps its running
+  status.
+- **Dropdowns are fed from the backend** (`/admin/mission-options`):
+  strategies from `parity_world.STRATEGIES`, asset classes from the
+  reference registry's Capability Set — §4's extensibility is a tuple
+  entry and a registry flag, not a UI redesign.
+- **Authority**: the server process (the Controller, addendum 21's
+  orchestration layer) invokes the engines directly — the same disposition
+  as §40's Reference-engine startup invocation. COO-mediated mission
+  orchestration is deferred until a mission needs agent-side sequencing;
+  today's engine start is one synchronous DB write, and a directive
+  round-trip would add a queue for a millisecond operation.
+
+### The panel
+
+A ninth notebook tab beside the organization views, polling on the
+panel's existing 2s cycle: run mode / strategy / asset classes / seed /
+scenarios controls, Start Mission, the §22 mission list (status, pipeline
+counts as detections/reports/analyses, pass rate, strategy-exercised),
+and Evaluate with the per-scenario outcomes and diagnosis verdict in the
+detail pane. Formatting lives in `panel/render.py` (testable without Tk,
+the file's own rule); every handler is a method callable without a click,
+which is what live verification drives.
+
+### The auth surface test stopped being a sample
+
+Review found `tests/test_admin_auth.py`'s "the whole surface, not a
+sample" list silently covering nine of twenty-seven routes — exactly the
+rot its own docstring warns about, discovered rather than prevented. The
+surface is now derived from the app's routing table with a floor
+assertion, so a new admin route is gated-by-default or fails the suite.
+
+### Live verification, and the defect it caught in §43's work
+
+The real Tkinter panel's own handlers, driven against a real organization
+(harness, real LLM): dropdowns populated from the backend; Historical
+refused with the honest message on the status line; a four-scenario
+mission started from the panel; agents worked it; Evaluate rendered
+per-scenario outcomes and a verdict; graceful shutdown.
+
+That run also caught a real conflation in the diagnosis stage: **both
+deep-reasoning calls failed with genuine `Connection error.`** — the
+intended error path, report completed 'failed' with the error in its
+detail — and the diagnosis called it `analysis_lost`, whose remedy hunts
+a code defect that does not exist. A report completed 'failed' carries
+its own explanation; only 'analyzed'-with-no-conclusion is the code-defect
+case. `analysis_failed` now exists as its own cause (classification
+agent, remedy naming the transient-vs-gateway distinction, same-seed
+rerun), with a regression test, and re-diagnosing the run's real
+artifacts produces it — one corrective item across both scenarios, detail
+`Connection error.` carried in the notes. Third consecutive increment in
+which live verification against a real organization found what the unit
+suite structurally could not.
+
+### Verified
+
+1521 passing (was 1494: +17 backend missions, +10 panel render, −1 from
+consolidating the two hand-listed auth-surface tests into one derived
+test, +1 analysis_failed regression). Division of labour per the tiering
+directive: both halves
+delegated; design, specs, review — the auth-surface rot, the
+analysis_failed conflation — and the live panel run by the top model.
+
+### Deferred, with reasons
+
+Historical/Live mission engines (their run modes refuse honestly until
+they exist); COO-mediated mission orchestration (above); scenario-mix and
+difficulty controls in the panel (§13's progression is still future
+design — the seed and scenario count are the reproducibility controls §6
+requires); automatic re-evaluation polling (Evaluate is an operator act;
+wiring it to a timer is an operator decision).

@@ -24,6 +24,9 @@ All formatting lives in panel/render.py so the decisions that matter are
 testable without a Tk window. This module is widgets, polling, and HTTP.
 """
 
+import random
+from datetime import datetime, timezone
+
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 
@@ -34,6 +37,20 @@ from panel import render
 BASE_URL = "http://localhost:8000"
 POLL_INTERVAL_MS = 2000
 REQUEST_TIMEOUT_SECONDS = 5
+
+# Shown before GET /admin/mission-options has ever answered (addendum 25 SS4
+# offers all three run modes regardless of activation; the asset-class
+# fallback mirrors simulation.parity_world.MissionConfig's own defaults, so
+# an operator who starts a mission before the backend answers still gets a
+# config the engine would accept).
+FALLBACK_MISSION_OPTIONS = {
+    "run_modes": ["simulation", "historical", "live"],
+    "strategies": [],
+    "asset_classes": [
+        {"asset_class": "stock", "display_name": "Stock"},
+        {"asset_class": "stock_option", "display_name": "Stock Option"},
+    ],
+}
 
 
 class ControlPanel:
@@ -103,6 +120,8 @@ class ControlPanel:
         self.question_entry.bind("<Return>", lambda _e: self._ask_selected_agent())
         tk.Button(ask_frame, text="Ask", command=self._ask_selected_agent).pack(side=tk.LEFT, pady=6)
 
+        self._build_mission_tab()
+
         paned.add(right)
 
         self._identities: list[str] = []
@@ -115,6 +134,236 @@ class ControlPanel:
         area.pack(fill=tk.BOTH, expand=True)
         self.tabs.add(frame, text=label)
         return area
+
+    # --- Mission control (addendum 25 §4 - Run Mode / Asset Classes /
+    # Strategy controls, extensible; §22 - dashboard visibility) -------------
+    #
+    # A ninth notebook tab, not a new pane: the right side of the panel is
+    # already a Notebook of independent views polled on the same 2s cycle,
+    # and mission control is exactly one more thing an operator looks at
+    # alongside the roster - it needs no relationship to the currently
+    # selected *agent* the way the Ask box does, so it does not belong beside
+    # the roster the way that box does.
+
+    def _build_mission_tab(self):
+        frame = tk.Frame(self.tabs)
+        self.tabs.add(frame, text="Mission Control")
+
+        controls = tk.Frame(frame)
+        controls.pack(fill=tk.X, padx=8, pady=8)
+
+        tk.Label(controls, text="Run Mode").grid(row=0, column=0, sticky="w")
+        self.run_mode_var = tk.StringVar(value=FALLBACK_MISSION_OPTIONS["run_modes"][0])
+        self.run_mode_combo = ttk.Combobox(
+            controls, textvariable=self.run_mode_var, state="readonly",
+            values=FALLBACK_MISSION_OPTIONS["run_modes"], width=14,
+        )
+        self.run_mode_combo.grid(row=0, column=1, sticky="w", padx=(4, 16))
+
+        tk.Label(controls, text="Strategy").grid(row=0, column=2, sticky="w")
+        self.strategy_var = tk.StringVar(value="")
+        self.strategy_combo = ttk.Combobox(
+            controls, textvariable=self.strategy_var, state="readonly",
+            values=FALLBACK_MISSION_OPTIONS["strategies"], width=28,
+        )
+        self.strategy_combo.grid(row=0, column=3, sticky="w", padx=(4, 16))
+
+        tk.Label(controls, text="Seed").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.seed_entry = tk.Entry(controls, width=14)
+        # A random default, not a fixed one - reproducibility of a run is the
+        # operator's choice to make (typing a known seed back in), not the
+        # panel's to impose by always offering the same number.
+        self.seed_entry.insert(0, str(random.randint(1, 999_999)))
+        self.seed_entry.grid(row=1, column=1, sticky="w", padx=(4, 16), pady=(6, 0))
+
+        tk.Label(controls, text="Scenarios").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        self.scenarios_entry = tk.Entry(controls, width=8)
+        self.scenarios_entry.insert(0, "6")
+        self.scenarios_entry.grid(row=1, column=3, sticky="w", padx=(4, 16), pady=(6, 0))
+
+        tk.Label(controls, text="Asset Classes").grid(row=2, column=0, sticky="nw", pady=(6, 0))
+        self.asset_classes_frame = tk.Frame(controls)
+        self.asset_classes_frame.grid(row=2, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        self._asset_class_vars: dict[str, tk.BooleanVar] = {}
+        self._populate_asset_class_checkboxes(FALLBACK_MISSION_OPTIONS["asset_classes"])
+
+        tk.Button(controls, text="Start Mission", command=self.start_mission).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(10, 0)
+        )
+        self.mission_status = tk.Label(frame, text="", anchor="w", fg="#666", wraplength=760, justify="left")
+        self.mission_status.pack(fill=tk.X, padx=8, pady=(0, 6))
+
+        # The §22 dashboard: mission id, status, and pipeline counts, polled
+        # the same way and on the same cycle as the agent roster to its left.
+        list_frame = tk.Frame(frame)
+        list_frame.pack(fill=tk.X, padx=8)
+        tk.Label(list_frame, text="Missions", font=("", 10, "bold")).pack(anchor="w")
+        tk.Label(list_frame, text=render.MISSION_HEADER, font=("Courier New", 8), fg="#666").pack(anchor="w")
+        self.mission_list = tk.Listbox(list_frame, font=("Courier New", 9), height=8, exportselection=False)
+        self.mission_list.pack(fill=tk.X, pady=(0, 4))
+        self.mission_list.bind("<<ListboxSelect>>", self._on_select_mission)
+        tk.Button(list_frame, text="Evaluate", command=self.evaluate_selected).pack(anchor="w", pady=(0, 8))
+
+        self.mission_detail_area = scrolledtext.ScrolledText(
+            frame, wrap=tk.WORD, state="disabled", font=("Courier New", 9)
+        )
+        self.mission_detail_area.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        self._mission_options_loaded = False
+        self._missions: list[dict] = []
+        self._mission_ids: list[str] = []
+        self.selected_mission_id: str | None = None
+        self._write_mission_detail("Select a mission, or start a new one above.")
+
+    def _populate_asset_class_checkboxes(self, asset_classes: list[dict]):
+        """Rebuilt once, the first time mission-options answers (§4: default
+        all checked). Rebuilding on every poll would silently uncheck
+        whatever the operator had just unchecked."""
+        for child in self.asset_classes_frame.winfo_children():
+            child.destroy()
+        self._asset_class_vars = {}
+        for entry in asset_classes:
+            var = tk.BooleanVar(value=True)
+            self._asset_class_vars[entry["asset_class"]] = var
+            tk.Checkbutton(self.asset_classes_frame, text=entry["display_name"], variable=var).pack(
+                side=tk.LEFT, padx=(0, 10)
+            )
+
+    def _load_mission_options(self):
+        """Populate the dropdowns and asset-class checkboxes from GET
+        /admin/mission-options, once. All three run modes are offered
+        (§4) regardless of which the backend will actually activate (§2) -
+        the panel does not pre-filter, so choosing Historical or Live and
+        starting shows the backend's own honest refusal."""
+        if self._mission_options_loaded:
+            return
+        body = self._get("/admin/mission-options")
+        if body is None:
+            return
+        self.run_mode_combo.configure(values=body.get("run_modes") or FALLBACK_MISSION_OPTIONS["run_modes"])
+        strategies = body.get("strategies") or []
+        self.strategy_combo.configure(values=strategies)
+        if strategies:
+            self.strategy_var.set(strategies[0])
+        self._populate_asset_class_checkboxes(body.get("asset_classes") or FALLBACK_MISSION_OPTIONS["asset_classes"])
+        self._mission_options_loaded = True
+
+    def start_mission(self):
+        """POST /admin/mission with the operator's chosen config.
+
+        Callable without a click, like every handler here: it reads widget
+        state (StringVars, Entry contents, the BooleanVars behind the
+        checkboxes) and nothing else, so it can be driven programmatically
+        against a live backend the same way the roster's lifecycle buttons
+        are (see `_request_lifecycle`)."""
+        asset_classes = [ac for ac, var in self._asset_class_vars.items() if var.get()]
+        try:
+            seed = int(self.seed_entry.get().strip())
+        except ValueError:
+            self.mission_status.configure(text="Seed must be an integer.", fg="#b00")
+            return
+        try:
+            n_scenarios = int(self.scenarios_entry.get().strip())
+        except ValueError:
+            self.mission_status.configure(text="Scenarios must be an integer.", fg="#b00")
+            return
+
+        mission_id = f"mission-{seed}-{datetime.now(timezone.utc):%H%M%S}"
+        config = {
+            "mission_id": mission_id,
+            "run_mode": self.run_mode_var.get(),
+            "strategy": self.strategy_var.get(),
+            "asset_classes": asset_classes,
+            "seed": seed,
+            "n_scenarios": n_scenarios,
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/admin/mission", json=config, headers=self._headers(),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            self.mission_status.configure(text=f"Could not reach the backend: {exc}", fg="#b00")
+            return
+
+        if response.status_code >= 400:
+            detail = response.json().get("detail", response.text) if response.content else response.text
+            # The activation rule lives server-side (§2 decides; §4 only
+            # offers the modes) - the panel shows the backend's own message
+            # verbatim rather than pre-filtering Historical/Live out of the
+            # dropdown.
+            self.mission_status.configure(text=render.refusal(detail), fg="#b00")
+            return
+
+        body = response.json()
+        self.mission_status.configure(text=render.start_outcome(body), fg="#060")
+        self._refresh_missions()
+
+    def _refresh_missions(self):
+        body = self._get("/admin/missions")
+        if body is None:
+            return
+        missions = body["missions"]
+        rows = [render.mission_row(m) for m in missions]
+        ids = [m["mission_id"] for m in missions]
+        # Only redraw on an actual change, matching the roster's own rule, so
+        # a poll that changed nothing does not disturb the operator's
+        # selection or scroll position.
+        if rows != list(self.mission_list.get(0, tk.END)):
+            self.mission_list.delete(0, tk.END)
+            for row in rows:
+                self.mission_list.insert(tk.END, row)
+        self._missions = missions
+        self._mission_ids = ids
+        if self.selected_mission_id in ids:
+            self.mission_list.selection_clear(0, tk.END)
+            self.mission_list.selection_set(ids.index(self.selected_mission_id))
+
+    def _on_select_mission(self, _event):
+        selection = self.mission_list.curselection()
+        if selection and selection[0] < len(self._mission_ids):
+            self.selected_mission_id = self._mission_ids[selection[0]]
+            mission = self._missions[selection[0]]
+            self._write_mission_detail(render.mission_detail(mission))
+
+    def evaluate_selected(self):
+        """POST /admin/mission/{id}/evaluate for the selected mission and
+        show the result: status, per-scenario outcomes, and the diagnosis
+        verdict (certified complete / retry recommended with causes / wait
+        and re-evaluate).
+
+        Callable without a click, like `start_mission`: it reads
+        `self.selected_mission_id` and nothing from an event object."""
+        if self.selected_mission_id is None:
+            self.mission_status.configure(text="Select a mission first.", fg="#b00")
+            return
+        try:
+            response = requests.post(
+                f"{self.base_url}/admin/mission/{self.selected_mission_id}/evaluate",
+                headers=self._headers(), timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            self.mission_status.configure(text=f"Could not reach the backend: {exc}", fg="#b00")
+            return
+
+        if response.status_code >= 400:
+            detail = response.json().get("detail", response.text) if response.content else response.text
+            self.mission_status.configure(text=render.refusal(detail), fg="#b00")
+            return
+
+        result = response.json()
+        self.mission_status.configure(text=render.start_outcome(result["mission"]), fg="#060")
+        self._write_mission_detail(render.mission_detail(result["mission"], result["evaluation"], result["diagnosis"]))
+        self._refresh_missions()
+
+    def _write_mission_detail(self, text: str):
+        area = self.mission_detail_area
+        area.configure(state="normal")
+        position = area.yview()[0]
+        area.delete("1.0", tk.END)
+        area.insert(tk.END, text)
+        area.yview_moveto(position)
+        area.configure(state="disabled")
 
     def _ask_selected_agent(self):
         """Put the typed question to the selected agent (addendum 14 §7).
@@ -302,6 +551,9 @@ class ControlPanel:
         directives = self._get("/admin/directives")
         if directives is not None:
             self._write("directives", render.format_directives(directives))
+
+        self._load_mission_options()
+        self._refresh_missions()
 
     def _refresh_agent_detail(self):
         if self.selected_identity is None:

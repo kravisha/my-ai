@@ -15,9 +15,10 @@ for the consent prompt - see the docstring on chat() below.
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Body, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from app import admin_auth
@@ -29,7 +30,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import fi_db, reference_data, strategy
+from backend import fi_db, missions, reference_data, strategy
 from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
 
@@ -906,3 +907,108 @@ def list_directives(limit: int = 25, conn=Depends(panel_db), admin: str = Depend
         "SELECT * FROM coo_directives_completed ORDER BY id DESC LIMIT ?", (limit,)
     )
     return {"pending": pending, "completed": completed}
+
+
+# --- Mission control (addendum 25 SS4/SS22/SS23; docs/SPEC_RECONCILIATION.md
+# SS39) ------------------------------------------------------------------
+#
+# The Market Data Simulation Engine's UI backend: what a mission-control
+# panel would read (options, the mission list, one mission's pipeline
+# progress) and the one action it would take (register a mission, evaluate
+# one that has run). backend/missions.py owns the actual logic; these routes
+# only translate its refusals into HTTP status codes.
+
+
+@app.get("/admin/mission-options")
+def mission_options(conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """What the interface's dropdowns are fed from - run modes, strategies,
+    capable asset classes (backend/missions.py's mission_options)."""
+    return missions.mission_options(conn)
+
+
+@app.post("/admin/mission")
+def start_mission(config: dict = Body(...), conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Register (or retry) a mission.
+
+    Authority note (comment, not a route): the server process itself - the
+    Controller, addendum 21's orchestration layer - invokes the Market Data
+    Simulation Engine directly here, the same docs/SPEC_RECONCILIATION.md
+    SS40 disposition already used for the Reference Data Engine's startup
+    invocation. COO-mediated mission orchestration is deferred until a
+    mission actually needs agent-side sequencing - today's engine start is a
+    synchronous database write, nothing a directive queue would improve.
+
+    HTTP mapping: a run_mode other than 'simulation' (addendum 25 SS2's
+    activation rule) and any other bad config both answer 400; an
+    already-running or already-completed mission_id answers 409, since
+    re-storing over it would silently discard real work; a mission blocked
+    on reference data answers 200 with a WAITING_FOR_REFERENCE_DATA row -
+    addendum 25 SS23 treats that as a successful, visible registration of a
+    blocked mission, not an error - and so does an ordinary success."""
+    try:
+        return missions.start_mission(conn, config)
+    except missions.ActivationRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except missions.MissionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/admin/missions")
+def list_missions(conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Every mission, newest request first, each with its own pipeline
+    progress (addendum 25 SS22's dashboard numbers)."""
+    return {
+        "missions": [
+            {**mission, "pipeline": missions.pipeline_counts(conn, mission["mission_id"])}
+            for mission in missions.list_missions(conn)
+        ]
+    }
+
+
+@app.get("/admin/mission/{mission_id}")
+def get_mission(mission_id: str, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """One mission's row, its pipeline progress, and its latest evaluation's
+    per-scenario detail when one exists on disk - read directly rather than
+    only from the cached metrics, so the panel can show the full scenario
+    breakdown addendum 25 SS22 asks for, not only the summary numbers."""
+    mission = missions.get_mission(conn, mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail=f"No mission with id {mission_id!r}")
+
+    evaluation_scenarios = None
+    evaluation_detail = None
+    if mission["evaluation_path"]:
+        try:
+            evaluation_detail = json.loads(Path(mission["evaluation_path"]).read_text(encoding="utf-8"))
+            evaluation_scenarios = evaluation_detail.get("scenarios")
+        except FileNotFoundError:
+            # Told rather than 500'd - the row still knows an evaluation ran,
+            # even if the file backing it is gone (moved runs directory,
+            # cleaned-up disk).
+            evaluation_detail = None
+
+    return {
+        "mission": mission,
+        "pipeline": missions.pipeline_counts(conn, mission_id),
+        "evaluation_scenarios": evaluation_scenarios,
+        "evaluation_file_missing": bool(mission["evaluation_path"]) and evaluation_detail is None,
+    }
+
+
+@app.post("/admin/mission/{mission_id}/evaluate")
+def evaluate_mission_route(mission_id: str, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """Run the Evaluator and diagnosis stage over a stored mission (addendum
+    25 SS16-SS19) and cache the result on its row.
+
+    404 for a mission_id nobody ever registered; 409 for one that has - but
+    has not yet stored a world, so there is no ground truth to grade
+    against."""
+    try:
+        result = missions.evaluate(conn, mission_id)
+    except missions.MissionNotStored as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No mission with id {mission_id!r}")
+    return result

@@ -17,33 +17,48 @@ def _register(backend_client, username="alice", password="hunter2"):
     return {"Authorization": f"Bearer {token}"}
 
 
-ADMIN_ROUTES = [
-    ("get", "/admin/clients"),
-    ("get", "/admin/agents"),
-    ("get", "/admin/agents/explorer-1"),
-    ("get", "/admin/intelligence"),
-    ("get", "/admin/regime"),
-    ("get", "/admin/cross-checks"),
-    ("get", "/admin/discovery"),
-    ("get", "/admin/uqi"),
-    ("get", "/admin/directives"),
-]
+# Dummy values for path parameters, so a derived route like
+# /admin/agents/{identity} becomes a concrete request. Auth is checked before
+# any parameter is looked at, so the values only need to parse.
+_PARAM_STAND_INS = {
+    "username": "alice",
+    "identity": "explorer-1",
+    "name": "some-lens",
+    "revision_id": "1",
+    "request_id": "1",
+    "mission_id": "m1",
+}
+
+
+def _admin_surface():
+    """Every /admin route the app actually serves, derived from its own
+    routing table rather than a hand-maintained list. The first version of
+    this test WAS a hand-maintained list, and it silently fell to covering
+    nine of twenty-seven routes as the surface grew - which is exactly the
+    rot the docstring below warns about, discovered rather than prevented."""
+    from backend.main import app
+
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/admin"):
+            continue
+        for name, value in _PARAM_STAND_INS.items():
+            path = path.replace("{" + name + "}", value)
+        assert "{" not in path, f"unmapped path parameter in {route.path} - extend _PARAM_STAND_INS"
+        for method in route.methods - {"HEAD", "OPTIONS"}:
+            yield method.lower(), path
 
 
 def test_every_admin_route_refuses_an_anonymous_caller(backend_client, monkeypatch):
     """The whole surface, not a sample. A single ungated route is the same
     exposure as none of them being gated."""
     monkeypatch.setenv(admin_auth.ADMIN_USERS_ENV, "root")
-    for method, path in ADMIN_ROUTES:
-        response = getattr(backend_client, method)(path)
-        assert response.status_code == 401, f"{path} allowed an anonymous caller"
-
-
-def test_admin_write_routes_also_refuse_an_anonymous_caller(backend_client, monkeypatch):
-    monkeypatch.setenv(admin_auth.ADMIN_USERS_ENV, "root")
-    assert backend_client.post("/admin/agents/explorer-1/uqi", json={"question": "hi"}).status_code == 401
-    assert backend_client.post("/admin/agents/explorer-1/retire", json={"reason": "x"}).status_code == 401
-    assert backend_client.post("/admin/agents/explorer-1/resume", json={"reason": "x"}).status_code == 401
+    surface = list(_admin_surface())
+    assert len(surface) >= 27  # the count when this went dynamic; growth is fine, shrinkage is a question
+    for method, path in surface:
+        kwargs = {"json": {}} if method == "post" else {}
+        response = getattr(backend_client, method)(path, **kwargs)
+        assert response.status_code == 401, f"{method.upper()} {path} allowed an anonymous caller"
 
 
 def test_an_ordinary_logged_in_user_is_not_an_admin(backend_client, monkeypatch):

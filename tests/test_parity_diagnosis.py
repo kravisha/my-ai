@@ -328,6 +328,35 @@ def test_analysis_in_flight_then_stalled(conn, tmp_path):
     assert diagnosis2["retry_guidance"]["rerun_same_seed"] is True
 
 
+def test_a_failed_deep_call_is_analysis_failed_not_analysis_lost(conn, tmp_path):
+    """Found live (mission-control verification run): both parity reports
+    completed 'failed' with detail 'Connection error.' - the intended error
+    path when the deep-reasoning call dies - and the diagnosis called it
+    analysis_lost, whose remedy hunts a code defect that does not exist. A
+    report completed 'failed' carries its own explanation; only a report
+    completed 'analyzed' with no conclusion row is the code-defect case."""
+    config, summary_path = _store_parity_world(
+        conn, "m-diag-analysisfailed", seed=3, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"genuine": 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+    _answer_all_cross_checks(conn)
+    _file_cross_checked_reports(conn, "explorer-1", "T0")
+    report = fi_db.fetch_next_pending_report(conn)
+    fi_db.complete_report(conn, report["id"], "failed", "analysis-1", "T0", detail="Connection error.")
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    diagnosis = pdiag.diagnose_mission(conn, evaluation["evaluation_path"])
+
+    [entry] = diagnosis["scenarios"]
+    assert entry["causes"] == [pdiag.CAUSE_ANALYSIS_FAILED]
+    assert entry["component"] == pdiag.COMPONENT_ANALYSIS
+    assert entry["notes"]["failure_details"] == ["Connection error."]
+    item = _corrective_by_cause(diagnosis)[pdiag.CAUSE_ANALYSIS_FAILED]
+    assert item["classification"] == pdiag.CLASS_AGENT
+    assert diagnosis["retry_recommended"] is True
+    assert diagnosis["retry_guidance"]["rerun_same_seed"] is True
+
+
 # --- 8. world_not_stored -----------------------------------------------------------
 
 

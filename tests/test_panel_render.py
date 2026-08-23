@@ -304,3 +304,146 @@ def test_an_empty_store_says_so_rather_than_rendering_blank():
     text = render.format_knowledge({"lessons": [], "open_questions": []})
     assert "(nothing learned yet)" in text
     assert "(none outstanding)" in text
+
+
+# --- Mission control (addendum 25 SS4, SS22) --------------------------------
+
+
+def _mission(**overrides):
+    base = {
+        "mission_id": "mission-42-101530",
+        "run_mode": "simulation",
+        "strategy": "put_call_parity_arbitrage",
+        "config": {"run_mode": "simulation", "strategy": "put_call_parity_arbitrage", "seed": 42, "n_scenarios": 6},
+        "status": "AGENTS_RUNNING",
+        "note": None,
+        "metrics": None,
+        "pipeline": {"detections": 3, "scenarios_with_detections": 2, "reports_pending": 1,
+                     "reports_completed": 2, "analyses": 2},
+    }
+    return {**base, **overrides}
+
+
+def test_mission_row_shows_pipeline_counts_with_no_metrics_yet():
+    """AGENTS_RUNNING has pipeline activity but no evaluation yet - pass_rate
+    and strategy_exercised must read as absent, not as zero/failed."""
+    row = render.mission_row(_mission())
+    assert "mission-42-101530" in row
+    assert "AGENTS_RUNNING" in row
+    assert "3/3/2" in row  # detections / (pending+completed reports) / analyses
+    assert row.split()[-2:] == ["-", "-"]  # pass_rate, strategy_exercised: absent, not zero
+
+
+def test_mission_row_shows_cached_metrics_when_completed():
+    row = render.mission_row(_mission(
+        status="COMPLETED",
+        metrics={"pass_rate": 0.833, "strategy_exercised": True},
+    ))
+    assert "COMPLETED" in row
+    assert "0.83" in row
+    assert "yes" in row
+
+
+def test_mission_row_for_a_waiting_mission_shows_zero_counts_and_no_metrics():
+    row = render.mission_row(_mission(
+        status="WAITING_FOR_REFERENCE_DATA",
+        pipeline={"detections": 0, "scenarios_with_detections": 0, "reports_pending": 0,
+                  "reports_completed": 0, "analyses": 0},
+    ))
+    assert "WAITING_FOR_REFERENCE_DATA" in row
+    assert "0/0/0" in row
+
+
+def test_mission_detail_for_a_fresh_mission_shows_config_and_status_note():
+    text = render.mission_detail(_mission(
+        status="WAITING_FOR_REFERENCE_DATA",
+        note="reference data is not READY for symbol SYN1",
+    ))
+    assert "Seed        : 42" in text
+    assert "Scenarios   : 6" in text
+    assert "WAITING_FOR_REFERENCE_DATA" in text
+    assert "reference data is not READY" in text
+    assert "not yet evaluated" in text
+
+
+def _evaluation(**overrides):
+    base = {
+        "mission_id": "mission-42-101530",
+        "scenarios": [
+            {"scenario_id": "mission-42-101530-s0", "variant": "genuine", "outcome": "PASS", "reasons": [],
+             "counts": {"detections": 1, "reports": 1, "analyses": 1}},
+        ],
+        "metrics": {"pass_rate": 1.0, "strategy_exercised": True},
+    }
+    return {**base, **overrides}
+
+
+def _diagnosis(**overrides):
+    base = {
+        "mission_id": "mission-42-101530",
+        "scenarios": [],
+        "corrective_items": [],
+        "mission_certified_complete": True,
+        "retry_recommended": False,
+        "wait_and_reevaluate": False,
+        "retry_guidance": {"reason": "Every scenario passed; the mission is certified complete.",
+                            "rerun_same_seed": False, "adjust_world_first": False},
+    }
+    return {**base, **overrides}
+
+
+def test_mission_detail_certified_complete_shows_scenario_outcomes_and_verdict():
+    text = render.mission_detail(_mission(status="COMPLETED"), _evaluation(), _diagnosis())
+    assert "mission-42-101530-s0" in text
+    assert "PASS" in text
+    assert "certified complete" in text
+
+
+def test_mission_detail_retry_case_lists_corrective_causes():
+    diagnosis = _diagnosis(
+        mission_certified_complete=False,
+        retry_recommended=True,
+        corrective_items=[
+            {"cause": "detector_missed_genuine", "component": "world", "scenarios": ["mission-42-101530-s1"],
+             "classification": "world", "remedy": "widen the deviation range"},
+        ],
+        retry_guidance={"reason": "1 corrective item(s) outstanding (detector_missed_genuine) need correction "
+                                   "before a rerun would prove anything.",
+                        "rerun_same_seed": False, "adjust_world_first": True},
+    )
+    text = render.mission_detail(_mission(status="RETRY_REQUIRED"), _evaluation(), diagnosis)
+    assert "retry recommended" in text
+    assert "detector_missed_genuine" in text
+
+
+def test_mission_detail_wait_and_reevaluate_case():
+    diagnosis = _diagnosis(
+        mission_certified_complete=False,
+        retry_recommended=False,
+        wait_and_reevaluate=True,
+        retry_guidance={"reason": "No corrective work outstanding; scenario(s) are still in flight - "
+                                   "wait and re-evaluate.", "rerun_same_seed": False, "adjust_world_first": False},
+    )
+    text = render.mission_detail(_mission(), _evaluation(), diagnosis)
+    assert "wait and re-evaluate" in text
+
+
+def test_start_outcome_reports_agents_running():
+    text = render.start_outcome({"mission_id": "mission-42-101530", "status": "AGENTS_RUNNING", "note": None})
+    assert "mission-42-101530" in text
+    assert "AGENTS_RUNNING" in text
+
+
+def test_start_outcome_includes_the_note_for_a_blocked_mission():
+    """A WAITING_FOR_REFERENCE_DATA response is still a 200 (addendum 25
+    SS23) - the note is what tells the operator it is not a plain success."""
+    text = render.start_outcome({
+        "mission_id": "mission-42-101530", "status": "WAITING_FOR_REFERENCE_DATA",
+        "note": "reference data is not READY for symbol SYN1",
+    })
+    assert "WAITING_FOR_REFERENCE_DATA" in text
+    assert "reference data is not READY" in text
+
+
+def test_refusal_matches_the_existing_lifecycle_refusal_idiom():
+    assert render.refusal("mission 'x' is already AGENTS_RUNNING") == "Refused: mission 'x' is already AGENTS_RUNNING"
