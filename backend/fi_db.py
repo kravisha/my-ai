@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, novelty, observations, reference_data, risk, strategy, triage
+from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, risk, strategy, triage
 from backend import db as db_module
 from backend.db import Database
 
@@ -1317,6 +1317,13 @@ def init_schema(conn: Database) -> None:
     # security_master is the engine *run* (run_reference_engine), invoked from
     # backend/main.py's startup orchestration, not from schema init.
     reference_data.init_schema(conn)
+    # Mission control's backend registry (this increment; addendum 25 SS4/
+    # SS22/SS23, docs/SPEC_RECONCILIATION.md SS39). Owns one table
+    # (missions), created here for the same reason every module above is:
+    # this module must not import fi_db back (backend/missions.py's own
+    # module docstring), so init_schema is the only place that can wire it
+    # into the shared database.
+    missions.init_schema(conn)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1425,19 +1432,22 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     happen invisibly.
 
     Reads `SCHEMA`, `identifiers.SCHEMA`, `observations.SCHEMA`, `risk.SCHEMA`,
-    `strategy.SCHEMA` and `reference_data.SCHEMA`, not just this module's own.
-    The additive mechanism parsed only this module's SCHEMA, so the moment
-    table ownership was split across modules, identifiers- and
-    observations-owned tables silently lost migration support entirely - a
-    column added to their DDL would exist on fresh databases and be missing on
-    every deployed one. Modular schemas require the migration walker to see
-    every module's DDL, or modularity quietly becomes divergence. risk.SCHEMA
-    joined the tuple the day risk_assessments arrived, for the same reason;
-    strategy.SCHEMA joined it the day strategies did; reference_data.SCHEMA
-    joined it the day the Reference Data Engine's tables did."""
+    `strategy.SCHEMA`, `reference_data.SCHEMA` and `missions.SCHEMA`, not just
+    this module's own. The additive mechanism parsed only this module's
+    SCHEMA, so the moment table ownership was split across modules,
+    identifiers- and observations-owned tables silently lost migration
+    support entirely - a column added to their DDL would exist on fresh
+    databases and be missing on every deployed one. Modular schemas require
+    the migration walker to see every module's DDL, or modularity quietly
+    becomes divergence. risk.SCHEMA joined the tuple the day risk_assessments
+    arrived, for the same reason; strategy.SCHEMA joined it the day
+    strategies did; reference_data.SCHEMA joined it the day the Reference
+    Data Engine's tables did; missions.SCHEMA joined it the day mission
+    control's backend registry did."""
     applied = _reconcile_triggers(conn)
     for table, columns in _declared_columns(
-        (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA, reference_data.SCHEMA)
+        (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
+         reference_data.SCHEMA, missions.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

@@ -103,6 +103,7 @@ CAUSE_EXPLORER_ESCALATION_FAILURE = "explorer_escalation_failure"
 CAUSE_ANALYSIS_STALLED = "analysis_stalled"
 CAUSE_ANALYSIS_IN_FLIGHT = "analysis_in_flight"
 CAUSE_ANALYSIS_LOST = "analysis_lost"
+CAUSE_ANALYSIS_FAILED = "analysis_failed"
 
 COMPONENT_SIMULATION_ENGINE = "simulation_engine"
 COMPONENT_EXPLORER = "explorer"
@@ -132,6 +133,7 @@ _CLASSIFICATION = {
     CAUSE_EXPLORER_SELECTION_ERROR: CLASS_AGENT,
     CAUSE_ANALYSIS_STALLED: CLASS_AGENT,
     CAUSE_ANALYSIS_LOST: CLASS_AGENT,
+    CAUSE_ANALYSIS_FAILED: CLASS_AGENT,
     CAUSE_GROUND_TRUTH_DIRECTION_ERROR: CLASS_EVALUATION,
     CAUSE_DIRECTION_INDETERMINATE: CLASS_EVALUATION,
     CAUSE_CROSS_CHECK_IN_FLIGHT: CLASS_IN_FLIGHT,
@@ -202,9 +204,14 @@ _REMEDY = {
     ),
     CAUSE_ANALYSIS_IN_FLIGHT: "Analysis is still working this report. No action - wait and re-evaluate.",
     CAUSE_ANALYSIS_LOST: (
-        "The report completed but no analysis_results row was ever recorded for it. Check "
+        "The report completed as 'analyzed' but no analysis_results row was ever recorded for it. Check "
         "record_analysis_result's call site in agents/analysis.py for a path that completes a report "
         "without recording its conclusion."
+    ),
+    CAUSE_ANALYSIS_FAILED: (
+        "The deep-reasoning call failed and the report was completed 'failed' - the detail on the "
+        "report carries the error. A transient error (connection/API) is re-tested by a same-seed "
+        "rerun; repeated failures implicate the model gateway, not the analysis logic."
     ),
 }
 
@@ -326,6 +333,17 @@ def _diagnose_analysis_in_flight(conn, mission_id: str, entry: dict, notes: dict
             f"SELECT * FROM analysis_results WHERE report_id IN ({id_placeholders})", report_ids,
         )
         if not analyses:
+            # Two different facts hide behind "completed, no analysis", and a
+            # live run taught the difference: a report completed 'failed'
+            # carries the error that stopped it (agents/analysis.py marks the
+            # report failed and stays alive - the intended error path, seen
+            # for real as 'Connection error.' on both reports of one mission),
+            # while a report completed 'analyzed' with no conclusion row would
+            # be a genuine code defect. Same records-shape, opposite remedies.
+            failed = [r for r in completed if r["outcome"] == "failed"]
+            if failed:
+                return _result(entry, [CAUSE_ANALYSIS_FAILED], COMPONENT_ANALYSIS,
+                                {**notes, "failure_details": [r["detail"] for r in failed]})
             return _result(entry, [CAUSE_ANALYSIS_LOST], COMPONENT_ANALYSIS, notes)
         # A completed report with a recorded analysis contradicts an
         # INCONCLUSIVE grade (evaluate_mission would have graded PASS/PARTIAL

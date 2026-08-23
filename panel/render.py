@@ -277,3 +277,122 @@ def format_discovery(body: dict) -> str:
 
 def _worth(value) -> str:
     return "-" if value is None else ("yes" if value else "no")
+
+
+# --- Mission control (addendum 25 SS4, SS22) ------------------------------
+
+MISSION_HEADER = "{:<32} {:<22} {:>11} {:>6} {:>9}".format(
+    "mission_id", "status", "det/rep/an", "pass", "exercised"
+)
+
+
+def mission_row(mission: dict) -> str:
+    """One dashboard line (addendum 25 SS22). The pipeline counts and the
+    cached metrics come from two different places in the row's lifetime - a
+    mission accrues detections/reports/analyses while its agents work it, and
+    only gains pass_rate/strategy_exercised once /evaluate has run - so
+    "no metrics yet" must read as "-", not as a zero that would misreport a
+    WAITING or freshly-AGENTS_RUNNING mission as having failed everything."""
+    pipeline = mission.get("pipeline") or {}
+    detections = pipeline.get("detections", 0)
+    reports = pipeline.get("reports_pending", 0) + pipeline.get("reports_completed", 0)
+    analyses = pipeline.get("analyses", 0)
+    counts = f"{detections}/{reports}/{analyses}"
+
+    metrics = mission.get("metrics")
+    pass_rate = "-" if not metrics or metrics.get("pass_rate") is None else f"{metrics['pass_rate']:.2f}"
+    exercised = "-" if not metrics else ("yes" if metrics.get("strategy_exercised") else "no")
+
+    return "{:<32} {:<22} {:>11} {:>6} {:>9}".format(
+        mission["mission_id"], mission["status"], counts, pass_rate, exercised
+    )
+
+
+def mission_detail(mission: dict, evaluation: dict | None = None, diagnosis: dict | None = None) -> str:
+    """The full picture of one mission: its config, its current status, and -
+    once /evaluate has run - what each scenario resolved to and what the
+    diagnosis stage recommends.
+
+    evaluation and diagnosis are both optional: a freshly-started mission has
+    neither, and a mission still WAITING_FOR_REFERENCE_DATA may never earn
+    one. Rendering each block only when its data exists, rather than printing
+    empty scenario/verdict sections, keeps a fresh mission's detail from
+    looking like a broken evaluated one."""
+    config = mission.get("config") or {}
+    lines = [
+        f"Mission     : {mission.get('mission_id', '?')}",
+        f"Run mode    : {config.get('run_mode', mission.get('run_mode', '?'))}",
+        f"Strategy    : {config.get('strategy', mission.get('strategy', '?'))}",
+        f"Seed        : {config.get('seed', '?')}",
+        f"Scenarios   : {config.get('n_scenarios', '?')}",
+        "",
+        f"Status      : {mission.get('status', '?')}",
+    ]
+    if mission.get("note"):
+        lines.append(f"Note        : {mission['note']}")
+
+    if evaluation is None:
+        lines += ["", "(not yet evaluated)"]
+        return "\n".join(lines)
+
+    scenarios = evaluation.get("scenarios") or []
+    lines += ["", "Scenario outcomes:"]
+    for entry in scenarios:
+        counts = entry.get("counts") or {}
+        reasons = ", ".join(entry.get("reasons") or []) or "-"
+        lines.append(
+            f"  {entry.get('scenario_id', '?'):<24} {entry.get('variant', '?'):<16} "
+            f"{entry.get('outcome', '?'):<12} det={counts.get('detections', 0)} "
+            f"rep={counts.get('reports', 0)} an={counts.get('analyses', 0)}  reasons: {reasons}"
+        )
+    if not scenarios:
+        lines.append("  (none)")
+
+    if diagnosis is None:
+        return "\n".join(lines)
+
+    # The three verdicts diagnose_mission can reach (addendum 25 SS17-SS19):
+    # certified complete, retry recommended with named causes, or wait and
+    # re-evaluate because something is still in flight. Printed as mutually
+    # exclusive branches because the diagnosis stage treats them as such -
+    # showing more than one would suggest an ambiguity the diagnosis itself
+    # does not have.
+    lines.append("")
+    if diagnosis.get("mission_certified_complete"):
+        lines.append("VERDICT: certified complete - every scenario passed")
+    elif diagnosis.get("retry_recommended"):
+        causes = ", ".join(item["cause"] for item in diagnosis.get("corrective_items") or [])
+        reason = (diagnosis.get("retry_guidance") or {}).get("reason", "")
+        lines.append(f"VERDICT: retry recommended - causes: {causes or '(none listed)'}")
+        if reason:
+            lines.append(f"         {reason}")
+    elif diagnosis.get("wait_and_reevaluate"):
+        reason = (diagnosis.get("retry_guidance") or {}).get("reason", "")
+        lines.append(f"VERDICT: wait and re-evaluate - {reason}")
+    else:
+        reason = (diagnosis.get("retry_guidance") or {}).get("reason", "-")
+        lines.append(f"VERDICT: {reason}")
+    return "\n".join(lines)
+
+
+def start_outcome(response_json: dict) -> str:
+    """The status-line message after POST /admin/mission succeeds (HTTP 200).
+
+    A 200 does not mean AGENTS_RUNNING: backend/missions.py's module
+    docstring (addendum 25 SS23) has a blocked-on-reference-data or a
+    failed-to-store mission answer 200 with a row too, because a mission the
+    dashboard can show is not an exception a caller has to catch. This reads
+    the row's own status rather than assuming success means the happy path."""
+    mission_id = response_json.get("mission_id", "?")
+    status = response_json.get("status", "?")
+    note = response_json.get("note")
+    if note:
+        return f"Mission {mission_id}: {status} - {note}"
+    return f"Mission {mission_id}: {status}"
+
+
+def refusal(detail: str) -> str:
+    """Matches the existing lifecycle-refusal status-line idiom (see
+    app.py's `_request_lifecycle`) so a 400 (bad run_mode/config) or 409
+    (mission_id conflict) reads the same way an operator already expects."""
+    return f"Refused: {detail}"
