@@ -137,6 +137,32 @@ def _assemble_context(conn, report: dict) -> str:
                     "into peer_classification (favor 'idiosyncratic')."
                 )
 
+    # ARB-001 (SPEC_RECONCILIATION.md §39-§41): the parity mission's own
+    # report shape. Reports with a parity_event_id carry detector_event_id
+    # None (backend/fi_db.py's discovery_reports.parity_event_id comment),
+    # so this block and the detector-event block above never both fire for
+    # the same report.
+    if report.get("parity_event_id") is not None:
+        parity_event = fi_db.get_parity_event(conn, report["parity_event_id"])
+        if parity_event is not None:
+            lines.append(
+                f"Parity claim (ARB-001): {parity_event['direction']} on {parity_event['security']} at "
+                f"strike {parity_event['strike']}, expiry {parity_event['expiry_days']}d - gross edge "
+                f"${parity_event['gross_edge_per_share']:.2f}/share, net edge "
+                f"${parity_event['net_edge_per_share']:.2f}/share, classification {parity_event['classification']}, "
+                f"capacity {parity_event['capacity_units']:.2f} unit(s)."
+            )
+            lines.append(
+                "This is a deterministic executable-arbitrage claim (backend/arbitrage.py's ARB-001), not "
+                "a statistical anomaly you are pattern-matching - assess whether the claimed edge actually "
+                "survives scrutiny: quote staleness, the size genuinely available at the quoted price, and "
+                "- for a class B (reversal) claim only - whether the borrow-fee assumption behind it is "
+                "realistic, or whether the simulated quotes could plausibly have moved between observation "
+                "and execution. Name specifically what would invalidate this claim. There is no peer-group "
+                "signal behind a parity detection - set peer_classification to 'not_applicable' unless "
+                "there is genuine peer evidence elsewhere in this context."
+            )
+
     evidence_ids = json.loads(report["evidence_ids"] or "[]")
     if evidence_ids:
         evidence = fi_db.list_evidence_items(conn, evidence_ids)

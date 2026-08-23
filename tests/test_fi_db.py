@@ -755,10 +755,15 @@ def _graded_report(conn, lens_artifact_id, overall_score, worth_the_compute,
     return report_id
 
 
-def test_both_lenses_are_seeded_active(conn):
+def test_all_three_lenses_are_seeded_active(conn):
+    # Three now, not two - ARB-001's escalation lens (LENS_PARITY_MIN_EDGE_NAME)
+    # joined the IV and speculator-confidence lenses when Explorer/Speculator
+    # were wired to the parity mission (SPEC_RECONCILIATION.md SS39-SS41).
     lenses = fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND)
     names = {a["name"]: a for a in lenses}
-    assert set(names) == {fi_db.LENS_IV_RATIO_NAME, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME}
+    assert set(names) == {
+        fi_db.LENS_IV_RATIO_NAME, fi_db.LENS_SPECULATOR_CONFIDENCE_NAME, fi_db.LENS_PARITY_MIN_EDGE_NAME,
+    }
     assert all(a["status"] == "active" for a in lenses)
 
 
@@ -791,7 +796,8 @@ def test_artifact_seeding_is_idempotent_and_non_destructive(conn):
     fi_db.init_schema(conn)
     fi_db.init_schema(conn)
 
-    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND)) == 2
+    # Three seeded lenses now (see test_all_three_lenses_are_seeded_active).
+    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND)) == 3
     assert fi_db.get_active_artifact(conn, fi_db.LENS_IV_RATIO_NAME) is None  # stayed stale
 
 
@@ -1206,3 +1212,136 @@ def test_a_session_with_no_calendar_is_unaffected_by_the_same_holiday(conn):
     fi_db.set_simulation_clock(conn, "2026-07-03T15:00:00+00:00", scale=1, enforce_sessions=True)
 
     assert fi_db.market_is_open(conn, "futures_price") is True
+
+
+# --- parity_events (ARB-001, SPEC_RECONCILIATION.md SS39-SS41) -------------
+
+
+def test_record_and_get_parity_event_round_trip(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_PARITY_MIN_EDGE_NAME)
+    parity_event_id = fi_db.record_parity_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "ENT1", "SYN1",
+        strike=100.0, expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.6, net_edge_per_share=0.5, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+        run_id="m1", scenario_id="m1-s0", lens_artifact_id=lens["id"],
+    )
+
+    event = fi_db.get_parity_event(conn, parity_event_id)
+    assert event["entity_id"] == "ENT1"
+    assert event["security"] == "SYN1"
+    assert event["strike"] == 100.0
+    assert event["expiry_days"] == 30
+    assert event["direction"] == "conversion"
+    assert event["gross_edge_per_share"] == 0.6
+    assert event["net_edge_per_share"] == 0.5
+    assert event["classification"] == "A"
+    assert event["capacity_units"] == 12.0
+    assert event["run_id"] == "m1"
+    assert event["scenario_id"] == "m1-s0"
+    assert event["lens_artifact_id"] == lens["id"]
+
+
+def test_get_parity_event_none_when_absent(conn):
+    assert fi_db.get_parity_event(conn, 999) is None
+
+
+def test_record_parity_event_converges_on_the_same_chain_snapshot(conn):
+    """The same detection re-recorded against the same chain observation must
+    return the existing row, not append - a static mission world re-triggers
+    every agent cycle, and the live run that found this recorded 1,152
+    identical rows in five minutes. A new observed_at (a genuinely new chain)
+    is a new row."""
+    kwargs = dict(
+        strike=100.0, expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.6, net_edge_per_share=0.5, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+        run_id="m1", scenario_id="m1-s0",
+    )
+    first = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **kwargs)
+    second = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **kwargs)
+    assert second == first
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 1
+
+    fresh = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1",
+        **{**kwargs, "observed_at": "2026-01-06T14:30:00+00:00"},
+    )
+    assert fresh != first
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 2
+
+
+def test_the_parity_min_edge_lens_is_seeded(conn):
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_PARITY_MIN_EDGE_NAME)
+    assert lens is not None
+    assert json.loads(lens["value"]) == fi_db.LENS_PARITY_MIN_EDGE_SEED
+
+
+def test_enqueue_report_with_parity_event_id_lands_and_survives_archival(conn):
+    parity_event_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1", strike=100.0, expiry_days=30,
+        direction="conversion", gross_edge_per_share=0.6, net_edge_per_share=0.5,
+        classification="A", capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+    )
+    report_id = fi_db.enqueue_report(
+        conn, "explorer-1", "T0", "explorer", "SYN1", summary="parity",
+        detector_event_id=None, parity_event_id=parity_event_id,
+    )
+    pending = fi_db.fetch_next_pending_report(conn)
+    assert pending["id"] == report_id
+    assert pending["parity_event_id"] == parity_event_id
+    assert pending["detector_event_id"] is None
+
+    fi_db.complete_report(conn, report_id, "analyzed", handled_by_identity="analysis-1", handled_by_spawned_at="T1")
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["id"] == report_id
+    assert completed[0]["parity_event_id"] == parity_event_id
+
+
+def _trigger_sql(conn, name):
+    row = conn.fetchone("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?", (name,))
+    return row["sql"] if row else None
+
+
+def test_an_old_discovery_reports_archive_trigger_is_replaced_and_the_column_survives(conn):
+    """discovery_reports_archive is not an 'IF NOT EXISTS' trigger reconciled
+    by _reconcile_triggers - it is DROP+CREATE unconditionally on every
+    init_schema call (see its own comment in SCHEMA on why: naming its
+    columns explicitly means it must be reissued whenever discovery_reports
+    gains one). This proves that self-healing actually carries a newly-added
+    column - parity_event_id - onto a trigger that predates it, the same
+    class of drift test_report_claiming.py's trigger tests cover for
+    coo_directives_archive's IF-NOT-EXISTS mechanism."""
+    conn.execute("DROP TRIGGER discovery_reports_archive")
+    conn.execute(
+        "CREATE TRIGGER discovery_reports_archive AFTER UPDATE OF status ON discovery_reports "
+        "WHEN NEW.status IN ('analyzed', 'failed') BEGIN "
+        "INSERT INTO discovery_reports_completed "
+        "(id, created_at, producer_identity, producer_spawned_at, report_type, security, summary, "
+        "detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at, "
+        "detail, completed_at, outcome, lens_artifact_id, cross_check_id, schema_version) "
+        "VALUES "
+        "(NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary, "
+        "NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at, "
+        "NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.schema_version); "
+        "DELETE FROM discovery_reports WHERE id = NEW.id; END"
+    )
+    assert "parity_event_id" not in _trigger_sql(conn, "discovery_reports_archive")
+
+    fi_db.init_schema(conn)  # a fresh server start against this "existing" database
+
+    assert "parity_event_id" in _trigger_sql(conn, "discovery_reports_archive")
+
+    parity_event_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1", strike=100.0, expiry_days=30,
+        direction="conversion", gross_edge_per_share=0.6, net_edge_per_share=0.5,
+        classification="A", capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+    )
+    report_id = fi_db.enqueue_report(
+        conn, "explorer-1", "T0", "explorer", "SYN1", parity_event_id=parity_event_id,
+    )
+    fi_db.complete_report(conn, report_id, "analyzed")
+
+    completed = fi_db.list_completed_reports(conn)
+    assert completed[0]["parity_event_id"] == parity_event_id

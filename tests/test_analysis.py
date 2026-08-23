@@ -182,6 +182,56 @@ def test_assemble_context_includes_detector_event_and_evidence(conn):
     assert "large block trade printed" in context
 
 
+# --- ARB-001 parity context (SPEC_RECONCILIATION.md SS39-SS41) --------------
+
+
+def test_assemble_context_renders_the_parity_block_for_a_parity_report(conn):
+    parity_event_id = fi_db.record_parity_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "ENT1", "SYN1",
+        strike=100.0, expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.65, net_edge_per_share=0.55, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+        run_id="m1", scenario_id="m1-s0",
+    )
+    fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        summary="Executable put-call parity violation on SYN1: conversion net edge $0.55/share at K=100.0 30d "
+                "(ARB-001, class A); cross-check evidence",
+        detector_event_id=None, parity_event_id=parity_event_id, evidence_ids=[],
+    )
+    report = fi_db.fetch_next_pending_report(conn)
+
+    context = _assemble_context(conn, report)
+
+    assert "conversion" in context
+    assert "0.55" in context
+    assert "100.0" in context
+    assert "30" in context
+    assert "ARB-001" in context
+    assert "not_applicable" in context
+
+
+def test_assemble_context_iv_report_is_unchanged_by_the_parity_block(conn):
+    """A report with no parity_event_id must not gain a parity block - the
+    two are mutually exclusive (backend/fi_db.py's discovery_reports.
+    parity_event_id comment)."""
+    event_id = fi_db.record_detector_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "SYN1", "iv_surface_peak_ratio",
+        0.6, 0.25, 2.4, 2.0,
+    )
+    fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        detector_event_id=event_id, evidence_ids=[],
+    )
+    report = fi_db.fetch_next_pending_report(conn)
+    assert report["parity_event_id"] is None
+
+    context = _assemble_context(conn, report)
+
+    assert "Parity claim" not in context
+    assert "ARB-001" not in context
+
+
 # --- real-subprocess / real-LLM integration test ---
 
 

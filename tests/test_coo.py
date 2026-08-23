@@ -428,7 +428,11 @@ def test_intelligence_health_leaves_a_well_performing_lens_active(conn):
 def test_intelligence_health_is_a_noop_with_no_reports_at_all(conn):
     """Startup state: seeded lenses, nothing graded yet."""
     _evaluate_intelligence_health(conn)
-    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND, status="active")) == 2
+    # Three seeded lenses now, not two - ARB-001's escalation lens
+    # (fi_db.LENS_PARITY_MIN_EDGE_NAME) joined the IV and speculator-
+    # confidence lenses when Explorer/Speculator were wired to the parity
+    # mission (SPEC_RECONCILIATION.md SS39-SS41).
+    assert len(fi_db.list_intelligence_artifacts(conn, artifact_kind=fi_db.LENS_KIND, status="active")) == 3
 
 
 # --- intelligence health: the conditions half (regime) ---
