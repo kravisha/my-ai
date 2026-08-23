@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from simulation import harness, parity_world, scenario as scenario_module, stage1
+from simulation import harness, parity_evaluation, parity_world, scenario as scenario_module, stage1
 
 
 def _cmd_list(args) -> int:
@@ -195,7 +195,12 @@ def _cmd_stage1(args) -> int:
 def _cmd_parity(args) -> int:
     """The Market Data Simulation Engine's Version 1 mission (addendum 25):
     put-call parity training worlds, refusing outright if reference data
-    is not READY (fail closed, addendum 25 SS3, visibly rather than silently)."""
+    is not READY (fail closed, addendum 25 SS3, visibly rather than silently).
+
+    --store switches from the simulator's own answer-key run to the mission
+    runner's other entry point: build the world and store it into the Data
+    Store against --db, for Explorer/Speculator/Analysis to consume as the
+    real detector (parity_world.store_world's docstring)."""
     from backend import fi_db
 
     db_path = Path(args.db) if args.db else fi_db.DB_PATH
@@ -209,6 +214,16 @@ def _cmd_parity(args) -> int:
             seed=args.seed,
             n_scenarios=args.scenarios,
         )
+        if args.store:
+            try:
+                result = parity_world.store_world(conn, config)
+            except parity_world.ReferenceNotReady as exc:
+                print(f"REFUSED: {exc}", file=sys.stderr)
+                return 2
+            print(f"stored {result['stored']['kept']} observation(s) "
+                  f"({result['stored']['already_held']} already held) across {result['scenarios']} scenario(s)")
+            print(f"summary written to {result['summary_path']}")
+            return 0
         try:
             report = parity_world.run_parity_exercise(conn, config)
         except parity_world.ReferenceNotReady as exc:
@@ -236,6 +251,47 @@ def _cmd_parity(args) -> int:
     print(f"summary written to {report['summary_path']}")
 
     return 0 if report["states"][-1] == parity_world.COMPLETED else 1
+
+
+def _cmd_parity_evaluate(args) -> int:
+    """The Evaluator's own CLI entry point (simulation/parity_evaluation.py):
+    grade a stored mission's ground-truth summary against what the
+    organization's own records (parity_events, discovery_reports,
+    analysis_results) show it actually did.
+
+    Exit code 0 iff strategy_exercised - addendum 25 SS18's requirement that
+    a run which never exercised the selected strategy cannot certify as a
+    successful training run, made visible to a caller's script rather than
+    only to a human reading the printed table."""
+    from backend import fi_db
+
+    db_path = Path(args.db) if args.db else fi_db.DB_PATH
+    conn = fi_db.get_connection(db_path)
+    try:
+        evaluation = parity_evaluation.evaluate_mission(conn, args.summary_path)
+    finally:
+        conn.close()
+
+    print(f"{'scenario':<24} {'variant':<16} {'symbol':<8} {'outcome':<12} reasons")
+    for entry in evaluation["scenarios"]:
+        reasons = ", ".join(entry["reasons"])
+        print(f"{entry['scenario_id']:<24} {entry['variant']:<16} {entry['symbol']:<8} {entry['outcome']:<12} {reasons}")
+
+    m = evaluation["metrics"]
+    rate = f"{m['pass_rate']:.3f}" if m["pass_rate"] is not None else "n/a"
+    by_outcome = m["by_outcome"]
+    print(
+        f"\nPASS={by_outcome['PASS']} PARTIAL={by_outcome['PARTIAL']} FAIL={by_outcome['FAIL']} "
+        f"INCONCLUSIVE={by_outcome['INCONCLUSIVE']} pass_rate={rate}"
+    )
+    print(
+        f"genuine_detected={m['genuine_detected']} genuine_missed={m['genuine_missed']} "
+        f"false_positives={m['false_positives']} strategy_exercised={m['strategy_exercised']} "
+        f"retry_required={m['retry_required']}"
+    )
+    print(f"evaluation written to {evaluation['evaluation_path']}")
+
+    return 0 if m["strategy_exercised"] else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -279,7 +335,18 @@ def main(argv: list[str] | None = None) -> int:
     parity_parser.add_argument("--scenarios", type=int, default=12, help="how many scenarios to generate")
     parity_parser.add_argument("--db", metavar="PATH", default=None,
                                help="financial_intelligence.db path (default: FI_DB_PATH / the repo's own db)")
+    parity_parser.add_argument("--store", action="store_true",
+                               help="store the mission's world into the Data Store against --db for the real "
+                                    "agents to consume, instead of running the simulator's own answer key")
     parity_parser.set_defaults(func=_cmd_parity)
+
+    parity_evaluate_parser = sub.add_parser(
+        "parity-evaluate",
+        help="grade a stored parity mission's ground-truth summary against the org's own records (addendum 25 SS16)")
+    parity_evaluate_parser.add_argument("summary_path", help="path to a parity-<mission>-<ts>.json summary")
+    parity_evaluate_parser.add_argument("--db", metavar="PATH", default=None,
+                                        help="financial_intelligence.db path (default: FI_DB_PATH / the repo's own db)")
+    parity_evaluate_parser.set_defaults(func=_cmd_parity_evaluate)
 
     args = parser.parse_args(argv)
     return args.func(args)

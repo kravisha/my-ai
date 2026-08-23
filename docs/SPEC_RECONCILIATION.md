@@ -2920,3 +2920,148 @@ exercising itself unprompted. After certifying the copy: eight scenarios
 (one genuine, traps, all variants drawn), 216 contracts, 24 chatter items,
 genuine detected, zero trap leaks, pass rate 1.000, strategy exercised,
 final state COMPLETED, summary written and gitignored.
+
+
+---
+
+## §42 — The agents work the parity world blind, and the Evaluator grades them (2026-08-23)
+
+Addendum 25 §17's completion loop, closed: Mission Configuration → Reference
+Data READY → world stored → Explorer + Speculator identify the candidate →
+Analysis investigates → **Evaluator compares outcome with ground truth**.
+Every arrow now runs through the real organization — real OS processes, real
+LLM calls — and §41's offline answer key is retired to what it always was:
+the development-time proof that world and detector agree.
+
+### The world reaches the agents through the Data Store
+
+`store_world` persists a mission's option chains and chatter as canonical
+Observations (synthetic provenance, run_id = mission, scenario_id per
+world); Explorer and Speculator read them back through
+`providers/stored_data.py`. Two properties carry the design:
+
+- **Source-indifference is structural.** The read side is a translation
+  layer over `observations.replay` — a historical or live chain feed later
+  writes the same store and the agents change nothing (addendum 25 §10's
+  "the same interface that will later serve historical or live data").
+- **Activation is data presence, not a flag.** No stored mission world →
+  `latest_chain`/`fetch_recent` return nothing → every new agent path is a
+  no-op, cycle after cycle. Addendum 25 §2's activation rule stays enforced
+  at the mission runner (`run_mode="simulation"` required); no env plumbing
+  reached the agents.
+- **One distinct security per stored scenario.** The store's idempotency
+  key (entity, class, observed_at, origin, source — all shared within a
+  mission) would collapse two same-entity scenarios into one chain and
+  leave the Evaluator blaming agents for a miss the store caused; and
+  Explorer reads only the latest chain per entity, so distinct assignment
+  is the only honest shape, enforced with a refusal when
+  n_scenarios > focus assets.
+
+### Explorer is ARB-001's detector now
+
+`_parity_work` scans `reference_data.list_focus_assets` — **the Assets
+view's first work-discovery consumer, closing §40's loop** — and runs
+`detect_arb001` itself over each stored chain. Detections land in a new
+`parity_events` table (detector_events is IV-shaped, NOT NULL peak/ratio
+columns; parity numbers in IV-named columns would be misfiled evidence),
+carrying run_id/scenario_id from the observation's provenance — the
+Evaluator's join key, which identifies the scenario without revealing its
+answer. Reports gained a nullable `parity_event_id`, the archive trigger
+copies it (the §34-era trigger-reconciliation machinery updates deployed
+databases automatically), and Analysis renders a parity context block that
+tells the model what the claim is and what would invalidate it.
+
+Discipline mirrored from the IV path, with two deliberate differences:
+**no LLM judgment gate** (the detector's executable-price hard stops are
+the precision filter; a coherence check on deterministic arithmetic is an
+LLM call with nothing to judge), and a **recency guard** (the mission's
+world is static, so a security whose analysis just completed would
+otherwise re-open a paid pipeline loop every cycle). The escalation law is
+unchanged: cross-check with Speculator first, report on the answer or the
+timeout, dissent attached. The min-edge threshold is a third seeded lens
+(`arb001_min_net_edge`, 0.0 — any positive executable edge; convention),
+with no regime validity conditions: parity is a structural relationship,
+not a regime-dependent pattern. Speculator reads the mission's chatter
+into evidence and its `seen` window (corroboration only — the parity
+mission's originator is Explorer).
+
+### The Evaluator
+
+`simulation/parity_evaluation.py` — the Evaluator role of addendum 23 §7
+in its current form: a deterministic grading pass, not an agent (§39's
+disposition stands; there is no judgment here an LLM would earn its call
+by making). It joins the ground-truth summary (which no agent ever read)
+against parity_events → reports → analysis_results, and grades per
+addendum 25 §16: full chain in the right direction → PASS; wrong direction
+→ PARTIAL; detected but never escalated → PARTIAL; report awaiting
+analysis → INCONCLUSIVE (the evaluator reports the state it finds, it
+does not wait); missed genuine → FAIL; any detection on a trap or clean
+control → FAIL, regardless of what happened downstream. Strategy coverage
+(§18) requires at least one genuine scenario at PASS; anything less is the
+strategy being tried, not exercised, and the CLI
+(`python -m simulation parity-evaluate`) exits nonzero on it.
+
+### The gate grew teeth, and the watcher had to learn about them
+
+`bootstrap_coo` now runs only on a READY certification — §40's promised
+blocking, real because Explorer genuinely consumes focus assets. The
+server stays up on FAILED (admin routes must show the failure, addendum
+24 §21); only the workforce waits.
+
+**Live verification found the hole a unit test structurally could not:**
+the first FAILED-certification run came up fully staffed anyway. The gate
+had worked — the banner was in the log, `bootstrap_coo` never ran — and
+§28's COO watcher then treated the missing COO as a fault and "recovered"
+it, waking the exact workforce the gate exists to block. The fix consults
+the same authority the gate did (`reference_data.is_ready`) inside
+`_recover_coo`: a missing COO under a non-READY certification is
+intentional inactivity, the same §7 reasoning as the dormancy branch —
+no incident, no spawn. Re-verified live: FAILED certification, only
+`controller-1` registered, watcher standing down, graceful shutdown.
+
+### What live verification proved, and what review caught
+
+Full completion loop against a real organization (harness-isolated, real
+LLM): six scenarios stored (four genuine, two traps); Explorer detected
+and escalated all four genuine within seconds; Speculator answered the
+cross-checks from mission chatter; one genuine scenario completed the
+entire chain inside the five-minute window — a real Analysis thesis
+naming staleness sensitivity on a $0.05/share class-A edge — and the
+Evaluator graded it PASS with `strategy_exercised: true`; both traps PASS
+with zero detections; the three still-in-flight chains graded
+INCONCLUSIVE (`analysis_in_flight`), which is the honest state: Analysis's
+adopted 3-pass budget spends ~2 minutes per deep call, and the window fit
+one. Zero false positives. Clean shutdown, no orphans.
+
+The same run exposed **parity-event spam**: the static world re-triggered
+every ~1s cycle and recorded 1,152 identical rows in five minutes.
+`record_parity_event` now converges on (security, observed_at, strike,
+expiry, direction) — the observations store's own ingest idiom; a new
+chain observation carries a new observed_at, so fresh market states are
+always fresh rows. Review also fixed the stored-mission/rebuild mismatch
+in a round-trip test that the distinct-assignment change surfaced.
+
+### Deferred, with reasons
+
+- **Diagnosis and training/correction** (addendum 25 §19): the Evaluator
+  measures; deciding what to do about a FAIL is a separate design with its
+  own owner decisions.
+- **Difficulty progression, mission-control UI**: unchanged from §39.
+- **Speculator origination from mission chatter**: the parity mission's
+  originator is Explorer; Speculator's own origination stays on its
+  existing path until a mission design wants otherwise.
+- **A live-run panel view of parity events/evaluations**: no route asked
+  for it yet; `/admin/discovery`-style surfacing arrives with a consumer.
+
+### Verified
+
+1482 passing (was 1440 at branch start: +31 delegated wiring tests, +8
+evaluator tests, +3 review regression tests — the store collision, the
+parity-event convergence, and the watcher gate). Two live runs
+against real organizations as described above — the completion loop with
+real LLM calls, and the blocked-bootstrap run, both shut down verified
+clean. Division of labour per the tiering directive: survey, wiring and
+evaluator implementation delegated (one connection loss mid-task, resumed
+with context intact); design, specs, review — which caught the event spam,
+the store collision, and drove the two live runs that caught the watcher
+hole — and this record by the top model.

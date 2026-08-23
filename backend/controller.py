@@ -397,6 +397,22 @@ class Controller:
 
     def _recover_coo(self, identity, symptom, last_healthy, agent=None, now=None) -> dict:
         """Detection, diagnosis, and either recovery or escalation."""
+        # The Day Zero gate, consulted by the watcher too. When the startup
+        # reference certification is not READY, backend/main.py deliberately
+        # never bootstraps the COO - and a watcher that "recovered" it would
+        # wake the exact workforce the gate exists to keep blocked (found
+        # live: a FAILED-certification run came up fully staffed because this
+        # branch treated the missing COO as a fault). Intentional inactivity
+        # is not failure - the same §7 reasoning as the dormancy branch in
+        # watch_coo - so this asks the same authority the gate asked, not a
+        # separate flag that could drift from it.
+        from backend import reference_data  # lazy: main.py imports this module first
+        if not reference_data.is_ready(self.conn):
+            return {
+                "action": "none",
+                "reason": "reference data is not READY - the workforce is deliberately blocked, "
+                          "not failed (Day Zero rule; see backend/main.py's startup gate)",
+            }
         incident = fi_db.open_incident_for(self.conn, identity)
         if incident is None:
             incident_id = fi_db.open_incident(

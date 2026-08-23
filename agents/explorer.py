@@ -27,11 +27,17 @@ import sys
 from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
-from backend import fi_db
+from backend import fi_db, reference_data
+from backend.arbitrage import CostConfig, Opportunity, detect_arb001
 from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataProvider
+from providers.stored_data import StoredChainProvider
 
 ROLE = "explorer"
 DETECTOR_TYPE = "iv_surface_peak_ratio"
+# ARB-001's own detector label (backend/arbitrage.py's DETECTOR_ID is the
+# formal "ARB-001"; this is the requester_finding['detector'] tag
+# _file_cross_checked_reports and agents/analysis.py key off of).
+PARITY_DETECTOR_TYPE = "arb001_parity"
 JUDGMENT_MAX_TOKENS = 300
 
 
@@ -135,18 +141,39 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
         security = request["security"]
 
         if not fi_db.has_pending_report(conn, identity, security):
-            fi_db.enqueue_report(
-                conn, identity, spawned_at, "explorer", security,
-                summary=(
-                    f"IV surface anomaly on {security}: ratio {finding['ratio']:.2f} "
-                    f"(peak {finding['peak_iv']:.4f} vs baseline {finding['baseline_iv']:.4f}), "
-                    f"scope={finding['scope']}; cross-check {request['outcome']}"
-                ),
-                detector_event_id=finding.get("detector_event_id"),
-                evidence_ids=[], judgment_confidence=None,
-                lens_artifact_id=finding.get("lens_artifact_id"),
-                cross_check_id=request["id"],
-            )
+            if finding.get("detector") == PARITY_DETECTOR_TYPE:
+                # ARB-001's own lead (agents/explorer.py's _parity_work below)
+                # - a parity_event_id, not a detector_event_id, backs this
+                # report; discovery_reports carries both columns precisely so
+                # neither detector's rows are mistaken for the other's (see
+                # backend/fi_db.py's SCHEMA comment on parity_event_id).
+                fi_db.enqueue_report(
+                    conn, identity, spawned_at, "explorer", security,
+                    summary=(
+                        f"Executable put-call parity violation on {security}: {finding['direction']} "
+                        f"net edge ${finding['net_edge_per_share']:.2f}/share at K={finding['strike']} "
+                        f"{finding['expiry_days']}d (ARB-001, class {finding['classification']}); "
+                        f"cross-check {request['outcome']}"
+                    ),
+                    detector_event_id=None,
+                    evidence_ids=[], judgment_confidence=None,
+                    lens_artifact_id=finding.get("lens_artifact_id"),
+                    cross_check_id=request["id"],
+                    parity_event_id=finding["parity_event_id"],
+                )
+            else:
+                fi_db.enqueue_report(
+                    conn, identity, spawned_at, "explorer", security,
+                    summary=(
+                        f"IV surface anomaly on {security}: ratio {finding['ratio']:.2f} "
+                        f"(peak {finding['peak_iv']:.4f} vs baseline {finding['baseline_iv']:.4f}), "
+                        f"scope={finding['scope']}; cross-check {request['outcome']}"
+                    ),
+                    detector_event_id=finding.get("detector_event_id"),
+                    evidence_ids=[], judgment_confidence=None,
+                    lens_artifact_id=finding.get("lens_artifact_id"),
+                    cross_check_id=request["id"],
+                )
         # Consumed either way - a duplicate-suppressed lead must not leave the
         # request open forever, or this security could never be asked about again.
         fi_db.consume_cross_check(conn, request["id"])
@@ -187,6 +214,116 @@ def _answer_pending_cross_checks(conn, identity: str, spawned_at: str, provider,
     )
 
 
+def _parity_work(conn, identity: str, spawned_at: str) -> None:
+    """Explorer as ARB-001's own detector (SPEC_RECONCILIATION.md §39-§41,
+    addendum 25/27): reads whatever option_chain observations a stored
+    mission world has left behind (providers/stored_data.py's
+    StoredChainProvider) and runs backend/arbitrage.py's detect_arb001 over
+    them directly.
+
+    Activation is data presence, not a flag (providers/stored_data.py's
+    module docstring): reference_data.list_focus_assets always returns
+    something once reference data is READY, but latest_chain returns None
+    for every asset until a mission has actually stored a world - so with
+    nothing stored, this whole function is a no-op cycle after cycle."""
+    # Same market-session gate as the IV path, mirrored rather than shared:
+    # an option chain does not exist while the market is shut, for the same
+    # reason an IV surface doesn't (see _explorer_work's own comment on
+    # market_is_open) - just checked against "option_chain"'s own cadence
+    # rather than "option_surface"'s.
+    if not fi_db.market_is_open(conn, "option_chain"):
+        return
+
+    lens = fi_db.get_active_artifact(conn, fi_db.LENS_PARITY_MIN_EDGE_NAME)
+    lens_artifact_id = lens["id"] if lens else None
+    min_net_edge = json.loads(lens["value"]) if lens else fi_db.LENS_PARITY_MIN_EDGE_SEED
+
+    provider = StoredChainProvider(conn)
+    costs = CostConfig()
+
+    # list_focus_assets, not PEER_GROUP_SECURITIES - addendum 25/40's work-
+    # discovery consumer this lens was always meant to have: Explorer scans
+    # whatever the Reference Data Engine has certified as in focus, not a
+    # hand-maintained peer-group list that has nothing to do with the parity
+    # mission's own universe.
+    for asset in reference_data.list_focus_assets(conn):
+        entity_id, security = asset["entity_id"], asset["primary_identifier"]
+        observation = provider.latest_chain(entity_id)
+        if observation is None:
+            continue
+
+        candidates = []
+        for snapshot in provider.snapshots(observation):
+            result = detect_arb001(snapshot, costs)
+            if isinstance(result, Opportunity) and result.net_edge_per_share >= min_net_edge:
+                candidates.append((snapshot, result))
+        if not candidates:
+            continue
+
+        # The single best opportunity per security, not every row that
+        # cleared the bar - one escalation per security per cycle, the same
+        # shape has_pending_report/has_open_cross_check below dedup against
+        # (both keyed on security, not on strike/expiry).
+        snapshot, opportunity = max(candidates, key=lambda pair: pair[1].net_edge_per_share)
+
+        parity_event_id = fi_db.record_parity_event(
+            conn, identity, spawned_at, entity_id, security,
+            snapshot.strike, snapshot.expiry_days, opportunity.direction,
+            opportunity.gross_edge_per_share, opportunity.net_edge_per_share,
+            opportunity.classification, opportunity.capacity_units,
+            observed_at=observation.observed_at,
+            run_id=observation.provenance.run_id, scenario_id=observation.provenance.scenario_id,
+            lens_artifact_id=lens_artifact_id,
+        )
+
+        if fi_db.has_pending_report(conn, identity, security):
+            # A report from this producer+security is still unconsumed.
+            continue
+        if fi_db.has_open_cross_check(conn, identity, security):
+            # A question is already out on this security.
+            continue
+        # The mission's world is static per run - the same stored chain
+        # answers detect_arb001 identically every cycle, so without this
+        # guard a security Analysis has already judged would re-open a
+        # cross-check (and trigger a fresh, paid Analysis pass) every single
+        # remaining cycle of the mission's life. The IV path needs no
+        # equivalent guard: its synthetic surface only repeats when a caller
+        # deliberately forces an anomaly, where a stored parity world always
+        # does.
+        if fi_db.list_recent_analysis_results(conn, security, config.ANALYSIS_RECENCY_WINDOW_SECONDS):
+            continue
+
+        # No LLM judgment gate here, unlike the IV path's _judgment_gate.
+        # ARB-001's own hard stops (stale quote, crossed market, invalid
+        # bid, non-European style) and its executable-price-only edge
+        # computation are already the precision filter (backend/arbitrage.py's
+        # module docstring: "there is no code path in this module that reads
+        # a mid price") - a coherence check on deterministic arithmetic that
+        # already cleared its own cost-plus-buffer model would be an LLM
+        # call with nothing left to judge.
+        fi_db.open_cross_check(
+            conn, identity, spawned_at, ROLE, "speculator", security,
+            question=(
+                f"Explorer detected an executable put-call parity {opportunity.direction} on {security} "
+                f"at strike {snapshot.strike} expiring in {snapshot.expiry_days}d "
+                f"(net edge ${opportunity.net_edge_per_share:.2f}/share, ARB-001). "
+                "Is there contextual evidence of unusual attention on this security?"
+            ),
+            requester_finding={
+                "detector": PARITY_DETECTOR_TYPE,
+                "parity_event_id": parity_event_id,
+                "direction": opportunity.direction,
+                "net_edge_per_share": round(opportunity.net_edge_per_share, 4),
+                "gross_edge_per_share": round(opportunity.gross_edge_per_share, 4),
+                "classification": opportunity.classification,
+                "strike": snapshot.strike,
+                "expiry_days": snapshot.expiry_days,
+                "lens_artifact_id": lens_artifact_id,
+            },
+            requester_confidence=None,
+        )
+
+
 def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     neighborhood_desc = f"strike idx ±{config.NEIGHBORHOOD_STRIKE_RADIUS}, expiry idx ±{config.NEIGHBORHOOD_EXPIRY_RADIUS}"
 
@@ -210,6 +347,16 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
     fi_db.expire_stale_cross_checks(conn)
     _file_cross_checked_reports(conn, identity, spawned_at)
     _answer_pending_cross_checks(conn, identity, spawned_at, provider, threshold)
+
+    # ARB-001, addendum 25/27's parity mission (SPEC_RECONCILIATION.md
+    # §39-§41): a separate detector over a separate stored feed, called here
+    # rather than after the IV surface work's own early return below - that
+    # return is gated on "option_surface"'s session, and _parity_work has
+    # its own independent "option_chain" gate (see its docstring), so it
+    # must not be skipped just because the IV surface market happens to be
+    # shut. The two detectors share nothing but the ROLE and the
+    # cross-check/report plumbing they both escalate through.
+    _parity_work(conn, identity, spawned_at)
 
     # Scan every peer-group security independently first, so classification
     # (below) can ask "how many others also triggered this same cycle"

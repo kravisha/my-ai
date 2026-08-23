@@ -20,8 +20,10 @@ import pytest
 
 from agents.speculator import _answer_pending_cross_checks, _source_dispersion, _speculator_work
 from backend import fi_db
+from backend import reference_data as rd
 from backend.controller import PROJECT_ROOT
 from providers.social_data import SocialPost
+from simulation import parity_world as pw
 
 
 class FakeProvider:
@@ -291,3 +293,61 @@ def test_answering_ignores_requests_addressed_to_other_roles(conn, monkeypatch):
     _answer_pending_cross_checks(conn, "speculator-1", "T1", {"SYN1": [post("chatter", 0.9)]})
 
     call_model.assert_not_called()
+
+
+# --- ARB-001's stored mission chatter (SPEC_RECONCILIATION.md SS39-SS41) ----
+
+
+def _store_parity_world(conn, mission_id, seed, tmp_path, **overrides):
+    rd.run_reference_engine(conn)
+    config = pw.MissionConfig(
+        mission_id=mission_id, run_mode="simulation", strategy="put_call_parity_arbitrage",
+        seed=seed, **overrides,
+    )
+    pw.store_world(conn, config, runs_dir=tmp_path)
+    return config
+
+
+def test_speculator_work_ingests_stored_mission_chatter_into_evidence_and_seen(conn, tmp_path):
+    _store_parity_world(conn, "m-spec-chatter", seed=11, tmp_path=tmp_path, n_scenarios=3, scenario_mix={"genuine": 1.0})
+    provider = FakeProvider({})  # empty synthetic stream - isolates to the stored feed
+    seen = {}
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {}, seen, stored_cursor={})
+
+    evidence = conn.fetchall("SELECT * FROM evidence_items")
+    assert len(evidence) > 0
+    assert all(item["evidence_type"] == "social" for item in evidence)
+    assert seen  # at least one security's mission chatter entered the seen window
+    _security, posts = next(iter(seen.items()))
+    assert posts
+    # StoredPost, same attribute surface _source_dispersion/_read_stance need
+    assert hasattr(posts[0], "engagement_score") and hasattr(posts[0], "author")
+
+
+def test_speculator_work_stored_cursor_prevents_reingestion_on_the_second_cycle(conn, tmp_path):
+    _store_parity_world(conn, "m-spec-cursor", seed=11, tmp_path=tmp_path, n_scenarios=3, scenario_mix={"genuine": 1.0})
+    provider = FakeProvider({})
+    stored_cursor = {}
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {}, {}, stored_cursor=stored_cursor)
+    first_count = len(conn.fetchall("SELECT * FROM evidence_items"))
+    assert first_count > 0
+    assert stored_cursor  # advanced for at least one security
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {}, {}, stored_cursor=stored_cursor)
+    second_count = len(conn.fetchall("SELECT * FROM evidence_items"))
+    assert second_count == first_count  # nothing new to ingest the second cycle
+
+
+def test_speculator_work_does_not_originate_a_cross_check_from_mission_chatter(conn, tmp_path):
+    """Explorer originates the parity mission's leads (agents/explorer.py's
+    _parity_work); Speculator's role for mission chatter is corroboration
+    only - the existing peer-group loop's own origination stays untouched
+    and is exercised elsewhere in this file."""
+    _store_parity_world(conn, "m-spec-no-origin", seed=11, tmp_path=tmp_path, n_scenarios=3, scenario_mix={"genuine": 1.0})
+    provider = FakeProvider({})
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {}, {}, stored_cursor={})
+
+    assert conn.fetchall("SELECT * FROM cross_check_requests WHERE requester_role = 'speculator'") == []

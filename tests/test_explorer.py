@@ -14,10 +14,15 @@ from unittest.mock import MagicMock
 import pytest
 from dotenv import dotenv_values
 
-from agents.explorer import _explorer_work, _local_baseline, scan_for_anomaly
+from agents.explorer import (
+    PARITY_DETECTOR_TYPE, _explorer_work, _file_cross_checked_reports, _local_baseline, _parity_work,
+    scan_for_anomaly,
+)
 from backend import fi_db
+from backend import reference_data as rd
 from backend.controller import PROJECT_ROOT
 from providers.market_data import SyntheticMarketDataProvider
+from simulation import parity_world as pw
 
 
 class FakeBlock:
@@ -583,3 +588,153 @@ def test_peer_groups_parse_from_the_environment():
     assert _parse_peer_groups("a:S1,S2;b:S3") == {"a": ["S1", "S2"], "b": ["S3"]}
     assert _parse_peer_groups("") == {}
     assert _parse_peer_groups("malformed") == {}  # falls back to the default
+
+
+# --- ARB-001 parity path (SPEC_RECONCILIATION.md SS39-SS41) -----------------
+
+
+def _store_parity_world(conn, mission_id, seed, tmp_path, **overrides):
+    rd.run_reference_engine(conn)
+    config = pw.MissionConfig(
+        mission_id=mission_id, run_mode="simulation", strategy="put_call_parity_arbitrage",
+        seed=seed, **overrides,
+    )
+    pw.store_world(conn, config, runs_dir=tmp_path)
+    return config
+
+
+def test_explorer_work_records_parity_events_and_opens_cross_checks(conn, monkeypatch, tmp_path):
+    """A genuine-only stored mission world, run through the full
+    _explorer_work entry point: every scenario's genuine opportunity becomes
+    a parity_events row and a cross-check to Speculator, with no LLM call
+    (there is no judgment gate for ARB-001 - see _parity_work's docstring)."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", [])
+    call_model = MagicMock()
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", call_model)
+    _store_parity_world(conn, "m-exp-parity", seed=7, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"genuine": 1.0})
+    provider = SyntheticMarketDataProvider(seed=42)
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    events = conn.fetchall("SELECT * FROM parity_events")
+    assert len(events) > 0
+    call_model.assert_not_called()
+
+    cross_checks = conn.fetchall(
+        "SELECT * FROM cross_check_requests WHERE requester_role = 'explorer' AND responder_role = 'speculator'"
+    )
+    assert len(cross_checks) == len(events)
+    finding = json.loads(cross_checks[0]["requester_finding"])
+    assert finding["detector"] == PARITY_DETECTOR_TYPE
+    assert finding["parity_event_id"] in {e["id"] for e in events}
+    assert finding["direction"] in ("conversion", "reversal")
+    assert "net_edge_per_share" in finding
+
+
+def test_parity_work_with_no_stored_world_is_a_no_op(conn):
+    """Activation is data presence (providers/stored_data.py's module
+    docstring): reference data is READY, but nothing was ever stored, so
+    every focus asset's latest_chain is None and the whole cycle is a no-op."""
+    rd.run_reference_engine(conn)
+
+    _parity_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00")
+
+    assert conn.fetchall("SELECT * FROM parity_events") == []
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []
+
+
+def test_parity_work_traps_only_mission_produces_zero_parity_events(conn, tmp_path):
+    """Every trap variant looks like an opportunity at mid prices but clears
+    no executable edge (ARB-001's own non-negotiable rule) - a mission world
+    built entirely from trap variants must detect nothing."""
+    _store_parity_world(
+        conn, "m-exp-traps", seed=5, tmp_path=tmp_path, n_scenarios=4,
+        scenario_mix={variant: 1.0 for variant in pw.TRAP_VARIANTS},
+    )
+
+    _parity_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00")
+
+    assert conn.fetchall("SELECT * FROM parity_events") == []
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []
+
+
+def test_parity_work_pending_report_suppresses_a_new_cross_check(conn, tmp_path):
+    config = _store_parity_world(
+        conn, "m-exp-guard-pending", seed=3, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"genuine": 1.0},
+    )
+    focus_assets = rd.list_focus_assets(conn)
+    scenario = pw._build_scenario(config, focus_assets, 0)
+    fi_db.enqueue_report(conn, "explorer-1", "T0", "explorer", scenario.symbol, summary="already queued")
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    # the detection is still a real fact even though it does not escalate -
+    # the same discipline agents/explorer.py's IV path follows.
+    assert len(conn.fetchall("SELECT * FROM parity_events")) == 1
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []
+
+
+def test_parity_work_open_cross_check_suppresses_a_new_one(conn, tmp_path):
+    config = _store_parity_world(
+        conn, "m-exp-guard-open", seed=3, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"genuine": 1.0},
+    )
+    focus_assets = rd.list_focus_assets(conn)
+    scenario = pw._build_scenario(config, focus_assets, 0)
+    fi_db.open_cross_check(
+        conn, "explorer-1", "T0", "explorer", "speculator", scenario.symbol,
+        question="unrelated pending question", requester_finding={"note": "pre-existing"},
+    )
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    assert len(conn.fetchall("SELECT * FROM parity_events")) == 1
+    # only the pre-seeded cross-check exists - no second one opened
+    assert len(conn.fetchall("SELECT * FROM cross_check_requests")) == 1
+
+
+def test_parity_work_recent_analysis_suppresses_a_new_cross_check(conn, tmp_path):
+    """The world is static per mission - without this guard, a security
+    Analysis already judged would re-trigger a paid Analysis pass every
+    remaining cycle of the mission's life (_parity_work's own comment)."""
+    config = _store_parity_world(
+        conn, "m-exp-guard-analysis", seed=3, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"genuine": 1.0},
+    )
+    focus_assets = rd.list_focus_assets(conn)
+    scenario = pw._build_scenario(config, focus_assets, 0)
+    fi_db.record_analysis_result(
+        conn, "analysis-1", "T0", 1, scenario.symbol,
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+        peer_classification="not_applicable",
+    )
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    assert len(conn.fetchall("SELECT * FROM parity_events")) == 1
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []
+
+
+def test_file_cross_checked_parity_report_carries_the_parity_event_id(conn, tmp_path):
+    """The other half of the round trip: once Speculator answers, the
+    resulting report must carry parity_event_id (not detector_event_id), and
+    a summary naming the parity claim."""
+    _store_parity_world(
+        conn, "m-exp-file", seed=3, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"genuine": 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+    request = fi_db.fetch_next_pending_cross_check(conn, "speculator")
+    assert request is not None
+    fi_db.answer_cross_check(
+        conn, request["id"], "speculator-1", "T0", fi_db.CROSS_CHECK_NO_EVIDENCE, {"posts": 0},
+    )
+
+    # _file_cross_checked_reports, not another _parity_work cycle: filing a
+    # resolved cross-check into a report is _explorer_work's shared plumbing
+    # (both the IV and parity paths escalate through it), not something
+    # _parity_work does on its own.
+    _file_cross_checked_reports(conn, "explorer-1", "T0")
+
+    report = fi_db.fetch_next_pending_report(conn)
+    assert report is not None
+    assert report["detector_event_id"] is None
+    assert report["parity_event_id"] is not None
+    assert "ARB-001" in report["summary"]

@@ -73,6 +73,11 @@ from backend import reference_data
 from backend.arbitrage import CostConfig, NoOpportunity, Opportunity, ParitySnapshot, Quote, detect_arb001
 from backend.canonical import Observation, Provenance
 from backend.db import parse_timestamp
+# Aliased, not `from backend import observations`: this module defines its
+# own `observations()` function below (Explorer's and Speculator's combined
+# feed), and that def would shadow a same-named module import by the time
+# store_world (which needs backend.observations.store_many) is called.
+from backend import observations as observation_store
 from simulation import pricing
 
 # --- mission-level constants -------------------------------------------------
@@ -128,6 +133,13 @@ BORROW_FEE_RANGE_DEFAULT = (0.0, 0.02)
 STALE_TOLERANCE_DEFAULT = 10.0                # seconds
 CHATTER_PER_SCENARIO_DEFAULT = 3
 CHATTER_SIGNAL_RATIO_DEFAULT = 0.5
+# A small seeded handle pool chatter authors are drawn from - mission-only
+# data (module docstring's ground-truth isolation section), not a real
+# identity source. Small on purpose: providers/stored_data.py's
+# StoredSocialProvider needs an author per post to satisfy Speculator's
+# _source_dispersion, and a pool of this size still lets several posts in one
+# scenario legitimately share an author without meaning anything by it.
+CHATTER_HANDLE_POOL = tuple(f"user{n}" for n in range(1000, 1030))
 OPTION_SIZE_RANGE = (10, 200)                 # contracts, per quote side
 UNDERLYING_SIZE_RANGE = (100, 2000)           # shares, per quote side
 
@@ -655,6 +667,14 @@ def _generate_chatter(rng: random.Random, gt: GroundTruth, focus_assets: list[di
         items.append({
             "posted_at": posted_at, "symbol": symbol, "entity_id": entity_id,
             "text": text, "stance": rng.choice(_STANCES),
+            # author/engagement_score: what providers/stored_data.py's
+            # StoredSocialProvider needs to satisfy Speculator's SocialPost
+            # interface (source, author, posted_at, text, engagement_score) -
+            # mission-only data, drawn from the seeded rng like everything
+            # else here, never a function of the variant or signal/noise
+            # split above.
+            "author": rng.choice(CHATTER_HANDLE_POOL),
+            "engagement_score": round(rng.uniform(0.0, 1.0), 3),
         })
     return tuple(items)
 
@@ -662,11 +682,18 @@ def _generate_chatter(rng: random.Random, gt: GroundTruth, focus_assets: list[di
 # --- scenario assembly ----------------------------------------------------------
 
 
-def _build_scenario(config: MissionConfig, focus_assets: list[dict], index: int) -> ScenarioWorld:
+def _build_scenario(
+    config: MissionConfig, focus_assets: list[dict], index: int, forced_asset: dict | None = None,
+) -> ScenarioWorld:
     scenario_id = f"{config.mission_id}-s{index}"
     rng = random.Random(f"{config.seed}:scenario:{index}")
 
-    asset = rng.choice(focus_assets)
+    # The choice draw always runs, even when forced_asset overrides it, so the
+    # seeded stream behind every later draw (variant, carry, skew) is identical
+    # whether or not a caller forced the security - one world per (seed, index),
+    # differing only in whose name it happened under.
+    drawn = rng.choice(focus_assets)
+    asset = forced_asset if forced_asset is not None else drawn
     entity_id, symbol = asset["entity_id"], asset["primary_identifier"]
     spot = _spot_for_symbol(config.seed, symbol)
 
@@ -750,6 +777,12 @@ def build_option_chain_observation(scenario: ScenarioWorld, config: MissionConfi
     payload = {
         "symbol": scenario.symbol,
         "as_of": config.base_time,
+        # Constant across the whole chain in this mission (module docstring:
+        # ARB-001 only prices European style) - carried in the payload anyway
+        # so providers/stored_data.py's StoredChainProvider can reconstruct a
+        # full ParitySnapshot (backend/arbitrage.py) without hardcoding a
+        # value the payload itself should be the source of truth for.
+        "style": "european",
         "underlying": {
             "bid": scenario.underlying.bid, "ask": scenario.underlying.ask,
             "bid_size": scenario.underlying.bid_size, "ask_size": scenario.underlying.ask_size,
@@ -775,7 +808,10 @@ def build_chatter_observations(scenario: ScenarioWorld, config: MissionConfig) -
     return [
         Observation(
             entity_id=item["entity_id"], data_class="social_post", observed_at=item["posted_at"],
-            payload={"symbol": item["symbol"], "text": item["text"], "stance": item["stance"]},
+            payload={
+                "symbol": item["symbol"], "text": item["text"], "stance": item["stance"],
+                "author": item["author"], "engagement_score": item["engagement_score"],
+            },
             provenance=Provenance(
                 origin="synthetic", source=f"parity_world(seed={config.seed})",
                 run_id=config.mission_id, scenario_id=scenario.scenario_id,
@@ -868,6 +904,99 @@ def _runs_dir() -> Path:
     return harness.RUNS_DIR
 
 
+def _require_reference_ready(conn, mission_id: str) -> list[dict]:
+    """The reference gate (module docstring, addendum 25 SS3): refuses
+    outright rather than degrading. Shared by run_parity_exercise and
+    store_world so both mission entry points fail closed identically - a
+    world stored for the real agents deserves exactly the same refusal a
+    world generated for the simulator's own answer key does."""
+    if not reference_data.is_ready(conn):
+        raise ReferenceNotReady(
+            f"Market Data Simulation Engine refused mission {mission_id!r}: reference data is not "
+            f"READY (state={WAITING_FOR_REFERENCE_DATA}). Call reference_data.run_reference_engine(conn) first."
+        )
+    focus_assets = reference_data.list_focus_assets(conn)
+    if not focus_assets:
+        raise ReferenceNotReady(
+            f"Market Data Simulation Engine refused mission {mission_id!r}: reference data is READY "
+            f"but no focus assets exist (state={WAITING_FOR_REFERENCE_DATA}). The engine never invents identity."
+        )
+    return focus_assets
+
+
+def _write_summary(mission_id: str, payload: dict, runs_dir: Path | None) -> str:
+    """Write `payload` to runs_dir/parity-<mission_id>-<timestamp>.json and
+    return the path as a str. Shared by run_parity_exercise and store_world so
+    both mission entry points write the same summary shape the same way.
+
+    The one wall-clock read in this module (module docstring): it names the
+    file, and is never folded into scenario content, so it does not break
+    the reproducibility property."""
+    out_dir = Path(runs_dir) if runs_dir is not None else _runs_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc)
+    out_path = out_dir / f"parity-{mission_id}-{timestamp:%Y%m%dT%H%M%S}.json"
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return str(out_path)
+
+
+def store_world(conn, config: MissionConfig, runs_dir: Path | None = None) -> dict:
+    """The mission runner's other entry point: build the world and store its
+    Observations into the Data Store (backend/observations.py) for the real
+    agents to consume, instead of running the simulator's own answer key.
+
+    Explorer now runs ARB-001 itself over the stored option_chain
+    observations (agents/explorer.py's `_parity_work`), and Speculator reads
+    the stored social_post observations - the mission's own answer_key/
+    evaluate() are what proved the world and detector agree during
+    development (run_parity_exercise, above); they play no role here. What
+    this function still owes the Evaluator is the ground-truth summary -
+    per-scenario ground truth and the mission config, written the same way
+    run_parity_exercise writes its own summary - so a later grading pass can
+    join stored parity_events (backend/fi_db.py, keyed by run_id/scenario_id)
+    back to the answer nothing an agent ever read.
+
+    Same reference gate as run_parity_exercise (module docstring's fail-closed
+    rule): a mission whose world could not legitimately be built stores
+    nothing."""
+    focus_assets = _require_reference_ready(conn, config.mission_id)
+    # One security per scenario, without replacement. The Data Store's
+    # idempotency key is (entity_id, data_class, observed_at, origin, source),
+    # and every chain in a mission shares base_time and source - so two
+    # scenarios drawn onto the same entity would collapse to one stored chain,
+    # and the Evaluator would blame the agents for a miss the store caused.
+    # Explorer reads only the latest chain per entity anyway, so distinct
+    # securities is not a workaround, it is the only shape a stored mission
+    # can honestly take.
+    if config.n_scenarios > len(focus_assets):
+        raise ValueError(
+            f"store_world needs one distinct focus asset per scenario: {config.n_scenarios} "
+            f"scenario(s) over {len(focus_assets)} focus asset(s). Lower n_scenarios or widen the focus."
+        )
+    assignment = random.Random(f"{config.seed}:assignment").sample(focus_assets, k=config.n_scenarios)
+    scenarios = [
+        _build_scenario(config, focus_assets, i, forced_asset=assignment[i])
+        for i in range(config.n_scenarios)
+    ]
+
+    all_observations = []
+    for scenario in scenarios:
+        all_observations.extend(observations(scenario, config))
+    store_report = observation_store.store_many(conn, all_observations)
+
+    summary = {
+        "mission_id": config.mission_id,
+        "config": asdict(config),
+        "scenarios": [
+            {"scenario_id": scenario.scenario_id, "ground_truth": asdict(scenario.ground_truth)}
+            for scenario in scenarios
+        ],
+    }
+    summary_path = _write_summary(config.mission_id, summary, runs_dir)
+
+    return {"stored": store_report, "scenarios": len(scenarios), "summary_path": summary_path}
+
+
 def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = None) -> dict:
     """The mission's entry point: reference gate, generate, evaluate, write
     the summary (addendum 25 SS17's completion loop, minus the agent stages
@@ -879,17 +1008,7 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     # and a state list that said otherwise would be a record of something
     # that did not happen.
     states = [NOT_STARTED]
-    if not reference_data.is_ready(conn):
-        raise ReferenceNotReady(
-            f"Market Data Simulation Engine refused mission {config.mission_id!r}: reference data is not "
-            f"READY (state={WAITING_FOR_REFERENCE_DATA}). Call reference_data.run_reference_engine(conn) first."
-        )
-    focus_assets = reference_data.list_focus_assets(conn)
-    if not focus_assets:
-        raise ReferenceNotReady(
-            f"Market Data Simulation Engine refused mission {config.mission_id!r}: reference data is READY "
-            f"but no focus assets exist (state={WAITING_FOR_REFERENCE_DATA}). The engine never invents identity."
-        )
+    focus_assets = _require_reference_ready(conn, config.mission_id)
 
     states += [CONFIGURING, GENERATING_MARKET, GENERATING_OPTIONS, GENERATING_SKEW, INJECTING_OPPORTUNITIES]
     scenarios = [_build_scenario(config, focus_assets, i) for i in range(config.n_scenarios)]
@@ -928,14 +1047,6 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
         "strategy_exercised": strategy_exercised,
     }
 
-    out_dir = Path(runs_dir) if runs_dir is not None else _runs_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # The one wall-clock read in this module - it names the file, and is
-    # never folded into scenario content, so it does not break the
-    # reproducibility property (module docstring).
-    timestamp = datetime.now(timezone.utc)
-    out_path = out_dir / f"parity-{config.mission_id}-{timestamp:%Y%m%dT%H%M%S}.json"
-
     report = {
         "mission_id": config.mission_id,
         "config": asdict(config),
@@ -943,6 +1054,5 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
         "scenarios": scenario_reports,
         "metrics": metrics,
     }
-    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    report["summary_path"] = str(out_path)
+    report["summary_path"] = _write_summary(config.mission_id, report, runs_dir)
     return report

@@ -33,8 +33,9 @@ import sys
 from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
-from backend import fi_db
+from backend import fi_db, reference_data
 from providers.social_data import SyntheticSocialDataProvider
+from providers.stored_data import StoredSocialProvider
 
 ROLE = "speculator"
 
@@ -202,13 +203,21 @@ def _answer_pending_cross_checks(conn, identity: str, spawned_at: str, seen: dic
 
 def _speculator_work(
     conn, identity: str, spawned_at: str, provider, cursor_state: dict, seen: dict | None = None,
+    stored_cursor: dict | None = None,
 ) -> None:
     """cursor_state is a flat dict keyed by security (not nested) - each
     security in the peer group tracks its own "since" cursor independently.
 
     seen is the same shape: the rolling window of posts this process has
-    observed per security, which is what cross-check answers are drawn from."""
+    observed per security, which is what cross-check answers are drawn from.
+
+    stored_cursor is cursor_state's counterpart for the Data Store's stored
+    mission chatter (SPEC_RECONCILIATION.md SS39-SS41) - a second, keyed-by-
+    symbol "since" cursor, independent of the synthetic provider's own, so
+    reading one feed's cursor never advances past what the other has
+    actually consumed."""
     seen = {} if seen is None else seen
+    stored_cursor = {} if stored_cursor is None else stored_cursor
     # Resolved from the intelligence store rather than a constant, for the
     # same reasons as agents/explorer.py's threshold - see that comment. The
     # confidence bar is what decides which social evidence is worth escalating,
@@ -300,6 +309,39 @@ def _speculator_work(
             requester_confidence=max_confidence,
         )
 
+    # ARB-001's mission chatter (SPEC_RECONCILIATION.md SS39-SS41): a second,
+    # independent read of the Data Store's stored social_post observations
+    # (providers/stored_data.py's StoredSocialProvider), so a cross-check
+    # Explorer opens for a parity detection can be answered from mission
+    # chatter too. A no-op with nothing stored - fetch_recent returns []
+    # for every entity until a mission has actually stored a world.
+    #
+    # Deliberately does NOT open a speculator-originated cross-check from
+    # this feed, unlike the loop above. The parity mission's originator is
+    # Explorer (agents/explorer.py's _parity_work); Speculator's role here
+    # is corroboration only - recording what the mission's chatter says so
+    # _answer_pending_cross_checks below can read it out of `seen`, the same
+    # way it already does regardless of which feed populated that entry.
+    # Speculator's own origination from chatter stays on the loop above,
+    # untouched.
+    stored_provider = StoredSocialProvider(conn)
+    for asset in reference_data.list_focus_assets(conn):
+        entity_id, symbol = asset["entity_id"], asset["primary_identifier"]
+        stored_posts = stored_provider.fetch_recent(entity_id, since=stored_cursor.get(symbol))
+        if not stored_posts:
+            continue
+
+        seen[symbol] = (seen.get(symbol, []) + stored_posts)[-SEEN_WINDOW:]
+
+        for post in stored_posts:
+            fi_db.record_evidence_item(
+                conn, identity, spawned_at, "social", symbol,
+                source=post.source, observed_at=post.posted_at, content=post.text,
+                confidence=post.engagement_score, raw_ref=f"{post.source}:{post.author}:{post.posted_at}",
+            )
+
+        stored_cursor[symbol] = stored_posts[-1].posted_at
+
     _answer_pending_cross_checks(conn, identity, spawned_at, seen)
 
 
@@ -316,12 +358,16 @@ def main() -> None:
     spawned_at_cache: dict = {}
     cursor_state: dict = {}
     seen: dict = {}
+    stored_cursor: dict = {}
 
     def work_fn(conn) -> None:
         if "value" not in spawned_at_cache:
             agent = fi_db.get_agent(conn, identity)
             spawned_at_cache["value"] = agent["spawned_at"] if agent else None
-        _speculator_work(conn, identity, spawned_at_cache["value"], provider, cursor_state, seen)
+        _speculator_work(
+            conn, identity, spawned_at_cache["value"], provider, cursor_state, seen,
+            stored_cursor=stored_cursor,
+        )
 
     run_agent(identity=identity, role=ROLE, work_fn=work_fn)
 

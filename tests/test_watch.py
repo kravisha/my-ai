@@ -14,7 +14,7 @@ import pytest
 
 from agents import coo as coo_module
 from backend import controller as controller_module
-from backend import fi_db, watch
+from backend import fi_db, reference_data, watch
 from backend.controller import CONTROLLER_ROLE, Controller
 
 
@@ -31,6 +31,11 @@ def controller(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     instance = Controller(db_path=str(tmp_path / "fi.db"))
     instance.bootstrap_self()
+    # A READY reference certification, matching what backend/main.py's startup
+    # establishes before the poll loop ever ticks. Without it the watcher
+    # correctly refuses to recover a COO (the Day Zero gate consulted inside
+    # _recover_coo) - which is its own test, not these tests' subject.
+    reference_data.run_reference_engine(instance.conn)
     instance.spawned = spawned
     yield instance
     instance.close()
@@ -145,6 +150,25 @@ def test_a_coo_that_never_registered_is_noticed_too(controller):
     assert outcome["action"] == "respawned"
     [incident] = fi_db.list_incidents(controller.conn)
     assert "no registry row" in incident["symptom"] or "no registry row" in incident["diagnosis"]
+
+
+def test_the_watcher_never_resurrects_a_workforce_the_day_zero_gate_blocked(controller):
+    """Found live: a FAILED-certification run came up fully staffed because
+    the watcher treated the deliberately-unstarted COO as a fault and
+    'recovered' it, defeating backend/main.py's bootstrap gate. A missing COO
+    under a non-READY certification is intentional inactivity, not failure -
+    no incident, no spawn."""
+    controller.conn.execute(
+        "INSERT INTO reference_readiness (certified_at, status, checks, focus_asset_count, schema_version) "
+        "VALUES ('2026-08-23T00:00:00+00:00', 'FAILED', '[]', 0, 1)"
+    )
+
+    outcome = controller.watch_coo()
+
+    assert outcome["action"] == "none"
+    assert "deliberately blocked" in outcome["reason"]
+    assert fi_db.list_incidents(controller.conn) == []
+    assert controller.spawned == []
 
 
 def test_a_spawn_still_coming_up_is_not_a_failure(controller):

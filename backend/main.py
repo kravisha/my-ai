@@ -61,6 +61,24 @@ async def _controller_poll_loop(controller: Controller) -> None:
         await asyncio.sleep(CONTROLLER_POLL_INTERVAL_SECONDS)
 
 
+def _reference_allows_bootstrap(readiness: dict) -> bool:
+    """Whether the reference-data certification this readiness dict records
+    is enough to wake the operational workforce.
+
+    A pure function of `readiness` (reference_data.certify_readiness's
+    return shape) so this decision is unit-testable directly, without going
+    through lifespan - this repo's TestClient has a known lifespan-thread
+    quirk, so a `with TestClient` test here would be the wrong tool.
+
+    docs/SPEC_RECONCILIATION.md §40 disposed of blocking as real "once a
+    consumer exists" for focus assets; Explorer's parity path
+    (agents/explorer.py's `_parity_work`, reference_data.list_focus_assets)
+    is that consumer. Only 'READY' passes - any other status, including one
+    this function has never seen, is refused rather than assumed safe
+    (addendum 24 §21/addendum 26 §17's fail-closed rule)."""
+    return readiness.get("status") == "READY"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Owns the Controller for exactly as long as the server is serving.
@@ -97,9 +115,28 @@ async def lifespan(app: FastAPI):
     # existing database still deserves a fresh certification rather than a
     # trusted stale one.
     reference_readiness = reference_data.run_reference_engine(controller.conn)
-    print(f"[reference_data] readiness: {reference_readiness['readiness']['status']} "
-          f"({reference_readiness['readiness']['focus_asset_count']} focus assets)")
-    controller.bootstrap_coo()
+    readiness = reference_readiness["readiness"]
+    print(f"[reference_data] readiness: {readiness['status']} "
+          f"({readiness['focus_asset_count']} focus assets)")
+    # §40's disposition made real: FAILED certification now blocks waking the
+    # operational workforce, because Explorer's parity path finally consumes
+    # focus assets (_reference_allows_bootstrap's docstring). The Controller
+    # and the poll loop below still start regardless - directives and the
+    # admin/dashboard routes must stay reachable to show the failure
+    # (addendum 24 §21), it is only the COO (and everything COO would spawn)
+    # that waits.
+    if _reference_allows_bootstrap(readiness):
+        controller.bootstrap_coo()
+    else:
+        failed_checks = ", ".join(c["check"] for c in readiness["checks"] if not c["ok"]) or "unknown"
+        print(
+            "\n" + "!" * 78 + "\n"
+            "! REFERENCE DATA NOT READY - COO AND THE OPERATIONAL WORKFORCE WERE NOT STARTED.\n"
+            f"! Failed check(s): {failed_checks}\n"
+            "! The Controller and admin routes are still up so the dashboard can show this\n"
+            "! failure (addendum 24 §21). Fix reference data and restart the server.\n"
+            + "!" * 78 + "\n"
+        )
     poll_task = asyncio.create_task(_controller_poll_loop(controller))
     try:
         yield

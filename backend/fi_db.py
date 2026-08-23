@@ -336,6 +336,12 @@ ROLE_CHARTERS = {
 LENS_KIND = "detection_lens"
 LENS_IV_RATIO_NAME = "iv_ratio_threshold"
 LENS_SPECULATOR_CONFIDENCE_NAME = "speculator_confidence_threshold"
+# ARB-001's escalation bar (addendum 25/27, SPEC_RECONCILIATION.md SS39-SS41):
+# the minimum net edge per share, beyond the detector's own cost+buffer,
+# that a parity detection must clear before Explorer opens a cross-check on
+# it. 0.0 means any positive executable edge escalates - a convention, not a
+# measurement, the same disclosure discipline as the other two lenses.
+LENS_PARITY_MIN_EDGE_NAME = "arb001_min_net_edge"
 
 # Seed values. These live here rather than in agents/discovery_config.py for
 # the same reason CEO_DISPLAY_NAME and SECURITY_UNIVERSE_SEED do: this module
@@ -344,6 +350,7 @@ LENS_SPECULATOR_CONFIDENCE_NAME = "speculator_confidence_threshold"
 # the artifact, so changing the env var only affects a fresh database.
 LENS_IV_RATIO_SEED = float(os.environ.get("FI_IV_RATIO_THRESHOLD", "2.0"))
 LENS_SPECULATOR_CONFIDENCE_SEED = float(os.environ.get("FI_SPECULATOR_CONFIDENCE_THRESHOLD", "0.6"))
+LENS_PARITY_MIN_EDGE_SEED = float(os.environ.get("FI_PARITY_MIN_EDGE", "0.0"))
 
 # Default validity conditions attached to a seeded lens - the performance half
 # of "intelligence expires", evaluated by agents/coo.py's
@@ -564,6 +571,39 @@ CREATE TABLE IF NOT EXISTS detector_events (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- ARB-001 detections (addendum 25/27, SPEC_RECONCILIATION.md SS39-SS41):
+-- Explorer's parity-detector counterpart to detector_events, one row per
+-- executable put-call parity opportunity it escalates. A separate table
+-- rather than a reuse of detector_events because the shape genuinely
+-- differs - strike/expiry/direction/edge are ARB-001's own vocabulary, not
+-- the IV-surface ratio/baseline fields the other table carries, and forcing
+-- one row shape to serve both would mean columns that are NULL for every row
+-- of one detector or the other.
+CREATE TABLE IF NOT EXISTS parity_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    producer_identity TEXT NOT NULL,
+    producer_spawned_at TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    security TEXT NOT NULL,            -- symbol, matching discovery_reports.security
+    strike REAL NOT NULL,
+    expiry_days INTEGER NOT NULL,
+    direction TEXT NOT NULL,           -- 'conversion' | 'reversal'
+    gross_edge_per_share REAL NOT NULL,
+    net_edge_per_share REAL NOT NULL,
+    classification TEXT NOT NULL,      -- 'A' | 'B'
+    capacity_units REAL NOT NULL,
+    observed_at TEXT NOT NULL,         -- the chain observation's observed_at
+    -- run_id/scenario_id: provenance identifying which simulated scenario
+    -- produced this detection (the Evaluator's join key). It does not reveal
+    -- the answer - ground truth lives only in the mission run summary
+    -- (simulation/parity_world.py's store_world), never here.
+    run_id TEXT,
+    scenario_id TEXT,
+    lens_artifact_id INTEGER,
+    schema_version INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS evidence_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -769,6 +809,12 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     -- both parties' findings unreconciled instead of a summary that has
     -- already picked a winner (addendum 12 §14, "disagreement is preserved").
     cross_check_id INTEGER,
+    -- The parity_events row backing this lead, for a report Explorer's ARB-001
+    -- path filed. Mutually exclusive with detector_event_id in practice - a
+    -- report carries one or the other, never both - kept as a separate
+    -- nullable column rather than a reused one so neither detector's rows are
+    -- ever mistaken for the other's.
+    parity_event_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -793,6 +839,8 @@ CREATE TABLE IF NOT EXISTS discovery_reports_completed (
     -- both parties' findings unreconciled instead of a summary that has
     -- already picked a winner (addendum 12 §14, "disagreement is preserved").
     cross_check_id INTEGER,
+    -- See discovery_reports.parity_event_id above.
+    parity_event_id INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -813,11 +861,11 @@ BEGIN
     INSERT INTO discovery_reports_completed
         (id, created_at, producer_identity, producer_spawned_at, report_type, security, summary,
          detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at,
-         detail, completed_at, outcome, lens_artifact_id, cross_check_id, schema_version)
+         detail, completed_at, outcome, lens_artifact_id, cross_check_id, parity_event_id, schema_version)
     VALUES
         (NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary,
          NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at,
-         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.schema_version);
+         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.parity_event_id, NEW.schema_version);
     DELETE FROM discovery_reports WHERE id = NEW.id;
 END;
 
@@ -1479,6 +1527,21 @@ def _seed_static_metadata(conn: Database) -> None:
             DEFAULT_LENS_VALIDITY_CONDITIONS,
             "Initial aggregate-confidence bar for filing social evidence. Chosen as a starting point "
             "during the Phase C build; not derived from evidence.",
+        ),
+        (
+            # No regime conditions, unlike the IV lens - deliberately. Put-call
+            # parity is a structural relationship (addendum 27's opening line),
+            # not a regime-dependent pattern: a conversion/reversal that clears
+            # its cost-plus-buffer bar is executable regardless of whether the
+            # broader market is calm or volatile, so nothing about market
+            # regime should be able to invalidate this lens the way it can the
+            # IV ratio lens.
+            LENS_PARITY_MIN_EDGE_NAME,
+            LENS_PARITY_MIN_EDGE_SEED,
+            DEFAULT_LENS_VALIDITY_CONDITIONS,
+            "Minimum net edge per share, beyond ARB-001's own cost+buffer, that a parity detection must "
+            "clear before Explorer escalates it. 0.0 means any positive executable edge escalates - a "
+            "convention, not a measurement, chosen during the parity-agent-wiring build.",
         ),
     ):
         conn.execute(
@@ -3461,6 +3524,65 @@ def get_detector_event(conn: Database, detector_event_id: int) -> dict | None:
     return conn.fetchone("SELECT * FROM detector_events WHERE id = ?", (detector_event_id,))
 
 
+def record_parity_event(
+    conn: Database,
+    producer_identity: str,
+    producer_spawned_at: str,
+    entity_id: str,
+    security: str,
+    strike: float,
+    expiry_days: int,
+    direction: str,
+    gross_edge_per_share: float,
+    net_edge_per_share: float,
+    classification: str,
+    capacity_units: float,
+    observed_at: str,
+    run_id: str | None = None,
+    scenario_id: str | None = None,
+    lens_artifact_id: int | None = None,
+) -> int:
+    """One ARB-001 detection Explorer's parity path is escalating.
+    run_id/scenario_id come from the chain observation's own provenance
+    (backend/canonical.py's Provenance) - see parity_events' own comment in
+    SCHEMA for why that is safe to carry.
+
+    **Converges rather than duplicates**, the observations store's own ingest
+    idiom: the same detection on the same chain snapshot - keyed by
+    (security, observed_at, strike, expiry_days, direction), where observed_at
+    identifies the exact chain the detector read - returns the existing row's
+    id instead of inserting another. Measured before being written: without
+    this, a static mission world re-triggering every ~1s agent cycle recorded
+    1,152 rows in a five-minute run from four securities - an append rate that
+    would put millions of identical rows under a long-running organization.
+    A *new* chain observation carries a new observed_at, so a detection on
+    fresh data is always a fresh row - the key converges re-reads, never
+    genuinely new market states."""
+    existing = conn.fetchone(
+        "SELECT id FROM parity_events WHERE security = ? AND observed_at = ? AND strike = ? "
+        "AND expiry_days = ? AND direction = ?",
+        (security, observed_at, strike, expiry_days, direction),
+    )
+    if existing is not None:
+        return existing["id"]
+    return conn.execute_returning_id(
+        "INSERT INTO parity_events "
+        "(created_at, producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days, "
+        "direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at, "
+        "run_id, scenario_id, lens_artifact_id, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            _now(), producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days,
+            direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at,
+            run_id, scenario_id, lens_artifact_id, SCHEMA_VERSION,
+        ),
+    )
+
+
+def get_parity_event(conn: Database, parity_event_id: int) -> dict | None:
+    return conn.fetchone("SELECT * FROM parity_events WHERE id = ?", (parity_event_id,))
+
+
 def record_evidence_item(
     conn: Database,
     producer_identity: str,
@@ -3508,6 +3630,7 @@ def enqueue_report(
     judgment_confidence: float | None = None,
     lens_artifact_id: int | None = None,
     cross_check_id: int | None = None,
+    parity_event_id: int | None = None,
 ) -> int:
     """lens_artifact_id: which intelligence artifact's threshold decided this
     was worth filing. Recorded on the report itself rather than only on the
@@ -3516,12 +3639,16 @@ def enqueue_report(
 
     cross_check_id: the contract whose two findings back this lead. Null for a
     report filed without one. Analysis follows it to read both sides of any
-    disagreement rather than a summary that has already resolved it."""
+    disagreement rather than a summary that has already resolved it.
+
+    parity_event_id: the ARB-001 detection backing this lead, for a report
+    Explorer's parity path filed. Null for every other report - see
+    discovery_reports.parity_event_id's own comment in SCHEMA."""
     return conn.execute_returning_id(
         "INSERT INTO discovery_reports "
-        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, cross_check_id, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, cross_check_id, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, SCHEMA_VERSION),
     )
 
 
