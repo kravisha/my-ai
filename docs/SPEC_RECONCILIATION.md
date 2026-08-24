@@ -3908,3 +3908,71 @@ one process note: a bulk PowerShell rewrite double-encoded the file's UTF-8
 (§ → Â§) and was caught by inspection; the file was restored from HEAD and
 re-edited with tooling that preserves encoding. The admin-auth surface test
 grew its `entry_id` stand-in and still walks every route.
+
+---
+
+## §55 — Phase 2 opens with the two members that have data: ARB-015/016 as Diagnostics (2026-08-25)
+
+TQ-06, scoped honestly before it was built. Addendum 27 §11's Phase 2 list
+runs 014–025; auditing each member against what the system actually
+produces: **ARB-014** needs the same forward/futures instruments ARB-013
+does (blocked, same reason); **ARB-012** needs a second expiry no
+ChainSnapshot carries — a world-design increment, not a detector increment;
+**ARB-017/019/020** need American worlds `STYLES` deliberately refuses.
+What remains buildable now is the pair the spec itself marks as signals
+rather than trades: ARB-015 (option-implied dividend, "difference alone is
+not arbitrage") and ARB-016 (implied financing/borrow basis, "usually B/D
+rather than A").
+
+### A separate schema, because the spec demands one
+
+Addendum 27 §8 requires "schema-level separation of D from arbitrage." So
+these are not Opportunities with a D stamp: a new `Diagnostic` type — no
+edge, no direction, no capacity — and its own entry point,
+`diagnose_chain`, parallel to `scan_chain` and deliberately absent from it.
+A test pins that scan_chain's output can never carry a diagnostic detector
+id, whatever the chain contains.
+
+### The executable band, not the mid-price gap
+
+What a diagnostic tests is whether a *declared* reference input (pv_div for
+015, r for 016) lies outside the entire interval of values consistent with
+executable bid/ask quotes. A mid-price difference smaller than the spread
+is the market saying nothing, and reporting it would readmit the exact
+error the library's opening rule exists to forbid, in diagnostic clothing.
+Corollary, pinned by test: widening spreads can only widen the band —
+quote uncertainty weakens a signal and can never manufacture one, the
+diagnostics restatement of "adverse bid/ask cannot improve edge."
+
+### ARB-016's interpretation rule
+
+Borrow is required reference data for 016 not because the arithmetic needs
+it but because the interpretation does: an implied-financing basis on a
+stock with unknown borrow state cannot distinguish "mispriced" from "hard
+to borrow" — the spec's own warning. Missing borrow is a refusal (§10),
+and when the fee is present, `borrow_explains_gap` reports whether r minus
+the declared fee falls inside the implied band — the spec's B-versus-D
+distinction carried as evidence rather than as a classification upgrade,
+since no locking package exists either way. A non-positive implied
+discount factor is reported as a broken input, not a financing signal.
+
+### Verified
+
+Eleven new tests (1641 passing): the coherent-chain control (zero
+diagnostics on a BS-coherent world), hand-checkable band arithmetic for
+both detectors, within-band silence, the spread-widening property, hard
+stops before arithmetic, the borrow-explains-gap evidence in both truth
+values, missing-borrow and broken-DF refusals, chain-level ordering by
+gap, and the schema-separation pin.
+
+### Not wired into the training loop, with the reason stated
+
+Explorer escalates opportunities; the Evaluator grades detections of
+injected tradeable structures. A D-class diagnostic is neither — injecting
+a "misdeclared dividend" scenario would surface through ARB-001's parity
+package anyway (a dividend error *is* a parity shift once it exceeds the
+band), so a diagnostic mission would either duplicate parity training or
+train agents to escalate non-tradeable signals. Diagnostics get a consumer
+when reference-data validation wants a market-implied cross-check on its
+declared dividends and borrow — that consumer is named here as the natural
+next increment, not presumed built.

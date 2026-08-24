@@ -2,8 +2,10 @@
 ARB-001/2/3/6/7/8/9/10/11/13 plus architecture, costs, audit and replay").
 ARB-001 (European put-call parity) shipped first as the simulation's answer
 key (docs/SPEC_RECONCILIATION.md SS39/SS41); this module now also carries
-ARB-002, 003, 006, 007, 008, 009, 010 and 011. ARB-012 through ARB-030 stay
-roadmap.
+ARB-002, 003, 006, 007, 008, 009, 010 and 011, plus the first Phase 2
+members with data to work with: ARB-015 and ARB-016 as D-class Diagnostics
+under their own schema (see the Phase 2 section at the bottom). The rest of
+ARB-012 through ARB-030 stays roadmap.
 
 ## ARB-013 is not built
 
@@ -1020,4 +1022,156 @@ def scan_chain(
                 _add(detect_arb009(chain, strikes[i], strikes[j], strikes[k], costs, stale_tolerance_seconds))
 
     found.sort(key=lambda o: o.net_edge_per_share, reverse=True)
+    return found
+
+
+# --- Phase 2 diagnostics: ARB-015 / ARB-016 (addendum 27 §11 Phase 2) -------
+#
+# The first Phase 2 members that have data to work with in this system.
+# ARB-014 (cash-and-carry) needs the same forward/futures instruments ARB-013
+# does; ARB-012 needs a second expiry no snapshot carries; 017/019/020 need
+# American worlds STYLES refuses. What remains buildable is the pair the spec
+# itself marks as *signals*: option-implied dividend (015) and implied
+# borrow/financing basis (016) — "difference alone is not arbitrage" (015),
+# "usually B/D rather than A" (016).
+#
+# Hence a separate schema. Addendum 27 §8 requires "schema-level separation
+# of D from arbitrage": a Diagnostic is not an Opportunity, has no edge, no
+# direction, no capacity, and no path into scan_chain's results — a consumer
+# that wants diagnostics asks diagnose_chain for them. What a diagnostic
+# reports is an *executable band*: the interval of values consistent with
+# actual bid/ask quotes. Only a declared input lying outside that band is a
+# signal at all — a mid-price gap smaller than the spread is the market
+# saying nothing, and reporting it would be the mid-price error in
+# diagnostic clothing.
+
+
+@dataclass(frozen=True)
+class Diagnostic:
+    """A D-class signal: a declared reference input inconsistent with what
+    executable quotes imply. Never tradeable as-is (the spec's own words for
+    015/016); `gap` is the distance from the declared value to the nearest
+    edge of the implied band, so a consumer can rank by how far outside the
+    market's own uncertainty the declaration sits."""
+
+    detector_id: str
+    strike: float
+    implied_low: float
+    implied_high: float
+    declared: float
+    gap: float
+    classification: str = "D"
+    inputs: dict = field(default_factory=dict)
+
+
+def _implied_pv_div_band(snapshot: ParitySnapshot) -> tuple[float, float]:
+    """PVDiv = S - PVK - (C-P), evaluated at executable extremes.
+
+    (C-P) ranges from Cbid-Pask to Cask-Pbid and S from Sbid to Sask, so the
+    implied-dividend band is [Sbid - PVK - (Cask-Pbid), Sask - PVK - (Cbid-Pask)].
+    Wider spreads widen the band — more quote uncertainty can only ever
+    weaken a diagnostic, never manufacture one."""
+    pvk = _pvk(snapshot.strike, snapshot.r, snapshot.expiry_days)
+    low = snapshot.underlying.bid - pvk - (snapshot.call.ask - snapshot.put.bid)
+    high = snapshot.underlying.ask - pvk - (snapshot.call.bid - snapshot.put.ask)
+    return low, high
+
+
+def detect_arb015(
+    snapshot: ParitySnapshot, stale_tolerance_seconds: float = 10.0
+) -> Diagnostic | NoOpportunity:
+    """ARB-015: option-implied dividend versus the declared distribution.
+
+    A Diagnostic only when the declared pv_div lies outside the entire
+    executable band — the spec's list of innocent explanations (borrow,
+    funding, taxes, stale quotes) is exactly why the band, not a mid-point
+    difference, is the test, and why the result is D rather than an
+    opportunity: nothing here constructs the "complete locking package" §
+    ARB-015 requires before elevation."""
+    stops = _package_hard_stops(
+        (snapshot.underlying, snapshot.call, snapshot.put),
+        snapshot.as_of, snapshot.style, stale_tolerance_seconds,
+    )
+    if stops:
+        return NoOpportunity(sorted(stops))
+
+    low, high = _implied_pv_div_band(snapshot)
+    if low <= snapshot.pv_div <= high:
+        return NoOpportunity(["within_executable_band"])
+    gap = (low - snapshot.pv_div) if snapshot.pv_div < low else (snapshot.pv_div - high)
+    return Diagnostic(
+        detector_id="ARB-015", strike=snapshot.strike,
+        implied_low=low, implied_high=high, declared=snapshot.pv_div, gap=gap,
+        inputs={"r": snapshot.r, "expiry_days": snapshot.expiry_days},
+    )
+
+
+def detect_arb016(
+    snapshot: ParitySnapshot, stale_tolerance_seconds: float = 10.0
+) -> Diagnostic | NoOpportunity:
+    """ARB-016: implied financing versus the declared rate and borrow.
+
+    Inverts parity for the discount factor — DF_implied = (S - PVDiv - (C-P))/K
+    — at executable extremes, converts to a continuously-compounded rate band,
+    and compares the declared r against it. The borrow fee is required
+    reference data here, not because the arithmetic needs it but because the
+    *interpretation* does: an implied-financing basis on a stock whose borrow
+    state is unknown cannot distinguish "mispriced" from "hard to borrow",
+    which is precisely the spec's warning. Missing borrow is a refusal
+    (§10: never silently substitute zero). `inputs['borrow_explains_gap']`
+    reports whether r minus the declared borrow fee falls inside the band —
+    the B-versus-D distinction the spec draws, carried as evidence rather
+    than as a different class, since no locking package exists either way."""
+    stops = _package_hard_stops(
+        (snapshot.underlying, snapshot.call, snapshot.put),
+        snapshot.as_of, snapshot.style, stale_tolerance_seconds,
+    )
+    if snapshot.borrow_fee_annual is None:
+        stops = set(stops) | {"missing_borrow"}
+    if stops:
+        return NoOpportunity(sorted(stops))
+
+    t = _t_years(snapshot.expiry_days)
+    # DF at executable extremes: the small DF comes from the high (C-P) side.
+    df_low = (snapshot.underlying.bid - snapshot.pv_div - (snapshot.call.ask - snapshot.put.bid)) / snapshot.strike
+    df_high = (snapshot.underlying.ask - snapshot.pv_div - (snapshot.call.bid - snapshot.put.ask)) / snapshot.strike
+    if df_low <= 0 or df_high <= 0:
+        # A non-positive implied DF is not a financing signal, it is a broken
+        # input (deep-ITM quotes crossing the dividend-adjusted spot).
+        return NoOpportunity(["implied_df_not_positive"])
+
+    r_low = -math.log(df_high) / t
+    r_high = -math.log(df_low) / t
+    if r_low <= snapshot.r <= r_high:
+        return NoOpportunity(["within_executable_band"])
+    gap = (r_low - snapshot.r) if snapshot.r < r_low else (snapshot.r - r_high)
+    borrow_adjusted = snapshot.r - snapshot.borrow_fee_annual
+    return Diagnostic(
+        detector_id="ARB-016", strike=snapshot.strike,
+        implied_low=r_low, implied_high=r_high, declared=snapshot.r, gap=gap,
+        inputs={
+            "borrow_fee_annual": snapshot.borrow_fee_annual,
+            "borrow_explains_gap": r_low <= borrow_adjusted <= r_high,
+            "expiry_days": snapshot.expiry_days,
+        },
+    )
+
+
+def diagnose_chain(
+    chain: ChainSnapshot, stale_tolerance_seconds: float = 10.0
+) -> list[Diagnostic]:
+    """The diagnostics entry point, parallel to scan_chain and deliberately
+    not part of it (§8's schema separation): ARB-015 and ARB-016 over every
+    strike, hard-stopped and within-band strikes silently skipped, sorted by
+    gap descending so the least-explainable inconsistency leads."""
+    found: list[Diagnostic] = []
+    for sq in chain.strikes:
+        snapshot = _parity_snapshot_from_chain(chain, sq)
+        for result in (
+            detect_arb015(snapshot, stale_tolerance_seconds),
+            detect_arb016(snapshot, stale_tolerance_seconds),
+        ):
+            if isinstance(result, Diagnostic):
+                found.append(result)
+    found.sort(key=lambda d: d.gap, reverse=True)
     return found

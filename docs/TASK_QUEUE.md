@@ -86,14 +86,15 @@ transition.
 
 ### TQ-06 — Options arbitrage library, next increment per addendum 27 §11
 
-**WANT · QUEUED**
+**WANT · DONE (buildable scope) — `SPEC_RECONCILIATION.md` §55**
 
-Source: addendum 27 §11 Phase 2 ordering; reconciliation §46's deferrals. Candidates in the spec's
-own order: ARB-012 calendar diagnostics (D-class, diagnostic only — the world already has multiple
-expiries), then Phase 2 detectors (ARB-014 cash-and-carry, ARB-015 option-implied dividend,
-ARB-016 borrow basis, ARB-017/019/020 American family — the last three need American-style worlds
-the simulation does not yet generate). Per-detector-family lenses and difficulty progression stay
-deferred per §46 until grades distinguish families.
+ARB-015 (option-implied dividend) and ARB-016 (implied financing/borrow basis) built as D-class
+`Diagnostic`s under their own schema with their own `diagnose_chain` entry point — addendum 27
+§8's schema-level separation of D from arbitrage, pinned by test. The executable-band discipline
+replaces mid-price gaps: a declaration inside the band the spreads allow is no signal at all.
+The rest of Phase 2 is blocked on world capabilities, recorded below; the diagnostics' first
+consumer (reference-data validation cross-checking declared dividends/borrow against the market)
+is named in §55 as the natural next increment.
 
 ### TQ-07 — Governance cost/impact profile on register entries
 
@@ -135,12 +136,25 @@ legible 503. Per-caller attribution and currency-denominated limits deferred wit
 
 ## Blocked
 
-### TQ-B1 — ARB-013 (forward/futures vs synthetic forward)
+### TQ-B1 — ARB-013 and ARB-014 (forward/futures detectors)
 
-**Source: addendum 27 §11 Phase 1.** The one Phase 1 detector not built. Blocked: the training
-world (addendum 25) generates equity option chains only — no forward or futures instruments exist
-for the detector to price against, and inventing them is a world-design increment (addendum 25's
+**Source: addendum 27 §11 Phase 1 (013) and Phase 2 (014).** Blocked: the training world
+(addendum 25) generates equity option chains only — no forward or futures instruments exist for
+either detector to price against, and inventing them is a world-design increment (addendum 25's
 scope), not a detector increment. Unblocks if/when the simulation grows a forward leg.
+
+### TQ-B2 — ARB-012 (calendar consistency)
+
+**Source: addendum 27 §11 Phase 2.** Blocked: every ChainSnapshot is one expiry's ladder and the
+world generates one expiry per scenario; calendar rules need at least two. A multi-expiry world is
+the same class of world-design increment as TQ-B1.
+
+### TQ-B3 — ARB-017 / 019 / 020 (American exercise family)
+
+**Source: addendum 27 §11 Phase 2, §6.** Blocked: the library's `STYLES` deliberately refuses
+non-European snapshots (applying European parity to American options is the spec's №2 guarded
+error), and the world generates European chains only. Unblocks with an American-style world *and*
+the §6 scenario engine — a substantially larger increment than any detector.
 
 ## Deferred, with reasons
 
