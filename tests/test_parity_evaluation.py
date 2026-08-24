@@ -400,3 +400,66 @@ def test_cross_trap_clean_passes(conn, tmp_path):
         assert entry["outcome"] == "PASS", entry
         assert entry["reasons"] == []
         assert entry["counts"] == {"detections": 0, "reports": 0, "analyses": 0}
+
+
+# --- calendar family (SPEC_RECONCILIATION.md SS56) ---------------------------
+
+
+def _store_calendar_world(conn, mission_id, seed, tmp_path, **overrides):
+    rd.run_reference_engine(conn)
+    config = pw.MissionConfig(
+        mission_id=mission_id, run_mode="simulation", strategy=pw.STRATEGY_CALENDAR,
+        seed=seed, **overrides,
+    )
+    result = pw.store_world(conn, config, runs_dir=tmp_path)
+    return config, result["summary_path"]
+
+
+def test_calendar_genuine_full_chain_reaches_pass(conn, tmp_path):
+    """detected (an ARB-012 package through the lifted expiry) -> escalated
+    -> cross-checked -> reported -> analyzed: PASS, with no direction to
+    compare (expected_direction is None for the calendar family too)."""
+    config, summary_path = _store_calendar_world(
+        conn, "m-eval-calbump", seed=3, tmp_path=tmp_path, n_scenarios=3,
+        scenario_mix={pw.VARIANT_CALENDAR_BUMP: 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+    _answer_all_cross_checks(conn)
+    _file_cross_checked_reports(conn, "explorer-1", "T0")
+    _complete_all_reports_with_analysis(conn)
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+
+    for entry in evaluation["scenarios"]:
+        assert entry["outcome"] == "PASS", entry
+        assert entry["reasons"] == []
+        assert entry["counts"]["detections"] >= 1
+    assert evaluation["metrics"]["strategy_exercised"] is True
+
+
+def test_calendar_same_expiry_hit_planted_fails_under_its_own_name(conn, tmp_path):
+    """A planted cross-strike detection on a calendar scenario is the world
+    drifting from the whole-ladder invariance - FAIL under
+    'unexpected_same_expiry_hit', distinct from both the parity alarm and a
+    stray ARB-012."""
+    config, summary_path = _store_calendar_world(
+        conn, "m-eval-calcofire", seed=3, tmp_path=tmp_path, n_scenarios=3,
+        scenario_mix={pw.VARIANT_CALENDAR_BUMP: 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+
+    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    scenario_entry = summary["scenarios"][0]
+    gt = scenario_entry["ground_truth"]
+    fi_db.record_parity_event(
+        conn, "explorer-1", "T0", gt["entity_id"], gt["symbol"],
+        strike=100.0, expiry_days=30, direction="call_vertical_upper",
+        gross_edge_per_share=0.10, net_edge_per_share=0.05, classification="A", capacity_units=10.0,
+        observed_at="2026-01-05T14:30:00+00:00", run_id=config.mission_id,
+        scenario_id=scenario_entry["scenario_id"], detector_id="ARB-007", strike2=105.0,
+    )
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    by_id = {e["scenario_id"]: e for e in evaluation["scenarios"]}
+    assert by_id[scenario_entry["scenario_id"]]["outcome"] == "FAIL"
+    assert by_id[scenario_entry["scenario_id"]]["reasons"] == ["unexpected_same_expiry_hit"]

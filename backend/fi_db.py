@@ -624,6 +624,11 @@ CREATE TABLE IF NOT EXISTS parity_events (
     detector_id TEXT NOT NULL DEFAULT 'ARB-001',
     strike2 REAL,
     strike3 REAL,
+    -- expiry2_days (§56, ARB-012): the calendar package's far-leg expiry -
+    -- expiry_days above stays the near leg, the same primary-slot reuse
+    -- strike/strike2 established. NULL for every single-expiry package,
+    -- exactly as rows written before this column existed read.
+    expiry2_days INTEGER,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -3591,6 +3596,7 @@ def record_parity_event(
     detector_id: str = "ARB-001",
     strike2: float | None = None,
     strike3: float | None = None,
+    expiry2_days: int | None = None,
 ) -> int:
     """One Phase 1 detection (backend/arbitrage.py) Explorer's chain-scan
     path is escalating - ARB-001 by default (every call site before the
@@ -3617,13 +3623,16 @@ def record_parity_event(
     true here since directions differ, but a monotonicity_calls at (k1, k2)
     and a call_vertical_upper at (k1, k2) would otherwise be indistinguishable
     without detector_id, and two different k2 partners for the same k1 would
-    otherwise collide without strike2. `IS ?` rather than `= ?` for the
-    nullable strike2/strike3 columns - SQLite's own NULL-safe comparison,
-    parameter-bindable exactly like any other placeholder."""
+    otherwise collide without strike2; expiry2_days joined it with ARB-012
+    (§56) because two calendar packages at the same strikes differ only by
+    their far leg. `IS ?` rather than `= ?` for the nullable
+    strike2/strike3/expiry2_days columns - SQLite's own NULL-safe
+    comparison, parameter-bindable exactly like any other placeholder."""
     existing = conn.fetchone(
         "SELECT id FROM parity_events WHERE security = ? AND observed_at = ? AND strike = ? "
-        "AND expiry_days = ? AND direction = ? AND detector_id = ? AND strike2 IS ? AND strike3 IS ?",
-        (security, observed_at, strike, expiry_days, direction, detector_id, strike2, strike3),
+        "AND expiry_days = ? AND direction = ? AND detector_id = ? AND strike2 IS ? AND strike3 IS ? "
+        "AND expiry2_days IS ?",
+        (security, observed_at, strike, expiry_days, direction, detector_id, strike2, strike3, expiry2_days),
     )
     if existing is not None:
         return existing["id"]
@@ -3631,12 +3640,12 @@ def record_parity_event(
         "INSERT INTO parity_events "
         "(created_at, producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days, "
         "direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at, "
-        "run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, expiry2_days, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             _now(), producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days,
             direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at,
-            run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, SCHEMA_VERSION,
+            run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, expiry2_days, SCHEMA_VERSION,
         ),
     )
 

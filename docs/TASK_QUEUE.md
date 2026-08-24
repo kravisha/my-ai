@@ -145,9 +145,13 @@ scope), not a detector increment. Unblocks if/when the simulation grows a forwar
 
 ### TQ-B2 — ARB-012 (calendar consistency)
 
-**Source: addendum 27 §11 Phase 2.** Blocked: every ChainSnapshot is one expiry's ladder and the
-world generates one expiry per scenario; calendar rules need at least two. A multi-expiry world is
-the same class of world-design increment as TQ-B1.
+**RESOLVED — `SPEC_RECONCILIATION.md` §56.** This entry's premise was half wrong and §56 corrects
+it: the world has priced three expiries per scenario since Day Zero; what was missing was the
+cross-expiry detector shape, the clean-world guarantee across expiries, and the wiring. ARB-012 is
+built on the genuinely proven rules (puts unconditionally, calls only dividend-free — the first
+derivation's dividend credit was refuted by the clean-world property test), trained by a
+whole-ladder-lift variant under its own strategy, and wired through Explorer, evaluation, and
+diagnosis. Two §45-class world findings were fixed on the way.
 
 ### TQ-B3 — ARB-017 / 019 / 020 (American exercise family)
 

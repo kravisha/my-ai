@@ -28,7 +28,7 @@ from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
 from backend import fi_db, reference_data
-from backend.arbitrage import CostConfig, Opportunity, scan_chain
+from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain
 from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataProvider
 from providers.stored_data import StoredChainProvider, chain_snapshots
 
@@ -289,10 +289,17 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
             continue
 
         candidates = []
-        for chain in chain_snapshots(observation):
+        chains = list(chain_snapshots(observation))
+        for chain in chains:
             for result in scan_chain(chain, costs):
                 if result.net_edge_per_share >= min_net_edge:
                     candidates.append(result)
+        # The cross-expiry scan (ARB-012, §56) over the same chains, behind
+        # the same min-edge lens - one bar for the whole library until
+        # grades distinguish detector families (§46's own deferral).
+        for result in scan_calendar(chains, costs):
+            if result.net_edge_per_share >= min_net_edge:
+                candidates.append(result)
         if not candidates:
             continue
 
@@ -330,6 +337,7 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
             run_id=observation.provenance.run_id, scenario_id=observation.provenance.scenario_id,
             lens_artifact_id=lens_artifact_id,
             detector_id=opportunity.detector_id, strike2=strike2, strike3=strike3,
+            expiry2_days=opportunity.inputs.get("expiry2_days"),
         )
 
         if fi_db.has_pending_report(conn, identity, security):

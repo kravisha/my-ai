@@ -21,19 +21,25 @@ than only stated as a rule). The ninth variant, 'none', injects nothing -
 false-positive material, the same role Stage 1's zero-plant worlds play
 (simulation/stage1.py).
 
-The two families train different detectors: the six original variants train
-ARB-001 (put-call parity, one strike, one expiry); the three cross-strike
-variants (`cross_strike_bump`/`cross_strike_dip`/
+The three families train different detectors: the six original variants
+train ARB-001 (put-call parity, one strike, one expiry); the three
+cross-strike variants (`cross_strike_bump`/`cross_strike_dip`/
 `cross_strike_spread_artifact`) train backend/arbitrage.py's Phase 1
 cross-strike detectors (ARB-006 through ARB-011) via a same-strike parallel
 shift that leaves parity at the shifted strike exactly invariant while
 breaking monotonicity/vertical/box/butterfly bounds against the neighboring
-strike - see the module note above `_inject_cross_bump` for the algebra.
-`STRATEGIES` offers both a `put_call_parity_arbitrage` mission (the original
-six variants, unchanged default mix) and an `options_arbitrage_phase1`
-mission (a default mix spanning both families) - a mix is explicit operator
-intent either way, so any variant is allowed under either strategy; only the
-per-strategy *default* differs.
+strike - see the module note above `_inject_cross_bump` for the algebra;
+and the two calendar variants (`calendar_bump`/`calendar_spread_artifact`,
+SPEC_RECONCILIATION §56) train ARB-012 via a whole-ladder parallel lift of
+the near expiry that extends the same algebra one level up - parity and
+every same-expiry relation exactly invariant, only the cross-expiry
+relations move. `STRATEGIES` offers a `put_call_parity_arbitrage` mission
+(the original six variants, unchanged default mix), an
+`options_arbitrage_phase1` mission (a default mix spanning the first two
+families), and an `options_arbitrage_calendar` mission (a default mix led
+by the calendar variants) - a mix is explicit operator intent in every
+case, so any variant is allowed under any strategy; only the per-strategy
+*default* differs.
 
 The simulator's own answer key is backend/arbitrage.py's `scan_chain` run
 over every expiry's strike ladder - the organization's own chain-level
@@ -88,7 +94,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend import reference_data
-from backend.arbitrage import ChainSnapshot, CostConfig, Opportunity, Quote, StrikeQuotes, scan_chain
+from backend.arbitrage import ChainSnapshot, CostConfig, Opportunity, Quote, StrikeQuotes, scan_calendar, scan_chain
 from backend.canonical import Observation, Provenance
 from backend.db import parse_timestamp
 # Aliased, not `from backend import observations`: this module defines its
@@ -107,7 +113,8 @@ from simulation import pricing
 # tuple entry, per SS44's own extensibility claim, not a redesign.
 STRATEGY_PARITY = "put_call_parity_arbitrage"
 STRATEGY_CROSS_STRIKE = "options_arbitrage_phase1"
-STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE)
+STRATEGY_CALENDAR = "options_arbitrage_calendar"
+STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE, STRATEGY_CALENDAR)
 
 # A convention, not a measurement: an arbitrary fixed Monday afternoon inside
 # a nominal equity session. Every timestamp a run produces derives from this
@@ -149,10 +156,28 @@ VARIANT_CROSS_DIP = "cross_strike_dip"
 VARIANT_CROSS_SPREAD_ARTIFACT = "cross_strike_spread_artifact"
 CROSS_GENUINE_VARIANTS = (VARIANT_CROSS_BUMP, VARIANT_CROSS_DIP)
 
-VARIANTS = PARITY_VARIANTS + CROSS_GENUINE_VARIANTS + (VARIANT_CROSS_SPREAD_ARTIFACT,)
+# The two calendar variants (ARB-012's training world, SPEC_RECONCILIATION
+# §56): a whole-ladder parallel lift - every near-expiry cell's call AND put
+# mid raised by one constant, half-spreads unchanged. The algebra extends
+# §45/§46's same-strike shift one level up: a per-strike parallel shift
+# preserves parity at that strike; applying the *same* shift to every strike
+# of one expiry additionally preserves every same-expiry cross-strike
+# relation (verticals, monotonicity, butterflies, boxes are differences of
+# same-expiry prices, all shift-invariant), so the only executable
+# relations that move are the cross-expiry ones - ARB-012's, exactly.
+# 'calendar_bump' is the genuine variant; 'calendar_spread_artifact' is the
+# trap: the same lift, erased by widening every near-expiry cell's spread
+# until the organization's own scan_calendar finds nothing.
+VARIANT_CALENDAR_BUMP = "calendar_bump"
+VARIANT_CALENDAR_SPREAD_ARTIFACT = "calendar_spread_artifact"
+
+VARIANTS = (
+    PARITY_VARIANTS + CROSS_GENUINE_VARIANTS
+    + (VARIANT_CROSS_SPREAD_ARTIFACT, VARIANT_CALENDAR_BUMP, VARIANT_CALENDAR_SPREAD_ARTIFACT)
+)
 TRAP_VARIANTS = (
     VARIANT_SPREAD_ARTIFACT, VARIANT_CARRY_EFFECT, VARIANT_BORROW_COST, VARIANT_STALE_QUOTE,
-    VARIANT_CROSS_SPREAD_ARTIFACT,
+    VARIANT_CROSS_SPREAD_ARTIFACT, VARIANT_CALENDAR_SPREAD_ARTIFACT,
 )
 
 # Equal weight per variant - a convention (scenario diversity, addendum 25
@@ -183,9 +208,26 @@ DEFAULT_SCENARIO_MIX_CROSS = {
     VARIANT_NONE: 0.10,
 }
 
+# The calendar strategy's default curriculum, same disclosure discipline as
+# the two above: the calendar variants carry the largest share (they are the
+# strategy's point), with parity and cross-strike material kept present so a
+# calendar-trained run still exercises the rest of the library, and 'none'
+# for false-positive material. Weights sum to 1.0.
+DEFAULT_SCENARIO_MIX_CALENDAR = {
+    VARIANT_CALENDAR_BUMP: 0.30,
+    VARIANT_CALENDAR_SPREAD_ARTIFACT: 0.15,
+    VARIANT_GENUINE: 0.125,
+    VARIANT_CROSS_BUMP: 0.10,
+    VARIANT_SPREAD_ARTIFACT: 0.075,
+    VARIANT_BORROW_COST: 0.075,
+    VARIANT_STALE_QUOTE: 0.075,
+    VARIANT_NONE: 0.10,
+}
+
 DEFAULT_SCENARIO_MIX_BY_STRATEGY = {
     STRATEGY_PARITY: DEFAULT_SCENARIO_MIX,
     STRATEGY_CROSS_STRIKE: DEFAULT_SCENARIO_MIX_CROSS,
+    STRATEGY_CALENDAR: DEFAULT_SCENARIO_MIX_CALENDAR,
 }
 
 # Strike grid as moneyness (K/S - 1) and listed expiries in days - both
@@ -455,9 +497,10 @@ class GroundTruth:
     # under a new name, so every variant's "the strike that matters most"
     # lives in one field.
     affected_strikes: list | None = None
-    # 'cross_strike' for the two genuine cross variants (bump/dip); None for
-    # every other variant, trap included - the trap's whole point is that it
-    # looks like the bump but resolves to no opportunity, so it carries no
+    # 'cross_strike' for the two genuine cross variants (bump/dip),
+    # 'calendar' for the genuine calendar bump (§56); None for every other
+    # variant, traps included - a trap's whole point is that it looks like
+    # its genuine sibling but resolves to no opportunity, so it carries no
     # expected family to grade against.
     expected_family: str | None = None
 
@@ -559,6 +602,58 @@ def _build_rows(rng: random.Random, spot: float, r: float, q: float, skew: Skew,
 _INJECTION_COSTS = CostConfig()  # the detector's own defaults - what the answer key will actually charge
 
 
+def _trial_chains(rows: list[ChainRow], underlying: Quote, r: float, q: float, spot: float,
+                  borrow_fee_annual: float | None, as_of: str) -> list[ChainSnapshot]:
+    """Every expiry's ladder from a candidate `rows` list, as the trial
+    ChainSnapshots the injectors' verification loops scan. One expiry's
+    chain used to be enough; once the answer key grew scan_calendar
+    (ARB-012, SPEC_RECONCILIATION §56), a trap erased at its own expiry
+    could still leak a cross-expiry package - the §46 lesson (injectors leak
+    into whatever relations the answer key learns to check next) repeating
+    one level up, closed the same way: verify against the organization's own
+    scan, over everything the scan can see."""
+    rows_by_expiry: dict[int, list[ChainRow]] = {}
+    for row in rows:
+        rows_by_expiry.setdefault(row.expiry_days, []).append(row)
+    chains = []
+    for expiry_days in sorted(rows_by_expiry):
+        ladder = sorted(rows_by_expiry[expiry_days], key=lambda row: row.strike)
+        chains.append(ChainSnapshot(
+            entity_id="_trial", symbol="_trial", expiry_days=expiry_days, style="european",
+            as_of=as_of, underlying=underlying, r=r,
+            pv_div=pricing.pv_div(spot, q, expiry_days / 365),
+            borrow_fee_annual=borrow_fee_annual,
+            strikes=tuple(StrikeQuotes(strike=row.strike, call=row.call, put=row.put) for row in ladder),
+        ))
+    return chains
+
+
+def _touches_cell(opportunity: Opportunity, strike: float, expiry_days: int) -> bool:
+    """Whether a scan_chain or scan_calendar package trades a leg at this
+    (strike, expiry) cell - the survivor filter the widening loops use, so a
+    trap widens for exactly the leakage its own shifted cell causes."""
+    inputs = opportunity.inputs
+    if opportunity.detector_id == "ARB-012":
+        return (inputs["k1"] == strike and inputs["expiry_days"] == expiry_days) or \
+            (inputs["k2"] == strike and inputs["expiry2_days"] == expiry_days)
+    if inputs.get("expiry_days") != expiry_days:
+        return False
+    return strike in {inputs.get("strike", inputs.get("k1")), inputs.get("k2"), inputs.get("k3")}
+
+
+def _surviving_through_cell(rows: list[ChainRow], underlying: Quote, r: float, q: float, spot: float,
+                            borrow_fee_annual: float | None, as_of: str,
+                            strike: float, expiry_days: int) -> list[Opportunity]:
+    """The full-library survivors a trap's shifted cell still causes: the
+    cell's own expiry scanned with scan_chain plus every cross-expiry pair
+    scanned with scan_calendar, filtered to packages trading that cell."""
+    chains = _trial_chains(rows, underlying, r, q, spot, borrow_fee_annual, as_of)
+    own = next(chain for chain in chains if chain.expiry_days == expiry_days)
+    found = list(scan_chain(own, _INJECTION_COSTS))
+    found.extend(scan_calendar(chains, _INJECTION_COSTS))
+    return [o for o in found if _touches_cell(o, strike, expiry_days)]
+
+
 def _conversion_net_at_zero_shift(row: ChainRow, r: float, pv_div_value: float, underlying: Quote) -> float:
     t_years = row.expiry_days / 365
     pvk = row.strike * math.exp(-r * t_years)
@@ -650,31 +745,22 @@ def _inject_spread_artifact(rng: random.Random, rows: list[ChainRow], idx: int, 
     base_at_zero_extra = call_mid - put_mid - underlying.ask + pv_div_value + pvk - _INJECTION_COSTS.total_per_share
     required_hs = max(call_hs, put_hs, base_at_zero_extra / 2 + 0.01)
 
-    same_expiry = sorted((other for other in rows if other.expiry_days == row.expiry_days), key=lambda o: o.strike)
+    def _trial_rows(hs: float) -> list[ChainRow]:
+        trial = replace(row, call=_requote_keep_sizes(call_mid, hs, row.call),
+                        put=_requote_keep_sizes(put_mid, hs, row.put))
+        candidate = list(rows)
+        candidate[idx] = trial
+        return candidate
 
-    def _trial_chain(hs: float) -> ChainSnapshot:
-        trial_call = _requote_keep_sizes(call_mid, hs, row.call)
-        trial_put = _requote_keep_sizes(put_mid, hs, row.put)
-        strikes = tuple(
-            StrikeQuotes(
-                strike=other.strike,
-                call=trial_call if other.strike == row.strike else other.call,
-                put=trial_put if other.strike == row.strike else other.put,
-            )
-            for other in same_expiry
-        )
-        return ChainSnapshot(
-            entity_id="_spread_artifact_trial", symbol="_trial", expiry_days=row.expiry_days, style="european",
-            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
-            borrow_fee_annual=borrow_fee_annual, strikes=strikes,
-        )
-
+    # The verification scan is now the whole library over every expiry, not
+    # just this row's own ladder - see _trial_chains' docstring for the §56
+    # cross-expiry leak this closes (a widened cell whose bid still sat
+    # above a longer expiry's ask was invisible to the same-expiry scan).
     for _ in range(50):
-        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
-        surviving = [
-            o for o in opportunities
-            if row.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
-        ]
+        surviving = _surviving_through_cell(
+            _trial_rows(required_hs), underlying, r, q, spot, borrow_fee_annual,
+            config.base_time, row.strike, row.expiry_days,
+        )
         if not surviving:
             break
         required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
@@ -736,32 +822,22 @@ def _inject_borrow_cost(rng: random.Random, rows: list[ChainRow], idx: int, spot
     required_borrow = pre_borrow_net_after / (underlying.bid * t_years)
     override_borrow_fee = required_borrow + 0.01  # enough surplus to make the post-borrow edge strictly negative
 
-    same_expiry = sorted((other for other in rows if other.expiry_days == row.expiry_days), key=lambda o: o.strike)
     required_hs = max(call_hs, put_hs)
 
-    def _trial_chain(hs: float) -> ChainSnapshot:
-        trial_call = _requote_keep_sizes(call_mid, hs, row.call)
-        trial_put = _requote_keep_sizes(put_mid, hs, row.put)
-        strikes = tuple(
-            StrikeQuotes(
-                strike=other.strike,
-                call=trial_call if other.strike == row.strike else other.call,
-                put=trial_put if other.strike == row.strike else other.put,
-            )
-            for other in same_expiry
-        )
-        return ChainSnapshot(
-            entity_id="_borrow_cost_trial", symbol="_trial", expiry_days=row.expiry_days, style="european",
-            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
-            borrow_fee_annual=override_borrow_fee, strikes=strikes,
-        )
+    def _trial_rows(hs: float) -> list[ChainRow]:
+        trial = replace(row, call=_requote_keep_sizes(call_mid, hs, row.call),
+                        put=_requote_keep_sizes(put_mid, hs, row.put))
+        candidate = list(rows)
+        candidate[idx] = trial
+        return candidate
 
+    # Whole-library, every-expiry verification - same §56 reasoning as
+    # _inject_spread_artifact's loop above.
     for _ in range(50):
-        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
-        surviving = [
-            o for o in opportunities
-            if row.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
-        ]
+        surviving = _surviving_through_cell(
+            _trial_rows(required_hs), underlying, r, q, spot, override_borrow_fee,
+            config.base_time, row.strike, row.expiry_days,
+        )
         if not surviving:
             break
         required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
@@ -935,8 +1011,8 @@ def _inject_cross_dip(
 
 
 def _inject_cross_spread_artifact(
-    rng: random.Random, rows: list[ChainRow], idx_prev: int, idx_mid: int, r: float,
-    pv_div_value: float, underlying: Quote, borrow_fee_annual: float | None, config: MissionConfig,
+    rng: random.Random, rows: list[ChainRow], idx_prev: int, idx_mid: int, r: float, q: float,
+    spot: float, underlying: Quote, borrow_fee_annual: float | None, config: MissionConfig,
 ) -> tuple[list[ChainRow], float]:
     """The bump's own shift (same package/floor as _inject_cross_bump), then
     a shared half-spread at k_mid widened until the whole 30-day chain scans
@@ -961,7 +1037,11 @@ def _inject_cross_spread_artifact(
     a co-drawn 'localized_distortion' skew bump elsewhere in the chain,
     docs/SPEC_RECONCILIATION.md SS45's first finding) is left alone: no
     amount of widening at k_mid could erase a violation that never touched
-    it, and this injector's job is only the shift it itself planted."""
+    it, and this injector's job is only the shift it itself planted.
+
+    §56: the verification scan is now _surviving_through_cell - the whole
+    library over every expiry, calendar packages included - because the
+    parallel shift also lifts this 30-day cell against the 60-day ladder."""
     row_prev, row_mid = rows[idx_prev], rows[idx_mid]
     costs2 = _INJECTION_COSTS.for_legs(2)
     t_years = 30 / 365
@@ -984,31 +1064,21 @@ def _inject_cross_spread_artifact(
     hs_put_vertical_upper = put_mid_shifted - row_prev.put.ask - pv_width - costs2 + 0.01
     required_hs = max(call_hs, put_hs, hs_monotonicity, hs_put_vertical_upper)
 
-    thirty_day = sorted((row for row in rows if row.expiry_days == 30), key=lambda row: row.strike)
+    def _trial_rows(hs: float) -> list[ChainRow]:
+        trial = replace(row_mid, call=_requote_keep_sizes(call_mid_shifted, hs, row_mid.call),
+                        put=_requote_keep_sizes(put_mid_shifted, hs, row_mid.put))
+        candidate = list(rows)
+        candidate[idx_mid] = trial
+        return candidate
 
-    def _trial_chain(hs: float) -> ChainSnapshot:
-        trial_call = _requote_keep_sizes(call_mid_shifted, hs, row_mid.call)
-        trial_put = _requote_keep_sizes(put_mid_shifted, hs, row_mid.put)
-        strikes = tuple(
-            StrikeQuotes(
-                strike=row.strike,
-                call=trial_call if row.strike == row_mid.strike else row.call,
-                put=trial_put if row.strike == row_mid.strike else row.put,
-            )
-            for row in thirty_day
-        )
-        return ChainSnapshot(
-            entity_id="_cross_spread_artifact_trial", symbol="_trial", expiry_days=30, style="european",
-            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
-            borrow_fee_annual=borrow_fee_annual, strikes=strikes,
-        )
-
+    # Whole-library, every-expiry verification (§56): the parallel shift at
+    # k_mid also lifts the 30-day cell against the 60-day ladder, which the
+    # 30-day-only scan this loop used to run could never see.
     for _ in range(50):
-        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
-        surviving = [
-            o for o in opportunities
-            if row_mid.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
-        ]
+        surviving = _surviving_through_cell(
+            _trial_rows(required_hs), underlying, r, q, spot, borrow_fee_annual,
+            config.base_time, row_mid.strike, 30,
+        )
         if not surviving:
             break
         required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
@@ -1024,6 +1094,132 @@ def _inject_cross_spread_artifact(
     rows = list(rows)
     rows[idx_mid] = new_row
     return rows, deviation
+
+
+def _lift_expiry(rows: list[ChainRow], expiry_days: int, lift: float) -> list[ChainRow]:
+    """Every cell at one expiry, both legs' mids shifted by the same amount,
+    half-spreads/sizes/timestamps untouched - the whole-ladder parallel lift
+    whose invariances the calendar variants rest on (module note above
+    VARIANT_CALENDAR_BUMP)."""
+    lifted = []
+    for row in rows:
+        if row.expiry_days != expiry_days:
+            lifted.append(row)
+            continue
+        call_mid, call_hs = _mid_and_half_spread(row.call)
+        put_mid, put_hs = _mid_and_half_spread(row.put)
+        lifted.append(replace(
+            row,
+            call=_requote_keep_sizes(call_mid + lift, call_hs, row.call),
+            put=_requote_keep_sizes(put_mid + lift, put_hs, row.put),
+        ))
+    return lifted
+
+
+def _calendar_lift_floor(rows: list[ChainRow], spot: float, r: float, q: float) -> float:
+    """The smallest lift that makes the ATM same-strike near-vs-middle PUT
+    package clear strictly: deviation > P_far_ask - P_near_bid + slack_p +
+    costs, with slack_p per detect_arb012's own proven-rule derivation
+    (backend/arbitrage.py). The put side, deliberately: it is the side with
+    an unconditional proven rule - the call side is only scoreable on a
+    dividend-free chain, and this world usually carries a dividend yield.
+    Mirrors the detector's arithmetic so the floor and the answer key
+    cannot disagree about what "clears" means."""
+    near_expiry, far_expiry = EXPIRY_DAYS[0], EXPIRY_DAYS[1]
+    near_atm = rows[_locate_row(rows, expiry_days=near_expiry, moneyness=0.00)]
+    far_atm = rows[_locate_row(rows, expiry_days=far_expiry, moneyness=0.00)]
+    df1 = math.exp(-r * near_expiry / 365)
+    df2 = math.exp(-r * far_expiry / 365)
+    slack_p = max(0.0, near_atm.strike * df1 - far_atm.strike * df2)
+    return far_atm.put.ask - near_atm.put.bid + slack_p + _INJECTION_COSTS.for_legs(2)
+
+
+def _inject_calendar_bump(rng: random.Random, rows: list[ChainRow], spot: float, r: float, q: float,
+                          underlying: Quote, borrow_fee_annual: float | None,
+                          config: MissionConfig) -> tuple[list[ChainRow], float]:
+    """The genuine calendar variant (§56): lift the whole near-expiry ladder.
+
+    Invariances, by the same algebra as the cross-strike shift one level up:
+    parity at every strike (call and put shifted equally), every same-expiry
+    cross-strike relation (all are differences of same-expiry prices, and
+    every cell moved by the same constant), and the parity-implied dividend/
+    financing (C-P unchanged). What moves is exactly the cross-expiry
+    relation ARB-012 prices - so an ARB-001 or cross-strike detection on a
+    calendar scenario is a world-integrity alarm, verified below with the
+    organization's own scans rather than trusted to the algebra: rounding
+    and the 0.01 bid floor are exactly the kind of seam §46 found closed
+    forms leaking through."""
+    near_expiry = EXPIRY_DAYS[0]
+    floor = _calendar_lift_floor(rows, spot, r, q)
+    deviation = max(rng.uniform(*config.deviation_range), floor + 0.05)
+    lifted = _lift_expiry(rows, near_expiry, deviation)
+
+    chains = _trial_chains(lifted, underlying, r, q, spot, borrow_fee_annual, config.base_time)
+    for chain in chains:
+        leaked = scan_chain(chain, _INJECTION_COSTS)
+        if leaked:  # pragma: no cover - world-integrity check, not expected to trigger
+            raise RuntimeError(
+                f"calendar bump leaked {len(leaked)} same-expiry package(s) at "
+                f"expiry_days={chain.expiry_days} (first: {leaked[0].detector_id} "
+                f"{leaked[0].direction}) - the parallel-lift invariance failed"
+            )
+    fired = scan_calendar(chains, _INJECTION_COSTS)
+    if not any(o.inputs["expiry_days"] == near_expiry for o in fired):  # pragma: no cover - same
+        raise RuntimeError(
+            f"calendar bump of {deviation:.4f} produced no ARB-012 package through the "
+            f"{near_expiry}d ladder - the lift floor is wrong"
+        )
+    return lifted, deviation
+
+
+def _inject_calendar_spread_artifact(rng: random.Random, rows: list[ChainRow], spot: float, r: float,
+                                     q: float, underlying: Quote, borrow_fee_annual: float | None,
+                                     config: MissionConfig) -> tuple[list[ChainRow], float]:
+    """The calendar trap: the same whole-ladder lift, erased by widening
+    every near-expiry cell's spread (both legs, an extra shared half-spread)
+    until scan_calendar over all three ladders finds nothing at all. A
+    mid-level calendar inversion the spread swallows - addendum 27's
+    non-negotiable rule, in calendar form.
+
+    Widening a whole ladder uniformly cannot create same-expiry packages
+    (every executable edge is bid-minus-ask arithmetic that only worsens as
+    spreads grow), so the loop's exit condition also asserts the same-expiry
+    scans stayed clean rather than assuming it."""
+    near_expiry = EXPIRY_DAYS[0]
+    floor = _calendar_lift_floor(rows, spot, r, q)
+    deviation = max(rng.uniform(*config.deviation_range), floor + 0.05)
+    lifted = _lift_expiry(rows, near_expiry, deviation)
+
+    extra_hs = deviation / 2
+    for _ in range(50):
+        widened = []
+        for row in lifted:
+            if row.expiry_days != near_expiry:
+                widened.append(row)
+                continue
+            call_mid, call_hs = _mid_and_half_spread(row.call)
+            put_mid, put_hs = _mid_and_half_spread(row.put)
+            widened.append(replace(
+                row,
+                call=_requote_keep_sizes(call_mid, call_hs + extra_hs, row.call),
+                put=_requote_keep_sizes(put_mid, put_hs + extra_hs, row.put),
+            ))
+        chains = _trial_chains(widened, underlying, r, q, spot, borrow_fee_annual, config.base_time)
+        surviving = scan_calendar(chains, _INJECTION_COSTS)
+        if not surviving:
+            for chain in chains:
+                leaked = scan_chain(chain, _INJECTION_COSTS)
+                if leaked:  # pragma: no cover - world-integrity check, not expected to trigger
+                    raise RuntimeError(
+                        f"calendar trap's widening leaked a same-expiry package at "
+                        f"expiry_days={chain.expiry_days}: {leaked[0].detector_id}"
+                    )
+            return widened, deviation
+        extra_hs += max(o.net_edge_per_share for o in surviving) + 0.05
+    raise RuntimeError(  # pragma: no cover - safety valve, not expected to trigger
+        f"calendar trap failed to converge to zero calendar packages after 50 widening "
+        f"iterations (lift={deviation:.4f})"
+    )
 
 
 # --- chatter (addendum 25 SS11/SS12) --------------------------------------------
@@ -1089,6 +1285,33 @@ def _generate_chatter(rng: random.Random, gt: GroundTruth, focus_assets: list[di
 # --- scenario assembly ----------------------------------------------------------
 
 
+def _skew_renders_clean(skew: Skew, config: MissionConfig, index: int, spot: float, r: float,
+                        q: float, borrow_fee: float | None) -> bool:
+    """Whether a candidate skew, rendered into a full trial world, scans
+    clean - scan_chain on every expiry AND scan_calendar across them.
+
+    Shape-based exclusion stopped being enough the day the answer key
+    learned ARB-012 (§56): 'localized_distortion' was the one shape known to
+    violate same-expiry bounds (§45's first finding), but a steep term-
+    structure skew can genuinely violate CALENDAR bounds - the generator
+    prices each expiry's IV independently and nothing ever constrained the
+    cross-expiry surface. Same class of finding one level up, closed the
+    same way as everything since §46: verify with the organization's own
+    scans, not with a hand-enumerated list of dangerous shapes.
+
+    The trial rows use their own derived rng (sizes only - sizes never move
+    an edge), so probing a candidate skew consumes nothing from the main
+    per-scenario stream and determinism is untouched."""
+    trial_rng = random.Random(f"{config.seed}:scenario:{index}:clean-trial")
+    trial_underlying = _build_underlying_quote(trial_rng, spot, config.spread_pct, config.base_time)
+    trial_rows = _build_rows(trial_rng, spot, r, q, skew, config.spread_pct, config.base_time)
+    chains = _trial_chains(trial_rows, trial_underlying, r, q, spot, borrow_fee, config.base_time)
+    for chain in chains:
+        if scan_chain(chain, _INJECTION_COSTS):
+            return False
+    return not scan_calendar(chains, _INJECTION_COSTS)
+
+
 def _build_scenario(
     config: MissionConfig, focus_assets: list[dict], index: int, forced_asset: dict | None = None,
 ) -> ScenarioWorld:
@@ -1114,7 +1337,7 @@ def _build_scenario(
         q = config.q_range[1]
     borrow_fee = rng.uniform(*config.borrow_fee_range)
     skew = draw_skew(rng)
-    if variant == VARIANT_NONE or variant in TRAP_VARIANTS:
+    if variant == VARIANT_NONE or variant in TRAP_VARIANTS or variant == VARIANT_CALENDAR_BUMP:
         # SS45's first finding: 'localized_distortion' is not itself an
         # injection, but its isolated IV mountain genuinely violates
         # cross-strike bounds around the bumped cell regardless of what (if
@@ -1132,9 +1355,33 @@ def _build_scenario(
         # scenario's own skew keeps drawing 'localized_distortion' exactly
         # as before - richness helps there, where ground truth already
         # expects a real opportunity.
+        #
+        # The genuine calendar bump (§56) joins the redraw even though it is
+        # not a clean-world variant: its 'calendar' family grades ANY
+        # same-expiry detection as world drift ('unexpected_same_expiry_hit'),
+        # a stronger promise than the cross family's primary-strike matching
+        # can absorb - a distortion's pre-existing cross-strike violation
+        # would poison the grade with a failure the lift never caused. Same
+        # instrument (skew diversity minus one shape), same reason (ground
+        # truth must not promise what the drawn world contradicts).
         clean_rng = random.Random(f"{config.seed}:scenario:{index}:clean-skew")
-        while skew.shape == "localized_distortion":
+        # Two rejection criteria: the shape §45 identified (kept explicit, so
+        # the guarantee does not silently rest on the property check alone),
+        # and the rendered-world property itself (§56 - see
+        # _skew_renders_clean for why shapes stopped being enough). Bounded:
+        # most draws pass on the first try, and a failure to find any clean
+        # skew in 200 draws would mean the generator itself has drifted.
+        for _ in range(200):
+            if skew.shape != "localized_distortion" and _skew_renders_clean(
+                skew, config, index, spot, r, q, borrow_fee,
+            ):
+                break
             skew = draw_skew(clean_rng)
+        else:  # pragma: no cover - safety valve, not expected to trigger
+            raise RuntimeError(
+                f"no clean skew found in 200 draws for scenario index {index} "
+                f"(seed {config.seed}) - the skew generator has drifted"
+            )
 
     underlying = _build_underlying_quote(rng, spot, config.spread_pct, config.base_time)
     rows = _build_rows(rng, spot, r, q, skew, config.spread_pct, config.base_time)
@@ -1185,12 +1432,27 @@ def _build_scenario(
         variant = actual_variant
     elif variant == VARIANT_CROSS_SPREAD_ARTIFACT:
         idx_prev, idx_mid = _cross_strike_indices(rows)
-        pv_div_30 = pricing.pv_div(spot, q, 30 / 365)
         rows, injected_deviation = _inject_cross_spread_artifact(
-            rng, rows, idx_prev, idx_mid, r, pv_div_30, underlying, borrow_fee, config,
+            rng, rows, idx_prev, idx_mid, r, q, spot, underlying, borrow_fee, config,
         )
         affected_strike, affected_expiry_days = rows[idx_mid].strike, 30
         affected_strikes = [rows[idx_prev].strike, rows[idx_mid].strike]
+    elif variant == VARIANT_CALENDAR_BUMP:
+        rows, injected_deviation = _inject_calendar_bump(
+            rng, rows, spot, r, q, underlying, borrow_fee, config,
+        )
+        # The whole near ladder is lifted, so there is no single affected
+        # strike - the affected *expiry* is the identity the evaluator keys
+        # on. affected_strike deliberately stays None rather than electing
+        # an arbitrary strike a grader might then wrongly require.
+        affected_expiry_days = EXPIRY_DAYS[0]
+        expected_executable = True
+        expected_family = "calendar"
+    elif variant == VARIANT_CALENDAR_SPREAD_ARTIFACT:
+        rows, injected_deviation = _inject_calendar_spread_artifact(
+            rng, rows, spot, r, q, underlying, borrow_fee, config,
+        )
+        affected_expiry_days = EXPIRY_DAYS[0]
     # VARIANT_NONE: nothing injected.
 
     ground_truth = GroundTruth(
@@ -1326,8 +1588,13 @@ def answer_key(scenario: ScenarioWorld, config: MissionConfig) -> list[Opportuni
     already knows how to run."""
     costs = CostConfig()
     opportunities: list[Opportunity] = []
-    for chain in _chain_snapshots_from_scenario(scenario, config):
+    chains = _chain_snapshots_from_scenario(scenario, config)
+    for chain in chains:
         opportunities.extend(scan_chain(chain, costs, stale_tolerance_seconds=config.stale_tolerance_seconds))
+    # §56: the answer key grew scan_calendar the day ARB-012 did - the same
+    # entry point Explorer's _parity_work runs, so world and organization
+    # keep judging the same relations.
+    opportunities.extend(scan_calendar(chains, costs, stale_tolerance_seconds=config.stale_tolerance_seconds))
     return opportunities
 
 
@@ -1338,6 +1605,8 @@ def _detection_record(o: Opportunity) -> dict:
         "strike": o.inputs.get("strike", o.inputs.get("k1")),
         "k2": o.inputs.get("k2"), "k3": o.inputs.get("k3"),
         "expiry_days": o.inputs.get("expiry_days"),
+        # ARB-012's far leg (§56); None for every single-expiry package.
+        "expiry2_days": o.inputs.get("expiry2_days"),
     }
 
 
@@ -1346,9 +1615,10 @@ def _detection_strikes(detection: dict) -> set:
 
 
 def evaluate(scenario: ScenarioWorld, opportunities: list[Opportunity]) -> dict:
-    """Grade one scenario's scan_chain output against its ground truth.
+    """Grade one scenario's answer-key output against its ground truth.
 
-    Two families, by `gt.expected_family`:
+    Three families, by `gt.expected_family` ('calendar' documented at its
+    own branch above the cross-strike one):
 
     - 'cross_strike' (the two genuine cross variants, SS45's deferred item):
       PASS needs >=1 non-ARB-001 opportunity whose strikes include the
@@ -1366,6 +1636,35 @@ def evaluate(scenario: ScenarioWorld, opportunities: list[Opportunity]) -> dict:
       trap or 'none' scenario needs zero detections at all, of anything."""
     gt = scenario.ground_truth
     detections = [_detection_record(o) for o in opportunities]
+
+    if gt.expected_family == "calendar":
+        # §56: the whole-ladder lift preserves parity and every same-expiry
+        # relation exactly, so ANY non-ARB-012 detection is the world
+        # drifting from that invariance - graded as its own named failure,
+        # not as a stray. A matching detection is an ARB-012 package whose
+        # near leg sits at the lifted expiry; an ARB-012 through some other
+        # expiry pair would be a stray the injector should not have
+        # produced.
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        same_expiry_hits = [d for d in detections if d["detector_id"] not in ("ARB-001", "ARB-012")]
+        calendar_hits = [d for d in detections if d["detector_id"] == "ARB-012"]
+        matching = [d for d in calendar_hits if d["expiry_days"] == gt.affected_expiry_days]
+        stray = [d for d in calendar_hits if d["expiry_days"] != gt.affected_expiry_days]
+
+        if arb001_hits:
+            outcome, reasons = "FAIL", ["unexpected_parity_hit"]
+        elif same_expiry_hits:
+            outcome, reasons = "FAIL", ["unexpected_same_expiry_hit"]
+        elif stray:
+            outcome, reasons = "FAIL", ["stray_detection"]
+        elif matching:
+            outcome, reasons = "PASS", []
+        else:
+            outcome, reasons = "FAIL", ["injection_missed"]
+        return {
+            "scenario_id": scenario.scenario_id, "ground_truth": asdict(gt),
+            "detections": detections, "outcome": outcome, "reasons": reasons,
+        }
 
     if gt.expected_family == "cross_strike":
         arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
@@ -1545,11 +1844,13 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     # "genuine" for strategy-coverage purposes (addendum 25 SS18) means any
     # variant the mix could produce a real, floored opportunity from - the
     # original single VARIANT_GENUINE plus the two cross-strike genuine
-    # variants (SS45's deferred item), since options_arbitrage_phase1's own
-    # curriculum may never draw the classic parity genuine at all and still
-    # deserves to certify COMPLETED once it exercises its own material.
+    # variants (SS45's deferred item) plus the calendar bump (§56), since a
+    # strategy's own curriculum may never draw the classic parity genuine at
+    # all and still deserves to certify COMPLETED once it exercises its own
+    # material.
     def _is_genuine(variant: str) -> bool:
-        return variant == VARIANT_GENUINE or variant in CROSS_GENUINE_VARIANTS
+        return (variant == VARIANT_GENUINE or variant in CROSS_GENUINE_VARIANTS
+                or variant == VARIANT_CALENDAR_BUMP)
 
     strategy_exercised = any(
         _is_genuine(report["ground_truth"]["variant"]) and report["outcome"] == "PASS"

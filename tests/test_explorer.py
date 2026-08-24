@@ -817,3 +817,34 @@ def test_parity_work_on_a_genuine_world_still_prefers_arb001_unchanged(conn, mon
         assert event["direction"] in ("conversion", "reversal")
         assert event["strike2"] is None
         assert event["strike3"] is None
+
+
+def test_parity_work_on_a_calendar_world_records_an_arb012_event_with_both_expiries(conn, tmp_path):
+    """A stored calendar_bump world (§56): `_parity_work` now also runs
+    scan_calendar over the same chains, so the event it records is an
+    ARB-012 package carrying both legs' expiries - the near leg in the
+    historical expiry_days slot, the far leg in expiry2_days - and the
+    escalated finding names the detector."""
+    config = pw.MissionConfig(
+        mission_id="m-exp-calendar", run_mode="simulation", strategy=pw.STRATEGY_CALENDAR,
+        seed=3, n_scenarios=1, scenario_mix={pw.VARIANT_CALENDAR_BUMP: 1.0},
+    )
+    rd.run_reference_engine(conn)
+    pw.store_world(conn, config, runs_dir=tmp_path)
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    events = conn.fetchall("SELECT * FROM parity_events")
+    assert len(events) == 1
+    event = events[0]
+    assert event["detector_id"] == "ARB-012"
+    assert event["classification"] == "C"
+    assert event["expiry_days"] == pw.EXPIRY_DAYS[0]
+    assert event["expiry2_days"] in pw.EXPIRY_DAYS[1:]
+    assert event["direction"] in ("put_calendar", "call_calendar")
+
+    cross_checks = conn.fetchall("SELECT * FROM cross_check_requests")
+    assert len(cross_checks) == 1
+    finding = json.loads(cross_checks[0]["requester_finding"])
+    assert finding["detector_id"] == "ARB-012"
+    assert "ARB-012" in cross_checks[0]["question"]

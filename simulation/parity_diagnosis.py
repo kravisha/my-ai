@@ -77,11 +77,11 @@ from pathlib import Path
 from agents.discovery_config import ANALYSIS_RECENCY_WINDOW_SECONDS
 from backend import fi_db
 from backend import observations as observation_store
-from backend.arbitrage import CostConfig, Opportunity, scan_chain
+from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain
 from providers.stored_data import chain_snapshots
 from simulation.parity_evaluation import (
     OUTCOME_FAIL, OUTCOME_INCONCLUSIVE, OUTCOME_PARTIAL, OUTCOME_PASS,
-    REASON_STRAY_DETECTION, REASON_UNEXPECTED_PARITY_HIT,
+    REASON_STRAY_DETECTION, REASON_UNEXPECTED_PARITY_HIT, REASON_UNEXPECTED_SAME_EXPIRY_HIT,
 )
 
 # How long a report may sit pending before this module calls it stalled
@@ -278,8 +278,13 @@ def _offline_differential(conn, entity_id: str, scenario_id: str) -> tuple[list,
     chain_observation = chain_rows[-1]
     costs = CostConfig()
     offline_opportunities: list[Opportunity] = []
-    for chain in chain_snapshots(chain_observation):
+    chains = list(chain_snapshots(chain_observation))
+    for chain in chains:
         offline_opportunities.extend(scan_chain(chain, costs))
+    # The cross-expiry scan too (ARB-012, §56) - Explorer runs scan_calendar
+    # over the same chains now, so a differential that skipped it would
+    # misdiagnose every calendar miss as a world problem.
+    offline_opportunities.extend(scan_calendar(chains, costs))
     return chain_rows, offline_opportunities
 
 
@@ -420,18 +425,34 @@ def _diagnose_scenario(conn, mission_id: str, entry: dict, ground_truth: dict) -
             return _result(entry, [cause], COMPONENT_SIMULATION_ENGINE, notes)
         return _result(entry, [CAUSE_DETECTOR_INTERFACE_DRIFT], COMPONENT_INTERFACE, notes)
 
-    if outcome == OUTCOME_FAIL and reason in (REASON_UNEXPECTED_PARITY_HIT, REASON_STRAY_DETECTION):
-        # SS45's deferred item. The offline re-scan (over every expiry, same
+    if outcome == OUTCOME_FAIL and reason in (
+        REASON_UNEXPECTED_PARITY_HIT, REASON_STRAY_DETECTION, REASON_UNEXPECTED_SAME_EXPIRY_HIT,
+    ):
+        # SS45's deferred item, extended by §56's calendar family. The
+        # offline re-scan (every expiry plus every cross-expiry pair, same
         # mechanism as every other branch here) either confirms the same
         # anomaly Explorer recorded - the injector genuinely failed to
-        # preserve parity or leaked beyond the affected strike, a world
-        # cause - or does not, in which case the disagreement is between
-        # Explorer's recorded detection and the identical detector run
-        # again, the same detector_interface_drift reasoning the
-        # trap/none branch above already uses.
+        # preserve its invariance or leaked beyond the affected cell, a
+        # world cause - or does not, in which case the disagreement is
+        # between Explorer's recorded detection and the identical detector
+        # run again, the same detector_interface_drift reasoning the
+        # trap/none branch above already uses. What "agrees" means is
+        # family-specific, because each reason names a different invariance.
         primary = ground_truth.get("affected_strike")
+        affected_expiry = ground_truth.get("affected_expiry_days")
         if reason == REASON_UNEXPECTED_PARITY_HIT:
             offline_agrees = any(o.detector_id == "ARB-001" for o in offline_opportunities)
+        elif reason == REASON_UNEXPECTED_SAME_EXPIRY_HIT:
+            offline_agrees = any(
+                o.detector_id not in ("ARB-001", "ARB-012") for o in offline_opportunities
+            )
+        elif ground_truth.get("expected_family") == "calendar":
+            # A calendar stray is an ARB-012 through the wrong expiry pair,
+            # not a strike mismatch - the family has no primary strike.
+            offline_agrees = any(
+                o.detector_id == "ARB-012" and o.inputs.get("expiry_days") != affected_expiry
+                for o in offline_opportunities
+            )
         else:
             offline_agrees = any(
                 o.detector_id != "ARB-001"

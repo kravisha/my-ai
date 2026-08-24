@@ -3911,6 +3911,121 @@ grew its `entry_id` stand-in and still walks every route.
 
 ---
 
+## §56 — The calendar detector gets its training world: ARB-012, cross-expiry (2026-08-25)
+
+TQ-B2 unblocked — and its premise corrected first. §55 recorded ARB-012 as
+blocked because "every ChainSnapshot is one expiry's ladder and the world
+generates one expiry per scenario." Half of that was wrong: the world has
+priced **three expiries per scenario from one (spot, r, q, skew) since Day
+Zero** (`EXPIRY_DAYS = (7, 30, 60)`). What was genuinely missing was the
+cross-expiry detector input shape, the clean-world guarantee *across*
+expiries, and the wiring — recorded here so the blocked-entry's error does
+not survive its own resolution.
+
+### The detector: only what is actually proven
+
+Addendum 27's ARB-012 warning ("never hard-code 'longer expiry always
+costs more' ... apply only proven dominance rules") turned out to bind
+harder than the first derivation respected. That derivation credited
+PVDiv(T1,T2] to both sides' slack, valid for deterministic *cash*
+dividends — and the clean-world property test immediately produced a
+counterexample: the world's dividends are a proportional *yield*, and
+`pv_div` promises a PV, not a model. What survives every admissible
+nonnegative dividend process:
+
+- **Puts, unconditionally**: P(K2,T2) ≥ P(K1,T1) − slack_p with
+  slack_p = max(0, K1·DF1 − K2·DF2) and *no dividend credit* — the far
+  put's model-free bound K2·DF(T1,T2) − S1 holds a fortiori under any
+  dividend process, and the shortfall is constant in S1.
+- **Calls, only on a dividend-free chain**: under a proportional yield the
+  far call's bound loses S1·(yield term) and the shortfall is *unbounded*
+  in S1 — no rule exists from prices and a PV alone. With far.pv_div == 0
+  the slack is max(0, K2·DF2 − K1·DF1), which also covers negative rates
+  (ARB-030). A dividend-bearing chain's call inversion is not scored at
+  all — the spec's "otherwise classify as D" arm, left with the
+  reference-data consumer §55 named.
+
+Classification **C**: a genuine no-arbitrage breach whose monetization at
+the near expiry's settlement has path complexity (liquidate the far leg at
+its bound, or re-hedge into stock-and-carry) — nothing pretends the T1
+realization is a contractual cash flow. `scan_calendar` is the cross-expiry
+entry point, parallel to `scan_chain`; `_pair_coherence` makes mismatched
+underlyings a caller error, not a reason code. `parity_events` grew
+`expiry2_days` additively (and its convergence key grew with it — two
+calendar packages at the same strikes differ only by their far leg).
+
+### The world: a whole-ladder lift, and two §45-class findings
+
+The genuine variant (`calendar_bump`) lifts every near-expiry cell's call
+AND put mid by one constant — §45/§46's parallel-shift algebra one level
+up: parity at every strike, every same-expiry cross-strike relation, and
+the parity-implied dividend/financing all exactly invariant; only the
+cross-expiry relations move. The trap (`calendar_spread_artifact`) erases
+the same lift by widening the whole near ladder until `scan_calendar`
+finds nothing. A third strategy (`options_arbitrage_calendar`) carries the
+default curriculum; the evaluator's 'calendar' family grades any
+same-expiry detection as its own named world failure
+(`unexpected_same_expiry_hit`), distinct from a stray ARB-012 through the
+wrong expiry pair.
+
+Building it surfaced two findings of exactly §45's class — the world
+generator's own properties, newly *visible* because the answer key learned
+a new relation:
+
+1. **The generator itself emits real calendar violations.** Each expiry's
+   IV is drawn independently, and a steep term-structure skew genuinely
+   violates the put calendar bound — invisible for as long as nothing
+   checked cross-expiry. Clean-promise variants (none, every trap, and the
+   calendar bump) now redraw their skew until the *rendered world*
+   actually scans clean — `scan_chain` on every expiry plus
+   `scan_calendar` across them — replacing shape-enumeration with the
+   §46 discipline (verify with the organization's own scans). The trial
+   render uses its own derived rng, so probing consumes nothing from the
+   main stream and determinism is untouched.
+2. **The mid-shift trap injectors leaked cross-expiry.** Their
+   widen-until-clean loops verified one expiry's ladder; a widened cell
+   whose bid still sat above a longer expiry's ask was invisible to them.
+   All three (`spread_artifact`, `borrow_cost`,
+   `cross_strike_spread_artifact`) now verify through
+   `_surviving_through_cell` — the whole library over every expiry,
+   filtered to packages trading the shifted cell.
+
+### Wired end to end
+
+Explorer's `_parity_work` runs `scan_calendar` over the same chains behind
+the same min-edge lens (per-family lenses stay deferred per §46, until
+grades distinguish families); the offline diagnosis differential grew the
+same scan (a differential that skipped it would misdiagnose every calendar
+miss as a world problem) plus family-aware agree-checks; the organizational
+evaluation (`parity_evaluation`) walks the same family branch and the same
+escalation ladder as the cross family.
+
+### Verified
+
+Eighteen new tests (1659 passing): the proven-rule arithmetic
+hand-checked on both sides, the dividend-refusal and negative-rate slacks,
+spread/cost adversarial cases, per-package hard stops, pair coherence,
+clean-regime sweeps including the yield-heavy and negative-rate corners,
+the whole-ladder invariance proven at detector level, world property tests
+(bump fully detected with zero co-fire, both traps erased — the calendar
+trap through the *existing* parametrized trap test, which picked the new
+variant up automatically — determinism, strategy registration), Explorer
+recording an ARB-012 event with both expiries, and the organizational
+evaluation's PASS chain and named failure modes. Offline mission: a
+10-scenario `options_arbitrage_calendar` run under the default mixed
+curriculum — **10/10 PASS, COMPLETED, zero false positives**, calendar
+material detected alongside parity, cross-strike, and four trap scenarios.
+
+### Deferred, with reasons
+
+A live-agent mission (real LLM) — this machine's API key is a placeholder;
+the offline mission and the full agent-path tests stand in until a keyed
+run. Per-detector-family lenses and difficulty progression, unchanged from
+§46. ARB-013/014 (forwards), ARB-017/019/020 (American), per the queue's
+blocked entries — the calendar increment does not unblock them.
+
+---
+
 ## §55 — Phase 2 opens with the two members that have data: ARB-015/016 as Diagnostics (2026-08-25)
 
 TQ-06, scoped honestly before it was built. Addendum 27 §11's Phase 2 list

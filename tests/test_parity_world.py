@@ -622,3 +622,96 @@ def test_offline_evaluate_grades_planted_arb001_on_cross_as_unexpected_parity_hi
     result = pw.evaluate(scenario, opportunities + [fake_arb001])
     assert result["outcome"] == "FAIL"
     assert result["reasons"] == ["unexpected_parity_hit"]
+
+
+# --- calendar variants (ARB-012's training world, §56) ------------------------
+
+
+def test_calendar_bump_only_mix_is_fully_detected_with_zero_cofire(conn):
+    """The whole-ladder lift's three promises, checked through the answer
+    key rather than trusted to the algebra: every detection is ARB-012 with
+    its near leg at the lifted expiry (zero ARB-001, zero same-expiry
+    cross-strike co-fire, by the parallel-shift invariance one level up
+    from §46's), and every scenario grades PASS under the 'calendar'
+    family."""
+    rd.run_reference_engine(conn)
+    config = _config(
+        "m-calendar", seed=7, n_scenarios=5,
+        strategy=pw.STRATEGY_CALENDAR, scenario_mix={pw.VARIANT_CALENDAR_BUMP: 1.0},
+    )
+    report = pw.run_parity_exercise(conn, config)
+
+    for entry in report["scenarios"]:
+        gt = entry["ground_truth"]
+        assert gt["variant"] == pw.VARIANT_CALENDAR_BUMP
+        assert gt["expected_family"] == "calendar"
+        assert gt["affected_expiry_days"] == pw.EXPIRY_DAYS[0]
+        assert gt["affected_strike"] is None
+        assert entry["detections"], "the lift must be visible to the answer key"
+        for detection in entry["detections"]:
+            assert detection["detector_id"] == "ARB-012"
+            assert detection["expiry_days"] == pw.EXPIRY_DAYS[0]
+            assert detection["expiry2_days"] in pw.EXPIRY_DAYS[1:]
+        assert entry["outcome"] == "PASS", entry
+    assert report["metrics"]["pass_rate"] == pytest.approx(1.0)
+    assert report["metrics"]["strategy_exercised"] is True
+
+
+def test_calendar_strategy_default_mix_is_registered_and_sums_to_one():
+    config = pw.MissionConfig(
+        mission_id="m", run_mode="simulation", strategy=pw.STRATEGY_CALENDAR, seed=1,
+    )
+    assert set(config.scenario_mix) >= {pw.VARIANT_CALENDAR_BUMP, pw.VARIANT_CALENDAR_SPREAD_ARTIFACT}
+    assert set(config.scenario_mix) <= set(pw.VARIANTS)
+    assert sum(config.scenario_mix.values()) == pytest.approx(1.0)
+    assert pw.STRATEGY_CALENDAR in pw.STRATEGIES
+
+
+def test_offline_evaluate_grades_same_expiry_cofire_on_calendar_as_its_own_failure(conn):
+    """A hand-planted cross-strike hit on a calendar scenario is the world
+    drifting from the whole-ladder invariance - named
+    'unexpected_same_expiry_hit', distinct from a stray ARB-012 through the
+    wrong expiry pair, so a world defect and an injector defect stay
+    distinguishable in the grade."""
+    rd.run_reference_engine(conn)
+    config = _config(
+        "m-cal-cofire", seed=7, n_scenarios=3,
+        strategy=pw.STRATEGY_CALENDAR, scenario_mix={pw.VARIANT_CALENDAR_BUMP: 1.0},
+    )
+    focus_assets = rd.list_focus_assets(conn)
+    scenario = pw._build_scenario(config, focus_assets, 0)
+    opportunities = pw.answer_key(scenario, config)
+
+    fake_vertical = Opportunity(
+        detector_id="ARB-007", direction="call_vertical_upper", gross_edge_per_share=0.10,
+        net_edge_per_share=0.05, capacity_units=10.0, classification="A",
+        inputs={"k1": 90.0, "k2": 100.0, "expiry_days": 30},
+    )
+    result = pw.evaluate(scenario, opportunities + [fake_vertical])
+    assert result["outcome"] == "FAIL"
+    assert result["reasons"] == ["unexpected_same_expiry_hit"]
+
+    fake_stray_calendar = Opportunity(
+        detector_id="ARB-012", direction="put_calendar", gross_edge_per_share=0.10,
+        net_edge_per_share=0.05, capacity_units=10.0, classification="C",
+        inputs={"k1": 100.0, "k2": 100.0, "expiry_days": 30, "expiry2_days": 60},
+    )
+    result = pw.evaluate(scenario, opportunities + [fake_stray_calendar])
+    assert result["outcome"] == "FAIL"
+    assert result["reasons"] == ["stray_detection"]
+
+
+def test_calendar_runs_are_deterministic(conn):
+    rd.run_reference_engine(conn)
+    reports = []
+    for _ in range(2):
+        config = _config(
+            "m-cal-det", seed=21, n_scenarios=4,
+            strategy=pw.STRATEGY_CALENDAR,
+        )
+        reports.append(pw.run_parity_exercise(conn, config))
+    assert [e["ground_truth"] for e in reports[0]["scenarios"]] == \
+        [e["ground_truth"] for e in reports[1]["scenarios"]]
+    assert [e["detections"] for e in reports[0]["scenarios"]] == \
+        [e["detections"] for e in reports[1]["scenarios"]]
+

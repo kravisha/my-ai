@@ -73,6 +73,12 @@ REASON_FALSE_POSITIVE = "false_positive"
 # injector should not have produced.
 REASON_UNEXPECTED_PARITY_HIT = "unexpected_parity_hit"
 REASON_STRAY_DETECTION = "stray_detection"
+# §56, the calendar family's own world-integrity reason: the whole-ladder
+# lift preserves every same-expiry relation exactly, so a cross-strike or
+# parity-family detection on a calendar scenario is the world drifting from
+# that invariance - distinct from a stray ARB-012 through the wrong expiry
+# pair, so a world defect and an injector defect stay distinguishable.
+REASON_UNEXPECTED_SAME_EXPIRY_HIT = "unexpected_same_expiry_hit"
 
 OUTCOME_PASS = "PASS"
 OUTCOME_PARTIAL = "PARTIAL"
@@ -150,7 +156,36 @@ def _grade_scenario(conn, mission_id: str, scenario_id: str, ground_truth: dict)
     variant = ground_truth["variant"]
     detected_direction = None
 
-    if ground_truth.get("expected_family") == "cross_strike":
+    if ground_truth.get("expected_family") == "calendar":
+        # §56's family, graded on the live organization's own recorded
+        # detections the same way the offline evaluate() grades the answer
+        # key: a matching detection is ARB-012 with its near leg at the
+        # lifted expiry; ARB-001 and same-expiry hits are world-integrity
+        # failures under their own names; then the same escalation ladder
+        # the cross family walks (analysis -> PASS, report in flight ->
+        # INCONCLUSIVE, detection only -> PARTIAL).
+        affected_expiry = ground_truth.get("affected_expiry_days")
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        same_expiry_hits = [d for d in detections if d["detector_id"] not in ("ARB-001", "ARB-012")]
+        calendar_hits = [d for d in detections if d["detector_id"] == "ARB-012"]
+        matching = [d for d in calendar_hits if d["expiry_days"] == affected_expiry]
+        stray = [d for d in calendar_hits if d["expiry_days"] != affected_expiry]
+
+        if arb001_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_UNEXPECTED_PARITY_HIT]
+        elif same_expiry_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_UNEXPECTED_SAME_EXPIRY_HIT]
+        elif stray:
+            outcome, reasons = OUTCOME_FAIL, [REASON_STRAY_DETECTION]
+        elif not matching:
+            outcome, reasons = OUTCOME_FAIL, [REASON_MISSED]
+        elif analyses:
+            outcome, reasons = OUTCOME_PASS, []
+        elif reports:
+            outcome, reasons = OUTCOME_INCONCLUSIVE, [REASON_ANALYSIS_IN_FLIGHT]
+        else:
+            outcome, reasons = OUTCOME_PARTIAL, [REASON_DETECTED_NOT_ESCALATED]
+    elif ground_truth.get("expected_family") == "cross_strike":
         # SS45's deferred item. A same-strike parallel shift leaves every
         # executable ARB-001 edge at the bumped strike invariant (module note
         # above simulation/parity_world.py's _inject_cross_bump) - so an
@@ -228,11 +263,13 @@ def _metrics(scenarios: list[dict]) -> dict:
 
     # "genuine" spans any family (SS45's deferred item): the original
     # VARIANT_GENUINE plus the two cross-strike genuine variants
-    # (pw.CROSS_GENUINE_VARIANTS) - a run trained on options_arbitrage_phase1
-    # may never draw the classic parity genuine at all and still deserves to
-    # count as having exercised its own strategy.
+    # (pw.CROSS_GENUINE_VARIANTS) plus the calendar bump (§56) - a run
+    # trained on a single strategy may never draw the classic parity genuine
+    # at all and still deserves to count as having exercised its own
+    # strategy.
     def _is_genuine(variant: str) -> bool:
-        return variant == pw.VARIANT_GENUINE or variant in pw.CROSS_GENUINE_VARIANTS
+        return (variant == pw.VARIANT_GENUINE or variant in pw.CROSS_GENUINE_VARIANTS
+                or variant == pw.VARIANT_CALENDAR_BUMP)
 
     genuine = [s for s in scenarios if _is_genuine(s["variant"])]
     non_genuine = [s for s in scenarios if not _is_genuine(s["variant"])]

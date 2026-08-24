@@ -2,10 +2,11 @@
 ARB-001/2/3/6/7/8/9/10/11/13 plus architecture, costs, audit and replay").
 ARB-001 (European put-call parity) shipped first as the simulation's answer
 key (docs/SPEC_RECONCILIATION.md SS39/SS41); this module now also carries
-ARB-002, 003, 006, 007, 008, 009, 010 and 011, plus the first Phase 2
-members with data to work with: ARB-015 and ARB-016 as D-class Diagnostics
-under their own schema (see the Phase 2 section at the bottom). The rest of
-ARB-012 through ARB-030 stays roadmap.
+ARB-002, 003, 006, 007, 008, 009, 010 and 011, plus the Phase 2 members
+with data to work with: ARB-012 (calendar consistency, cross-expiry, via
+its own scan_calendar entry point) and ARB-015/ARB-016 as D-class
+Diagnostics under their own schema (the Phase 2 sections at the bottom).
+The rest of ARB-013 through ARB-030 stays roadmap.
 
 ## ARB-013 is not built
 
@@ -146,11 +147,11 @@ class CostConfig:
 @dataclass(frozen=True)
 class Opportunity:
     detector_id: str
-    direction: str  # 'conversion' | 'reversal'
+    direction: str  # 'conversion' | 'reversal' | the cross-strike and calendar directions
     gross_edge_per_share: float
     net_edge_per_share: float
     capacity_units: float
-    classification: str  # 'A' | 'B'
+    classification: str  # 'A' | 'B' | 'C' (addendum 27 CLASSIFICATION)
     inputs: dict = field(default_factory=dict)
 
 
@@ -1021,6 +1022,183 @@ def scan_chain(
             for k in range(j + 1, len(strikes)):
                 _add(detect_arb009(chain, strikes[i], strikes[j], strikes[k], costs, stale_tolerance_seconds))
 
+    found.sort(key=lambda o: o.net_edge_per_share, reverse=True)
+    return found
+
+
+# =============================================================================
+# ARB-012 MATURITY/CALENDAR CONSISTENCY (addendum 27 §11 Phase 2)
+# =============================================================================
+#
+# The spec's own warning is the design: "Never hard-code 'longer expiry always
+# costs more.' Dividends, rates ... can invalidate it. Apply only proven
+# dominance rules." What is actually provable depends on what the snapshot
+# can promise about dividends - and pv_div promises a PV, not a *model*
+# (deterministic cash vs proportional yield), so each side gets the rule
+# that survives every admissible nonnegative dividend process:
+#
+# PUTS - proven unconditionally. Long P(K2,T2), short P(K1,T1). At T1 the
+# short leg settles at (K1-S1)+ and the far put's model-free European lower
+# bound is K2*DF(T1,T2) - S1 (dividends only lower the future stock, which
+# helps a put, so ignoring them keeps the bound valid under ANY dividend
+# process). Worst shortfall, over all S1: max(0, K1 - K2*DF(T1,T2)) -
+# constant in S1 - which discounted to today gives
+#
+#       slack_p = max(0, K1*DF1 - K2*DF2)
+#
+# with DF_i each chain's own discount factor. No dividend credit is taken:
+# under a proportional yield the dividend contribution vanishes exactly in
+# the states (S1 -> 0) where the put bound binds, so crediting PVDiv here
+# was a real false-positive generator - found by the clean-world property
+# test, not by inspection (SPEC_RECONCILIATION §56).
+#
+# CALLS - proven only on a dividend-free underlying. The far call's bound at
+# T1 is S1 - PVDiv@T1 - K2*DF(T1,T2), and under a proportional yield
+# PVDiv@T1 grows with S1, making the shortfall UNBOUNDED in S1 - no
+# call calendar dominance exists from prices and a PV alone. When the chain
+# declares no dividends at all through the far expiry (far.pv_div == 0),
+# the bound is S1 - K2*DF(T1,T2), the shortfall against (S1-K1)+ caps at
+# max(0, K2*DF(T1,T2) - K1), and discounting gives
+#
+#       slack_c = max(0, K2*DF2 - K1*DF1)
+#
+# which also covers negative rates (ARB-030: DF2 > DF1 makes it positive).
+# A dividend-bearing chain simply has no call-side rule to violate - the
+# spec's "otherwise classify as D" arm, which stays with the reference-data
+# consumer named in §56 rather than being faked here.
+#
+# Classification C, not A: the violation is a genuine no-arbitrage breach
+# locked at the initial fills *as a bound*, but monetizing it at T1 requires
+# either liquidating the far leg at its no-arbitrage value or re-hedging the
+# expiry settlement into a stock-and-carry package - addendum 27's own C
+# ("no-arbitrage violation with ... settlement path complexity"). Nothing
+# here pretends the T1 leg's realization is a contractual cash flow.
+
+
+def _pair_coherence(near: ChainSnapshot, far: ChainSnapshot) -> None:
+    """Structural validation for a calendar pair - caller errors, raised
+    rather than returned as reason codes, the same split _find_strike makes:
+    a data-quality problem is a NoOpportunity, but comparing two different
+    underlyings (or the same expiry twice) is a bug at the call site."""
+    if near.entity_id != far.entity_id or near.symbol != far.symbol:
+        raise ValueError(
+            f"calendar pair must share an underlying; got {near.symbol!r}/{far.symbol!r}"
+        )
+    if near.style != far.style:
+        raise ValueError(f"calendar pair must share a style; got {near.style!r}/{far.style!r}")
+    if near.as_of != far.as_of:
+        raise ValueError(
+            f"calendar pair must be snapped at one moment; got {near.as_of!r}/{far.as_of!r}"
+        )
+    if near.multiplier != far.multiplier:
+        raise ValueError(
+            f"calendar pair must share a multiplier; got {near.multiplier!r}/{far.multiplier!r}"
+        )
+    if not near.expiry_days < far.expiry_days:
+        raise ValueError(
+            f"calendar pair requires near.expiry_days < far.expiry_days; "
+            f"got {near.expiry_days} and {far.expiry_days}"
+        )
+
+
+def _calendar_slacks(near: ChainSnapshot, far: ChainSnapshot, k1: float, k2: float) -> tuple[float | None, float]:
+    """(slack_c, slack_p) per the derivation above; slack_c is None when no
+    proven call-side rule exists (the chain carries dividends). Each chain's
+    own r prices its own DF, so a term structure (different r per expiry)
+    flows through without a flat-rate assumption; the ARB-030 discipline
+    (DF-based, valid for negative rates) is inherited from _discount_factor.
+
+    Deliberately no dividend credit anywhere: pv_div is a PV, not a dividend
+    *model*, and the credit is only valid for deterministic cash dividends -
+    the clean-world property test caught the yield-model counterexample
+    (§56). What is proven is kept; what is not is refused."""
+    df1 = _discount_factor(near.r, near.expiry_days)
+    df2 = _discount_factor(far.r, far.expiry_days)
+    slack_p = max(0.0, k1 * df1 - k2 * df2)
+    slack_c = max(0.0, k2 * df2 - k1 * df1) if far.pv_div == 0.0 else None
+    return slack_c, slack_p
+
+
+def detect_arb012(
+    near: ChainSnapshot, far: ChainSnapshot, k1: float, k2: float,
+    costs: CostConfig, stale_tolerance_seconds: float = 10.0,
+) -> Opportunity | NoOpportunity:
+    """One calendar package: strike k1 at the near expiry against strike k2
+    at the far expiry, both option types, best violation wins (the ARB-011
+    shape, across expiries instead of across strikes).
+
+    Put violation ('put_calendar'): sell the near put at bid, buy the far
+    put at ask; gross = P1bid - P2ask - slack_p, the size of the
+    no-arbitrage breach itself, with the slack reserved before any edge is
+    claimed. Call violation ('call_calendar') symmetric - but only on a
+    dividend-free chain, because that is the only case a call-side rule is
+    proven for (module comment above); a dividend-bearing chain's call
+    inversion is not scored at all rather than scored under an unproven
+    theorem.
+
+    Calls and puts are hard-stop-checked independently over only the two
+    legs each package trades - the underlying is not a leg here and is
+    deliberately not checked."""
+    _pair_coherence(near, far)
+    sq1, sq2 = _find_strike(near, k1), _find_strike(far, k2)
+    slack_c, slack_p = _calendar_slacks(near, far, k1, k2)
+    costs2 = costs.for_legs(2)
+    candidates = []
+
+    call_stops = _package_hard_stops((sq1.call, sq2.call), near.as_of, near.style, stale_tolerance_seconds)
+    if not call_stops and slack_c is not None:
+        gross = sq1.call.bid - sq2.call.ask - slack_c
+        net = gross - costs2
+        if net > 0:
+            candidates.append(("call_calendar", net, gross, slack_c, [sq1.call.bid_size, sq2.call.ask_size]))
+
+    put_stops = _package_hard_stops((sq1.put, sq2.put), near.as_of, near.style, stale_tolerance_seconds)
+    if not put_stops:
+        gross = sq1.put.bid - sq2.put.ask - slack_p
+        net = gross - costs2
+        if net > 0:
+            candidates.append(("put_calendar", net, gross, slack_p, [sq1.put.bid_size, sq2.put.ask_size]))
+
+    if candidates:
+        direction, net, gross, slack, sides = max(candidates, key=lambda c: c[1])
+        return Opportunity(
+            detector_id="ARB-012", direction=direction, gross_edge_per_share=gross, net_edge_per_share=net,
+            capacity_units=_capacity(sides), classification="C",
+            inputs={
+                "k1": k1, "k2": k2,
+                "expiry_days": near.expiry_days, "expiry2_days": far.expiry_days,
+                "slack_per_share": slack,
+                "symbol": near.symbol, "entity_id": near.entity_id, "as_of": near.as_of,
+            },
+        )
+    if call_stops and put_stops:
+        return NoOpportunity(reason_codes=[code for code in _HARD_STOP_ORDER if code in (call_stops | put_stops)])
+    return NoOpportunity(reason_codes=["no_edge"])
+
+
+def scan_calendar(
+    chains: list[ChainSnapshot] | tuple[ChainSnapshot, ...],
+    costs: CostConfig = CostConfig(),
+    stale_tolerance_seconds: float = 10.0,
+) -> list[Opportunity]:
+    """The cross-expiry entry point, parallel to scan_chain: every ordered
+    expiry pair, every (k1, k2) strike pair across it, ARB-012 on each.
+    Hard-stopped and no-edge packages are silently skipped, matching
+    scan_chain's own convention; results sorted by net edge descending.
+
+    Fewer than two chains is a legitimate no-op (a single-expiry world has
+    no calendar to check), but two chains at the same expiry for the same
+    underlying is a caller error surfaced by _pair_coherence."""
+    ordered = sorted(chains, key=lambda c: c.expiry_days)
+    found: list[Opportunity] = []
+    for i in range(len(ordered)):
+        for j in range(i + 1, len(ordered)):
+            near, far = ordered[i], ordered[j]
+            for sq1 in near.strikes:
+                for sq2 in far.strikes:
+                    result = detect_arb012(near, far, sq1.strike, sq2.strike, costs, stale_tolerance_seconds)
+                    if isinstance(result, Opportunity):
+                        found.append(result)
     found.sort(key=lambda o: o.net_edge_per_share, reverse=True)
     return found
 
