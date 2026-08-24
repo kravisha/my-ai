@@ -586,9 +586,9 @@ CREATE TABLE IF NOT EXISTS parity_events (
     producer_spawned_at TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     security TEXT NOT NULL,            -- symbol, matching discovery_reports.security
-    strike REAL NOT NULL,
+    strike REAL NOT NULL,              -- the package's primary strike (k1 for multi-leg packages)
     expiry_days INTEGER NOT NULL,
-    direction TEXT NOT NULL,           -- 'conversion' | 'reversal'
+    direction TEXT NOT NULL,           -- 'conversion' | 'reversal' | any other Phase 1 direction
     gross_edge_per_share REAL NOT NULL,
     net_edge_per_share REAL NOT NULL,
     classification TEXT NOT NULL,      -- 'A' | 'B'
@@ -601,6 +601,20 @@ CREATE TABLE IF NOT EXISTS parity_events (
     run_id TEXT,
     scenario_id TEXT,
     lens_artifact_id INTEGER,
+    -- detector_id/strike2/strike3 (cross-strike training increment,
+    -- docs/SPEC_RECONCILIATION.md SS45's deferred item): this table now
+    -- records any backend/arbitrage.py Phase 1 detection, not only ARB-001 -
+    -- the name is historical (the comment above already explains "any
+    -- arbitrage-library detection", not literally "parity"), and renaming a
+    -- table is banned by this project's additive-only discipline, so the
+    -- name stays. detector_id defaults to 'ARB-001' so every row written
+    -- before this column existed reads correctly without a backfill.
+    -- strike2/strike3 carry a multi-leg package's k2/k3 (box, vertical,
+    -- butterfly, monotonicity) - NULL for a single-strike package exactly as
+    -- ARB-001's own rows have always left them.
+    detector_id TEXT NOT NULL DEFAULT 'ARB-001',
+    strike2 REAL,
+    strike3 REAL,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -3551,27 +3565,42 @@ def record_parity_event(
     run_id: str | None = None,
     scenario_id: str | None = None,
     lens_artifact_id: int | None = None,
+    detector_id: str = "ARB-001",
+    strike2: float | None = None,
+    strike3: float | None = None,
 ) -> int:
-    """One ARB-001 detection Explorer's parity path is escalating.
+    """One Phase 1 detection (backend/arbitrage.py) Explorer's chain-scan
+    path is escalating - ARB-001 by default (every call site before the
+    cross-strike training increment), or any other detector scan_chain can
+    return, named by `detector_id` with its extra legs in strike2/strike3.
     run_id/scenario_id come from the chain observation's own provenance
     (backend/canonical.py's Provenance) - see parity_events' own comment in
     SCHEMA for why that is safe to carry.
 
     **Converges rather than duplicates**, the observations store's own ingest
     idiom: the same detection on the same chain snapshot - keyed by
-    (security, observed_at, strike, expiry_days, direction), where observed_at
-    identifies the exact chain the detector read - returns the existing row's
-    id instead of inserting another. Measured before being written: without
-    this, a static mission world re-triggering every ~1s agent cycle recorded
-    1,152 rows in a five-minute run from four securities - an append rate that
-    would put millions of identical rows under a long-running organization.
-    A *new* chain observation carries a new observed_at, so a detection on
-    fresh data is always a fresh row - the key converges re-reads, never
-    genuinely new market states."""
+    (security, observed_at, strike, expiry_days, direction, detector_id,
+    strike2, strike3), where observed_at identifies the exact chain the
+    detector read - returns the existing row's id instead of inserting
+    another. Measured before being written: without this, a static mission
+    world re-triggering every ~1s agent cycle recorded 1,152 rows in a
+    five-minute run from four securities - an append rate that would put
+    millions of identical rows under a long-running organization. A *new*
+    chain observation carries a new observed_at, so a detection on fresh data
+    is always a fresh row - the key converges re-reads, never genuinely new
+    market states. detector_id/strike2/strike3 joined the key so a box at
+    (k1, k2) and ARB-001's own conversion at k1 - same security, same
+    observed_at, same strike, same direction name space is not actually
+    true here since directions differ, but a monotonicity_calls at (k1, k2)
+    and a call_vertical_upper at (k1, k2) would otherwise be indistinguishable
+    without detector_id, and two different k2 partners for the same k1 would
+    otherwise collide without strike2. `IS ?` rather than `= ?` for the
+    nullable strike2/strike3 columns - SQLite's own NULL-safe comparison,
+    parameter-bindable exactly like any other placeholder."""
     existing = conn.fetchone(
         "SELECT id FROM parity_events WHERE security = ? AND observed_at = ? AND strike = ? "
-        "AND expiry_days = ? AND direction = ?",
-        (security, observed_at, strike, expiry_days, direction),
+        "AND expiry_days = ? AND direction = ? AND detector_id = ? AND strike2 IS ? AND strike3 IS ?",
+        (security, observed_at, strike, expiry_days, direction, detector_id, strike2, strike3),
     )
     if existing is not None:
         return existing["id"]
@@ -3579,12 +3608,12 @@ def record_parity_event(
         "INSERT INTO parity_events "
         "(created_at, producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days, "
         "direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at, "
-        "run_id, scenario_id, lens_artifact_id, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             _now(), producer_identity, producer_spawned_at, entity_id, security, strike, expiry_days,
             direction, gross_edge_per_share, net_edge_per_share, classification, capacity_units, observed_at,
-            run_id, scenario_id, lens_artifact_id, SCHEMA_VERSION,
+            run_id, scenario_id, lens_artifact_id, detector_id, strike2, strike3, SCHEMA_VERSION,
         ),
     )
 

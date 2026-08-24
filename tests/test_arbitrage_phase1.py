@@ -705,18 +705,33 @@ def test_scan_chain_skips_hard_stopped_packages_silently():
 #    price at that one strike can genuinely violate strike monotonicity or
 #    convexity relative to its neighbors, which ARB-006/007/008/009/011
 #    (cross-strike checks) correctly catch. A 25-seed, 150-scenario sweep
-#    found this is the *only* skew shape that ever produces a cross-strike
-#    opportunity on a 'none'-mix world; every other shape (flat, put_skew,
-#    call_heavy, smile, steep/shallow put skew, inverted_term) was clean
-#    across every seed and scenario tried.
+#    found this was, at the time, the *only* skew shape that ever produced a
+#    cross-strike opportunity on a 'none'-mix world; every other shape (flat,
+#    put_skew, call_heavy, smile, steep/shallow put skew, inverted_term) was
+#    clean across every seed and scenario tried.
+#
+#    A later increment (docs/SPEC_RECONCILIATION.md SS45's deferred item,
+#    cross-strike training injectors) turned this from a documented exception
+#    into a design constraint: a 'none' or trap scenario's ground truth
+#    promises "no opportunity", and letting it draw the one skew shape that
+#    genuinely creates one would make that promise a lie rather than an
+#    honest world failure. simulation/parity_world.py's `_build_scenario` now
+#    redraws the skew (from its own salted, deterministic stream, main rng
+#    untouched) whenever a clean variant - 'none' or any TRAP_VARIANTS member
+#    - lands on 'localized_distortion', so a 'none'-mix world built through
+#    `_build_scenario` can no longer draw it at all. The shape stays fully
+#    available to 'genuine' and the cross-strike genuine variants, where
+#    ground truth already expects a real opportunity and the extra richness
+#    only helps (see test_genuine_mix_finds_arb001_and_any_other_hit_traces_
+#    to_a_known_source below, which still carves it out for exactly that
+#    reason).
 # 2. Single-strike detectors (ARB-001/002/003/010) never fired on a single
-#    non-distorted scenario in that same sweep.
+#    scenario in that same sweep, distorted or not - the distortion is a
+#    same-strike bump (call and put at the bumped cell still share one
+#    sigma), so it only ever shows up cross-strike.
 #
 # The tests below assert exactly these two properties, which the sweep
-# confirmed hold and which a real ARB-006-011 formula bug would violate
-# (since only ~1 shape in 8 gets excluded, the second test still exercises
-# every cross-strike detector against the overwhelming majority of
-# scenarios).
+# confirmed hold and which a real ARB-006-011 formula bug would violate.
 
 
 def _reference_ready_conn():
@@ -760,13 +775,20 @@ def test_none_mix_single_strike_detectors_never_fire_across_seeds():
                         )
 
 
-def test_none_mix_full_scan_chain_clean_except_localized_distortion_skew():
+def test_none_mix_full_scan_chain_is_unconditionally_clean():
+    """Every 'none'-mix scenario built through `_build_scenario` now scans
+    clean, full stop - no 'localized_distortion' carve-out. The redraw
+    (module note above) makes this a design guarantee for a clean-world
+    variant, not an empirical near-certainty: this test asserts that
+    guarantee, and would fail loudly if a future change reopened the gap
+    (e.g. a redraw bypass, or a new clean variant added without threading
+    it through the same check)."""
     from simulation import parity_world as pw
     from providers.stored_data import chain_snapshots
 
     conn = _reference_ready_conn()
     from backend import reference_data as rd
-    checked_non_distorted = 0
+    checked = 0
     for seed in (201, 202, 203):
         config = pw.MissionConfig(
             mission_id=f"m-none-full-{seed}", run_mode="simulation", strategy="put_call_parity_arbitrage",
@@ -776,21 +798,17 @@ def test_none_mix_full_scan_chain_clean_except_localized_distortion_skew():
         for i in range(config.n_scenarios):
             scenario = pw._build_scenario(config, focus_assets, i)
             gt = scenario.ground_truth
+            assert gt.skew_shape != "localized_distortion"
             obs = pw.build_option_chain_observation(scenario, config)
             for chain in chain_snapshots(obs):
                 opps = scan_chain(chain, CostConfig())
-                if gt.skew_shape == "localized_distortion":
-                    # May legitimately fire cross-strike detectors (module
-                    # note above) but never a same-strike one.
-                    assert not any(o.detector_id in ("ARB-001", "ARB-010") for o in opps)
-                else:
-                    checked_non_distorted += 1
-                    assert opps == [], (
-                        f"seed={seed} scenario={i} expiry={chain.expiry_days} skew={gt.skew_shape}: "
-                        f"scan_chain found {[(o.detector_id, o.direction) for o in opps]} on an "
-                        "arbitrage-free chain"
-                    )
-    assert checked_non_distorted > 20  # the property actually got exercised, not vacuously true
+                checked += 1
+                assert opps == [], (
+                    f"seed={seed} scenario={i} expiry={chain.expiry_days} skew={gt.skew_shape}: "
+                    f"scan_chain found {[(o.detector_id, o.direction) for o in opps]} on an "
+                    "arbitrage-free chain"
+                )
+    assert checked > 20  # the property actually got exercised, not vacuously true
 
 
 def test_genuine_mix_finds_arb001_and_any_other_hit_traces_to_a_known_source():

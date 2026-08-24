@@ -252,9 +252,29 @@ def test_mission_options_lists_offered_run_modes_and_capabilities(conn):
 
     assert options["run_modes"] == ["simulation", "historical", "live"]
     assert "put_call_parity_arbitrage" in options["strategies"]
+    # options_arbitrage_phase1 (docs/SPEC_RECONCILIATION.md SS45's deferred
+    # item): a tuple entry in simulation/parity_world.py's STRATEGIES feeds
+    # this dropdown automatically - no route change needed.
+    assert "options_arbitrage_phase1" in options["strategies"]
 
     asset_class_codes = {row["asset_class"] for row in options["asset_classes"]}
     assert {"stock", "stock_option"} <= asset_class_codes
+
+
+def test_starting_a_cross_strike_mission_stores_a_world_with_a_cross_variant(conn, tmp_path):
+    """A mission started with the new strategy stores a world whose summary
+    contains at least one cross-strike variant under a pinned seed - the
+    default curriculum (DEFAULT_SCENARIO_MIX_CROSS) actually reaching a
+    stored mission through the same start_mission path the panel drives."""
+    rd.run_reference_engine(conn)
+    result = missions.start_mission(
+        conn, _config("m-cross-start", seed=1, strategy="options_arbitrage_phase1", n_scenarios=6),
+        runs_dir=tmp_path,
+    )
+    mission = missions.get_mission(conn, result["mission_id"])
+    summary = json.loads(Path(mission["summary_path"]).read_text(encoding="utf-8"))
+    variants = {entry["ground_truth"]["variant"] for entry in summary["scenarios"]}
+    assert variants & set(pw.CROSS_GENUINE_VARIANTS) or pw.VARIANT_CROSS_SPREAD_ARTIFACT in variants
 
 
 # --- route level ---------------------------------------------------------------------

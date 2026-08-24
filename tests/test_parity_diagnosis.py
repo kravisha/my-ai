@@ -409,6 +409,130 @@ def test_explorer_filing_failure(conn, tmp_path):
     assert diagnosis["retry_recommended"] is True
 
 
+# --- cross-strike family (docs/SPEC_RECONCILIATION.md SS45's deferred item) -
+
+
+def _store_cross_world(conn, mission_id, seed, tmp_path, **overrides):
+    rd.run_reference_engine(conn)
+    config = pw.MissionConfig(
+        mission_id=mission_id, run_mode="simulation", strategy="options_arbitrage_phase1",
+        seed=seed, **overrides,
+    )
+    result = pw.store_world(conn, config, runs_dir=tmp_path)
+    return config, result["summary_path"]
+
+
+def test_cross_genuine_unworked_is_explorer_missed(conn, tmp_path):
+    """store_world only, nothing run: the injected cross-strike edge is
+    sitting on the stored chain and Explorer's scan never ran at all -
+    FAIL('missed') from the Evaluator, explorer_missed from diagnosis
+    because the offline differential (scan_chain, ARB-001 included in the
+    same scan) finds it."""
+    config, summary_path = _store_cross_world(
+        conn, "m-diag-crossmissed", seed=1, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"cross_strike_bump": 1.0},
+    )
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    for entry in evaluation["scenarios"]:
+        assert entry["outcome"] == "FAIL"
+        assert entry["reasons"] == ["missed"]
+
+    diagnosis = pdiag.diagnose_mission(conn, evaluation["evaluation_path"])
+    assert len(diagnosis["scenarios"]) == config.n_scenarios
+    for entry in diagnosis["scenarios"]:
+        assert entry["causes"] == [pdiag.CAUSE_EXPLORER_MISSED]
+        assert entry["component"] == pdiag.COMPONENT_EXPLORER
+        assert entry["notes"]["offline_opportunity_count"] >= 1
+    assert diagnosis["retry_recommended"] is True
+    assert diagnosis["retry_guidance"]["rerun_same_seed"] is True
+
+
+def test_cross_world_with_injection_neutralized_is_insufficient_signal(conn, tmp_path):
+    """A clean ('none') world, with the summary's own ground truth doctored
+    to claim a cross-strike opportunity that was never actually injected -
+    mirrors test_insufficient_signal's own doctoring technique. The
+    Evaluator grades FAIL('missed') against the doctored expectation; the
+    offline differential, re-run over the (truly clean) stored chain,
+    agrees with the chain rather than the doctored ground truth -
+    insufficient signal, not a missed detection."""
+    config, summary_path = _store_cross_world(
+        conn, "m-diag-crossinsufficient", seed=1, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"none": 1.0},
+    )
+    summary_path = Path(summary_path)
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    gt = summary["scenarios"][0]["ground_truth"]
+    assert gt["variant"] == pw.VARIANT_NONE
+    # Guaranteed, not merely likely: 'none' is a clean-world variant, and
+    # _build_scenario's redraw never lets a clean variant land on
+    # 'localized_distortion' - the doctoring below relies on this chain
+    # being genuinely clean.
+    assert gt["skew_shape"] != "localized_distortion"
+    gt["variant"] = pw.VARIANT_CROSS_BUMP
+    gt["expected_executable"] = True
+    gt["expected_family"] = "cross_strike"
+    gt["affected_strike"] = 100.0
+    gt["affected_strikes"] = [95.0, 100.0]
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    evaluation = pe.evaluate_mission(conn, str(summary_path))
+    assert evaluation["scenarios"][0]["outcome"] == "FAIL"
+    assert evaluation["scenarios"][0]["reasons"] == ["missed"]
+
+    diagnosis = pdiag.diagnose_mission(conn, evaluation["evaluation_path"])
+    entry = diagnosis["scenarios"][0]
+    assert entry["causes"] == [pdiag.CAUSE_INSUFFICIENT_SIGNAL]
+    assert entry["component"] == pdiag.COMPONENT_SIMULATION_ENGINE
+    assert entry["notes"]["offline_opportunity_count"] == 0
+
+    item = diagnosis["corrective_items"][0]
+    assert item["cause"] == pdiag.CAUSE_INSUFFICIENT_SIGNAL
+    assert item["classification"] == pdiag.CLASS_WORLD
+    assert diagnosis["retry_guidance"]["adjust_world_first"] is True
+
+
+def test_cross_planted_stray_with_offline_agreement_is_world_cross_integrity(conn, tmp_path):
+    """A parity_events row planted directly at strikes the offline re-scan
+    independently ALSO finds (a real, still-present violation elsewhere in
+    the stored chain, in this case a co-drawn 'localized_distortion' skew
+    bump - docs/SPEC_RECONCILIATION.md SS45's first finding) - the offline
+    scan agrees with what was recorded, so the cause is the injector having
+    leaked (or the world genuinely carrying) a violation beyond the
+    affected strike, not a disagreement between Explorer and the detector."""
+    config, summary_path = _store_cross_world(
+        conn, "m-diag-worldintegrity", seed=4, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"cross_strike_bump": 1.0},
+    )
+    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    entry = summary["scenarios"][2]
+    gt = entry["ground_truth"]
+    assert gt["skew_shape"] == "localized_distortion"
+    assert gt["affected_strike"] == 277.5
+
+    # A real ARB-009 put_butterfly the offline scan independently finds on
+    # this exact stored chain (verified directly against the real world
+    # before writing this test), at strikes that do not include the primary
+    # affected strike (277.5).
+    fi_db.record_parity_event(
+        conn, "explorer-1", "T0", gt["entity_id"], gt["symbol"],
+        strike=249.5, expiry_days=30, direction="put_butterfly",
+        gross_edge_per_share=8.5, net_edge_per_share=8.23, classification="A", capacity_units=5.0,
+        observed_at="2026-01-05T14:30:00+00:00", run_id=config.mission_id, scenario_id=entry["scenario_id"],
+        detector_id="ARB-009", strike2=263.5, strike3=291.0,
+    )
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    graded = next(e for e in evaluation["scenarios"] if e["scenario_id"] == entry["scenario_id"])
+    assert graded["outcome"] == "FAIL"
+    assert graded["reasons"] == ["stray_detection"]
+
+    diagnosis = pdiag.diagnose_mission(conn, evaluation["evaluation_path"])
+    diag_entry = next(e for e in diagnosis["scenarios"] if e["scenario_id"] == entry["scenario_id"])
+    assert diag_entry["causes"] == [pdiag.CAUSE_WORLD_CROSS_INTEGRITY]
+    assert diag_entry["component"] == pdiag.COMPONENT_SIMULATION_ENGINE
+
+    item = next(i for i in diagnosis["corrective_items"] if i["cause"] == pdiag.CAUSE_WORLD_CROSS_INTEGRITY)
+    assert item["classification"] == pdiag.CLASS_WORLD
+
+
 # --- CLI exit-code semantics --------------------------------------------------------
 
 

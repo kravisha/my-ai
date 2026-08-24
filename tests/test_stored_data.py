@@ -6,8 +6,8 @@ than against hand-picked numbers."""
 
 from backend import fi_db
 from backend import reference_data as rd
-from backend.arbitrage import CostConfig, Opportunity, detect_arb001
-from providers.stored_data import StoredChainProvider, StoredPost, StoredSocialProvider
+from backend.arbitrage import CostConfig, scan_chain
+from providers.stored_data import StoredChainProvider, StoredPost, StoredSocialProvider, chain_snapshots
 from simulation import parity_world as pw
 
 MISSION_KWARGS = dict(run_mode="simulation", strategy="put_call_parity_arbitrage")
@@ -70,11 +70,18 @@ def test_latest_chain_returns_the_newest_chain_for_the_entity(conn, tmp_path):
 
 
 def test_snapshots_reconstruct_parity_snapshots_matching_the_answer_key(conn, tmp_path):
-    """The round-trip the whole module exists for: detect_arb001 over the
-    snapshots StoredChainProvider decodes from a stored chain must agree
-    exactly with detect_arb001 over the world's own in-memory ChainRows, for
+    """The round-trip the whole module exists for: scan_chain over the
+    ChainSnapshots providers/stored_data.py's `chain_snapshots` decodes from
+    a stored chain must agree exactly with scan_chain over the world's own
+    in-memory ChainRows (simulation/parity_world.py's `answer_key`), for
     whichever scenario actually landed in the store (see the entity-collision
-    note below)."""
+    note below).
+
+    Deviation from the pre-existing form of this test (which compared
+    detect_arb001 alone on both sides): answer_key now runs scan_chain, not
+    per-row detect_arb001 (this increment's own switch, SS45) - the
+    reconstructed-vs-in-memory comparison is updated to the same engine on
+    both sides, which is what "matching the answer key" now means."""
     config = _store(conn, "m-snapshots", seed=42, tmp_path=tmp_path, n_scenarios=6, scenario_mix={"genuine": 1.0})
     focus_assets = rd.list_focus_assets(conn)
     # Rebuild the exact worlds store_world stored: it assigns one distinct
@@ -100,14 +107,13 @@ def test_snapshots_reconstruct_parity_snapshots_matching_the_answer_key(conn, tm
         scenario = scenarios[observation.provenance.scenario_id]
 
         got = [
-            (r.direction, round(r.net_edge_per_share, 6))
-            for r in (detect_arb001(sn, CostConfig()) for sn in provider.snapshots(observation))
-            if isinstance(r, Opportunity)
+            (r.detector_id, r.direction, round(r.net_edge_per_share, 6))
+            for chain in chain_snapshots(observation)
+            for r in scan_chain(chain, CostConfig(), stale_tolerance_seconds=config.stale_tolerance_seconds)
         ]
         expected = [
-            (r.direction, round(r.net_edge_per_share, 6))
+            (r.detector_id, r.direction, round(r.net_edge_per_share, 6))
             for r in pw.answer_key(scenario, config)
-            if isinstance(r, Opportunity)
         ]
         assert got == expected
         checked_any = True
