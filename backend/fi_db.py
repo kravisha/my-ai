@@ -3961,7 +3961,7 @@ def list_recent_analysis_results(conn: Database, security: str, since_seconds: f
     now = datetime.now(timezone.utc)
     recent = []
     for row in rows:
-        if (now - parse_timestamp(row["created_at"])).total_seconds() <= since_seconds:
+        if (now - parse_timestamp(row["created_at"])).total_seconds() < since_seconds:
             recent.append(row)
     return recent
 
