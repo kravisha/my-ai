@@ -6,6 +6,7 @@ excluded from the default pytest run (see pyproject.toml)."""
 
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -645,10 +646,16 @@ def test_parity_work_with_no_stored_world_is_a_no_op(conn):
 
 def test_parity_work_traps_only_mission_produces_zero_parity_events(conn, tmp_path):
     """Every trap variant looks like an opportunity at mid prices but clears
-    no executable edge (ARB-001's own non-negotiable rule) - a mission world
-    built entirely from trap variants must detect nothing."""
+    no executable edge (backend/arbitrage.py's own non-negotiable rule) - a
+    mission world built entirely from trap variants must detect nothing, for
+    any seed: every TRAP_VARIANTS member is a clean-world variant, and
+    simulation/parity_world.py's `_build_scenario` redraw guarantees a clean
+    variant never lands on the one skew shape ('localized_distortion') that
+    could otherwise leak an unrelated cross-strike violation (see
+    tests/test_parity_world.py's own redraw tests for the constraint
+    itself)."""
     _store_parity_world(
-        conn, "m-exp-traps", seed=5, tmp_path=tmp_path, n_scenarios=4,
+        conn, "m-exp-traps", seed=1, tmp_path=tmp_path, n_scenarios=4,
         scenario_mix={variant: 1.0 for variant in pw.TRAP_VARIANTS},
     )
 
@@ -738,3 +745,75 @@ def test_file_cross_checked_parity_report_carries_the_parity_event_id(conn, tmp_
     assert report["detector_event_id"] is None
     assert report["parity_event_id"] is not None
     assert "ARB-001" in report["summary"]
+
+
+# --- the chain scan becomes the library scan (SS45's deferred item) ---------
+
+
+def test_parity_work_on_a_cross_bump_world_records_a_non_arb001_event_naming_the_detector(conn, tmp_path):
+    """A stored cross_strike_bump world: `_parity_work` now runs scan_chain
+    (not per-row detect_arb001), so the single event it records for this
+    security is the cross-strike package the injector planted - not
+    ARB-001, whose executable edge the same-strike shift never touches by
+    construction. seed=1 for this mix draws no 'localized_distortion' skew
+    (checked directly)."""
+    config = pw.MissionConfig(
+        mission_id="m-exp-crossbump", run_mode="simulation", strategy="options_arbitrage_phase1",
+        seed=1, n_scenarios=1, scenario_mix={"cross_strike_bump": 1.0},
+    )
+    rd.run_reference_engine(conn)
+    focus_assets = rd.list_focus_assets(conn)
+    # store_world assigns focus assets via its own seeded sample
+    # (forced_asset), not the plain rng.choice draw - rebuild the exact
+    # scenario it stores, the same way tests/test_stored_data.py's own
+    # round-trip test does, so this test's expectations match what actually
+    # landed in the Data Store.
+    assignment = random.Random(f"{config.seed}:assignment").sample(focus_assets, k=config.n_scenarios)
+    scenario = pw._build_scenario(config, focus_assets, 0, forced_asset=assignment[0])
+    assert scenario.ground_truth.skew_shape != "localized_distortion"
+    pw.store_world(conn, config, runs_dir=tmp_path)
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    events = conn.fetchall("SELECT * FROM parity_events")
+    assert len(events) == 1
+    event = events[0]
+    assert event["detector_id"] != "ARB-001"
+    k_prev, k_mid = scenario.ground_truth.affected_strikes
+    strikes = {event["strike"], event["strike2"], event["strike3"]}
+    strikes.discard(None)
+    assert k_mid in strikes
+
+    cross_checks = conn.fetchall("SELECT * FROM cross_check_requests")
+    assert len(cross_checks) == 1
+    finding = json.loads(cross_checks[0]["requester_finding"])
+    assert finding["detector_id"] == event["detector_id"]
+    assert finding["parity_event_id"] == event["id"]
+    question = cross_checks[0]["question"]
+    assert event["detector_id"] in question
+
+
+def test_parity_work_on_a_genuine_world_still_prefers_arb001_unchanged(conn, monkeypatch, tmp_path):
+    """Regression: the classic 'genuine' variant's one-legged shift also
+    breaks cross-strike bounds against its neighbor as an accepted side
+    effect (docs/SPEC_RECONCILIATION.md SS45's second finding) - once
+    _parity_work started scanning the whole library, a bigger box/vertical
+    edge born from that side effect could otherwise outrank ARB-001's own
+    edge and get escalated in its place. `_parity_work`'s ARB-001-preferred
+    tiebreak keeps this world's own recorded event exactly what it was
+    before this increment: an ARB-001 conversion/reversal, not a
+    cross-strike package."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", [])
+    _store_parity_world(
+        conn, "m-exp-parity-unchanged", seed=7, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"genuine": 1.0},
+    )
+
+    _parity_work(conn, "explorer-1", "T0")
+
+    events = conn.fetchall("SELECT * FROM parity_events")
+    assert len(events) > 0
+    for event in events:
+        assert event["detector_id"] == "ARB-001"
+        assert event["direction"] in ("conversion", "reversal")
+        assert event["strike2"] is None
+        assert event["strike3"] is None

@@ -137,23 +137,33 @@ def _assemble_context(conn, report: dict) -> str:
                     "into peer_classification (favor 'idiosyncratic')."
                 )
 
-    # ARB-001 (SPEC_RECONCILIATION.md §39-§41): the parity mission's own
-    # report shape. Reports with a parity_event_id carry detector_event_id
-    # None (backend/fi_db.py's discovery_reports.parity_event_id comment),
-    # so this block and the detector-event block above never both fire for
-    # the same report.
+    # Arbitrage library detections (SPEC_RECONCILIATION.md §39-§41/§45): the
+    # parity mission's own report shape. Reports with a parity_event_id carry
+    # detector_event_id None (backend/fi_db.py's discovery_reports.
+    # parity_event_id comment), so this block and the detector-event block
+    # above never both fire for the same report. detector_id defaults to
+    # 'ARB-001' on rows written before the cross-strike training increment
+    # (§45's deferred item) added the column, so every existing row still
+    # renders correctly.
     if report.get("parity_event_id") is not None:
         parity_event = fi_db.get_parity_event(conn, report["parity_event_id"])
         if parity_event is not None:
+            detector_id = parity_event["detector_id"] or "ARB-001"
+            strikes = [parity_event["strike"]]
+            if parity_event["strike2"] is not None:
+                strikes.append(parity_event["strike2"])
+            if parity_event["strike3"] is not None:
+                strikes.append(parity_event["strike3"])
+            strikes_text = "/".join(str(k) for k in strikes)
             lines.append(
-                f"Parity claim (ARB-001): {parity_event['direction']} on {parity_event['security']} at "
-                f"strike {parity_event['strike']}, expiry {parity_event['expiry_days']}d - gross edge "
+                f"Parity claim ({detector_id}): {parity_event['direction']} on {parity_event['security']} at "
+                f"strike(s) {strikes_text}, expiry {parity_event['expiry_days']}d - gross edge "
                 f"${parity_event['gross_edge_per_share']:.2f}/share, net edge "
                 f"${parity_event['net_edge_per_share']:.2f}/share, classification {parity_event['classification']}, "
                 f"capacity {parity_event['capacity_units']:.2f} unit(s)."
             )
             lines.append(
-                "This is a deterministic executable-arbitrage claim (backend/arbitrage.py's ARB-001), not "
+                f"This is a deterministic executable-arbitrage claim (backend/arbitrage.py's {detector_id}), not "
                 "a statistical anomaly you are pattern-matching - assess whether the claimed edge actually "
                 "survives scrutiny: quote staleness, the size genuinely available at the quoted price, and "
                 "- for a class B (reversal) claim only - whether the borrow-fee assumption behind it is "
@@ -162,6 +172,12 @@ def _assemble_context(conn, report: dict) -> str:
                 "signal behind a parity detection - set peer_classification to 'not_applicable' unless "
                 "there is genuine peer evidence elsewhere in this context."
             )
+            if detector_id != "ARB-001":
+                lines.append(
+                    "This is a cross-strike no-arbitrage-bound violation (box/vertical/butterfly/monotonicity), "
+                    "not a put-call parity claim - assess whether the quoted sizes at every leg named above and "
+                    "the staleness of the affected strikes support the claimed edge."
+                )
 
     evidence_ids = json.loads(report["evidence_ids"] or "[]")
     if evidence_ids:

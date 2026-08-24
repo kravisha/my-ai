@@ -1271,6 +1271,90 @@ def test_record_parity_event_converges_on_the_same_chain_snapshot(conn):
     assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 2
 
 
+def test_record_parity_event_detector_id_and_strikes_round_trip(conn):
+    """Additive columns (cross-strike training increment, SS45's deferred
+    item): detector_id defaults to 'ARB-001' when omitted, and strike2/
+    strike3 default to None (a single-strike package) - the shape every
+    call site before this increment already produced."""
+    default_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1",
+        strike=100.0, expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.6, net_edge_per_share=0.5, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+    )
+    default_event = fi_db.get_parity_event(conn, default_id)
+    assert default_event["detector_id"] == "ARB-001"
+    assert default_event["strike2"] is None
+    assert default_event["strike3"] is None
+
+    box_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1",
+        strike=100.0, expiry_days=30, direction="long_box",
+        gross_edge_per_share=0.9, net_edge_per_share=0.7, classification="A",
+        capacity_units=8.0, observed_at="2026-01-05T14:30:00+00:00",
+        detector_id="ARB-006", strike2=105.0, strike3=None,
+    )
+    box_event = fi_db.get_parity_event(conn, box_id)
+    assert box_event["detector_id"] == "ARB-006"
+    assert box_event["strike2"] == 105.0
+    assert box_event["strike3"] is None
+
+    butterfly_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1",
+        strike=95.0, expiry_days=30, direction="call_butterfly",
+        gross_edge_per_share=1.2, net_edge_per_share=1.0, classification="A",
+        capacity_units=5.0, observed_at="2026-01-05T14:30:00+00:00",
+        detector_id="ARB-009", strike2=100.0, strike3=105.0,
+    )
+    butterfly_event = fi_db.get_parity_event(conn, butterfly_id)
+    assert butterfly_event["strike2"] == 100.0
+    assert butterfly_event["strike3"] == 105.0
+
+
+def test_record_parity_event_convergence_key_distinguishes_detector_and_k2_k3(conn):
+    """The convergence key extends to (security, observed_at, strike,
+    expiry_days, direction, detector_id, strike2, strike3) - two detections
+    that share every ARB-001-era field but differ in detector_id or the
+    extra strikes must land as separate rows; identical on every field
+    (strike2/strike3 both None, matched via SQLite's NULL-safe IS) must
+    still converge."""
+    base = dict(
+        strike=100.0, expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.6, net_edge_per_share=0.5, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+    )
+
+    arb001_id = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **base)
+    # Same strike/expiry/direction, but a different detector_id (a
+    # hypothetical monotonicity_calls direction collision is not realistic
+    # for 'conversion', but the key must not silently converge two
+    # different detectors' rows just because the ARB-001-era columns match).
+    other_detector_id = fi_db.record_parity_event(
+        conn, "explorer-1", "T0", "ENT1", "SYN1", **base, detector_id="ARB-002",
+    )
+    assert other_detector_id != arb001_id
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 2
+
+    # Same everything else, but a different k2 (two distinct box partners for
+    # the same k1) - must not converge.
+    box_kwargs = {**base, "direction": "long_box", "detector_id": "ARB-006"}
+    box_k2_105 = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **box_kwargs, strike2=105.0)
+    box_k2_110 = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **box_kwargs, strike2=110.0)
+    assert box_k2_105 != box_k2_110
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 4
+
+    # Identical in every column, strike2/strike3 both None on both calls -
+    # must converge via SQLite's NULL-safe `IS` comparison, not append.
+    repeat_id = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **base)
+    assert repeat_id == arb001_id
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 4
+
+    # And identical box row (same k2) also converges.
+    repeat_box_id = fi_db.record_parity_event(conn, "explorer-1", "T0", "ENT1", "SYN1", **box_kwargs, strike2=105.0)
+    assert repeat_box_id == box_k2_105
+    assert conn.fetchone("SELECT COUNT(*) AS n FROM parity_events")["n"] == 4
+
+
 def test_the_parity_min_edge_lens_is_seeded(conn):
     lens = fi_db.get_active_artifact(conn, fi_db.LENS_PARITY_MIN_EDGE_NAME)
     assert lens is not None

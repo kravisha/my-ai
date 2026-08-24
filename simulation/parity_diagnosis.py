@@ -5,27 +5,33 @@ run over the records the Evaluator already produced
 ## The core idea
 
 The simulator's own offline detector is the differential diagnostic. Explorer
-runs backend/arbitrage.py's `detect_arb001` over whatever option_chain
-observations `providers/stored_data.py`'s `StoredChainProvider` hands it -
-that is Explorer's read side, not a copy of it. Re-running the identical
-detector, over the identical stored rows, right here in diagnosis, produces a
-second, independent answer with nothing but the passage of time and the
-identity of the caller changed. If the two answers agree, whatever went wrong
-happened after detection - Explorer's own escalation path, the cross-check,
-Analysis. If they disagree, the defect is upstream of Explorer entirely: the
-world never carried an executable edge to begin with (or, on a trap/none
-scenario, still carries one it should not). That split needs no judgment
-call, which is why this module - like `parity_evaluation.py` before it - is a
-pure function over a database connection: no LLM, no new agent (§39's
-Evaluator disposition applies equally here, and for the same reason).
+runs backend/arbitrage.py's `scan_chain` over whatever option_chain
+observations `providers/stored_data.py`'s `chain_snapshots` hands it - that is
+Explorer's read side, not a copy of it (SPEC_RECONCILIATION.md §45's deferred
+item: the chain scan, ARB-001 included alongside every cross-strike
+detector). Re-running the identical scan, over the identical stored rows,
+right here in diagnosis, produces a second, independent answer with nothing
+but the passage of time and the identity of the caller changed. If the two
+answers agree, whatever went wrong happened after detection - Explorer's own
+escalation path, the cross-check, Analysis. If they disagree, the defect is
+upstream of Explorer entirely: the world never carried an executable edge to
+begin with (or, on a trap/none/cross-strike scenario, still carries one it
+should not). That split needs no judgment call, which is why this module -
+like `parity_evaluation.py` before it - is a pure function over a database
+connection: no LLM, no new agent (§39's Evaluator disposition applies equally
+here, and for the same reason).
 
-`simulation/parity_world.py`'s own `answer_key`/`_snapshot_for_row` are not
-reusable for this: they take an in-memory `ScenarioWorld`, and diagnosis runs
-long after that object is gone, against whatever actually got written to the
-Data Store. `StoredChainProvider.snapshots` and `detect_arb001` are what
+`simulation/parity_world.py`'s own `answer_key`/`_chain_snapshots_from_scenario`
+are not reusable for this: they take an in-memory `ScenarioWorld`, and
+diagnosis runs long after that object is gone, against whatever actually got
+written to the Data Store. `chain_snapshots` and `scan_chain` are what
 Explorer itself calls (`agents/explorer.py`'s `_parity_work`), so re-running
 them here is a diagnostic over the same interface Explorer used, not a
-reimplementation that could quietly drift from it.
+reimplementation that could quietly drift from it. One mechanism now covers
+both families: a parity scenario's offline scan finds ARB-001 alone (nothing
+else survives an arbitrage-free chain), a cross-strike scenario's finds the
+cross-strike package instead, and either family's stray or unexpected hits
+show up in the same opportunity list.
 
 ## Corrective work is per cause, not per finding
 
@@ -71,9 +77,12 @@ from pathlib import Path
 from agents.discovery_config import ANALYSIS_RECENCY_WINDOW_SECONDS
 from backend import fi_db
 from backend import observations as observation_store
-from backend.arbitrage import CostConfig, Opportunity, detect_arb001
-from providers.stored_data import StoredChainProvider
-from simulation.parity_evaluation import OUTCOME_FAIL, OUTCOME_INCONCLUSIVE, OUTCOME_PARTIAL, OUTCOME_PASS
+from backend.arbitrage import CostConfig, Opportunity, scan_chain
+from providers.stored_data import chain_snapshots
+from simulation.parity_evaluation import (
+    OUTCOME_FAIL, OUTCOME_INCONCLUSIVE, OUTCOME_PARTIAL, OUTCOME_PASS,
+    REASON_STRAY_DETECTION, REASON_UNEXPECTED_PARITY_HIT,
+)
 
 # How long a report may sit pending before this module calls it stalled
 # rather than in flight. Addendum 25's own live-run measurement
@@ -104,6 +113,16 @@ CAUSE_ANALYSIS_STALLED = "analysis_stalled"
 CAUSE_ANALYSIS_IN_FLIGHT = "analysis_in_flight"
 CAUSE_ANALYSIS_LOST = "analysis_lost"
 CAUSE_ANALYSIS_FAILED = "analysis_failed"
+# The cross-strike family's own world cause (SPEC_RECONCILIATION.md §45's
+# deferred item): routes 'unexpected_parity_hit'/'stray_detection' FAILs
+# where the offline re-scan agrees with what was recorded - the parallel-
+# shift injector genuinely failed to preserve parity, or leaked a violation
+# beyond the affected strike. Disagreement between the recorded detection
+# and the offline re-scan still routes to the existing
+# CAUSE_DETECTOR_INTERFACE_DRIFT below (module docstring's classification
+# note applies equally here: no choice Explorer made explains a gap between
+# it and the identical detector run again).
+CAUSE_WORLD_CROSS_INTEGRITY = "world_cross_integrity"
 
 COMPONENT_SIMULATION_ENGINE = "simulation_engine"
 COMPONENT_EXPLORER = "explorer"
@@ -127,6 +146,7 @@ _CLASSIFICATION = {
     CAUSE_TRAP_NOT_ERASED: CLASS_WORLD,
     CAUSE_WORLD_NOT_CLEAN: CLASS_WORLD,
     CAUSE_DETECTOR_INTERFACE_DRIFT: CLASS_WORLD,
+    CAUSE_WORLD_CROSS_INTEGRITY: CLASS_WORLD,
     CAUSE_EXPLORER_MISSED: CLASS_AGENT,
     CAUSE_EXPLORER_FILING_FAILURE: CLASS_AGENT,
     CAUSE_EXPLORER_ESCALATION_FAILURE: CLASS_AGENT,
@@ -170,6 +190,13 @@ _REMEDY = {
         "Explorer's live detection and the offline detector disagree over the identical stored rows. "
         "Investigate providers/stored_data.py's snapshot reconstruction and any staleness/clock drift "
         "between Explorer's read and this diagnosis's re-read."
+    ),
+    CAUSE_WORLD_CROSS_INTEGRITY: (
+        "A cross-strike scenario recorded an ARB-001 hit or a detection that does not trace back to the "
+        "primary affected strike, and the offline re-scan confirms the chain as stored actually carries "
+        "it. The parallel-shift injector (_inject_cross_bump / _inject_cross_dip / "
+        "_inject_cross_spread_artifact) failed to preserve parity at the shifted strike, or leaked a "
+        "violation beyond it - investigate the injector, not Explorer."
     ),
     CAUSE_GROUND_TRUTH_DIRECTION_ERROR: (
         "The offline detector and the agents' recorded direction agree with each other but not with "
@@ -231,10 +258,13 @@ def _result(entry: dict, causes: list[str], component: str, notes: dict) -> dict
 def _offline_differential(conn, entity_id: str, scenario_id: str) -> tuple[list, list]:
     """Stage 0 (world integrity) and Stage 1 (the offline differential) in
     one pass: the scenario's stored chain, filtered to its own provenance,
-    then `detect_arb001` re-run over it exactly as Explorer calls it
-    (`agents/explorer.py`'s `_parity_work`: `detect_arb001(snapshot, costs)`,
-    no stale_tolerance_seconds override) - a second, independent reading of
-    the identical stored rows.
+    then `scan_chain` re-run over every expiry exactly as Explorer calls it
+    (`agents/explorer.py`'s `_parity_work`: `scan_chain(chain, costs)`, no
+    stale_tolerance_seconds override) - a second, independent reading of the
+    identical stored rows. One mechanism now covers both families: ARB-001
+    is part of the same scan, not a separate call, so a parity scenario's
+    differential and a cross-strike scenario's differential are the same
+    code path (SPEC_RECONCILIATION.md §45's deferred item).
 
     Returns (chain_rows, offline_opportunities). An empty chain_rows means
     Stage 0 already answers the question; the caller checks that before
@@ -247,11 +277,9 @@ def _offline_differential(conn, entity_id: str, scenario_id: str) -> tuple[list,
         return chain_rows, []
     chain_observation = chain_rows[-1]
     costs = CostConfig()
-    offline_results = [
-        detect_arb001(snapshot, costs)
-        for snapshot in StoredChainProvider(conn).snapshots(chain_observation)
-    ]
-    offline_opportunities = [r for r in offline_results if isinstance(r, Opportunity)]
+    offline_opportunities: list[Opportunity] = []
+    for chain in chain_snapshots(chain_observation):
+        offline_opportunities.extend(scan_chain(chain, costs))
     return chain_rows, offline_opportunities
 
 
@@ -392,10 +420,41 @@ def _diagnose_scenario(conn, mission_id: str, entry: dict, ground_truth: dict) -
             return _result(entry, [cause], COMPONENT_SIMULATION_ENGINE, notes)
         return _result(entry, [CAUSE_DETECTOR_INTERFACE_DRIFT], COMPONENT_INTERFACE, notes)
 
+    if outcome == OUTCOME_FAIL and reason in (REASON_UNEXPECTED_PARITY_HIT, REASON_STRAY_DETECTION):
+        # SS45's deferred item. The offline re-scan (over every expiry, same
+        # mechanism as every other branch here) either confirms the same
+        # anomaly Explorer recorded - the injector genuinely failed to
+        # preserve parity or leaked beyond the affected strike, a world
+        # cause - or does not, in which case the disagreement is between
+        # Explorer's recorded detection and the identical detector run
+        # again, the same detector_interface_drift reasoning the
+        # trap/none branch above already uses.
+        primary = ground_truth.get("affected_strike")
+        if reason == REASON_UNEXPECTED_PARITY_HIT:
+            offline_agrees = any(o.detector_id == "ARB-001" for o in offline_opportunities)
+        else:
+            offline_agrees = any(
+                o.detector_id != "ARB-001"
+                and primary not in (o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3"))
+                for o in offline_opportunities
+            )
+        if offline_agrees:
+            return _result(entry, [CAUSE_WORLD_CROSS_INTEGRITY], COMPONENT_SIMULATION_ENGINE, notes)
+        return _result(entry, [CAUSE_DETECTOR_INTERFACE_DRIFT], COMPONENT_INTERFACE, notes)
+
     if outcome == OUTCOME_PARTIAL and reason == "wrong_direction":
         expected = ground_truth.get("expected_direction")
         agent_direction = entry.get("detected_direction")
         offline_direction = offline_best.direction if offline_best else None
+        # A cross-strike scenario has no single "the" direction to compare
+        # against (ground_truth['expected_direction'] is None for that
+        # family - simulation/parity_evaluation.py's own cross-strike branch
+        # never produces 'wrong_direction' as a reason, but this guard keeps
+        # the refusal-to-guess honest if that ever changes) - refuse to
+        # infer a ground-truth or selection error from a comparison that has
+        # no expected answer to compare against.
+        if expected is None:
+            return _result(entry, [CAUSE_DIRECTION_INDETERMINATE], COMPONENT_EVALUATION, notes)
         if offline_direction is not None and offline_direction == agent_direction and offline_direction != expected:
             return _result(entry, [CAUSE_GROUND_TRUTH_DIRECTION_ERROR], COMPONENT_EVALUATION_OR_SIMULATION_ENGINE, notes)
         if offline_direction is not None and offline_direction == expected:

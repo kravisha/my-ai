@@ -65,6 +65,14 @@ REASON_ANALYSIS_IN_FLIGHT = "analysis_in_flight"
 REASON_WRONG_DIRECTION = "wrong_direction"
 REASON_TRAP_LEAKED = "trap_leaked"
 REASON_FALSE_POSITIVE = "false_positive"
+# The cross-strike family's own reasons (docs/SPEC_RECONCILIATION.md SS45's
+# deferred item): a same-strike parallel shift preserves parity by
+# construction, so an ARB-001 hit on one of these scenarios is a world-
+# integrity alarm, not a second correct answer; a non-ARB-001 hit whose
+# strikes do not trace back to the primary affected strike is a stray the
+# injector should not have produced.
+REASON_UNEXPECTED_PARITY_HIT = "unexpected_parity_hit"
+REASON_STRAY_DETECTION = "stray_detection"
 
 OUTCOME_PASS = "PASS"
 OUTCOME_PARTIAL = "PARTIAL"
@@ -142,7 +150,37 @@ def _grade_scenario(conn, mission_id: str, scenario_id: str, ground_truth: dict)
     variant = ground_truth["variant"]
     detected_direction = None
 
-    if variant == pw.VARIANT_GENUINE:
+    if ground_truth.get("expected_family") == "cross_strike":
+        # SS45's deferred item. A same-strike parallel shift leaves every
+        # executable ARB-001 edge at the bumped strike invariant (module note
+        # above simulation/parity_world.py's _inject_cross_bump) - so an
+        # ARB-001 hit here means the world drifted from that invariant, not
+        # that a second correct answer was found, and grades FAIL regardless
+        # of anything downstream. A non-ARB-001 hit whose strikes do not
+        # include the primary affected strike is a stray the injector should
+        # not have produced. Direction comparison is skipped throughout -
+        # ground_truth['expected_direction'] is None for every cross variant
+        # (there is no single "the" direction the way ARB-001's conversion/
+        # reversal has one), so the wrong_direction branch below never
+        # applies to this family.
+        primary = ground_truth.get("affected_strike")
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        cross_hits = [d for d in detections if d["detector_id"] != "ARB-001"]
+        stray = [d for d in cross_hits if primary not in (d["strike"], d["strike2"], d["strike3"])]
+
+        if arb001_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_UNEXPECTED_PARITY_HIT]
+        elif stray:
+            outcome, reasons = OUTCOME_FAIL, [REASON_STRAY_DETECTION]
+        elif not cross_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_MISSED]
+        elif analyses:
+            outcome, reasons = OUTCOME_PASS, []
+        elif reports:
+            outcome, reasons = OUTCOME_INCONCLUSIVE, [REASON_ANALYSIS_IN_FLIGHT]
+        else:
+            outcome, reasons = OUTCOME_PARTIAL, [REASON_DETECTED_NOT_ESCALATED]
+    elif variant == pw.VARIANT_GENUINE:
         if analyses:
             detected_direction = _detected_direction(analyses, reports, detections)
             if detected_direction == ground_truth["expected_direction"]:
@@ -188,17 +226,27 @@ def _metrics(scenarios: list[dict]) -> dict:
     for entry in scenarios:
         by_outcome[entry["outcome"]] += 1
 
-    genuine = [s for s in scenarios if s["variant"] == pw.VARIANT_GENUINE]
-    non_genuine = [s for s in scenarios if s["variant"] != pw.VARIANT_GENUINE]
+    # "genuine" spans any family (SS45's deferred item): the original
+    # VARIANT_GENUINE plus the two cross-strike genuine variants
+    # (pw.CROSS_GENUINE_VARIANTS) - a run trained on options_arbitrage_phase1
+    # may never draw the classic parity genuine at all and still deserves to
+    # count as having exercised its own strategy.
+    def _is_genuine(variant: str) -> bool:
+        return variant == pw.VARIANT_GENUINE or variant in pw.CROSS_GENUINE_VARIANTS
+
+    genuine = [s for s in scenarios if _is_genuine(s["variant"])]
+    non_genuine = [s for s in scenarios if not _is_genuine(s["variant"])]
     genuine_detected = sum(1 for s in genuine if s["outcome"] == OUTCOME_PASS)
     genuine_missed = len(genuine) - genuine_detected
     false_positives = sum(1 for s in non_genuine if s["outcome"] == OUTCOME_FAIL)
 
     # addendum 25 §18: the strategy was exercised if at least one genuine
-    # scenario made it all the way to PASS - detected, escalated, analyzed,
-    # and in the right direction. Anything short of that (missed, detected
-    # but not escalated, analysis still in flight, or the wrong direction)
-    # is not the strategy being exercised, it is the strategy being tried.
+    # scenario of any family made it all the way to PASS - detected,
+    # escalated, analyzed, and (for ARB-001 material) in the right direction.
+    # Anything short of that (missed, detected but not escalated, analysis
+    # still in flight, wrong direction, or - cross-strike material only - an
+    # unexpected parity hit or a stray detection) is not the strategy being
+    # exercised, it is the strategy being tried.
     strategy_exercised = genuine_detected > 0
 
     return {

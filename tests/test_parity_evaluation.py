@@ -293,3 +293,110 @@ def test_metrics_counts_sum_to_scenario_count(conn, tmp_path):
 
     assert sum(evaluation["metrics"]["by_outcome"].values()) == config.n_scenarios == 5
     assert len(evaluation["scenarios"]) == 5
+
+
+# --- cross-strike family (docs/SPEC_RECONCILIATION.md SS45's deferred item) -
+
+
+def _store_cross_world(conn, mission_id, seed, tmp_path, **overrides):
+    rd.run_reference_engine(conn)
+    config = pw.MissionConfig(
+        mission_id=mission_id, run_mode="simulation", strategy="options_arbitrage_phase1",
+        seed=seed, **overrides,
+    )
+    result = pw.store_world(conn, config, runs_dir=tmp_path)
+    return config, result["summary_path"]
+
+
+def test_cross_genuine_full_chain_reaches_pass(conn, tmp_path):
+    """detected (a non-ARB-001 package) -> escalated -> cross-checked ->
+    reported -> analyzed: PASS, with no direction to compare (expected_
+    direction is None for the cross-strike family)."""
+    config, summary_path = _store_cross_world(
+        conn, "m-eval-crossbump", seed=1, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"cross_strike_bump": 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+    _answer_all_cross_checks(conn)
+    _file_cross_checked_reports(conn, "explorer-1", "T0")
+    _complete_all_reports_with_analysis(conn)
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+
+    for entry in evaluation["scenarios"]:
+        assert entry["outcome"] == "PASS", entry
+        assert entry["reasons"] == []
+        assert entry["counts"]["detections"] >= 1
+        assert entry["detected_direction"] is None
+        assert entry["expected_direction"] is None
+    assert evaluation["metrics"]["strategy_exercised"] is True
+
+
+def test_cross_unexpected_parity_hit_planted_fails(conn, tmp_path):
+    """A parity_events row planted directly with detector_id='ARB-001' for a
+    cross-strike scenario - simulating a world-integrity failure (the
+    injector leaked an ARB-001 edge it should never have created) - fails
+    the scenario regardless of the real cross-strike detection also
+    present."""
+    config, summary_path = _store_cross_world(
+        conn, "m-eval-unexpected", seed=1, tmp_path=tmp_path, n_scenarios=4, scenario_mix={"cross_strike_bump": 1.0},
+    )
+    _parity_work(conn, "explorer-1", "T0")
+
+    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    scenario_entry = summary["scenarios"][0]
+    gt = scenario_entry["ground_truth"]
+    fi_db.record_parity_event(
+        conn, "explorer-1", "T0", gt["entity_id"], gt["symbol"],
+        strike=gt["affected_strike"], expiry_days=30, direction="conversion",
+        gross_edge_per_share=0.10, net_edge_per_share=0.05, classification="A", capacity_units=10.0,
+        observed_at="2026-01-05T14:30:00+00:00", run_id=config.mission_id, scenario_id=scenario_entry["scenario_id"],
+        detector_id="ARB-001",
+    )
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    by_id = {e["scenario_id"]: e for e in evaluation["scenarios"]}
+    assert by_id[scenario_entry["scenario_id"]]["outcome"] == "FAIL"
+    assert by_id[scenario_entry["scenario_id"]]["reasons"] == ["unexpected_parity_hit"]
+
+
+def test_cross_stray_detection_planted_fails(conn, tmp_path):
+    """A non-ARB-001 parity_events row planted directly whose strikes do not
+    include the scenario's primary affected strike - a stray the injector
+    should never have produced - fails distinctly from an unexpected parity
+    hit."""
+    config, summary_path = _store_cross_world(
+        conn, "m-eval-stray", seed=1, tmp_path=tmp_path, n_scenarios=1, scenario_mix={"cross_strike_bump": 1.0},
+    )
+    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    scenario_entry = summary["scenarios"][0]
+    gt = scenario_entry["ground_truth"]
+    primary = gt["affected_strike"]
+    away_strike = primary + 1000.0  # guaranteed not to equal the primary strike
+
+    fi_db.record_parity_event(
+        conn, "explorer-1", "T0", gt["entity_id"], gt["symbol"],
+        strike=away_strike, expiry_days=30, direction="monotonicity_calls",
+        gross_edge_per_share=0.10, net_edge_per_share=0.05, classification="A", capacity_units=10.0,
+        observed_at="2026-01-05T14:30:00+00:00", run_id=config.mission_id, scenario_id=scenario_entry["scenario_id"],
+        detector_id="ARB-011", strike2=away_strike + 5.0,
+    )
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+    entry = evaluation["scenarios"][0]
+    assert entry["outcome"] == "FAIL"
+    assert entry["reasons"] == ["stray_detection"]
+
+
+def test_cross_trap_clean_passes(conn, tmp_path):
+    config, summary_path = _store_cross_world(
+        conn, "m-eval-crosstrap", seed=1, tmp_path=tmp_path, n_scenarios=4,
+        scenario_mix={"cross_strike_spread_artifact": 1.0},
+    )
+    # No agent work at all - a trap variant's answer key is "detect nothing".
+
+    evaluation = pe.evaluate_mission(conn, summary_path)
+
+    for entry in evaluation["scenarios"]:
+        assert entry["outcome"] == "PASS", entry
+        assert entry["reasons"] == []
+        assert entry["counts"] == {"detections": 0, "reports": 0, "analyses": 0}

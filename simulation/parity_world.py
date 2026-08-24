@@ -10,19 +10,37 @@ connection, invoked from orchestration, no charter, no watcher.
 For each scenario: draw one canonical security from the Reference Data
 Engine's focus universe (never invented - addendum 25 SS3), price a full
 listed option chain on it with simulation/pricing.py's Black-Scholes kernel
-so European put-call parity holds by construction, then - for five of six
-scenario variants - deliberately perturb exactly one (strike, expiry) pair
-into either a genuine executable arbitrage or one of four traps that *look*
-like one at mid prices but are not (addendum 27's non-negotiable rule, lived
-out as training data rather than only stated as a rule). The sixth variant,
-'none', injects nothing - false-positive material, the same role Stage 1's
-zero-plant worlds play (simulation/stage1.py).
+so European put-call parity holds by construction, then - for eight of nine
+scenario variants - deliberately perturb either one (strike, expiry) pair
+(the original six ARB-001/parity variants) or one strike across both legs
+at the middle listed expiry (the three cross-strike variants,
+docs/SPEC_RECONCILIATION.md SS45's deferred item) into either a genuine
+executable arbitrage or a trap that *looks* like one at mid prices but is
+not (addendum 27's non-negotiable rule, lived out as training data rather
+than only stated as a rule). The ninth variant, 'none', injects nothing -
+false-positive material, the same role Stage 1's zero-plant worlds play
+(simulation/stage1.py).
 
-The simulator's own answer key is backend/arbitrage.py's detect_arb001 run
-over every (strike, expiry) pair - the organization's own detector, not a
-reimplementation that could quietly drift from it (the same reasoning
-stage1._answer_key gives for reusing scan_for_anomaly rather than
-reinventing it).
+The two families train different detectors: the six original variants train
+ARB-001 (put-call parity, one strike, one expiry); the three cross-strike
+variants (`cross_strike_bump`/`cross_strike_dip`/
+`cross_strike_spread_artifact`) train backend/arbitrage.py's Phase 1
+cross-strike detectors (ARB-006 through ARB-011) via a same-strike parallel
+shift that leaves parity at the shifted strike exactly invariant while
+breaking monotonicity/vertical/box/butterfly bounds against the neighboring
+strike - see the module note above `_inject_cross_bump` for the algebra.
+`STRATEGIES` offers both a `put_call_parity_arbitrage` mission (the original
+six variants, unchanged default mix) and an `options_arbitrage_phase1`
+mission (a default mix spanning both families) - a mix is explicit operator
+intent either way, so any variant is allowed under either strategy; only the
+per-strategy *default* differs.
+
+The simulator's own answer key is backend/arbitrage.py's `scan_chain` run
+over every expiry's strike ladder - the organization's own chain-level
+entry point, which runs ARB-001 per strike alongside every cross-strike
+detector, not a reimplementation that could quietly drift from either (the
+same reasoning stage1._answer_key gives for reusing scan_for_anomaly rather
+than reinventing it).
 
 ## Reference gate (addendum 25 SS3, fail closed)
 
@@ -70,7 +88,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend import reference_data
-from backend.arbitrage import CostConfig, NoOpportunity, Opportunity, ParitySnapshot, Quote, detect_arb001
+from backend.arbitrage import ChainSnapshot, CostConfig, Opportunity, Quote, StrikeQuotes, scan_chain
 from backend.canonical import Observation, Provenance
 from backend.db import parse_timestamp
 # Aliased, not `from backend import observations`: this module defines its
@@ -84,8 +102,12 @@ from simulation import pricing
 
 # Extensible by design (addendum 25 SS4: "the interface must be designed so
 # additional strategies can be added without redesigning the mission
-# system"). Exactly one member today.
-STRATEGIES = ("put_call_parity_arbitrage",)
+# system"). `options_arbitrage_phase1` (docs/SPEC_RECONCILIATION.md SS45's
+# deferred item) is the cross-strike detectors' own training strategy - a
+# tuple entry, per SS44's own extensibility claim, not a redesign.
+STRATEGY_PARITY = "put_call_parity_arbitrage"
+STRATEGY_CROSS_STRIKE = "options_arbitrage_phase1"
+STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE)
 
 # A convention, not a measurement: an arbitrary fixed Monday afternoon inside
 # a nominal equity session. Every timestamp a run produces derives from this
@@ -94,26 +116,77 @@ STRATEGIES = ("put_call_parity_arbitrage",)
 # their own base_time; this is only the shipped default.
 BASE_TIME_DEFAULT = "2026-01-05T14:30:00+00:00"
 
-# The six scenario variants addendum 25 SS9/SS21 asks for: one genuine
-# executable opportunity, four traps that look like one at mid prices but
-# are not, and a clean no-injection control.
+# The six original scenario variants addendum 25 SS9/SS21 asks for: one
+# genuine executable opportunity, four traps that look like one at mid
+# prices but are not, and a clean no-injection control - all of them ARB-001
+# (same-strike parity) material.
 VARIANT_GENUINE = "genuine"
 VARIANT_SPREAD_ARTIFACT = "spread_artifact"
 VARIANT_CARRY_EFFECT = "carry_effect"
 VARIANT_BORROW_COST = "borrow_cost"
 VARIANT_STALE_QUOTE = "stale_quote"
 VARIANT_NONE = "none"
-VARIANTS = (
+PARITY_VARIANTS = (
     VARIANT_GENUINE, VARIANT_SPREAD_ARTIFACT, VARIANT_CARRY_EFFECT,
     VARIANT_BORROW_COST, VARIANT_STALE_QUOTE, VARIANT_NONE,
 )
-TRAP_VARIANTS = (VARIANT_SPREAD_ARTIFACT, VARIANT_CARRY_EFFECT, VARIANT_BORROW_COST, VARIANT_STALE_QUOTE)
+
+# The three cross-strike variants (docs/SPEC_RECONCILIATION.md SS45's
+# deferred item): a same-strike parallel shift - call AND put mids at one
+# strike moved by the same amount, unchanged half-spreads - leaves every
+# executable parity edge at that strike invariant (Cbid-Pask and -Cask+Pbid
+# both untouched by a shift applied equally to both legs) while violating
+# monotonicity/verticals/butterflies against the neighboring strike. That
+# makes 'cross_strike_bump'/'cross_strike_dip' genuine cross-strike
+# opportunities with, by construction, zero ARB-001 co-fire - an ARB-001 hit
+# on one of these scenarios is a world-integrity alarm, not a second correct
+# answer (see _inject_cross_bump/_inject_cross_dip below).
+# 'cross_strike_spread_artifact' is the trap: the same shift, erased by a
+# widened spread at the bumped strike rather than by the shift never having
+# happened.
+VARIANT_CROSS_BUMP = "cross_strike_bump"
+VARIANT_CROSS_DIP = "cross_strike_dip"
+VARIANT_CROSS_SPREAD_ARTIFACT = "cross_strike_spread_artifact"
+CROSS_GENUINE_VARIANTS = (VARIANT_CROSS_BUMP, VARIANT_CROSS_DIP)
+
+VARIANTS = PARITY_VARIANTS + CROSS_GENUINE_VARIANTS + (VARIANT_CROSS_SPREAD_ARTIFACT,)
+TRAP_VARIANTS = (
+    VARIANT_SPREAD_ARTIFACT, VARIANT_CARRY_EFFECT, VARIANT_BORROW_COST, VARIANT_STALE_QUOTE,
+    VARIANT_CROSS_SPREAD_ARTIFACT,
+)
 
 # Equal weight per variant - a convention (scenario diversity, addendum 25
 # SS21), not a measured training-curriculum split. A caller wanting a
 # genuine-only or trap-only run overrides scenario_mix directly (the property
-# tests below do exactly that).
-DEFAULT_SCENARIO_MIX = {variant: 1.0 for variant in VARIANTS}
+# tests below do exactly that). Unchanged in shape and value from before the
+# cross-strike variants existed - the parity strategy's default training
+# curriculum is exactly what it always was; only the new strategy's default
+# spans the wider variant set (DEFAULT_SCENARIO_MIX_CROSS below).
+DEFAULT_SCENARIO_MIX = {variant: 1.0 for variant in PARITY_VARIANTS}
+
+# The cross-strike strategy's default curriculum: a convention, disclosed
+# rather than measured (same discipline as DEFAULT_SCENARIO_MIX above).
+# Genuine cross material (bump/dip) gets the largest single share since it is
+# the strategy's own point; the parity variants stay present at a reduced
+# combined weight so a cross-strike-trained run still sees ARB-001 material
+# too (options_arbitrage_phase1 covers the whole Phase 1 library, ARB-001
+# included). Weights sum to 1.0.
+DEFAULT_SCENARIO_MIX_CROSS = {
+    VARIANT_GENUINE: 0.20,
+    VARIANT_CROSS_BUMP: 0.15,
+    VARIANT_CROSS_DIP: 0.15,
+    VARIANT_CROSS_SPREAD_ARTIFACT: 0.10,
+    VARIANT_SPREAD_ARTIFACT: 0.075,
+    VARIANT_CARRY_EFFECT: 0.075,
+    VARIANT_BORROW_COST: 0.075,
+    VARIANT_STALE_QUOTE: 0.075,
+    VARIANT_NONE: 0.10,
+}
+
+DEFAULT_SCENARIO_MIX_BY_STRATEGY = {
+    STRATEGY_PARITY: DEFAULT_SCENARIO_MIX,
+    STRATEGY_CROSS_STRIKE: DEFAULT_SCENARIO_MIX_CROSS,
+}
 
 # Strike grid as moneyness (K/S - 1) and listed expiries in days - both
 # conventions describing a plausible small chain, not a real exchange's
@@ -197,7 +270,14 @@ class MissionConfig:
     asset_classes: tuple[str, ...] = field(default_factory=lambda: ("stock", "stock_option"))
     n_scenarios: int = 12
     base_time: str = BASE_TIME_DEFAULT
-    scenario_mix: dict = field(default_factory=lambda: dict(DEFAULT_SCENARIO_MIX))
+    # None means "use this strategy's own default" (__post_init__ below) -
+    # a sentinel rather than a fixed default_factory, because the default
+    # curriculum is strategy-dependent (DEFAULT_SCENARIO_MIX_BY_STRATEGY)
+    # and a dataclass field default cannot see another field's value. An
+    # explicitly-passed mix is honored verbatim regardless of strategy - a
+    # mix is explicit operator intent, and cross variants are allowed under
+    # either strategy; only the *default* differs by strategy.
+    scenario_mix: dict | None = None
     deviation_range: tuple[float, float] = DEVIATION_RANGE_DEFAULT
     spread_pct: float = SPREAD_PCT_DEFAULT
     r_range: tuple[float, float] = R_RANGE_DEFAULT
@@ -209,7 +289,14 @@ class MissionConfig:
 
     def __post_init__(self) -> None:
         self.asset_classes = tuple(self.asset_classes)
-        self.scenario_mix = dict(self.scenario_mix)
+        if self.scenario_mix is None:
+            # Unknown strategy falls back to the parity default here rather
+            # than raising early - _validate() below is what actually rejects
+            # an unknown strategy, with a clear message naming it; picking
+            # some placeholder mix first just gives it something to reject.
+            self.scenario_mix = dict(DEFAULT_SCENARIO_MIX_BY_STRATEGY.get(self.strategy, DEFAULT_SCENARIO_MIX))
+        else:
+            self.scenario_mix = dict(self.scenario_mix)
         self.deviation_range = tuple(self.deviation_range)
         self.r_range = tuple(self.r_range)
         self.q_range = tuple(self.q_range)
@@ -360,6 +447,19 @@ class GroundTruth:
     r: float
     q: float
     borrow_fee_annual: float | None
+    # Additive, default None (cross-strike training increment, SS45's
+    # deferred item) - existing summaries with neither field still parse.
+    # affected_strikes: [k_prev, k_mid] for a cross-strike variant, k_mid
+    # (the same value as affected_strike above) primary - affected_strike
+    # itself is kept and reused as the primary strike rather than duplicated
+    # under a new name, so every variant's "the strike that matters most"
+    # lives in one field.
+    affected_strikes: list | None = None
+    # 'cross_strike' for the two genuine cross variants (bump/dip); None for
+    # every other variant, trap included - the trap's whole point is that it
+    # looks like the bump but resolves to no opportunity, so it carries no
+    # expected family to grade against.
+    expected_family: str | None = None
 
 
 @dataclass(frozen=True)
@@ -504,11 +604,28 @@ def _inject_genuine(rng: random.Random, rows: list[ChainRow], idx: int, spot: fl
 
 
 def _inject_spread_artifact(rng: random.Random, rows: list[ChainRow], idx: int, spot: float, r: float, q: float,
-                             underlying: Quote, config: MissionConfig) -> tuple[list[ChainRow], float]:
+                             underlying: Quote, borrow_fee_annual: float | None,
+                             config: MissionConfig) -> tuple[list[ChainRow], float]:
     """Same mid-shift mechanism as genuine, but the spread is then widened
     (both legs, to a shared half-spread) until the executable edge is <= 0 -
     a visible mid-price gap the spread itself erases, addendum 27's
-    non-negotiable rule made concrete."""
+    non-negotiable rule made concrete.
+
+    Cross-strike verification (docs/SPEC_RECONCILIATION.md SS45's deferred
+    item, found while building it): this injector's one-legged shift has the
+    same structural property SS45's second finding names for the genuine
+    variant - it also breaks monotonicity/vertical/box/butterfly bounds
+    against the neighboring strike, and the closed-form half-spread above
+    only floors the same-strike ARB-001 edge, not those. Once answer_key
+    started running the full Phase 1 scan (this increment's own switch) that
+    stopped being harmless: a trap that leaks a cross-strike detector is a
+    trap that failed its one job. So the closed-form hs is now a starting
+    point, verified (and widened further if needed) against an actual
+    scan_chain call over the real chain at this row's own expiry - the same
+    discipline _inject_cross_spread_artifact below uses for its own
+    same-strike verification, applied here because the classic trap
+    inherited the same exposure once the answer key it is graded against
+    stopped being ARB-001-only."""
     row = rows[idx]
     t_years = row.expiry_days / 365
     pv_div_value = pricing.pv_div(spot, q, t_years)
@@ -533,6 +650,40 @@ def _inject_spread_artifact(rng: random.Random, rows: list[ChainRow], idx: int, 
     base_at_zero_extra = call_mid - put_mid - underlying.ask + pv_div_value + pvk - _INJECTION_COSTS.total_per_share
     required_hs = max(call_hs, put_hs, base_at_zero_extra / 2 + 0.01)
 
+    same_expiry = sorted((other for other in rows if other.expiry_days == row.expiry_days), key=lambda o: o.strike)
+
+    def _trial_chain(hs: float) -> ChainSnapshot:
+        trial_call = _requote_keep_sizes(call_mid, hs, row.call)
+        trial_put = _requote_keep_sizes(put_mid, hs, row.put)
+        strikes = tuple(
+            StrikeQuotes(
+                strike=other.strike,
+                call=trial_call if other.strike == row.strike else other.call,
+                put=trial_put if other.strike == row.strike else other.put,
+            )
+            for other in same_expiry
+        )
+        return ChainSnapshot(
+            entity_id="_spread_artifact_trial", symbol="_trial", expiry_days=row.expiry_days, style="european",
+            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
+            borrow_fee_annual=borrow_fee_annual, strikes=strikes,
+        )
+
+    for _ in range(50):
+        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
+        surviving = [
+            o for o in opportunities
+            if row.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
+        ]
+        if not surviving:
+            break
+        required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
+    else:
+        raise RuntimeError(  # pragma: no cover - safety valve, not expected to trigger
+            f"spread-artifact trap failed to converge to zero opportunities at strike={row.strike} "
+            f"expiry_days={row.expiry_days} after 50 widening iterations"
+        )
+
     new_row = replace(row, call=_requote_keep_sizes(call_mid, required_hs, row.call),
                        put=_requote_keep_sizes(put_mid, required_hs, row.put))
     rows = list(rows)
@@ -545,7 +696,21 @@ def _inject_borrow_cost(rng: random.Random, rows: list[ChainRow], idx: int, spot
     """Shift so the reversal direction shows a positive pre-borrow edge, then
     return a borrow fee override high enough to erase exactly that edge -
     the detector must never guess a borrow cost at zero (addendum 27 SS10),
-    so the trap here is a real, if punitive, borrow rate, not a hidden one."""
+    so the trap here is a real, if punitive, borrow rate, not a hidden one.
+
+    Cross-strike verification (docs/SPEC_RECONCILIATION.md SS45's deferred
+    item, found while building it, same reasoning as
+    _inject_spread_artifact's own note above): the one-legged shift here has
+    the same neighbor-breaking property, and a borrow fee cannot erase a
+    box/vertical/butterfly violation - none of those packages' formulas
+    depend on borrow cost at all. So after the borrow override is computed
+    (unchanged, still solved against the original, unwidened quotes), the
+    resulting chain is verified against an actual scan_chain call at this
+    row's own expiry and widened (both legs, shared half-spread, the
+    borrow-fee-erased reversal edge only gets safer as the spread widens
+    further) if anything still trades a leg at this strike - the same
+    scan-verified widening _inject_spread_artifact uses, layered on top of
+    the borrow erasure rather than replacing it."""
     row = rows[idx]
     t_years = row.expiry_days / 365
     pv_div_value = pricing.pv_div(spot, q, t_years)
@@ -565,14 +730,51 @@ def _inject_borrow_cost(rng: random.Random, rows: list[ChainRow], idx: int, spot
         put_mid += deviation
     new_call = _requote_keep_sizes(call_mid, call_hs, row.call)
     new_put = _requote_keep_sizes(put_mid, put_hs, row.put)
-    new_row = replace(row, call=new_call, put=new_put)
-    rows = list(rows)
-    rows[idx] = new_row
 
     pvk = row.strike * math.exp(-r * t_years)
     pre_borrow_net_after = -new_call.ask + new_put.bid + underlying.bid - pv_div_value - pvk - _INJECTION_COSTS.total_per_share
     required_borrow = pre_borrow_net_after / (underlying.bid * t_years)
     override_borrow_fee = required_borrow + 0.01  # enough surplus to make the post-borrow edge strictly negative
+
+    same_expiry = sorted((other for other in rows if other.expiry_days == row.expiry_days), key=lambda o: o.strike)
+    required_hs = max(call_hs, put_hs)
+
+    def _trial_chain(hs: float) -> ChainSnapshot:
+        trial_call = _requote_keep_sizes(call_mid, hs, row.call)
+        trial_put = _requote_keep_sizes(put_mid, hs, row.put)
+        strikes = tuple(
+            StrikeQuotes(
+                strike=other.strike,
+                call=trial_call if other.strike == row.strike else other.call,
+                put=trial_put if other.strike == row.strike else other.put,
+            )
+            for other in same_expiry
+        )
+        return ChainSnapshot(
+            entity_id="_borrow_cost_trial", symbol="_trial", expiry_days=row.expiry_days, style="european",
+            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
+            borrow_fee_annual=override_borrow_fee, strikes=strikes,
+        )
+
+    for _ in range(50):
+        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
+        surviving = [
+            o for o in opportunities
+            if row.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
+        ]
+        if not surviving:
+            break
+        required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
+    else:
+        raise RuntimeError(  # pragma: no cover - safety valve, not expected to trigger
+            f"borrow-cost trap failed to converge to zero opportunities at strike={row.strike} "
+            f"expiry_days={row.expiry_days} after 50 widening iterations"
+        )
+
+    new_row = replace(row, call=_requote_keep_sizes(call_mid, required_hs, row.call),
+                       put=_requote_keep_sizes(put_mid, required_hs, row.put))
+    rows = list(rows)
+    rows[idx] = new_row
 
     return rows, deviation, override_borrow_fee
 
@@ -617,6 +819,211 @@ def _locate_row(rows: list[ChainRow], expiry_days: int, moneyness: float) -> int
         if row.expiry_days == expiry_days and abs(row.moneyness - moneyness) < 1e-9:
             return i
     raise ValueError(f"no row at expiry_days={expiry_days}, moneyness={moneyness}")  # pragma: no cover - grid is fixed
+
+
+# --- cross-strike injection (SS45's deferred item: training injectors for the
+# cross-strike detectors) -------------------------------------------------------
+#
+# A same-strike parallel shift - call AND put mids at one strike moved by the
+# same amount d, unchanged half-spreads - leaves every executable parity edge
+# at that strike invariant: new Cbid - new Pask = (Cbid+d) - (Pask+d) =
+# Cbid-Pask, and new Pbid - new Cask = (Pbid+d) - (Cask+d) = Pbid-Cask,
+# exactly the two executable parity edges detect_arb001 prices. Nothing about
+# the underlying, PVK or pv_div moves either, so ARB-001/002/003/010 (every
+# same-strike check) stay exactly as clean as they were before the shift.
+# What does not survive is monotonicity against the neighboring strike - a
+# call raised without its lower neighbor also being raised violates strike
+# monotonicity/verticals/butterflies through that pair. That is the whole
+# point: a scenario with a genuine, floored cross-strike opportunity and,
+# by construction, zero ARB-001 co-fire. An ARB-001 hit on one of these
+# scenarios is therefore not a second correct answer - it is a world-
+# integrity alarm (simulation/parity_evaluation.py's cross-strike branch
+# grades it FAIL('unexpected_parity_hit')).
+
+
+def _cross_strike_indices(rows: list[ChainRow]) -> tuple[int, int]:
+    """(idx_prev, idx_mid) into `rows` for the 30-day expiry's median-
+    moneyness strike and its next-lower neighbor. MONEYNESS_GRID has an odd
+    length (9), so index len//2 is always an interior strike with both
+    neighbors present - a fixed structural position, not a drawn one, so
+    every cross-strike scenario perturbs the same place in the grid (the
+    same determinism VARIANT_CARRY_EFFECT's own _locate_row call already
+    relies on for its own fixed target)."""
+    thirty_day = sorted((i, row) for i, row in enumerate(rows) if row.expiry_days == 30)
+    mid_pos = len(thirty_day) // 2
+    idx_prev = thirty_day[mid_pos - 1][0]
+    idx_mid = thirty_day[mid_pos][0]
+    return idx_prev, idx_mid
+
+
+def _inject_cross_bump(
+    rng: random.Random, rows: list[ChainRow], idx_prev: int, idx_mid: int, config: MissionConfig,
+) -> tuple[list[ChainRow], float]:
+    """Raise k_mid's call AND put mids by the same d (module note above).
+    Floored against the primary package this shift creates - ARB-011's
+    monotonicity_calls at (k_prev, k_mid), buy C_prev at ask / sell C_mid at
+    bid: post-shift C_mid.bid must clear C_prev.ask + for_legs(2) strictly.
+    d_min uses the pre-shift C_mid.bid (shifting the mid by d shifts the bid
+    by the same d, half-spread unchanged), the same re-flooring discipline
+    every injector in this module uses so a small drawn deviation can never
+    land right on the boundary."""
+    row_prev, row_mid = rows[idx_prev], rows[idx_mid]
+    costs2 = _INJECTION_COSTS.for_legs(2)
+
+    call_mid, call_hs = _mid_and_half_spread(row_mid.call)
+    put_mid, put_hs = _mid_and_half_spread(row_mid.put)
+
+    d_min = max(0.0, row_prev.call.ask + costs2 - row_mid.call.bid)
+    deviation = max(rng.uniform(*config.deviation_range), d_min + 0.05)
+
+    new_call = _requote_keep_sizes(call_mid + deviation, call_hs, row_mid.call)
+    new_put = _requote_keep_sizes(put_mid + deviation, put_hs, row_mid.put)
+    new_row = replace(row_mid, call=new_call, put=new_put)
+    rows = list(rows)
+    rows[idx_mid] = new_row
+    return rows, deviation
+
+
+def _inject_cross_dip(
+    rng: random.Random, rows: list[ChainRow], idx_prev: int, idx_mid: int, config: MissionConfig,
+) -> tuple[list[ChainRow], float, str]:
+    """Lower k_mid's call AND put mids by the same d - parity-preserving
+    exactly as the bump is, breaking monotonicity through the lower
+    neighbor's PUT instead of its call. Floored against ARB-011's
+    monotonicity_puts at (k_prev, k_mid): post-shift P_prev.bid must clear
+    P_mid.ask + for_legs(2) strictly; d_min = P_mid.ask - (P_prev.bid -
+    for_legs(2)), using the pre-shift P_mid.ask.
+
+    Clip-fallback: lowering both mids by a large d could push one below the
+    0.02 floor _quote_from_mid/_requote_keep_sizes enforce, silently planting
+    a weaker shift than ground truth would record - the same tail risk
+    review closed for _inject_genuine (SPEC_RECONCILIATION.md SS41). Here the
+    fallback is the bump direction, which has no floor to clip against: the
+    already-drawn raw deviation is re-floored against the bump's own package
+    (monotonicity_calls) rather than drawing a fresh value, so the rng
+    stream consumed is identical whether or not the fallback fires (only the
+    one `rng.uniform` call above runs either way). Ground truth then records
+    the variant ACTUALLY applied (the caller reads this function's third
+    return value) - a ground truth that lies about what was planted would
+    defeat the Evaluator."""
+    row_prev, row_mid = rows[idx_prev], rows[idx_mid]
+    costs2 = _INJECTION_COSTS.for_legs(2)
+    raw = rng.uniform(*config.deviation_range)
+
+    call_mid, call_hs = _mid_and_half_spread(row_mid.call)
+    put_mid, put_hs = _mid_and_half_spread(row_mid.put)
+
+    dip_d_min = max(0.0, row_mid.put.ask - (row_prev.put.bid - costs2))
+    dip_deviation = max(raw, dip_d_min + 0.05)
+
+    if call_mid - dip_deviation < 0.02 or put_mid - dip_deviation < 0.02:
+        bump_d_min = max(0.0, row_prev.call.ask + costs2 - row_mid.call.bid)
+        bump_deviation = max(raw, bump_d_min + 0.05)
+        new_call = _requote_keep_sizes(call_mid + bump_deviation, call_hs, row_mid.call)
+        new_put = _requote_keep_sizes(put_mid + bump_deviation, put_hs, row_mid.put)
+        new_row = replace(row_mid, call=new_call, put=new_put)
+        rows = list(rows)
+        rows[idx_mid] = new_row
+        return rows, bump_deviation, VARIANT_CROSS_BUMP
+
+    new_call = _requote_keep_sizes(call_mid - dip_deviation, call_hs, row_mid.call)
+    new_put = _requote_keep_sizes(put_mid - dip_deviation, put_hs, row_mid.put)
+    new_row = replace(row_mid, call=new_call, put=new_put)
+    rows = list(rows)
+    rows[idx_mid] = new_row
+    return rows, dip_deviation, VARIANT_CROSS_DIP
+
+
+def _inject_cross_spread_artifact(
+    rng: random.Random, rows: list[ChainRow], idx_prev: int, idx_mid: int, r: float,
+    pv_div_value: float, underlying: Quote, borrow_fee_annual: float | None, config: MissionConfig,
+) -> tuple[list[ChainRow], float]:
+    """The bump's own shift (same package/floor as _inject_cross_bump), then
+    a shared half-spread at k_mid widened until the whole 30-day chain scans
+    clean of every package trading a k_mid leg.
+
+    A closed-form floor against the two packages the primary shift is known
+    to create - ARB-011 monotonicity_calls at (k_prev, k_mid), and
+    put_vertical_upper at the same pair - gives a starting half-spread,
+    solved the same way _inject_spread_artifact solves its own required
+    half-spread (+0.01 margin). That floor is a lower bound, not a proof:
+    widening a strike's spread does not uniformly make every package
+    touching it harder - a butterfly or vertical/box against a FARTHER
+    strike (or the neighbor on the other side) can still clear after the
+    closed-form floor, discovered by exactly the check this function now
+    performs rather than asserted away. So the candidate half-spread is
+    verified against an actual scan_chain call over the real 30-day ladder,
+    widened further and re-checked when any package still trading a k_mid
+    leg survives, until the scan agrees - the only way to be certain against
+    every package the scan itself enumerates rather than trusting a
+    per-package derivation to be exhaustive. A surviving opportunity that
+    does NOT touch k_mid at all (an independent, unrelated violation - e.g.
+    a co-drawn 'localized_distortion' skew bump elsewhere in the chain,
+    docs/SPEC_RECONCILIATION.md SS45's first finding) is left alone: no
+    amount of widening at k_mid could erase a violation that never touched
+    it, and this injector's job is only the shift it itself planted."""
+    row_prev, row_mid = rows[idx_prev], rows[idx_mid]
+    costs2 = _INJECTION_COSTS.for_legs(2)
+    t_years = 30 / 365
+
+    call_mid, call_hs = _mid_and_half_spread(row_mid.call)
+    put_mid, put_hs = _mid_and_half_spread(row_mid.put)
+
+    bump_d_min = max(0.0, row_prev.call.ask + costs2 - row_mid.call.bid)
+    deviation = max(rng.uniform(*config.deviation_range), bump_d_min + 0.05)
+
+    call_mid_shifted = call_mid + deviation
+    put_mid_shifted = put_mid + deviation
+    pv_width = (row_mid.strike - row_prev.strike) * math.exp(-r * t_years)
+
+    # hs such that monotonicity_calls' net <= 0:
+    #   (call_mid_shifted - hs) - row_prev.call.ask - costs2 <= 0
+    hs_monotonicity = call_mid_shifted - row_prev.call.ask - costs2 + 0.01
+    # hs such that put_vertical_upper's net <= 0:
+    #   (put_mid_shifted - hs) - row_prev.put.ask - pv_width - costs2 <= 0
+    hs_put_vertical_upper = put_mid_shifted - row_prev.put.ask - pv_width - costs2 + 0.01
+    required_hs = max(call_hs, put_hs, hs_monotonicity, hs_put_vertical_upper)
+
+    thirty_day = sorted((row for row in rows if row.expiry_days == 30), key=lambda row: row.strike)
+
+    def _trial_chain(hs: float) -> ChainSnapshot:
+        trial_call = _requote_keep_sizes(call_mid_shifted, hs, row_mid.call)
+        trial_put = _requote_keep_sizes(put_mid_shifted, hs, row_mid.put)
+        strikes = tuple(
+            StrikeQuotes(
+                strike=row.strike,
+                call=trial_call if row.strike == row_mid.strike else row.call,
+                put=trial_put if row.strike == row_mid.strike else row.put,
+            )
+            for row in thirty_day
+        )
+        return ChainSnapshot(
+            entity_id="_cross_spread_artifact_trial", symbol="_trial", expiry_days=30, style="european",
+            as_of=config.base_time, underlying=underlying, r=r, pv_div=pv_div_value,
+            borrow_fee_annual=borrow_fee_annual, strikes=strikes,
+        )
+
+    for _ in range(50):
+        opportunities = scan_chain(_trial_chain(required_hs), _INJECTION_COSTS)
+        surviving = [
+            o for o in opportunities
+            if row_mid.strike in {o.inputs.get("strike", o.inputs.get("k1")), o.inputs.get("k2"), o.inputs.get("k3")}
+        ]
+        if not surviving:
+            break
+        required_hs += max(o.net_edge_per_share for o in surviving) + 0.05
+    else:
+        raise RuntimeError(  # pragma: no cover - safety valve, not expected to trigger
+            "cross-strike spread-artifact trap failed to converge to zero opportunities at k_mid "
+            f"(strike={row_mid.strike}) after 50 widening iterations"
+        )
+
+    new_call = _requote_keep_sizes(call_mid_shifted, required_hs, row_mid.call)
+    new_put = _requote_keep_sizes(put_mid_shifted, required_hs, row_mid.put)
+    new_row = replace(row_mid, call=new_call, put=new_put)
+    rows = list(rows)
+    rows[idx_mid] = new_row
+    return rows, deviation
 
 
 # --- chatter (addendum 25 SS11/SS12) --------------------------------------------
@@ -707,13 +1114,36 @@ def _build_scenario(
         q = config.q_range[1]
     borrow_fee = rng.uniform(*config.borrow_fee_range)
     skew = draw_skew(rng)
+    if variant == VARIANT_NONE or variant in TRAP_VARIANTS:
+        # SS45's first finding: 'localized_distortion' is not itself an
+        # injection, but its isolated IV mountain genuinely violates
+        # cross-strike bounds around the bumped cell regardless of what (if
+        # anything) a variant injects elsewhere - tests/test_arbitrage_phase1.py
+        # already characterizes this as the world generator's own property,
+        # not a detector bug. A clean-world variant (every trap, and 'none')
+        # promises "no opportunity" in its own ground truth; drawing that one
+        # shape would make the promise a lie, not an honest world failure to
+        # be graded - so a clean variant redraws from its own salted,
+        # deterministic stream until it lands on a different shape, keeping
+        # full diversity minus that one shape. The main rng stream is
+        # untouched (this loop reads only from clean_rng, never rng), so
+        # every OTHER draw this scenario makes is bit-for-bit unaffected by
+        # whether this branch fires, and every genuine/cross-strike
+        # scenario's own skew keeps drawing 'localized_distortion' exactly
+        # as before - richness helps there, where ground truth already
+        # expects a real opportunity.
+        clean_rng = random.Random(f"{config.seed}:scenario:{index}:clean-skew")
+        while skew.shape == "localized_distortion":
+            skew = draw_skew(clean_rng)
 
     underlying = _build_underlying_quote(rng, spot, config.spread_pct, config.base_time)
     rows = _build_rows(rng, spot, r, q, skew, config.spread_pct, config.base_time)
 
     affected_strike = affected_expiry_days = injected_deviation = None
+    affected_strikes = None
     expected_executable = False
     expected_direction = None
+    expected_family = None
 
     if variant == VARIANT_GENUINE:
         idx = rng.randrange(len(rows))
@@ -722,7 +1152,7 @@ def _build_scenario(
         expected_executable, expected_direction = True, "conversion"
     elif variant == VARIANT_SPREAD_ARTIFACT:
         idx = rng.randrange(len(rows))
-        rows, injected_deviation = _inject_spread_artifact(rng, rows, idx, spot, r, q, underlying, config)
+        rows, injected_deviation = _inject_spread_artifact(rng, rows, idx, spot, r, q, underlying, borrow_fee, config)
         affected_strike, affected_expiry_days = rows[idx].strike, rows[idx].expiry_days
     elif variant == VARIANT_CARRY_EFFECT:
         idx = _locate_row(rows, expiry_days=60, moneyness=0.00)
@@ -735,6 +1165,32 @@ def _build_scenario(
         idx = rng.randrange(len(rows))
         rows, injected_deviation = _inject_stale_quote(rng, rows, idx, spot, r, q, underlying, config)
         affected_strike, affected_expiry_days = rows[idx].strike, rows[idx].expiry_days
+    elif variant == VARIANT_CROSS_BUMP:
+        idx_prev, idx_mid = _cross_strike_indices(rows)
+        rows, injected_deviation = _inject_cross_bump(rng, rows, idx_prev, idx_mid, config)
+        affected_strike, affected_expiry_days = rows[idx_mid].strike, 30
+        affected_strikes = [rows[idx_prev].strike, rows[idx_mid].strike]
+        expected_executable = True
+        expected_family = "cross_strike"
+    elif variant == VARIANT_CROSS_DIP:
+        idx_prev, idx_mid = _cross_strike_indices(rows)
+        rows, injected_deviation, actual_variant = _inject_cross_dip(rng, rows, idx_prev, idx_mid, config)
+        affected_strike, affected_expiry_days = rows[idx_mid].strike, 30
+        affected_strikes = [rows[idx_prev].strike, rows[idx_mid].strike]
+        expected_executable = True
+        expected_family = "cross_strike"
+        # The clip-fallback may have actually planted a bump - ground truth
+        # records what was ACTUALLY applied, not what was drawn (module note
+        # above _inject_cross_dip).
+        variant = actual_variant
+    elif variant == VARIANT_CROSS_SPREAD_ARTIFACT:
+        idx_prev, idx_mid = _cross_strike_indices(rows)
+        pv_div_30 = pricing.pv_div(spot, q, 30 / 365)
+        rows, injected_deviation = _inject_cross_spread_artifact(
+            rng, rows, idx_prev, idx_mid, r, pv_div_30, underlying, borrow_fee, config,
+        )
+        affected_strike, affected_expiry_days = rows[idx_mid].strike, 30
+        affected_strikes = [rows[idx_prev].strike, rows[idx_mid].strike]
     # VARIANT_NONE: nothing injected.
 
     ground_truth = GroundTruth(
@@ -743,6 +1199,7 @@ def _build_scenario(
         injected_deviation=injected_deviation, expected_executable=expected_executable,
         expected_direction=expected_direction, skew_shape=skew.shape, skew_params=skew.params,
         r=r, q=q, borrow_fee_annual=borrow_fee,
+        affected_strikes=affected_strikes, expected_family=expected_family,
     )
     chatter = _generate_chatter(rng, ground_truth, focus_assets, config)
 
@@ -831,60 +1288,123 @@ def observations(scenario: ScenarioWorld, config: MissionConfig) -> list[Observa
 # --- answer key and evaluation (addendum 25 SS15-SS18) ---------------------------
 
 
-def _snapshot_for_row(scenario: ScenarioWorld, row: ChainRow, config: MissionConfig) -> ParitySnapshot:
-    pv_div_value = pricing.pv_div(scenario.spot, scenario.q, row.expiry_days / 365)
-    return ParitySnapshot(
-        entity_id=scenario.entity_id, symbol=scenario.symbol, strike=row.strike, expiry_days=row.expiry_days,
-        style="european", as_of=config.base_time, underlying=scenario.underlying, call=row.call, put=row.put,
-        r=scenario.r, pv_div=pv_div_value, borrow_fee_annual=scenario.borrow_fee_annual,
-    )
+def _chain_snapshots_from_scenario(scenario: ScenarioWorld, config: MissionConfig) -> list[ChainSnapshot]:
+    """One backend/arbitrage.py ChainSnapshot per expiry, built directly from
+    the in-memory ScenarioWorld - the offline-answer-key counterpart to
+    providers/stored_data.py's `chain_snapshots`, which does the same grouping
+    from a stored Observation's payload. A small internal builder rather than
+    a reuse of that one: this runs during scenario assembly, before anything
+    is stored (or ever will be, for run_parity_exercise's own self-test)."""
+    rows_by_expiry: dict[int, list[ChainRow]] = {}
+    for row in scenario.rows:
+        rows_by_expiry.setdefault(row.expiry_days, []).append(row)
+
+    chains = []
+    for expiry_days in sorted(rows_by_expiry):
+        rows_sorted = sorted(rows_by_expiry[expiry_days], key=lambda r: r.strike)
+        pv_div_value = pricing.pv_div(scenario.spot, scenario.q, expiry_days / 365)
+        strikes = tuple(
+            StrikeQuotes(strike=row.strike, call=row.call, put=row.put) for row in rows_sorted
+        )
+        chains.append(ChainSnapshot(
+            entity_id=scenario.entity_id, symbol=scenario.symbol, expiry_days=expiry_days,
+            style="european", as_of=config.base_time, underlying=scenario.underlying,
+            r=scenario.r, pv_div=pv_div_value, borrow_fee_annual=scenario.borrow_fee_annual,
+            strikes=strikes,
+        ))
+    return chains
 
 
-def answer_key(scenario: ScenarioWorld, config: MissionConfig) -> list[Opportunity | NoOpportunity]:
-    """detect_arb001 run over every (strike, expiry) pair in the chain - the
-    organization's own detector, the same one a real deployment would run,
-    not a parallel reimplementation that could drift from it."""
+def answer_key(scenario: ScenarioWorld, config: MissionConfig) -> list[Opportunity]:
+    """scan_chain (backend/arbitrage.py) run over every expiry's ChainSnapshot
+    - the organization's own chain-level entry point, the same one a real
+    deployment (and agents/explorer.py's `_parity_work`) would run, not a
+    parallel reimplementation that could drift from it. Supersedes the old
+    per-row detect_arb001 loop now that Phase 1 covers more than parity
+    (docs/SPEC_RECONCILIATION.md SS45): ARB-001 is still in here (scan_chain
+    runs it per strike), alongside every cross-strike detector the same scan
+    already knows how to run."""
     costs = CostConfig()
-    return [
-        detect_arb001(_snapshot_for_row(scenario, row, config), costs, stale_tolerance_seconds=config.stale_tolerance_seconds)
-        for row in scenario.rows
-    ]
+    opportunities: list[Opportunity] = []
+    for chain in _chain_snapshots_from_scenario(scenario, config):
+        opportunities.extend(scan_chain(chain, costs, stale_tolerance_seconds=config.stale_tolerance_seconds))
+    return opportunities
 
 
-def evaluate(scenario: ScenarioWorld, results: list[Opportunity | NoOpportunity]) -> dict:
+def _detection_record(o: Opportunity) -> dict:
+    return {
+        "detector_id": o.detector_id, "direction": o.direction,
+        "net_edge_per_share": o.net_edge_per_share, "classification": o.classification,
+        "strike": o.inputs.get("strike", o.inputs.get("k1")),
+        "k2": o.inputs.get("k2"), "k3": o.inputs.get("k3"),
+        "expiry_days": o.inputs.get("expiry_days"),
+    }
+
+
+def _detection_strikes(detection: dict) -> set:
+    return {v for v in (detection["strike"], detection["k2"], detection["k3"]) if v is not None}
+
+
+def evaluate(scenario: ScenarioWorld, opportunities: list[Opportunity]) -> dict:
+    """Grade one scenario's scan_chain output against its ground truth.
+
+    Two families, by `gt.expected_family`:
+
+    - 'cross_strike' (the two genuine cross variants, SS45's deferred item):
+      PASS needs >=1 non-ARB-001 opportunity whose strikes include the
+      primary affected strike, ZERO ARB-001 opportunities anywhere (an
+      ARB-001 hit on a same-strike parallel shift is a world-integrity
+      alarm, not a second correct answer - module note above the injectors),
+      and every opportunity's strikes must include the primary strike (a hit
+      elsewhere is a stray the injector should not have produced). Violating
+      any of those is FAIL('unexpected_parity_hit' / 'stray_detection'); no
+      matching opportunity at all is FAIL('injection_missed').
+    - Everything else (the original six parity variants, and the
+      cross-strike trap): unchanged logic from before scan_chain replaced
+      detect_arb001 as the answer key's engine - a genuine scenario needs its
+      affected (strike, expiry)'s ARB-001 hit in the expected direction; a
+      trap or 'none' scenario needs zero detections at all, of anything."""
     gt = scenario.ground_truth
-    detections = [
-        {"strike": row.strike, "expiry_days": row.expiry_days, "direction": result.direction,
-         "net_edge_per_share": result.net_edge_per_share, "classification": result.classification}
-        for row, result in zip(scenario.rows, results) if isinstance(result, Opportunity)
-    ]
+    detections = [_detection_record(o) for o in opportunities]
 
-    affected_result = None
-    if gt.affected_strike is not None:
-        for row, result in zip(scenario.rows, results):
-            if row.strike == gt.affected_strike and row.expiry_days == gt.affected_expiry_days:
-                affected_result = result
-                break
-    reasons = list(affected_result.reason_codes) if isinstance(affected_result, NoOpportunity) else []
+    if gt.expected_family == "cross_strike":
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        primary = gt.affected_strike
+        cross_hits = [d for d in detections if d["detector_id"] != "ARB-001"]
+        matching = [d for d in cross_hits if primary in _detection_strikes(d)]
+        stray = [d for d in cross_hits if primary not in _detection_strikes(d)]
+
+        if arb001_hits:
+            outcome, reasons = "FAIL", ["unexpected_parity_hit"]
+        elif stray:
+            outcome, reasons = "FAIL", ["stray_detection"]
+        elif matching:
+            outcome, reasons = "PASS", []
+        else:
+            outcome, reasons = "FAIL", ["injection_missed"]
+        return {
+            "scenario_id": scenario.scenario_id, "ground_truth": asdict(gt),
+            "detections": detections, "outcome": outcome, "reasons": reasons,
+        }
 
     if gt.variant == VARIANT_GENUINE:
         affected_detection = next(
-            (d for d in detections if d["strike"] == gt.affected_strike and d["expiry_days"] == gt.affected_expiry_days),
+            (d for d in detections if d["detector_id"] == "ARB-001"
+             and d["strike"] == gt.affected_strike and d["expiry_days"] == gt.affected_expiry_days),
             None,
         )
         if affected_detection is None:
-            outcome = "FAIL"
-            reasons = reasons or ["injection_missed"]
+            outcome, reasons = "FAIL", ["injection_missed"]
         elif affected_detection["direction"] == gt.expected_direction:
-            outcome = "PASS"
+            outcome, reasons = "PASS", []
         else:
-            outcome = "PARTIAL"
+            outcome, reasons = "PARTIAL", []
     else:
         if not detections:
-            outcome = "PASS"
+            outcome, reasons = "PASS", []
         else:
             outcome = "FAIL"
-            reasons = reasons or (["trap_leaked"] if gt.variant != VARIANT_NONE else ["false_positive"])
+            reasons = ["trap_leaked"] if gt.variant != VARIANT_NONE else ["false_positive"]
 
     return {
         "scenario_id": scenario.scenario_id,
@@ -1017,21 +1537,30 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     scenario_reports = []
     contracts_generated = chatter_items = 0
     for scenario in scenarios:
-        results = answer_key(scenario, config)
-        scenario_reports.append(evaluate(scenario, results))
+        opportunities = answer_key(scenario, config)
+        scenario_reports.append(evaluate(scenario, opportunities))
         contracts_generated += len(scenario.rows)
         chatter_items += len(scenario.chatter)
 
+    # "genuine" for strategy-coverage purposes (addendum 25 SS18) means any
+    # variant the mix could produce a real, floored opportunity from - the
+    # original single VARIANT_GENUINE plus the two cross-strike genuine
+    # variants (SS45's deferred item), since options_arbitrage_phase1's own
+    # curriculum may never draw the classic parity genuine at all and still
+    # deserves to certify COMPLETED once it exercises its own material.
+    def _is_genuine(variant: str) -> bool:
+        return variant == VARIANT_GENUINE or variant in CROSS_GENUINE_VARIANTS
+
     strategy_exercised = any(
-        report["ground_truth"]["variant"] == VARIANT_GENUINE and report["outcome"] == "PASS"
+        _is_genuine(report["ground_truth"]["variant"]) and report["outcome"] == "PASS"
         for report in scenario_reports
     )
     final_state = COMPLETED if strategy_exercised else RETRY_REQUIRED
     states.append(final_state)
 
-    detected = sum(1 for r in scenario_reports if r["ground_truth"]["variant"] == VARIANT_GENUINE and r["outcome"] == "PASS")
-    missed = sum(1 for r in scenario_reports if r["ground_truth"]["variant"] == VARIANT_GENUINE and r["outcome"] != "PASS")
-    false_positives = sum(1 for r in scenario_reports if r["ground_truth"]["variant"] != VARIANT_GENUINE and r["outcome"] == "FAIL")
+    detected = sum(1 for r in scenario_reports if _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] == "PASS")
+    missed = sum(1 for r in scenario_reports if _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] != "PASS")
+    false_positives = sum(1 for r in scenario_reports if not _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] == "FAIL")
     opportunities_injected = sum(1 for s in scenarios if s.ground_truth.variant != VARIANT_NONE)
     pass_count = sum(1 for r in scenario_reports if r["outcome"] == "PASS")
 

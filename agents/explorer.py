@@ -28,15 +28,19 @@ from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
 from backend import fi_db, reference_data
-from backend.arbitrage import CostConfig, Opportunity, detect_arb001
+from backend.arbitrage import CostConfig, Opportunity, scan_chain
 from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataProvider
-from providers.stored_data import StoredChainProvider
+from providers.stored_data import StoredChainProvider, chain_snapshots
 
 ROLE = "explorer"
 DETECTOR_TYPE = "iv_surface_peak_ratio"
-# ARB-001's own detector label (backend/arbitrage.py's DETECTOR_ID is the
-# formal "ARB-001"; this is the requester_finding['detector'] tag
-# _file_cross_checked_reports and agents/analysis.py key off of).
+# The arbitrage-library path's own routing tag - the requester_finding
+# ['detector'] value _file_cross_checked_reports keys off of to tell a
+# parity/library lead from an IV-surface one. The name is historical (it
+# predates Phase 1's other detectors, backend/arbitrage.py's SS45 addition);
+# it now routes every scan_chain detection, ARB-001 included, not only
+# ARB-001's own - the actual detector fired is carried per-finding in
+# requester_finding['detector_id'] instead.
 PARITY_DETECTOR_TYPE = "arb001_parity"
 JUDGMENT_MAX_TOKENS = 300
 
@@ -142,17 +146,24 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
 
         if not fi_db.has_pending_report(conn, identity, security):
             if finding.get("detector") == PARITY_DETECTOR_TYPE:
-                # ARB-001's own lead (agents/explorer.py's _parity_work below)
-                # - a parity_event_id, not a detector_event_id, backs this
-                # report; discovery_reports carries both columns precisely so
-                # neither detector's rows are mistaken for the other's (see
-                # backend/fi_db.py's SCHEMA comment on parity_event_id).
+                # The arbitrage library's own lead (agents/explorer.py's
+                # _parity_work below) - a parity_event_id, not a
+                # detector_event_id, backs this report; discovery_reports
+                # carries both columns precisely so neither detector's rows
+                # are mistaken for the other's (see backend/fi_db.py's SCHEMA
+                # comment on parity_event_id). detector_id/strike2/strike3
+                # default for findings recorded before the cross-strike
+                # training increment (SS45) added them to requester_finding.
+                detector_id = finding.get("detector_id", "ARB-001")
+                strikes_text = _opportunity_strikes_text(
+                    finding["strike"], finding.get("strike2"), finding.get("strike3"),
+                )
                 fi_db.enqueue_report(
                     conn, identity, spawned_at, "explorer", security,
                     summary=(
-                        f"Executable put-call parity violation on {security}: {finding['direction']} "
-                        f"net edge ${finding['net_edge_per_share']:.2f}/share at K={finding['strike']} "
-                        f"{finding['expiry_days']}d (ARB-001, class {finding['classification']}); "
+                        f"Executable {detector_id} {finding['direction']} on {security}: "
+                        f"net edge ${finding['net_edge_per_share']:.2f}/share at K={strikes_text} "
+                        f"{finding['expiry_days']}d (class {finding['classification']}); "
                         f"cross-check {request['outcome']}"
                     ),
                     detector_event_id=None,
@@ -214,12 +225,30 @@ def _answer_pending_cross_checks(conn, identity: str, spawned_at: str, provider,
     )
 
 
+def _opportunity_strikes(opportunity: Opportunity) -> tuple[float, float | None, float | None]:
+    """(strike, strike2, strike3) for a parity_events row - the package's
+    primary strike (k1 for a multi-leg package, the lone strike for a
+    same-strike one) plus whatever else `Opportunity.inputs` carries."""
+    strike = opportunity.inputs.get("strike", opportunity.inputs.get("k1"))
+    return strike, opportunity.inputs.get("k2"), opportunity.inputs.get("k3")
+
+
+def _opportunity_strikes_text(strike: float, strike2: float | None, strike3: float | None) -> str:
+    strikes = [strike] + [k for k in (strike2, strike3) if k is not None]
+    return "/".join(str(k) for k in strikes)
+
+
 def _parity_work(conn, identity: str, spawned_at: str) -> None:
-    """Explorer as ARB-001's own detector (SPEC_RECONCILIATION.md §39-§41,
-    addendum 25/27): reads whatever option_chain observations a stored
-    mission world has left behind (providers/stored_data.py's
-    StoredChainProvider) and runs backend/arbitrage.py's detect_arb001 over
-    them directly.
+    """Explorer as the arbitrage library's own chain scanner
+    (SPEC_RECONCILIATION.md §39-§41/§45, addendum 25/27): reads whatever
+    option_chain observations a stored mission world has left behind
+    (providers/stored_data.py) and runs backend/arbitrage.py's `scan_chain`
+    over them directly - ARB-001 alongside every cross-strike detector the
+    same scan already knows how to run, not a per-row detect_arb001 loop
+    that only ever saw the parity relation. §45 deferred this exact wiring
+    ("Explorer wiring ... for the cross-strike detectors" pending "training
+    scenarios the world can pose") - simulation/parity_world.py's
+    cross-strike variants are that missing scenario design.
 
     Activation is data presence, not a flag (providers/stored_data.py's
     module docstring): reference_data.list_focus_assets always returns
@@ -234,6 +263,13 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
     if not fi_db.market_is_open(conn, "option_chain"):
         return
 
+    # The lens name (arb001_min_net_edge) is historical - it was seeded
+    # before Phase 1 existed, when ARB-001 was the only detector Explorer
+    # ran. Its scope is now the whole library scan: every Phase 1 direction's
+    # net edge is compared against the same bar, ARB-001's included, rather
+    # than inventing a second lens for the same "any positive executable
+    # edge clears" convention (§46 will record the rename this comment
+    # stands in for).
     lens = fi_db.get_active_artifact(conn, fi_db.LENS_PARITY_MIN_EDGE_NAME)
     lens_artifact_id = lens["id"] if lens else None
     min_net_edge = json.loads(lens["value"]) if lens else fi_db.LENS_PARITY_MIN_EDGE_SEED
@@ -253,27 +289,47 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
             continue
 
         candidates = []
-        for snapshot in provider.snapshots(observation):
-            result = detect_arb001(snapshot, costs)
-            if isinstance(result, Opportunity) and result.net_edge_per_share >= min_net_edge:
-                candidates.append((snapshot, result))
+        for chain in chain_snapshots(observation):
+            for result in scan_chain(chain, costs):
+                if result.net_edge_per_share >= min_net_edge:
+                    candidates.append(result)
         if not candidates:
             continue
 
-        # The single best opportunity per security, not every row that
+        # The single best opportunity per security, not every package that
         # cleared the bar - one escalation per security per cycle, the same
         # shape has_pending_report/has_open_cross_check below dedup against
-        # (both keyed on security, not on strike/expiry).
-        snapshot, opportunity = max(candidates, key=lambda pair: pair[1].net_edge_per_share)
+        # (both keyed on security, not on strike/expiry/detector).
+        #
+        # ARB-001 preferred when present, net edge the tiebreak otherwise:
+        # a classic genuine scenario's one-legged shift is this mission's
+        # own deliberately-planted training signal, and it also, as an
+        # accepted side effect of that same shift, breaks cross-strike
+        # bounds against the neighboring strike
+        # (docs/SPEC_RECONCILIATION.md SS45's second finding;
+        # tests/test_arbitrage_phase1.py already characterizes this as the
+        # world generator's own property, not a detector bug) - a box or
+        # vertical package born from that side effect can carry a larger net
+        # edge than the parity edge itself without being what this security's
+        # world was built to teach. This preference is a no-op for every
+        # cross-strike scenario (simulation/parity_world.py's
+        # cross_strike_bump/dip injectors preserve parity exactly, so no
+        # ARB-001 candidate ever exists there to prefer).
+        arb001_candidates = [c for c in candidates if c.detector_id == "ARB-001"]
+        pool = arb001_candidates or candidates
+        opportunity = max(pool, key=lambda o: o.net_edge_per_share)
+        strike, strike2, strike3 = _opportunity_strikes(opportunity)
+        expiry_days = opportunity.inputs["expiry_days"]
 
         parity_event_id = fi_db.record_parity_event(
             conn, identity, spawned_at, entity_id, security,
-            snapshot.strike, snapshot.expiry_days, opportunity.direction,
+            strike, expiry_days, opportunity.direction,
             opportunity.gross_edge_per_share, opportunity.net_edge_per_share,
             opportunity.classification, opportunity.capacity_units,
             observed_at=observation.observed_at,
             run_id=observation.provenance.run_id, scenario_id=observation.provenance.scenario_id,
             lens_artifact_id=lens_artifact_id,
+            detector_id=opportunity.detector_id, strike2=strike2, strike3=strike3,
         )
 
         if fi_db.has_pending_report(conn, identity, security):
@@ -283,41 +339,45 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
             # A question is already out on this security.
             continue
         # The mission's world is static per run - the same stored chain
-        # answers detect_arb001 identically every cycle, so without this
-        # guard a security Analysis has already judged would re-open a
-        # cross-check (and trigger a fresh, paid Analysis pass) every single
-        # remaining cycle of the mission's life. The IV path needs no
-        # equivalent guard: its synthetic surface only repeats when a caller
+        # answers scan_chain identically every cycle, so without this guard
+        # a security Analysis has already judged would re-open a cross-check
+        # (and trigger a fresh, paid Analysis pass) every single remaining
+        # cycle of the mission's life. The IV path needs no equivalent
+        # guard: its synthetic surface only repeats when a caller
         # deliberately forces an anomaly, where a stored parity world always
         # does.
         if fi_db.list_recent_analysis_results(conn, security, config.ANALYSIS_RECENCY_WINDOW_SECONDS):
             continue
 
         # No LLM judgment gate here, unlike the IV path's _judgment_gate.
-        # ARB-001's own hard stops (stale quote, crossed market, invalid
-        # bid, non-European style) and its executable-price-only edge
-        # computation are already the precision filter (backend/arbitrage.py's
-        # module docstring: "there is no code path in this module that reads
-        # a mid price") - a coherence check on deterministic arithmetic that
-        # already cleared its own cost-plus-buffer model would be an LLM
-        # call with nothing left to judge.
+        # Every Phase 1 detector's own hard stops (stale quote, crossed
+        # market, invalid bid, non-European style) and its executable-
+        # price-only edge computation are already the precision filter
+        # (backend/arbitrage.py's module docstring: "there is no code path
+        # in this module that reads a mid price") - a coherence check on
+        # deterministic arithmetic that already cleared its own cost-plus-
+        # buffer model would be an LLM call with nothing left to judge.
+        strikes_text = _opportunity_strikes_text(strike, strike2, strike3)
         fi_db.open_cross_check(
             conn, identity, spawned_at, ROLE, "speculator", security,
             question=(
-                f"Explorer detected an executable put-call parity {opportunity.direction} on {security} "
-                f"at strike {snapshot.strike} expiring in {snapshot.expiry_days}d "
-                f"(net edge ${opportunity.net_edge_per_share:.2f}/share, ARB-001). "
+                f"Explorer detected an executable {opportunity.detector_id} {opportunity.direction} on "
+                f"{security} at strike(s) {strikes_text} expiring in {expiry_days}d "
+                f"(net edge ${opportunity.net_edge_per_share:.2f}/share). "
                 "Is there contextual evidence of unusual attention on this security?"
             ),
             requester_finding={
                 "detector": PARITY_DETECTOR_TYPE,
                 "parity_event_id": parity_event_id,
+                "detector_id": opportunity.detector_id,
                 "direction": opportunity.direction,
                 "net_edge_per_share": round(opportunity.net_edge_per_share, 4),
                 "gross_edge_per_share": round(opportunity.gross_edge_per_share, 4),
                 "classification": opportunity.classification,
-                "strike": snapshot.strike,
-                "expiry_days": snapshot.expiry_days,
+                "strike": strike,
+                "strike2": strike2,
+                "strike3": strike3,
+                "expiry_days": expiry_days,
                 "lens_artifact_id": lens_artifact_id,
             },
             requester_confidence=None,

@@ -3361,3 +3361,97 @@ cross-strike detectors (each needs its scenario design — the natural next
 library increment); ARB-012's calendar diagnostics and Phase 2
 (014–025) per addendum 27's own ordering; the RelativeValue service for
 026/027 stays out of the arbitrage namespace entirely (27 §11).
+
+
+---
+
+## §46 — The cross-strike detectors get their training world (2026-08-24)
+
+§45's deferred item: training injectors for the Phase 1 detectors and
+Explorer wiring under addendum 25 §18's coverage rule. A new strategy —
+`options_arbitrage_phase1` in the extensible STRATEGIES tuple, picked up by
+the mission-control dropdown automatically — whose scenarios train the
+cross-strike detectors, worked by the same agents through the same loop.
+
+### The design: a parallel shift preserves parity
+
+Shifting one strike's call AND put mids by the same amount, half-spreads
+unchanged, leaves every executable parity edge at that strike invariant
+(Cbid−Pask and −Cask+Pbid both cancel the shift) while genuinely breaking
+monotonicity, verticals and butterflies against the neighbors. So the
+three new variants — `cross_strike_bump`, `cross_strike_dip` (with the
+clip-fallback discipline; ground truth records the variant actually
+applied), and `cross_strike_spread_artifact` — train ARB-006/007/008/009/
+011 with **zero ARB-001 co-fire by construction**, and an ARB-001
+detection on a cross scenario is a world-integrity alarm, graded
+FAIL('unexpected_parity_hit'). Floors are computed against the detector's
+own cost model, primary package ARB-011 monotonicity at (k_prev, k_mid).
+
+### What generalized, and what the generalization uncovered
+
+`parity_events` grew additively (`detector_id` defaulting to 'ARB-001',
+`strike2`, `strike3` — the table's name is now historical; renames are
+banned). Explorer's chain scan became `scan_chain` — the whole library,
+one entry point — gated by the same min-edge lens (its `arb001_` name is
+likewise historical; scope widened to the library scan). The Evaluator
+learned detector families (`expected_family: cross_strike`: any
+non-ARB-001 detection through the primary strike advances the chain;
+strays and parity hits fail). The diagnosis differential went chain-wide
+— `scan_chain` offline covers both families with one mechanism — and
+gained `world_cross_integrity` for the case where the offline scan agrees
+with a stray detection (the world leaked beyond the affected strike).
+
+Widening the answer key from ARB-001 to the library exposed two latent
+defects and forced one design decision:
+
+1. **The pre-existing trap injectors leaked cross-strike opportunities.**
+   `_inject_spread_artifact`/`_inject_borrow_cost`'s one-legged shifts
+   break monotonicity against the neighbor (§45's second finding), and
+   their erasure math only ever targeted the same-strike parity formula.
+   Both now verify with an actual `scan_chain` call and widen iteratively
+   until clean — as does the new cross trap, whose closed-form floor
+   alone proved empirically insufficient against far-strike butterflies.
+2. **Best-by-net-edge selection would have broken parity training.** A
+   genuine parity injection's induced cross-strike side effects can carry
+   a larger edge than the deliberately-minimal ARB-001 edge, so Explorer
+   prefers ARB-001 among candidates when present — semantically right
+   (the planted training signal) and provably a no-op on cross scenarios
+   (zero ARB-001 co-fire there).
+3. **"None means clean" is now true by construction** (owner-side design
+   decision on review). §45 accepted `localized_distortion` on clean
+   scenarios as an honest world-failure; this increment ends the
+   ambiguity instead: clean-world variants (none and every trap) redraw
+   their skew from a salted stream when they land on that shape — ground
+   truth must not promise "no opportunity" over a world that genuinely
+   carries one. Genuine variants keep full skew diversity, distortion
+   included. The none-mix and trap-only property tests dropped their
+   carve-outs and assert unconditional zero detections again, plus a test
+   pinning the redraw itself.
+
+### Verified
+
+1592 passing (was 1566; +25 delegated, +1 review-driven pinning test).
+Live, through the mission-control API against a real organization (real
+LLM): a five-scenario `options_arbitrage_phase1` mission (two bumps, one
+dip, two spread traps) — Explorer recorded ARB-009 put butterflies
+through every affected strike, escalated through cross-checks, Analysis
+produced genuinely reasoned theses (one flagged the broken-wing
+asymmetry of an injected structure unprompted), both traps stayed clean,
+and the Evaluator + diagnosis graded **5/5 PASS, certified complete,
+zero corrective items**. Graceful shutdown. The one incident was the
+verification script itself dying on a Unicode arrow in a thesis under the
+cp1252 console after the run succeeded — evaluation completed offline
+against the surviving artifacts.
+
+Division of labour per the tiering directive: implementation delegated
+(one connection loss, resumed with context intact; its report surfaced
+all three findings above honestly); design, the clean-skew decision,
+review, live verification and this record by the top model.
+
+### Deferred, with reasons
+
+Per-detector-family lenses and grading attribution (one min-edge lens
+governs the whole scan until grades distinguish families); difficulty
+progression (unchanged from §39, now with two strategies' worth of
+certified runs to calibrate against); ARB-012 diagnostics and Phase 2 of
+the library, per addendum 27's ordering.

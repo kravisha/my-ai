@@ -211,6 +211,34 @@ def test_assemble_context_renders_the_parity_block_for_a_parity_report(conn):
     assert "not_applicable" in context
 
 
+def test_assemble_context_renders_cross_strike_guidance_for_a_non_arb001_detector(conn):
+    """docs/SPEC_RECONCILIATION.md SS45's deferred item: a parity_events row
+    with a non-ARB-001 detector_id (a box/vertical/butterfly/monotonicity
+    package) renders that detector_id in the claim line, all its strikes,
+    and gains the added cross-strike guidance sentence the ARB-001 wording
+    does not carry."""
+    parity_event_id = fi_db.record_parity_event(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "ENT1", "SYN1",
+        strike=95.0, expiry_days=30, direction="monotonicity_calls",
+        gross_edge_per_share=0.65, net_edge_per_share=0.55, classification="A",
+        capacity_units=12.0, observed_at="2026-01-05T14:30:00+00:00",
+        run_id="m1", scenario_id="m1-s0", detector_id="ARB-011", strike2=100.0,
+    )
+    fi_db.enqueue_report(
+        conn, "explorer-1", "2026-01-01T00:00:00+00:00", "explorer", "SYN1",
+        summary="Executable ARB-011 monotonicity_calls on SYN1: net edge $0.55/share at K=95.0/100.0 30d",
+        detector_event_id=None, parity_event_id=parity_event_id, evidence_ids=[],
+    )
+    report = fi_db.fetch_next_pending_report(conn)
+
+    context = _assemble_context(conn, report)
+
+    assert "ARB-011" in context
+    assert "95.0" in context
+    assert "100.0" in context
+    assert "cross-strike no-arbitrage-bound violation" in context
+
+
 def test_assemble_context_iv_report_is_unchanged_by_the_parity_block(conn):
     """A report with no parity_event_id must not gain a parity block - the
     two are mutually exclusive (backend/fi_db.py's discovery_reports.
