@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend import observations as observation_store
-from backend.arbitrage import ParitySnapshot, Quote
+from backend.arbitrage import ChainSnapshot, ParitySnapshot, Quote, StrikeQuotes
 from backend.canonical import Observation
 
 # StoredPost carries no source label of its own in the stored chatter payload
@@ -80,6 +80,46 @@ class StoredChainProvider:
             )
             for row in payload["chain"]
         ]
+
+
+def chain_snapshots(observation: Observation) -> list[ChainSnapshot]:
+    """One backend/arbitrage.py ChainSnapshot per expiry in a stored
+    option_chain observation - the multi-strike shape backend/arbitrage.py's
+    ARB-006 through ARB-011 need (a full strike ladder for one expiry),
+    beside StoredChainProvider.snapshots' existing per-(strike,expiry)
+    ParitySnapshot reconstruction above. Pure translation, same fields,
+    grouped by expiry_days and sorted by strike within each group (the order
+    ChainSnapshot.__post_init__ requires) rather than trusting the payload's
+    own row order."""
+    payload = observation.payload
+    underlying = _quote_from_leg(payload["underlying"])
+    carry = payload["carry"]
+    pv_div_by_expiry = {row["expiry_days"]: row["pv_div"] for row in carry["pv_div_by_expiry"]}
+
+    rows_by_expiry: dict[int, list[dict]] = {}
+    for row in payload["chain"]:
+        rows_by_expiry.setdefault(row["expiry_days"], []).append(row)
+
+    chains = []
+    for expiry_days in sorted(rows_by_expiry):
+        rows_sorted = sorted(rows_by_expiry[expiry_days], key=lambda r: r["strike"])
+        strikes = tuple(
+            StrikeQuotes(strike=row["strike"], call=_quote_from_leg(row["call"]), put=_quote_from_leg(row["put"]))
+            for row in rows_sorted
+        )
+        chains.append(ChainSnapshot(
+            entity_id=observation.entity_id,
+            symbol=payload["symbol"],
+            expiry_days=expiry_days,
+            style=payload["style"],
+            as_of=payload["as_of"],
+            underlying=underlying,
+            r=carry["r"],
+            pv_div=pv_div_by_expiry[expiry_days],
+            borrow_fee_annual=carry["borrow_fee_annual"],
+            strikes=strikes,
+        ))
+    return chains
 
 
 @dataclass(frozen=True)

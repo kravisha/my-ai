@@ -3273,3 +3273,91 @@ difficulty controls in the panel (§13's progression is still future
 design — the seed and scenario count are the reproducibility controls §6
 requires); automatic re-evaluation polling (Evaluate is an operator act;
 wiring it to a timer is an operator decision).
+
+
+---
+
+## §45 — The arbitrage library's Phase 1: eight detectors under one discipline (2026-08-23)
+
+Addendum 27 §11's Phase 1, on the contract ARB-001 proved in §41.
+`backend/arbitrage.py` now holds ARB-002/003 (conversion and reverse
+conversion as standalone package entry points sharing ARB-001's math
+through one internal helper, so the formulas cannot drift), ARB-006
+(European box, both directions), ARB-007/008 (call/put vertical bounds),
+ARB-009 (butterfly/convexity with general unequal-spacing weights),
+ARB-010 (all four intrinsic/upper bounds, per-check hard stops so a stale
+call cannot block a put-only package), and ARB-011 (strike monotonicity).
+Plus `ChainSnapshot` (one expiry's strike ladder), `CostConfig.for_legs`
+(the cost model finally per-leg-count), DF-based bound math throughout
+(negative rates generalize — ARB-030's framework rule, tested at
+r = −0.01), and `scan_chain`, the chain-level entry point that enumerates
+strikes, pairs and triples, skips hard-stopped candidates, and
+deduplicates — the monotonicity case is both ARB-007's zero bound and
+ARB-011, so the scan runs the verticals width-branch-only and attributes
+that package to ARB-011 once, while the standalone functions keep their
+full spec definitions.
+
+**ARB-013 is deliberately not built**: no forward or futures instrument
+exists in any world this system generates (the Capability Set is stock and
+stock_option), so the detector would have no producer and no consumer —
+the same empty-machinery refusal as every prior deferral. It arrives with
+the first forward-bearing world.
+
+**Nothing consumes the new detectors yet, and that is the honest state.**
+Explorer escalates ARB-001 only; wiring the others into discovery needs
+each to have training scenarios the world can pose (addendum 25 §18: a
+strategy-training run must exercise the strategy), which is injector work
+with its own increment. Phase 1's first consumer is the property suite
+below — the library and the world validating each other.
+
+### The property tests found two true things about the world
+
+Addendum 27 §7's "generate arbitrage-free chains, verify no executable
+positives" test, run with the parity world as the generator, produced two
+findings — both investigated to ground, neither a detector bug:
+
+1. **A localized IV distortion is a genuine cross-strike mispricing.**
+   Uninjected worlds were clean under every skew shape except
+   `localized_distortion`, whose isolated IV mountain — the exact shape
+   the original IV-surface lens trains on — genuinely violates
+   monotonicity, convexity, verticals and boxes around the bumped strike.
+   That is economics, not error: an isolated volatility spike *is* a
+   butterfly mispricing. Disposition: the world is not "broken"; the
+   §21 vocabulary is refined — `localized_distortion` is an implicit
+   anomaly variant, and future cross-strike training scenarios can use it
+   deliberately. Nothing currently misgrades: the Evaluator grades only
+   parity_events, and `world_not_clean` diagnoses only the parity checks.
+2. **A parity injection at one strike breaks cross-strike bounds through
+   that strike.** A $1 shift in one put is also a box/vertical/butterfly
+   mispricing at every pair involving it — verified: on genuine-mix
+   worlds, every non-ARB-001 hit traces to the injected strike (or to a
+   co-drawn localized distortion). Both findings are encoded as
+   assertions, not weakened away.
+
+### Verified
+
+1566 passing (was 1521; +45). Live, against the certification run's real
+stored world (cert-101): the two stale_quote scenarios scan to **zero**
+hits — every package touching the stale legs refuses, everything else is
+clean; the flat-skew genuine scenario shows ARB-001's $0.05 conversion at
+the injected strike plus eight box packages all through it; the
+localized-distortion genuine scenario shows the IV mountain read as
+twenty genuine cross-strike opportunities up to $14/share alongside the
+$0.05 parity edge — the library reading real stored data exactly as the
+two findings predict. One verification-script defect caught in passing:
+the first run's glob matched the diagnosis file (empty scenario list) and
+passed vacuously — a reminder that an OK with no evidence printed is not
+an OK.
+
+Division of labour per the tiering directive: implementation delegated
+(the property findings were the delegated work's own investigation,
+verified rather than taken on faith); design, spec, review, the live
+scan and this record by the top model.
+
+### Deferred, with reasons
+
+ARB-013 (above); Explorer wiring and training injectors for the
+cross-strike detectors (each needs its scenario design — the natural next
+library increment); ARB-012's calendar diagnostics and Phase 2
+(014–025) per addendum 27's own ordering; the RelativeValue service for
+026/027 stays out of the arbitrage namespace entirely (27 §11).
