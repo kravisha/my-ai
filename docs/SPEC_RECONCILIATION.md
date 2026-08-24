@@ -4026,6 +4026,63 @@ blocked entries — the calendar increment does not unblock them.
 
 ---
 
+## §57 — The live calendar mission, and the breaker meeting it (2026-08-25)
+
+§56's deferred item, closed the same day: a real API key was configured (by
+the owner; this record never saw it), and a five-scenario
+`options_arbitrage_calendar` mission ran against the live organization —
+real agents, real model calls — started through `missions.start_mission`,
+the same function the mission-control route calls, under the process-owner
+authority `app/admin_auth.py`'s own docstring describes.
+
+**Seed 4, chosen deterministically in a dry run**: stale_quote,
+calendar_bump, genuine, calendar_spread_artifact, stale_quote — both new
+variants, three families. **Graded 5/5 PASS, certified complete, zero
+corrective items.** Explorer detected exactly two packages: the ARB-012
+put_calendar 7d-vs-30d at strike 145 on the lifted world (net
+$3.49/share), and the ARB-001 conversion on the parity world (net
+$0.05/share, ARB-001-preferred as always). All three traps stayed silent.
+Both escalations were cross-checked, reported, and analyzed by the real
+model into genuinely skeptical theses (confidence 0.32 and 0.35 — the
+analyst *distrusting* a class-C bound and a thin class-A margin is the
+discipline working, not a defect).
+
+### The breaker fired first, and that is a feature meeting its spec
+
+Mid-mission, analyses stopped landing. Not a bug in the mission: §52's
+cost circuit breaker had tripped — the live organization had spent 502k
+tokens across 106 calls inside the UTC day, crossing the 500k default, and
+the ledger recorded **625 refusals** while Analysis kept claiming reports
+it could not pay for. The remedy was the breaker's own documented one:
+`MODEL_BUDGET_DAILY_TOKENS` raised deliberately (to 2M, in `.env`, with
+the reason written next to it), backend restarted, pipeline completed in
+~3 minutes. Worth recording as measured fact: this organization's routine
+loops spend on the order of the old default in about an hour of live
+operation — the number the default should be recalibrated against, now
+that one exists.
+
+### The finding the live model caught, and its fix
+
+The SYN5 thesis, unprompted: "only one expiry_days (7) is reported for
+both legs ... evidence that the 'calendar' structure is misidentified."
+Correct — Explorer's escalation question and requester_finding carried
+only the near expiry, so the analyst was judging a two-expiry package
+shown one expiry. Fixed in the same increment: the question now reads
+"expiring in 7d vs 30d" for calendar packages and the finding carries
+`expiry2_days`; the Explorer test pins both. The §46 pattern repeating —
+the live model's skepticism finding a real seam the offline tests could
+not, because the seam was in what the model itself gets shown.
+
+### Verified
+
+1659 tests still passing after the fix (the explorer test grew two
+assertions). Live artifacts: mission row COMPLETED, evaluation and
+diagnosis cached on it, both theses in `analysis_results`, and the spend
+ledger carrying the whole story — 106 calls, 502k tokens, 625 refusals,
+then the deliberate raise.
+
+---
+
 ## §55 — Phase 2 opens with the two members that have data: ARB-015/016 as Diagnostics (2026-08-25)
 
 TQ-06, scoped honestly before it was built. Addendum 27 §11's Phase 2 list

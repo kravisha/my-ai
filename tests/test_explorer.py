@@ -847,4 +847,9 @@ def test_parity_work_on_a_calendar_world_records_an_arb012_event_with_both_expir
     assert len(cross_checks) == 1
     finding = json.loads(cross_checks[0]["requester_finding"])
     assert finding["detector_id"] == "ARB-012"
-    assert "ARB-012" in cross_checks[0]["question"]
+    assert finding["expiry2_days"] == event["expiry2_days"]
+    question = cross_checks[0]["question"]
+    assert "ARB-012" in question
+    # Both legs' expiries reach the analyst - §57's live finding: presenting
+    # only the near leg made the first live thesis doubt the structure.
+    assert f"{event['expiry_days']}d vs {event['expiry2_days']}d" in question

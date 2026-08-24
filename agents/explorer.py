@@ -366,11 +366,19 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
         # deterministic arithmetic that already cleared its own cost-plus-
         # buffer model would be an LLM call with nothing left to judge.
         strikes_text = _opportunity_strikes_text(strike, strike2, strike3)
+        # A calendar package's identity is its expiry PAIR - presenting only
+        # the near leg made the first live ARB-012 thesis (correctly) doubt
+        # the structure existed at all: "only one expiry_days is reported
+        # for both legs ... evidence that the 'calendar' structure is
+        # misidentified" (SPEC_RECONCILIATION §57's live finding, caught by
+        # the analysis model itself, unprompted).
+        expiry2_days = opportunity.inputs.get("expiry2_days")
+        expiry_text = f"{expiry_days}d" if expiry2_days is None else f"{expiry_days}d vs {expiry2_days}d"
         fi_db.open_cross_check(
             conn, identity, spawned_at, ROLE, "speculator", security,
             question=(
                 f"Explorer detected an executable {opportunity.detector_id} {opportunity.direction} on "
-                f"{security} at strike(s) {strikes_text} expiring in {expiry_days}d "
+                f"{security} at strike(s) {strikes_text} expiring in {expiry_text} "
                 f"(net edge ${opportunity.net_edge_per_share:.2f}/share). "
                 "Is there contextual evidence of unusual attention on this security?"
             ),
@@ -386,6 +394,7 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
                 "strike2": strike2,
                 "strike3": strike3,
                 "expiry_days": expiry_days,
+                "expiry2_days": expiry2_days,
                 "lens_artifact_id": lens_artifact_id,
             },
             requester_confidence=None,
