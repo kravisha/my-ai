@@ -3843,3 +3843,68 @@ first run found six known vulnerabilities in the environment's own pip
 environment scans clean. Worth recording less for the fix than for the
 demonstration: the habit produced a real finding on its first execution,
 which is the difference between a control and a checkbox.
+
+---
+
+## §54 — The Strategic Priority Register, machine-readable (2026-08-25)
+
+TQ-05. `backend/register.py`, owning `strategic_register` in the house
+module-owned-table pattern (created by fi_db.init_schema, additive
+migrations wired), with admin routes: file a petition or mandate, read the
+register with its queue view, transition with reasons.
+
+### The boundary implementation drew
+
+The queue entry said this store would "supersede the paper file."
+Implementing it showed that would have been wrong: the *development* queue —
+increments executed against this repository — and the *organization's*
+register of proposals are different registers with different authors and
+lifecycles. Development work must be recorded in the repository next to the
+code it describes (`docs/TASK_QUEUE.md` stays authoritative there);
+petitions and mandates are operational state and live in rows, where a
+petition from an agent will eventually land (31 §5, the §22 intake
+pipeline's substrate). Duplicating one into the other would have
+manufactured two sources of truth — the Conflict Rule's exact target. The
+register therefore starts *empty*, and that is correct: it holds what the
+organization files, not what this file already records.
+
+### The rules, enforced rather than described
+
+- Vocabulary is fail-closed: category and flag are refused, not normalized,
+  and **a Want cannot carry a priority flag** — 31 §2.2 makes the flag an
+  escalation property of necessity, so storing one on a Want would corrupt
+  the classification the whole doctrine hangs on.
+- Parking transitions (blocked / deferred / declined) require a reason;
+  **done requires a record reference** — G14's "passing is not
+  implementation" as a NOT-NULL-in-practice, the pointer to where completion
+  is verifiable.
+- Duplicate open titles are refused naming the existing entry (31 §5.4
+  consolidation); a closed entry frees its title, because re-raising a
+  finished concern is a new proposal.
+- `queue_order` is the doctrine, not a score: Needs before Wants, Needs by
+  stated flag severity with unflagged below green (urgency someone stated
+  outranks urgency nobody did), Quick-Win Wants ahead of other Wants
+  (32 §15), filing order as the tie-break. A priority *score* — 31 §3 lists
+  one — is deliberately absent: a scalar would wear authority nothing
+  earned, and 31 §7 itself says no single number decides strategy.
+- The filing route records the authenticated admin as origin (32 §9.2: who
+  proposed the change is the first transparency field).
+
+Fields from 31 §3 with no producer today (cost/impact profile → TQ-07;
+champion, Board status, commission linkage → the deferred parliamentary
+machinery) are absent, not defaulted.
+
+### Verified
+
+Eleven new tests (1630 passing): filing, both vocabulary refusals, the
+Want-flag rejection, consolidation with title release, reason and
+record-reference obligations, missing-entry error, the full ordering
+contract (including blocked-stays-queued and closed-drops-out), filter
+validation, and the routes (origin recorded, queue view leading with a
+later-filed Need, refusals as legible 400s). One defect caught by the
+existing suite: the module name `register` was silently shadowed by the
+`/auth/register` route handler of the same name — aliased at import. And
+one process note: a bulk PowerShell rewrite double-encoded the file's UTF-8
+(§ → Â§) and was caught by inspection; the file was restored from HEAD and
+re-edited with tooling that preserves encoding. The admin-auth surface test
+grew its `entry_id` stand-in and still walks every route.

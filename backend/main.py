@@ -32,6 +32,9 @@ from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
 from backend import fi_db, missions, reference_data, strategy
+# Aliased because this module already has a route handler named `register`
+# (/auth/register), which would silently shadow the module name.
+from backend import register as strategic_register
 from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
 
@@ -528,6 +531,70 @@ def describe_agent(identity: str, conn=Depends(panel_db), admin: str = Depends(r
     if description is None:
         raise HTTPException(status_code=404, detail=f"No agent with identity {identity!r}")
     return {"answered_by": "organizational_record", **description}
+
+
+class RegisterEntryRequest(BaseModel):
+    title: str
+    category: str
+    rationale: str
+    need_flag: str | None = None
+    quick_win: bool = False
+    source_reference: str | None = None
+
+
+class RegisterStatusRequest(BaseModel):
+    status: str
+    reason: str | None = None
+    record_reference: str | None = None
+
+
+@app.get("/admin/register")
+def read_register(status: str | None = None, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """The Strategic Priority Register (addendum 31 §3): every entry, plus the
+    open ones in working order by the doctrine's own rules — Needs before
+    Wants, flag severity, Quick-Win acceleration. Both views from one store,
+    so there is exactly one queue however it is read."""
+    try:
+        entries = strategic_register.list_register(conn, status=status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "entries": entries,
+        "queue": [entry["id"] for entry in strategic_register.queue_order(conn)],
+    }
+
+
+@app.post("/admin/register")
+def file_register_entry(request: RegisterEntryRequest, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    """File a petition or mandate (addendum 31 §5). The admin's username is the
+    recorded origin - a register where entries do not say who filed them would
+    fail 32 §9.2 (who proposed the change) on day one."""
+    try:
+        entry_id = strategic_register.file_entry(
+            conn,
+            title=request.title,
+            category=request.category,
+            origin=admin,
+            rationale=request.rationale,
+            need_flag=request.need_flag,
+            quick_win=request.quick_win,
+            source_reference=request.source_reference,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"id": entry_id, "entry": strategic_register.get_entry(conn, entry_id)}
+
+
+@app.post("/admin/register/{entry_id}/status")
+def transition_register_entry(entry_id: int, request: RegisterStatusRequest, conn=Depends(panel_db), admin: str = Depends(require_admin)):
+    try:
+        strategic_register.set_status(
+            conn, entry_id, request.status,
+            reason=request.reason, record_reference=request.record_reference,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"entry": strategic_register.get_entry(conn, entry_id)}
 
 
 @app.get("/admin/intelligence")

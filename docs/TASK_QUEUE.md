@@ -74,14 +74,15 @@ The exposure preconditions are restated in one place in §50 so exposure can nev
 
 ### TQ-05 — Strategic Priority Register, machine-readable
 
-**WANT · QUEUED**
+**WANT · DONE — `SPEC_RECONCILIATION.md` §54**
 
-Source: addendum 31 §3, §5 (petitions), §22 (intake pipeline); addendum 32 §12, §14–§15 (cost/
-impact and Quick-Win classification). Supersedes this paper file with a backend store: petitions,
-Need/Want classification, flags, cost/impact profile, status, and a panel view. The petition
-*sources* the specs describe (agent self-reflection time, trainer/mentor pre-review) come later;
-the register itself is the enabling substrate. Also the natural home for addendum 32's Quick-Win
-accelerated path.
+`backend/register.py` + `/admin/register` routes. One correction to this entry's own premise,
+recorded in §54: the store does **not** supersede this paper file — the development queue (this
+file) and the organization's register of proposals are different registers, and duplicating one
+into the other would manufacture two sources of truth. The store starts empty and holds what the
+organization files: petitions and mandates, ordered by the doctrine (Needs before Wants, flag
+severity, Quick-Win acceleration), with fail-closed vocabulary and reasons on every parking
+transition.
 
 ### TQ-06 — Options arbitrage library, next increment per addendum 27 §11
 
@@ -94,12 +95,15 @@ ARB-016 borrow basis, ARB-017/019/020 American family — the last three need Am
 the simulation does not yet generate). Per-detector-family lenses and difficulty progression stay
 deferred per §46 until grades distinguish families.
 
-### TQ-07 — Governance cost/impact profile on scoreboard entries
+### TQ-07 — Governance cost/impact profile on register entries
 
-**WANT · QUEUED · after TQ-05**
+**WANT · QUEUED · consumer-gated**
 
-Source: addendum 32 §14. Once the register exists, high-cost/high-side-effect classification
-(32 §16) and the Quick-Win path (32 §15) attach to it. Pointless as a paper exercise before then.
+Source: addendum 32 §14, §16. The register (TQ-05) now exists to carry the profile, but the
+profile's *consumer* — the enhanced-scrutiny path where a committee weighs cost against benefit —
+is part of the deferred parliamentary machinery. Until something reads the fields, adding them
+would be the "table nothing writes to" error in reverse; queued until a consumer exists or the
+owner wants the profile for their own review.
 
 ### TQ-08 — Incident response runbook, including credential revocation
 
