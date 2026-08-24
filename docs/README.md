@@ -1,6 +1,6 @@
 # Design Documents
 
-Everything governing this system's design, in one place. Thirty files here, accumulated across
+Everything governing this system's design, in one place. Forty files here, accumulated across
 several design sessions, and five more held privately; this index says what each one is, which govern
 which, and what order to read them in.
 
@@ -23,6 +23,7 @@ Documents disagree with each other, so the order matters. Higher layers win.
 | Layer | Document | Authority |
 |---|---|---|
 | **Constitutional** | `JARVIS_CONSTITUTION.md` — **held privately** | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
+| Architectural | [`addenda/`](addenda) 28–33 (Organizational Doctrine) | Canonical **for the target organizational structure: security defense, business continuity, systemic evolution, strategy, governance, and strategic doctrine**. A description of the organization MyAI is to become, not of the built system — nearly all of it is roadmap. Where these touch the FI addenda (11–15), the Gateway lineage (16–18), or Day Zero (21–27), record the disposition in `SPEC_RECONCILIATION.md` §47 rather than assuming the newer set wins. |
 | Architectural | [`addenda/`](addenda) 21–27 (Day Zero lineage) | Canonical **for Day Zero startup, reference data, the simulation training world, and the arbitrage library**. Builds on 20's engine architecture. 22 is held privately. Within the lineage, 24 governs 26 where they differ. Where these touch other lineages, record the disposition in `SPEC_RECONCILIATION.md` §39 rather than assuming the higher number wins. |
 | Architectural | [`addenda/`](addenda) 16–18 (Gateway lineage) | Canonical **for the external communication boundary and backend infrastructure only**. A separate subject from 2–15, not a newer set of it — these neither supersede nor are governed by the Financial Intelligence addenda. Where the two ever touch the same question, record it in `SPEC_RECONCILIATION.md` rather than assuming the higher number wins. |
 | Architectural | [`addenda/`](addenda) 11–15 (newest FI set) | Canonical. Where these conflict with 5–10, these win. 11 and 15 are held privately. |
@@ -39,7 +40,7 @@ those resolutions live, because the addenda themselves are marked do-not-edit.
 
 A distinction worth knowing before editing anything.
 
-- **Verbatim** — `addenda/` 1–14, 16–18 and 20–27 are unedited copies of supplied specifications. They are
+- **Verbatim** — `addenda/` 1–14, 16–18 and 20–33 are unedited copies of supplied specifications. They are
   the authoritative source and are never changed; disagreements with them get recorded elsewhere.
 - **Maintained** — `JARVIS_GAP_ANALYSIS.md`, `SPEC_RECONCILIATION.md`, `TIMING_CONSTANTS.md` and
   `organization.yaml` are this project's own records, edited as the design and the code move.
@@ -56,6 +57,8 @@ A distinction worth knowing before editing anything.
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Where conflicts *between* specifications are resolved, and where owner decisions are recorded. Also lists what was declined, and why. |
 | [`TIMING_CONSTANTS.md`](TIMING_CONSTANTS.md) | Every constant whose correctness depends on a rate, what that rate is, and whether it has been *measured*. Three real defects were found this way. |
 | [`organization.yaml`](organization.yaml) | The organization as *implemented*, machine-readable. `tests/test_organization_model.py` asserts every claim in it against the code, so a role named here but not built — or built but not named — fails the suite. |
+| [`TASK_QUEUE.md`](TASK_QUEUE.md) | The Strategic Priority Register in paper form — the prioritized queue of work derived from the specifications, with Need/Want classification and status. Realizes addendum 31 §3 and addendum 32 §12 until a machine-readable register exists. |
+| [`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) | What to actually do, in order, on suspected compromise: preserve evidence, stop the organization, revoke credentials, assess, restore, review. Written for this deployment's real shape, with its limits stated. |
 | [`GOVERNANCE.md`](GOVERNANCE.md) | Which governing documents are held privately, why that is a split rather than an omission, and what remains public. |
 | [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) | The rule the split is maintained under, so it stays a practice rather than a one-off migration. What moves, what must never move, and how a public comment references private reasoning by identifier. |
 | [`MARKET_DATA_TAXONOMY.md`](MARKET_DATA_TAXONOMY.md) | What data an analysis organization can obtain from markets, organised by how it arrives in time rather than by asset class. |
@@ -99,6 +102,24 @@ increments added.
 | [25 — Market Data Simulation Engine (Specification 02)](addenda/addendum_25_market_data_simulation_engine_specification.md) | The training-world generator: option chains, skew generator, parity opportunity injection with genuine and trap variants, hidden ground truth, the evaluation loop. |
 | [26 — Day Zero Reference Data Engine](addenda/addendum_26_day_zero_reference_data_engine.md) | Sibling of 24, less detailed; kept for the statements 24 lacks (dependency chain, Explorer's initial volatility-surface focus). |
 | [27 — Full Options Arbitrage Library](addenda/addendum_27_options_arbitrage_library_specification.md) | ARB-001 through ARB-030, the executable-price discipline, cost model, A/B/C/D classification, and the pure-detector implementation contract. Mostly roadmap; ARB-001 is the first consumer. |
+
+**Organizational Doctrine (28–33)** — a fifth lineage, supplied 2026-08-23: the
+target organization. Six peer frameworks describing what MyAI is to become —
+its defense, its resilience, how it changes itself, how it decides what to
+pursue, how it governs itself, and the strategic doctrine underneath all of it.
+Nearly everything here is roadmap; [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md)
+§47 records what already exists under other names, what was adopted
+immediately, and what is deferred with reasons. The work it generates is
+queued in [`TASK_QUEUE.md`](TASK_QUEUE.md).
+
+| | |
+|---|---|
+| [28 — Security Defense Framework](addenda/addendum_28_security_defense_framework.md) | The malicious-adversary division: zero trust, capability boundaries outside the model, the Tool Security Gateway, containment, Emergency Defense Mode, the security agent catalog, and the §32 minimum viable baseline. |
+| [29 — Business Continuity Framework](addenda/addendum_29_business_continuity_framework.md) | Operating through disruption regardless of cause: service tiers, RPO/RTO, provider-neutral backup with tested restore, graceful degradation, clean-room recovery. Its §45 baseline is the lineage's most immediately implementable demand. |
+| [30 — Department of Evolution v2.0](addenda/addendum_30_department_of_evolution.md) | How approved systemic change is trained, assimilated, certified, rolled out, and reversed. Draws the Strategy/Evolution boundary: Strategy decides what and why, Evolution decides how. Overlaps the addendum 13 training loop; §47 records the mapping. |
+| [31 — Strategy Department](addenda/addendum_31_strategy_department.md) | What to pursue and in what order: Need/Want classification, GREEN→CRITICAL flags, the Strategic Priority Register, petitions, champions, commissions, Horizon Intelligence, Board sessions, Development Plans. |
+| [32 — Governance Framework & Parliamentary System](addenda/addendum_32_governance_framework_parliamentary_system.md) | How the organization governs itself: civilian character, dual departmental leadership, two-tier democracy, committees, priority queues, Quick-Win and high-cost classification, verified constitutional implementation. |
+| [33 — Strategic Principles](addenda/addendum_33_strategic_principles.md) | Constitutional-level doctrine addending 31: never become a dinosaur, strategy over brute force, blind-spot reviews, cooperation first with competition as tie-breaker, responsible growth, strategic humility. Directives SP1–SP17. |
 
 **Financial Intelligence, third set (11–15)** — the current architecture.
 

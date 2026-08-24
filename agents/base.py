@@ -22,6 +22,7 @@ import time
 
 from agents import introspection
 from backend import fi_db
+from backend.version import code_version
 
 HEARTBEAT_INTERVAL_SECONDS = 1.0
 
@@ -81,7 +82,9 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
         db_path = os.environ.get("FI_DB_PATH", str(fi_db.DB_PATH))
     conn = fi_db.get_connection(db_path)
     fi_db.init_schema(conn)
-    fi_db.register_agent(conn, identity, role, os.getpid())
+    # Computed here, once per life, not per heartbeat: which code this process
+    # is actually running (Directive E17; backend/version.py never guesses).
+    fi_db.register_agent(conn, identity, role, os.getpid(), behavior_version=code_version())
 
     try:
         while True:

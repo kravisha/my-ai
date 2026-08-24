@@ -51,6 +51,7 @@ from dotenv import dotenv_values
 
 from agents import coo
 from backend import fi_db
+from backend import version as backend_version
 from simulation import metrics as metrics_module
 from simulation import properties as properties_module
 from simulation import faults as faults_module
@@ -135,22 +136,11 @@ def _code_version() -> str:
     """The commit the run executed, or an honest marker that it is unknown.
 
     A run whose code version is unrecorded cannot be replayed, so this never
-    guesses; 'unknown' is a usable answer and a wrong sha is not."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    if result.returncode != 0:
-        return "unknown"
-    sha = result.stdout.strip()
-    dirty = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=REPO_ROOT, capture_output=True, text=True,
-    ).stdout.strip()
-    return f"{sha}-dirty" if dirty else sha
+    guesses; 'unknown' is a usable answer and a wrong sha is not. The
+    implementation moved to backend/version.py when the agent registry needed
+    the same fact (Directive E17) — one producer, so the two records can never
+    disagree about which code was running."""
+    return backend_version.code_version()
 
 
 def _free_port() -> int:

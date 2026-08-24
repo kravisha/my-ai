@@ -39,6 +39,7 @@ import sys
 from pathlib import Path
 
 from backend import fi_db, watch
+from backend.version import code_version
 
 # Environment every spawned agent gets on top of the Controller's own.
 #
@@ -167,7 +168,10 @@ class Controller:
         Also records a first heartbeat immediately, so the row is never
         momentarily stale-looking to a COO health check that happens to run
         between registration and the first poll-loop tick."""
-        fi_db.register_agent(self.conn, self.identity, CONTROLLER_ROLE, os.getpid())
+        fi_db.register_agent(
+            self.conn, self.identity, CONTROLLER_ROLE, os.getpid(),
+            behavior_version=code_version(),
+        )
         fi_db.record_heartbeat(self.conn, self.identity)
         self._establish_world_clock()
         return self.identity

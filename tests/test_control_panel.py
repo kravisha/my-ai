@@ -23,6 +23,18 @@ def test_agents_route_reports_both_axes_separately(panel_client, panel_conn):
     assert agent["heartbeat_age_seconds"] is not None
 
 
+def test_agents_route_exposes_behavior_version_including_honest_null(panel_client, panel_conn):
+    """Directive E17: which code each life runs is visible on the panel, and a
+    row that never stated one reports null (unknown), not something current."""
+    fi_db.register_agent(panel_conn, "explorer-1", "explorer", 4242, behavior_version="abc123-dirty")
+    fi_db.register_agent(panel_conn, "speculator-1", "speculator", 4243)
+
+    agents = {a["identity"]: a for a in panel_client.get("/admin/agents").json()["agents"]}
+
+    assert agents["explorer-1"]["behavior_version"] == "abc123-dirty"
+    assert agents["speculator-1"]["behavior_version"] is None
+
+
 def test_a_dormant_agent_is_visibly_dormant_not_missing(panel_client, panel_conn):
     fi_db.register_agent(panel_conn, "explorer-1", "explorer", 4242)
     fi_db.request_retirement(panel_conn, "explorer-1")

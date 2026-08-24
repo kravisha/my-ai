@@ -25,3 +25,7 @@ gateway.db-shm
 # and log. Reproducible from the scenario plus the manifest's recorded seed and
 # code version, so the runs themselves are not worth versioning.
 simulation/runs/
+# Backup sets (backend/continuity.py): copies of the live stores above, and
+# exactly as sensitive - gateway.db session rows and sessions.json are
+# credentials in the backup too.
+backups/

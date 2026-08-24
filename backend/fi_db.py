@@ -425,7 +425,16 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     last_heartbeat_at TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1,
     lifecycle_state TEXT NOT NULL DEFAULT 'active',
-    process_state TEXT NOT NULL DEFAULT 'running'
+    process_state TEXT NOT NULL DEFAULT 'running',
+    -- Directive E17 (addendum 30 §26), half of it: which code this life of the
+    -- agent is running (a commit sha, sha-dirty, or 'unknown' - see
+    -- backend/version.py). Nullable because rows written before the column
+    -- existed genuinely do not know. The directive's other half, a per-agent
+    -- certification state, deliberately has no column yet: nothing in the
+    -- organization produces one (certification today is per-mission and
+    -- per-Alpha-gate, and competency is earned per-dimension), and a column
+    -- nothing writes to reads as a capability - see SPEC_RECONCILIATION §49.
+    behavior_version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS coo_directives (
@@ -1606,7 +1615,9 @@ def _derive_status(lifecycle_state: str, process_state: str) -> str:
     return "gone"
 
 
-def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
+def register_agent(
+    conn: Database, identity: str, role: str, pid: int, behavior_version: str | None = None
+) -> None:
     """identity is a permanent role-slot ID (addendum_5 §4: durable
     performance record independent of any one process instance - see
     backend/controller.py's _slot_identity), so this INSERT...ON CONFLICT
@@ -1623,17 +1634,24 @@ def register_agent(conn: Database, identity: str, role: str, pid: int) -> None:
     Controller changes lifecycle_state (retire_agent/resume_agent), so a
     dormant agent whose process somehow starts can never silently
     un-retire itself. A brand-new agent gets 'active' from the column default
-    on INSERT."""
+    on INSERT.
+
+    behavior_version is overwritten on the ON CONFLICT path like pid, and for
+    the same reason: it is a fact about *this life* of the identity (which
+    code the new process runs), not about the durable career - Directive E17,
+    and mixed-version operation depends on it being current rather than
+    inherited from a previous life."""
     now = _now()
     conn.execute(
-        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version, lifecycle_state, process_state) "
-        "VALUES (?, ?, ?, ?, 0, ?, NULL, ?, ?, ?) "
+        "INSERT INTO agent_registry (identity, role, pid, status, retire_requested, spawned_at, last_heartbeat_at, schema_version, lifecycle_state, process_state, behavior_version) "
+        "VALUES (?, ?, ?, ?, 0, ?, NULL, ?, ?, ?, ?) "
         "ON CONFLICT(identity) DO UPDATE SET pid=excluded.pid, retire_requested=0, spawned_at=excluded.spawned_at, "
         "last_heartbeat_at=NULL, schema_version=excluded.schema_version, process_state=excluded.process_state, "
+        "behavior_version=excluded.behavior_version, "
         "status=CASE WHEN agent_registry.lifecycle_state = ? THEN ? ELSE ? END",
         (
             identity, role, pid, _derive_status(LIFECYCLE_ACTIVE, PROCESS_RUNNING), now, SCHEMA_VERSION,
-            LIFECYCLE_ACTIVE, PROCESS_RUNNING,
+            LIFECYCLE_ACTIVE, PROCESS_RUNNING, behavior_version,
             LIFECYCLE_DORMANT,
             _derive_status(LIFECYCLE_DORMANT, PROCESS_RUNNING),
             _derive_status(LIFECYCLE_ACTIVE, PROCESS_RUNNING),

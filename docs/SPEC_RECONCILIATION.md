@@ -3455,3 +3455,318 @@ governs the whole scan until grades distinguish families); difficulty
 progression (unchanged from §39, now with two strategies' worth of
 certified runs to calibrate against); ARB-012 diagnostics and Phase 2 of
 the library, per addendum 27's ordering.
+
+---
+
+## §47 — The Organizational Doctrine lineage arrives: six documents and a queue (2026-08-24)
+
+Seven documents supplied. One — the options arbitrage library specification —
+verified byte-identical to addendum 27's verbatim body (assimilated §39/§43);
+re-supply, no action. The other six are new and form a fifth lineage,
+**Organizational Doctrine (28–33)**, dated 2026-08-23: Security Defense (28),
+Business Continuity (29), Department of Evolution v2.0 (30), Strategy
+Department (31), Governance Framework & Parliamentary System (32), Strategic
+Principles (33). All six describe the *target* organization — Board,
+ministers, parliaments, defense branches, continuity councils, agent catalogs
+in the dozens — for a platform the documents call "MyAI"; that is this
+platform (the repository is literally `my-ai`), and "Project Jarvis" remains
+the organizational lineage's own name for it. Nearly everything in them is
+roadmap. Assimilated verbatim per convention; precedence row added to the
+index; and — the lineage's first concrete effect — the work it generates now
+lives in a maintained queue, `docs/TASK_QUEUE.md`.
+
+### What was adopted immediately
+
+Addendum 31 §3 demands a Strategic Priority Register; addendum 32 §12 demands
+priority queues with Need/Want and Quick-Win classification. Both are adopted
+now, in the only form the current system can honestly support: a maintained
+paper register (`TASK_QUEUE.md`) whose conventions are the specs' own
+(NEED/WANT per 31 §2, GREEN→CRITICAL flags per 31 §2.2, QUICK_WIN per 32 §15),
+worked one item at a time with the owner as Board. A machine-readable register
+is itself queued (TQ-05) rather than presumed. This follows the lineage's own
+doctrine — addendum 30 §12: prefer metadata and policy before code.
+
+### Boundary dispositions
+
+1. **30 (Evolution) against 13 (Training Agent Design).** The built training
+   loop — missions, evaluation, certification, remediation, competency — was
+   built under 13 and already performs 30's train→evaluate→certify with
+   separated roles (30 §18's trainer/evaluator/certifier split is honored in
+   structure). Disposition: **13 governs the built loop**; 30 is adopted as
+   doctrine above it, and its machinery (versioned Evolution Directives,
+   trainer hierarchy, Directive Communication Agents) waits until a real
+   systemic evolution needs what the existing loop cannot express. One
+   directive is actionable today and queued: **E17** (every agent exposes a
+   behavior version and certification state) — agents carry `identity` +
+   `spawned_at` and act on versioned strategies, but the registry row exposes
+   neither field E17 names. TQ-03.
+
+2. **30 §10 (COO) against the built COO.** No conflict — the built COO is
+   exactly 30's operational coordinator (spawning, capacity, directives,
+   reconciliation) and owns none of what 30 §10 excludes. Noted, nothing to
+   resolve.
+
+3. **28 (Security Defense) against the Gateway lineage (16–18).** 16–18 own
+   the external boundary's existence and shape (one exposed service, Super
+   User, loopback host); 28 governs its *defensive posture*. Much of 28's §32
+   baseline already exists under Gateway-lineage names: no secrets in Git
+   (`.env`), bcrypt with environment-sourced Super User credential, layered
+   rate limiting that deliberately refuses `X-Forwarded-For` (§43's run.py
+   discipline), per-user isolation, audit logging, loopback-only origin. The
+   item-by-item audit is queued (TQ-04). Emergency Defense Mode, threat
+   intelligence, and edge/DDoS defense are deferred until anything is exposed
+   beyond loopback — the trigger is explicit, not forgotten.
+
+4. **29 (Business Continuity) against everything built.** The genuine gap in
+   the lineage: **nothing implements backup or restore.** Every store —
+   backend database, Gateway store, `user_data/` — lives in one failure
+   domain, violating 29 §1.3. The 3-2-1 principle, provider-neutral
+   `StorageProvider`, and tested-restore discipline (§1.4) are accepted as
+   binding for the first slice, which is the queue's top implementable item
+   (TQ-02). Multi-zone/multi-region/clean-room machinery is deferred: a
+   single-machine deployment has no second failure domain to orchestrate.
+   Model-provider fallback (29 §15) already exists under the FI lineage's
+   provider abstraction; noted as satisfied in kind.
+
+5. **32 (Governance) against 11/22 (organizational constitution, private) and
+   the constitution.** The constitution remains supreme (precedence table).
+   32's civilian character, dual departmental leadership, and
+   proportional-to-impact voting are adopted as direction and recorded here;
+   the parliamentary machinery (elections, committees, referendums, Cabinet)
+   is deferred with the reason stated in the queue: at the current population
+   — a handful of role-agents — the procedure would be ceremony without
+   constituents. Governance's *classification* discipline (Quick Wins,
+   cost/impact profiles, high-visibility accountability) is adopted through
+   the register instead.
+
+6. **33 (Strategic Principles) against the constitution.** 33 §0 says its
+   principles SHOULD be distilled into constitutional directives. The
+   constitution is held privately; distillation is an owner action and is
+   listed as such in the queue's deferred section. Meanwhile 33 operates at
+   architectural precedence like its siblings. Its doctrine is already
+   visible in this file's own habits — §46's "strategy over brute force" was
+   practiced before it was named (a parallel mid-shift that preserves parity
+   by construction instead of brute-force erasure search), which is worth
+   recording as evidence the doctrine fits rather than as self-congratulation.
+
+### The queue itself
+
+`docs/TASK_QUEUE.md`, at assimilation: TQ-01 (this work, done), TQ-02
+(continuity backup slice, NEED/YELLOW — the top implementable item), TQ-03
+(E17, quick win), TQ-04 (28 §32 audit, quick win), TQ-05 (machine-readable
+register, WANT), TQ-06 (library Phase 2 per 27 §11, WANT), TQ-07 (cost/impact
+profiles, after TQ-05); blocked: ARB-013 (no forward/futures instruments in
+the training world — a world-design increment, not a detector increment);
+deferred with reasons: parliamentary machinery, emergency defense, multi-zone
+continuity, constitutional distillation, Evolution directive machinery.
+
+---
+
+## §48 — The first recovery copy: continuity backup with tested restore (2026-08-24)
+
+TQ-02, the queue's top implementable item. `backend/continuity.py`: addendum
+29 §8.1's `StorageProvider` interface with a local-directory adapter first
+(29 §1.7 blesses local storage as a provider), `create_backup` /
+`verify_backup` / `restore_backup` / `list_backups`, and a
+`python -m backend.continuity` CLI. The backup domain is the gitignored
+state — both databases, `users.json`, `sessions.json`, `user_data/` —
+resolved through the owning modules' own path constants so environment
+redirects move the domain with the data.
+
+### The decisions worth recording
+
+- **SQLite goes through the engine, not the filesystem.** Copying a WAL
+  database's bytes while agents write produces a torn copy; snapshots use
+  sqlite3's backup API, and the test for it commits a row through a
+  still-open connection (parked in the -wal, unchekpointed) and reads it
+  back out of the restored file.
+- **The manifest is written last.** An interrupted `create_backup` leaves
+  files but no manifest, and `list_backups`/`verify_backup` treat
+  manifest-presence as the definition of a set — an incomplete backup
+  cannot be mistaken for a complete one. Tested.
+- **Fail-closed in both directions.** Restore verifies the entire set
+  before writing a single byte (restoring the intact half of a corrupt set
+  manufactures a state that never existed), and refuses to overwrite
+  existing files without an explicit flag. Both tested, including that the
+  corrupt-set restore writes *nothing*.
+- **Absence is recorded, not skipped.** A missing source lands in the
+  manifest's `absent` list — restore can distinguish "not backed up" from
+  "did not exist". The live run recorded exactly this: `gateway` absent
+  because the Gateway has never run on this machine.
+- **Exclusions are decisions.** `.env` (re-issue keys, don't copy them),
+  `simulation/runs/` (reproducible, §12.4 derived data), source code
+  (Git's job; §38 repository continuity is separate). Recorded in the
+  module docstring per §1.8. Encryption-before-upload deferred for this
+  adapter with the reason stated: same failure domain, so it adds key-loss
+  risk without confidentiality gain; mandatory with the first remote
+  adapter. Meanwhile a backup set is exactly as sensitive as the live
+  stores (session rows are credentials) and `backups/` is gitignored with
+  that stated.
+
+### Verified
+
+Ten new tests (1602 passing total): provider roundtrip and root-escape
+refusal, manifest/hash/absentee recording, the live-WAL snapshot case,
+byte-exact restore, corruption detection with all-or-nothing restore,
+overwrite refusal, orphan-set invisibility, id uniqueness, and the real
+backup domain's labels. Live: `python -m backend.continuity backup` against
+the running organization took a consistent 42MB snapshot of
+`financial_intelligence.db` *while the COO's agents were writing to it*,
+recorded users/sessions, recorded the Gateway absent, and `verify` reported
+the set intact.
+
+### An operational fact the verification surfaced
+
+Killing the backend process does not stop the organization: the COO's
+agents are separate processes and keep writing (the test suite's
+real-database tripwire caught them mid-run, doing its job). Recovery was
+manual process cleanup. This is addendum 30 §7's drain discipline and
+addendum 29 §13.2's clean-restart requirement meeting reality — a graceful
+whole-organization shutdown path exists via the controller, but an
+ungraceful backend death orphans the population. Noted here as observed
+behavior, not fixed; it belongs to the queue if the owner wants it as work.
+
+### Deferred within the slice
+
+Scheduled/automatic backups (the CLI is manual; §45 item 3 says
+"automated" and a scheduler or shutdown hook is the natural next rung);
+retention policy (§7.4 records expiration: nothing enforces one); a second
+provider adapter (which triggers mandatory encryption per above); backup
+of the backup manifest chain (parent stays null — full sets only).
+
+---
+
+## §49 — Directive E17, the half with a producer (2026-08-24)
+
+TQ-03. Addendum 30 §26 (Directive E17): every agent SHALL expose a
+behavioral version and certification state. Built: the half a producer
+exists for.
+
+**Behavior version.** `agent_registry.behavior_version` (additive, nullable
+— NULL means a row written before the column existed, unknown rather than
+current). Populated at both registration sites (agents/base.py, the
+Controller's self-registration) from `backend/version.py` — the code-version
+primitive *extracted from* simulation/harness.py rather than duplicated, so
+the run manifest and the registry can never disagree about which code was
+running. Its contract is "a true answer or 'unknown'": the sha is validated
+before being trusted, dirty working trees are marked, and any failure —
+git absent, a test environment with a faked subprocess layer — resolves to
+'unknown', never to an exception in registration or a fabricated version on
+record. Overwritten on respawn like pid, because it is a fact about this
+life, not the durable career. Surfaced on `/admin/agents`.
+
+**Certification state: deliberately not a column.** Certification in this
+organization today is per-mission (missions certified complete) and
+per-Alpha-gate; competency is earned per-dimension and refuses priors. No
+machinery produces a per-agent certification state, and this repository's
+own rule (the competency module's "a dimension nothing populates reads as
+a capability"; §43's "the fields are §16's list, minus two with no
+producer") says a defaulted `certification_state` column would be worse
+than none: every agent would read CERTIFIED without anything having
+certified it — assigning what addendum 30's whole §17–§18 insists is
+earned. The column arrives with the machinery that writes it (a real
+Evolution directive with training and evaluation behind it), not before.
+The schema comment at the column marks this section.
+
+### Verified
+
+Five new tests (1607 passing): version recorded, overwritten on respawn,
+NULL default meaning unknown, the sha-or-unknown format contract, and the
+panel surface including the honest null. One defect found by the suite
+itself: the first `code_version` used the harness's narrow exception list,
+and tests that fake `subprocess.Popen` for spawn control blew up inside
+registration — 17 errors, fixed by the broad-except-plus-validation
+contract above, which is also the more honest reading of "never guesses".
+Live: after restart, all six agents of the running organization report the
+current commit with the `-dirty` marker (this increment was uncommitted at
+the time — the marker doing its job).
+
+---
+
+## §50 — Security Defense §32 baseline: the audit (2026-08-24)
+
+TQ-04. Addendum 28 §32's twenty pre-exposure requirements, audited
+item-by-item against what is built. Statuses: **satisfied**, **partial**
+(exists but not in the shape §32 describes; the missing piece named),
+**absent** (a genuine gap), **n/a-until** (meaningless at the current
+deployment shape; the trigger that changes that, stated). Claims below were
+verified against the code in this pass, not recalled.
+
+1. **Edge DDoS protection — n/a-until exposure.** Everything binds
+   loopback; the Gateway's own spec keeps the host loopback-only behind a
+   tunnel. Trigger: the first non-loopback exposure.
+2. **WAF — n/a-until exposure.** Same trigger.
+3. **API rate limiting — satisfied at the boundary.** The Gateway
+   rate-limits login and WebSocket attempts per caller (in-memory by
+   design, 429 with retry information, `gateway/exposure.py`), and
+   `gateway/run.py` refuses `X-Forwarded-For` resolution so the bucket
+   cannot be rotated by header. The backend has none — it is not the
+   boundary and is loopback-bound.
+4. **Origin not directly exposed — satisfied.** One externally-intended
+   service (addenda 16–18's deliberate design), loopback host.
+5. **MFA for administrative accounts — absent.** The Gateway Super User is
+   single-factor bcrypt from the environment. Exposure precondition,
+   listed below.
+6. **No production secrets in Git — satisfied.** `git ls-files` shows
+   `.env.example` only; `.env`, both stores, session files and `user_data/`
+   are ignored (and now `backups/`, which is exactly as sensitive).
+7. **Dedicated secret management — satisfied for the deployment class.**
+   28 §8.2's local-development pattern, followed. A production secret
+   manager is owed *with* production, not before it.
+8. **Tenant-aware authorization — satisfied.** Fully isolated per-user
+   permissions, preferences, and audit trails; multi-user isolation is
+   tested.
+9. **Central security audit logging — partial.** Per-user audit trails,
+   organizational decision records with reasons, and Gateway login/limit
+   logging all exist; what does not is §14.2's single normalized
+   security-event envelope across them.
+10. **Agent capability enforcement outside the LLM — satisfied.** The
+    founding milestone: permission is checked in tool dispatch before data
+    is touched, and the model never sees what a revoked grant protects.
+11. **Tool Security Gateway — partial.** Tool dispatch enforces permission
+    and forwarding consent server-side; there is no separate gateway with
+    argument/destination validation, per-tool rate and cost limits.
+12. **Production database isolation — satisfied.** SQLite files with no
+    network endpoint at all.
+13. **CI/CD protected — n/a-until CI exists.**
+14. **Dependency and secret scanning — absent.** No CI to host it. Queued
+    (TQ-09).
+15. **Incident response playbook — absent.** Queued (TQ-08).
+16. **Emergency credential revocation — partial.** Session revocation
+    exists (logout, token store); provider-key rotation is a manual `.env`
+    edit documented nowhere. Folded into TQ-08's runbook.
+17. **Agent kill switch — satisfied.** `stop_requested` /
+    `retire_requested` on the registry, Controller directives, and the
+    watch escalation path: instance, role, or the whole population.
+18. **Cost circuit breakers — absent, and not exposure-gated.** Nothing
+    tracks model spend or stops a runaway loop from spending; the risk
+    exists the moment a real API key does. Queued (TQ-10).
+19. **Backup security contract — partial, newly.** §48's provider-neutral
+    interface with integrity hashes; encryption and credential scoping
+    activate with the first remote adapter, trigger recorded there.
+20. **Restore trust verification — partial.** Integrity verification is
+    built and fail-closed; §30's *security-gated* recovery has no security
+    function to gate it yet.
+
+**Exposure preconditions**, restated in one place so exposure can never
+happen by drift: edge protection (1, 2), MFA for the Super User (5), a
+production secret store (7), and the §14.2 event envelope (9) become
+blocking requirements the day anything binds beyond loopback. Until then
+they are declared debts with a named trigger, which is what §32 is for.
+
+---
+
+## §51 — The runbook (2026-08-24)
+
+TQ-08, promoted by §50's items 15–16. `docs/INCIDENT_RESPONSE.md`: evidence
+preservation first (a continuity backup *is* the evidence capture), the stop
+procedure including §48's orphaned-population case, credential revocation in
+escalating order (client sessions, Gateway sessions, the provider key at the
+console — local deletion does not revoke a leaked key — and the Gateway
+password), assessment against audit trails and `behavior_version`'s dirty
+marker, restore through the fail-closed continuity path, and a required
+written review. Two honest admissions in the document itself: user-password
+force-reset does not exist (deleting the `users.json` entry is the crude
+substitute, named as such), and the §50 exposure preconditions bound what
+this runbook can promise. A documentation increment; no code, no test-count
+change.

@@ -50,6 +50,34 @@ def test_register_agent_resets_last_heartbeat_on_reregistration(conn):
     assert fi_db.get_agent(conn, "dummy-1")["last_heartbeat_at"] is None
 
 
+def test_register_agent_records_behavior_version(conn):
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111, behavior_version="abc123")
+    assert fi_db.get_agent(conn, "dummy-1")["behavior_version"] == "abc123"
+
+
+def test_behavior_version_follows_the_new_life_on_respawn(conn):
+    """Like pid, behavior_version is a fact about this life of the identity,
+    not the durable career (Directive E17): a respawn runs whatever code is
+    now deployed, and inheriting the previous life's version would defeat
+    mixed-version operation's whole point."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111, behavior_version="abc123")
+    fi_db.register_agent(conn, "dummy-1", "dummy", 222, behavior_version="def456")
+    assert fi_db.get_agent(conn, "dummy-1")["behavior_version"] == "def456"
+
+
+def test_behavior_version_defaults_to_null_meaning_unknown(conn):
+    """A row written without a version is unknown, not current - callers that
+    did not state which code they run must not look as if they did."""
+    fi_db.register_agent(conn, "dummy-1", "dummy", 111)
+    assert fi_db.get_agent(conn, "dummy-1")["behavior_version"] is None
+
+
+def test_code_version_is_a_sha_dirty_sha_or_honest_unknown():
+    from backend.version import code_version
+    import re
+    assert re.fullmatch(r"[0-9a-f]{40}(-dirty)?|unknown", code_version())
+
+
 def test_get_agent_returns_none_for_unknown_identity(conn):
     assert fi_db.get_agent(conn, "nobody") is None
 

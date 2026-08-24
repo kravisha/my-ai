@@ -501,6 +501,9 @@ def list_agents(conn=Depends(panel_db), admin: str = Depends(require_admin)):
             "spawned_at": agent["spawned_at"],
             "last_heartbeat_at": agent["last_heartbeat_at"],
             "heartbeat_age_seconds": None if age is None else round(age, 2),
+            # Directive E17: which code this life is running. NULL means the
+            # row predates the column - unknown, not "current".
+            "behavior_version": agent["behavior_version"],
         })
     return {"agents": agents}
 
