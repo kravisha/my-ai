@@ -29,3 +29,6 @@ simulation/runs/
 # exactly as sensitive - gateway.db session rows and sessions.json are
 # credentials in the backup too.
 backups/
+# The model-spend ledger (app/model_budget.py): live local state, one row per
+# UTC day, shared by every process that calls the model.
+model_spend.db

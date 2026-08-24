@@ -12,6 +12,7 @@ never called a model. `default_provider()` below is that same singleton, minus
 the import-time cost.
 """
 
+from app.model_budget import BudgetedProvider
 from app.model_provider import DEFAULT_MODEL, AnthropicProvider, ModelProvider
 
 MODEL = DEFAULT_MODEL
@@ -25,10 +26,16 @@ def default_provider() -> ModelProvider:
     A module-level singleton rather than a parameter threaded through every
     caller: there is one model in play, and the callers that would have to pass
     it are agent work functions whose signatures are fixed by `agents/base.py`'s
-    run contract. Tests substitute it with `set_provider`."""
+    run contract. Tests substitute it with `set_provider`.
+
+    Wrapped in the cost circuit breaker (app/model_budget.py) here, at the one
+    place the real vendor is constructed, so every caller in every process -
+    agents, backend /chat, the Gateway's stream - spends against the same
+    ledger. A test provider installed via set_provider is deliberately not
+    wrapped: it spends nothing."""
     global _provider
     if _provider is None:
-        _provider = AnthropicProvider(model=MODEL)
+        _provider = BudgetedProvider(AnthropicProvider(model=MODEL))
     return _provider
 
 

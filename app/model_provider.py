@@ -72,6 +72,10 @@ def replayable_block(block: dict) -> dict:
     return {key: value for key, value in block.items() if key in allowed}
 
 
+def _reported_usage(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 class ModelProvider(Protocol):
     """What the rest of the system may assume about a model, whoever supplies it."""
 
@@ -142,8 +146,16 @@ class AnthropicProvider:
                 yield {"type": "text", "text": fragment}
             final = stream.get_final_message()
 
+        usage = getattr(final, "usage", None)
         yield {
             "type": "final",
             "content": [replayable_block(block.model_dump()) for block in final.content],
             "stop_reason": final.stop_reason,
+            # For the budget ledger (app/model_budget.py). Strictly what the
+            # provider reported: a non-integer (a test double, a partial mock)
+            # becomes None - "not reported" - never a fabricated number.
+            "usage": {
+                "input_tokens": _reported_usage(getattr(usage, "input_tokens", None)),
+                "output_tokens": _reported_usage(getattr(usage, "output_tokens", None)),
+            },
         }

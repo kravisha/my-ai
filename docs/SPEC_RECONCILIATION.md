@@ -3770,3 +3770,76 @@ force-reset does not exist (deleting the `users.json` entry is the crude
 substitute, named as such), and the §50 exposure preconditions bound what
 this runbook can promise. A documentation increment; no code, no test-count
 change.
+
+---
+
+## §52 — The cost circuit breaker (2026-08-25)
+
+TQ-10, promoted by §50 item 18 — the one absent baseline item that was not
+exposure-gated: nothing stood between a runaway agent loop and the invoice.
+`app/model_budget.py`: a `BudgetedProvider` wrapping any `ModelProvider`,
+installed at the one place the real vendor is constructed
+(`model_gateway.default_provider`), so every caller in every process —
+agents, backend `/chat`, the Gateway's stream — spends against the same
+budget.
+
+### The decisions worth recording
+
+- **A shared SQLite ledger (`model_spend.db`, one row per UTC day), not
+  in-memory counters.** The organization is a population of processes each
+  holding its own provider singleton; per-process counters would let the
+  population collectively spend N times the budget. The §48 lesson,
+  reapplied before it could become a defect.
+- **Post-hoc accounting, pre-call refusal.** A call's true cost is known
+  only from its response's usage report, so the breaker refuses the *next*
+  call once recorded spend crosses a limit — damage bounded to the limit
+  plus one reply, stated as the contract and pinned by a test.
+- **The ledger holds what the provider said, never an estimate.** Usage is
+  extracted with strict integer checks at both layers (the stream's final
+  event now carries a `usage` field; a mock or partial object degrades to
+  None — "not reported" — and is recorded as zero). An abandoned stream
+  still counts as a call: the spend happened whether or not the caller
+  finished reading.
+- **Refusals are on the record.** Every refusal increments the day's
+  `refusals` counter before raising, so "the breaker fired" is a queryable
+  ledger fact. `/chat` maps the refusal to a 503 whose detail names the
+  limit hit and the environment variable that raises it deliberately.
+- **Real defaults, loud misconfiguration.** 500k tokens / 2000 calls per
+  UTC day (a breaker off by default protects nothing), raised via
+  `MODEL_BUDGET_DAILY_TOKENS` / `MODEL_BUDGET_DAILY_CALLS`; an unparseable
+  limit raises rather than silently becoming the default — a typo must not
+  become an unlimited budget.
+- **Test providers installed via `set_provider` are deliberately not
+  wrapped**: they spend nothing, and wrapping them would put fiction in a
+  real ledger.
+
+### Verified
+
+Twelve new tests (1619 passing): ledger recording, call- and token-limit
+refusal (the refused call never reaches the vendor), unreported usage as
+zero-not-guessed, stream pass-through and abandoned-stream accounting,
+cross-instance sharing, day rollover, malformed-limit error, the refusal
+message's numbers-and-remedy contract, strict usage extraction, and the
+`/chat` 503 mapping.
+
+### Deferred within the slice
+
+Per-caller attribution (the ledger is organization-wide; §19.2's per-account
+economic telemetry needs an identity carried through the provider call);
+dollar-denominated limits (tokens are what the provider reports; pricing
+tables drift and belong in configuration when someone actually budgets in
+currency); surfacing `todays_spend()` on the admin panel.
+
+---
+
+## §53 — The scanning habit, and its first catch (2026-08-25)
+
+TQ-09, promoted by §50 item 14. `pip-audit` pinned in requirements-dev with
+the cadence documented beside the pin (no CI exists to host it; the honest
+minimum is a named manual habit — before each push that changes
+requirements, and on picking the project back up after time away). The
+first run found six known vulnerabilities in the environment's own pip
+25.0.1 (PYSEC-2026-196 and five siblings); upgraded to 26.2.1, and the
+environment scans clean. Worth recording less for the fix than for the
+demonstration: the habit produced a real finding on its first execution,
+which is the difference between a control and a checkbox.

@@ -112,19 +112,20 @@ Its own limits are stated in the document.
 
 ### TQ-09 — Dependency scanning habit
 
-**WANT · QUEUED · from §50 item 14**
+**WANT · DONE — noted in `SPEC_RECONCILIATION.md` §53**
 
-Source: addendum 28 §13.2, §32 item 14. No CI exists to host scanning; the honest minimum is
-`pip-audit` in requirements-dev with a documented cadence, upgraded to CI enforcement when CI
-exists.
+`pip-audit` pinned in requirements-dev with the cadence documented beside it (before each push
+that changes requirements, and on picking the project back up). Its first run found and fixed six
+known vulnerabilities in the venv's own pip (25.0.1 → 26.2.1); the environment now scans clean.
+Upgrades to CI enforcement when CI exists.
 
 ### TQ-10 — Cost circuit breaker on the model provider
 
-**NEED (GREEN) · QUEUED · from §50 item 18**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §52**
 
-Source: addendum 28 §19.3, §32 item 18. Not exposure-gated: the risk exists the moment a real
-API key does. A per-run and per-day token/call budget on the provider layer that refuses, visibly,
-instead of spending — with the refusal recorded like any other denial.
+`app/model_budget.py`: shared per-UTC-day SQLite ledger, pre-call refusal with post-hoc accounting
+(damage bounded to limit + one reply), refusals recorded in the ledger, `/chat` mapping to a
+legible 503. Per-caller attribution and currency-denominated limits deferred within §52.
 
 ---
 

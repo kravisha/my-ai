@@ -10,3 +10,10 @@ pyyaml==6.0.3
 # Present today only as a transitive dependency of starlette; named here for the
 # same reason pyyaml is, so those tests do not vanish if that changes.
 anyio==4.14.2
+
+# Dependency vulnerability scanning (addendum 28 §13.2, §32 item 14; TASK_QUEUE
+# TQ-09). No CI exists to host this, so the habit is manual and documented:
+# run `.venv/Scripts/python.exe -m pip_audit` before each push that changes
+# requirements*.txt, and on picking the project back up after time away.
+# Upgrades to CI enforcement when CI exists.
+pip-audit==2.9.0

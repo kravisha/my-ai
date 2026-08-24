@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from app import admin_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
+from app.model_budget import BudgetExceededError
 from app.model_gateway import call_reasoning_model
 from app.permissions import RESOURCE_PATHS, PermissionManager
 from app.privacy_preferences import PrivacyPreferenceStore
@@ -325,7 +326,14 @@ def chat(request: ChatRequest, username: str = Depends(get_current_user)):
         })
 
     while True:
-        response = call_reasoning_model(SYSTEM_PROMPT, messages, TOOLS)
+        try:
+            response = call_reasoning_model(SYSTEM_PROMPT, messages, TOOLS)
+        except BudgetExceededError as exc:
+            # The cost circuit breaker (app/model_budget.py) refused before
+            # spending. 503 rather than 500: the service is fine, the budget
+            # is exhausted, and the message says which limit and how to raise
+            # it deliberately - a refusal is only a defense if it is legible.
+            raise HTTPException(status_code=503, detail=str(exc))
         messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
 
         if response.stop_reason != "tool_use":

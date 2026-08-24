@@ -68,6 +68,27 @@ def test_simple_text_reply(backend_client, monkeypatch):
     assert response.json()["reply"] == "Hello!"
 
 
+def test_exhausted_model_budget_is_a_legible_503_not_a_500(backend_client, monkeypatch):
+    """The cost circuit breaker's refusal reaches the client as service
+    unavailability with the remedy in the detail - a refusal is only a
+    defense if the person hitting it can tell what happened."""
+    from app.model_budget import BudgetExceededError
+
+    headers = _register_and_auth_header(backend_client)
+    monkeypatch.setattr(
+        "backend.main.call_reasoning_model",
+        MagicMock(side_effect=BudgetExceededError(
+            "Daily model call budget exhausted: 2000 calls recorded today (limit 2000). "
+            "Raise MODEL_BUDGET_DAILY_CALLS deliberately if this spend is intended."
+        )),
+    )
+
+    response = backend_client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]}, headers=headers)
+
+    assert response.status_code == 503
+    assert "MODEL_BUDGET_DAILY_CALLS" in response.json()["detail"]
+
+
 def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(backend_client, monkeypatch, mock_portfolio_path):
     """There's no direct 'set preference' route by design (matching the CLI/
     GUI, which only ever set a disposition via the consent flow itself) - so
