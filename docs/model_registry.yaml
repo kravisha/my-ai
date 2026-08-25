@@ -138,6 +138,20 @@ profiles:
         max_tokens: 500
         source: UQI_MAX_TOKENS
 
+  - agent_class: coo_chat
+    role: coo   # the operator is talking to the COO, whose charter this answers under
+    code_ref: backend/coo_chat.py
+    task_type: answering operator questions from a bounded snapshot of real system state
+    criticality: medium
+    latency_tolerance: interactive
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape:
+      - purpose: grounded answer to one operator question
+        max_tokens: 900
+        source: MAX_TOKENS
+
   - agent_class: backend_chat
     role: null   # the /chat surface, not an agent
     code_ref: backend/main.py

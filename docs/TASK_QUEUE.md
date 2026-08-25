@@ -367,7 +367,28 @@ The COO chat that answers from real state is split out as TQ-27, being a differe
 
 ### TQ-27 — The COO chat, answering from real system state
 
-**NEED (GREEN) · QUEUED · follows TQ-26 · `SPEC_RECONCILIATION.md` §75**
+**NEED (GREEN) · IN_PROGRESS (paused 2026-08-25 at a clean boundary) · `SPEC_RECONCILIATION.md` §75**
+
+**Where this stands, for a quick restart.** `backend/coo_chat.py` is written and imports
+cleanly, but is **not wired to any route, not covered by tests, and not rendered by the
+console** — nothing calls it yet, so the shipped system is unchanged by its presence. It
+carries: a bounded `state_digest` over the same data the console desks render; a system prompt
+whose first rule is answer-only-from-the-snapshot (38 §4.5's requirement made structural rather
+than hoped for); an explicit report-don't-act rule (§11); a `not_built_yet` section so the COO
+can distinguish "idle" from "does not exist"; and a pass-through language label so any language
+works without a code change.
+
+**Remaining, in order:** (1) a `/console/chat` route — streaming, so the reply is genuinely
+interruptible; (2) tests, including that an unavailable model surfaces as a reported error and
+never as a fabricated answer; (3) the console layout rework the owner specified — tabs
+occupying roughly two thirds with the COO chat as a separate pane below them taking the last
+third, Bloomberg/newspaper styling, type-and-voice toggle with barge-in, and language selection
+(Tamil and Indian-accented English are the owner's stated preference; available voices depend
+on what the operator's browser has installed, which the UI must report honestly rather than
+promise); (4) a Finance tab in the shape of a Yahoo/Google Finance front page, drawn from this
+system's **own simulated world** and labelled SIMULATED throughout — the owner's note is that a
+group of newspaper agents will own it later, so the placeholder must not be mistakable for real
+market data or investment advice.
 
 Source: addendum 38 §4.5, §11. The operator asks the COO questions in natural language — "what
 stage are we in?", "which departments are idle?", "what failed during startup?" — and the COO
