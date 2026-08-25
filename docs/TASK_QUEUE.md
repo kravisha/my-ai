@@ -129,7 +129,8 @@ Its own limits are stated in the document.
 `pip-audit` pinned in requirements-dev with the cadence documented beside it (before each push
 that changes requirements, and on picking the project back up). Its first run found and fixed six
 known vulnerabilities in the venv's own pip (25.0.1 → 26.2.1); the environment now scans clean.
-Upgrades to CI enforcement when CI exists.
+**Upgraded to CI enforcement 2026-08-25** — `.github/workflows/ci.yml` runs it on every push and
+pull request and fails the build on a finding (`SPEC_RECONCILIATION.md` §67).
 
 ### TQ-11 — Origination cooldown on the idle loops
 

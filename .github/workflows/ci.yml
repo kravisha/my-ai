@@ -1,0 +1,101 @@
+# Continuous integration: the test suite and the dependency scan, enforced.
+#
+# Until this file existed, both were habits - the suite run by hand before a
+# push, and `pip-audit` documented as a manual cadence in requirements-dev.txt
+# with the note "upgrades to CI enforcement when CI exists" (TASK_QUEUE TQ-09,
+# addendum 28 §13.2 / §32 item 14). This is that upgrade: a habit somebody can
+# forget becomes a gate that fails.
+#
+# Two deliberate choices, stated here rather than left to be rediscovered:
+#
+# - **Tests run on Windows.** Not a preference - it is the platform the suite
+#   is actually verified on (Windows 11, Python 3.12). The default run is very
+#   likely portable (the only platform-specific code, in simulation/harness.py
+#   and simulation/faults.py, handles both branches and belongs to the
+#   `simulation`-marked tests this run excludes), but "very likely" is not
+#   "measured", and a red pipeline nobody trusts is worse than none. Adding
+#   `ubuntu-latest` to the matrix below is a deliberate step: do it, watch it,
+#   and keep it only once it is green.
+# - **The audit runs on Linux.** pip-audit compares pinned versions against a
+#   vulnerability database, which is platform-independent, so it runs on the
+#   cheaper runner.
+#
+# What must never run here: anything marked `real_llm`. Those tests make real
+# API calls - they cost money and need a key this workflow deliberately does
+# not hold. They are excluded by pyproject.toml's own `addopts`, which is why
+# the pytest step below passes no marker expression of its own: one source of
+# truth for what the default run means, shared with every developer's local
+# run.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A superseded run proves nothing about the commit that replaced it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        # requirements-dev.txt includes `-r requirements.txt`, so this is the
+        # whole environment - runtime pins and test pins together.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # No `-m` here on purpose: pyproject.toml's addopts already excludes
+        # `real_llm` and `simulation`, and restating it would create a second
+        # definition of the default run that could drift from the first.
+        run: python -m pytest -q
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Audit installed dependencies
+        # The installed environment rather than `-r requirements.txt`: it
+        # covers the transitive tree too, which is where the first real catch
+        # came from (SPEC_RECONCILIATION §53 - six known vulnerabilities in
+        # pip itself, a dependency no requirements file names).
+        #
+        # This gates on purpose. A newly published CVE can therefore fail a
+        # pull request that changed nothing related to it; that is the cost of
+        # enforcement rather than a malfunction, and the remedy is the same one
+        # §53 recorded: raise the pin, or record why the finding does not apply.
+        run: python -m pip_audit

@@ -12,8 +12,11 @@ pyyaml==6.0.3
 anyio==4.14.2
 
 # Dependency vulnerability scanning (addendum 28 §13.2, §32 item 14; TASK_QUEUE
-# TQ-09). No CI exists to host this, so the habit is manual and documented:
-# run `.venv/Scripts/python.exe -m pip_audit` before each push that changes
-# requirements*.txt, and on picking the project back up after time away.
-# Upgrades to CI enforcement when CI exists.
+# TQ-09). Now enforced rather than remembered: .github/workflows/ci.yml runs
+# `pip_audit` over the installed environment on every push and pull request,
+# and a finding fails the build (SPEC_RECONCILIATION §67).
+#
+# The manual run is still worth keeping for the case CI cannot cover - picking
+# the project back up after time away, before you have pushed anything:
+# `.venv/Scripts/python.exe -m pip_audit`.
 pip-audit==2.9.0

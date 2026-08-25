@@ -4900,3 +4900,67 @@ Currency-denominated limits (§52's other deferral) still wait on a real
 price list; the ledger meters tokens and calls because those are what the
 provider reports. Per-caller *limits* wait on someone wanting to ration
 rather than measure.
+
+---
+
+## §67 — Two habits become gates (2026-08-25)
+
+Owner-directed, after the §59–§66 work merged: the repository had no CI, so
+its two standing verification habits — run the suite before pushing, run
+`pip-audit` when requirements change — were disciplines a person could
+forget. `.github/workflows/ci.yml` makes both fail instead.
+
+This closes TQ-09's own final sentence, which had been waiting for exactly
+this: *"upgrades to CI enforcement when CI exists."*
+
+### What runs, and what must never
+
+Two jobs on push and pull request against master: the test suite, and
+`pip_audit` over the installed environment. The pytest step passes **no
+marker expression of its own** — `pyproject.toml`'s `addopts` already
+excludes `real_llm` and `simulation`, and restating it in the workflow
+would create a second definition of "the default run" free to drift from
+the first. That matters most for `real_llm`: those tests make real API
+calls, and CI deliberately holds no key. The breaker (§52) bounds what a
+runaway loop can spend; not handing CI a credential is the same discipline
+one layer out.
+
+### Where the tests run, and the honesty about why
+
+`windows-latest`, because that is the platform the suite is actually
+verified on — 1758 passing on Windows 11 / Python 3.12. The default run is
+very likely portable: the only platform-specific code
+(`simulation/harness.py`, `simulation/faults.py`) handles both branches and
+belongs to the `simulation`-marked tests this run excludes. But "very
+likely" is not "measured", and a red pipeline nobody trusts is worse than
+no pipeline at all. Adding `ubuntu-latest` is written into the workflow as
+a deliberate next step — do it, watch it, keep it only once green — rather
+than assumed and left to fail on somebody else's pull request. The audit
+job does run on Linux: it compares pinned versions against a vulnerability
+database, which is platform-independent, so it takes the cheaper runner.
+
+### The audit gates, and that has a cost
+
+A finding fails the build. A newly published CVE can therefore fail a pull
+request that changed nothing related to it — that is the price of
+enforcement rather than a malfunction, and the remedy is the one §53
+already recorded: raise the pin, or record why the finding does not apply.
+It audits the *installed environment* rather than `-r requirements.txt`,
+because the transitive tree is where the first real catch came from (§53:
+six known vulnerabilities in pip itself, which no requirements file names).
+
+### Verified before committing
+
+Both commands were run locally exactly as the workflow invokes them —
+`python -m pytest -q` (1758 passed, 5 deselected) and `python -m pip_audit`
+(no known vulnerabilities) — and the workflow YAML was parsed to confirm
+both jobs and both triggers. The first real proof is the pipeline's own
+first run against this commit.
+
+### A stale claim corrected on the way
+
+`requirements-dev.txt` said "No CI exists to host this, so the habit is
+manual" — true when written, false the moment this file landed. Rewritten
+to name the enforcement and keep the manual run only for the case CI
+genuinely cannot cover: picking the project back up after time away,
+before anything has been pushed.
