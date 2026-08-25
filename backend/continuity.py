@@ -275,7 +275,13 @@ def _snapshot_sqlite(source: Path) -> bytes:
     a file that merely looks like one. The snapshot lands in a sibling temp
     file (same directory, so no cross-device surprises) that is always
     removed."""
-    temp = source.parent / f".{source.name}.continuity-snapshot"
+    # Unique per call, not a fixed name. Two backups can legitimately overlap -
+    # the periodic loop and the shutdown backup, most obviously - and a shared
+    # temp path makes them fight: the second gets PermissionError on Windows
+    # (the first still holds the handle) or silently reads a half-written file
+    # elsewhere. Observed during the desktop sleep test (§82), where a
+    # shutdown backup landed on top of a periodic one.
+    temp = source.parent / f".{source.name}.{os.getpid()}.{secrets.token_hex(4)}.continuity-snapshot"
     try:
         source_conn = sqlite3.connect(source)
         try:

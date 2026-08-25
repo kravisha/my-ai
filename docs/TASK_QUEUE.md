@@ -27,7 +27,11 @@ holds the queue, not the record.
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
 > (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
-> **Current focus: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
+> **Current focus: the desktop runtime** (addendum 40, assimilated 2026-08-25, §81) — TQ-30 →
+> TQ-31 → TQ-32 in that order, since each is the next one's foundation. TQ-33 (presentation
+> choreography) and TQ-34 (role-based Gateway) follow. Pre-Alpha Milestone 1 is complete.
+>
+> **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
 > TQ-22 → TQ-23 → TQ-24 in that order, since each is the next one's foundation; TQ-25 carries a
 > recorded startup conflict and TQ-26 is blocked on an owner decision about having two operator
 > UIs. Also open: TQ-07 (consumer-gated), and two owner actions from the continuity work —
@@ -422,6 +426,70 @@ prior work — the `_ruled_out` scan is the first place to look), bound or index
 recommendations a home the console can afford to draw. Until then the corrective analysis is
 reachable only by calling it directly.
 
+### TQ-30 — Native desktop shell, and the bootstrap invariant
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §82.** Native window, own runtime, clean sleep
+(the first attempt orphaned twelve agents — `terminate()` skips uvicorn's teardown on Windows),
+Start Menu shortcut with a matching AppUserModelID so the taskbar button is My AI rather than
+Python, and the loopback requirement measured rather than assumed: an inline-HTML window has no
+secure context and therefore no microphone.
+
+Phase A's first half. A native window hosting the existing console rather than a reimplementation
+of it (40 §18 Phase A: "move the existing web views into the shell ... without changing core
+business logic"), with the COO runtime behind it. Plus 40 §4.1's hard invariant — "main.py must
+not become the business application, it is a bootstrapper only" — enforced by a guard, because it
+is the same class of rule as the import-time-side-effect check and degrades the same way: one
+convenient addition at a time, unnoticed until the launcher owns half the system.
+
+Verify in the first hour, not the last: whether the chosen shell's webview exposes speech
+recognition (§81 risk 1). Voice is 40 §11's *default* path, and a shell that cannot hear is a
+Phase B blocker discovered too late.
+
+### TQ-31 — The living workspace: layout, view state, and the draft requirement
+
+**NEED (GREEN) · QUEUED · depends on TQ-30 · addendum 40 §5 · `SPEC_RECONCILIATION.md` §81**
+
+Phase A's substance, and the part with the sharpest acceptance test in the whole document
+(40 §5.3): "If the user types half a sentence and the machine crashes before Send, the same text
+must be present in the same field after recovery." Unambiguous, cheap, impossible to fake.
+
+Scope: continuous incremental checkpointing of tabs, selected filters, scroll and focus position,
+and every editable surface's draft text; atomic writes so a partial save cannot corrupt the last
+good state (§15); schema version metadata for forward migration; and restore-on-launch that makes
+startup feel like waking rather than rebuilding. 40 §5.4's distinction is the design rule —
+persist declarative state, reconstruct transient resources from it.
+
+### TQ-32 — Voice and natural language as control surfaces over the views
+
+**NEED (GREEN) · QUEUED · depends on TQ-30 · addendum 40 §10, §11 · `SPEC_RECONCILIATION.md` §81**
+
+Phase B. Much of this exists: the COO chat answers from real state (§77), and barge-in already
+stops stream, voice and microphone together. What is missing is the *control* half — 40 §11's
+"show that tab", "zoom in", "open the agent conversation": natural language changing the visual
+focus rather than only answering. 40 §10's rule governs the design: natural language is another
+control surface over one source of truth, not a second reporting system.
+
+### TQ-33 — Presentation direction: pointer, spotlight, and panel choreography
+
+**WANT · QUEUED · addendum 40 §8.3–§8.5 · `SPEC_RECONCILIATION.md` §81 disposition 4**
+
+The half of the presenter that is buildable now and carries most of the communicative value:
+bringing a referenced panel forward, pointing at the card or line under discussion, spotlighting a
+detail and restoring the broader view, clearing annotations when the topic moves on — all
+synchronized with the narration. **Deliberately without a human figure**, which is separable and
+expensive (see the deferred list). Two of 40 §19's acceptance criteria are satisfied by this alone.
+
+### TQ-34 — Role-based Gateway
+
+**WANT · QUEUED · addendum 40 §13, §14 · `SPEC_RECONCILIATION.md` §81**
+
+Phase D. The Gateway already exists as an authenticated boundary with one Super User; what 40 §13
+adds is *roles* — internal authorized, client/external meeting a named personal agent, and a
+scoped demo mode — with 40 §14's rule that the presentation layer must never bypass backend
+authorization just because the data exists on the server. Gated behind the exposure preconditions
+TQ-04 and §50 already record: nothing is exposed beyond loopback today, and roles do not change
+that.
+
 ---
 
 ## Blocked
@@ -495,6 +563,19 @@ the §6 scenario engine — a substantially larger increment than any detector.
 - **Multi-viewpoint staged debate, including model-diversity debate** (addendum 34 §3, 35 §9)
   — the §47 parliamentary deferral, unchanged; the model-diversity detail is preserved in §60
   disposition 6 for the day a parliament exists.
+- **The animated human presenter** (addendum 40 §8.2) — a believable animated person with gaze,
+  lip-sync, posture and gesture is real-time avatar rendering plus viseme-driven speech timing: a
+  substantial project, and one where a poor result is worse than none, because an unconvincing
+  figure damages trust in the intelligence behind it (§81 disposition 4). The *choreography* half
+  — pointer, spotlight, panel focus — is separable, carries most of the communicative value, and
+  is queued as TQ-33. The figure itself waits for a deliberate decision to build or buy it.
+- **Intent-based work model** (addendum 40 §12) — "take last year's rental accounting file, update
+  it, send it to my accountant" requires tool-use over the file system, spreadsheets and email
+  under an authorization model that does not exist yet. It is the north star's mechanism, not a
+  next increment; the Gateway's capability boundary (addendum 28) is where its safety story has to
+  start.
+- **AI-first minimal host** (addendum 40 §21, Phase E) — the direction, explicitly, rather than a
+  deliverable. Recorded so it stays a direction rather than quietly becoming a plan.
 - **Simulation maturity stages 3–9** (addendum 34 §20) — role workflows through continuous
   whole-organization Monte Carlo, historical validation, shadow operation. The world is at
   stages 1–2; TQ-14 is the honest next rung, and each further stage is its own increment

@@ -6023,3 +6023,203 @@ a query that was quadratic all along — visible only once the system had
 accumulated real history. Worth stating because the remedy generalises: when a
 query correlates per row, the linking column wants an index before the table
 grows, not after somebody waits three minutes for two rows.
+
+---
+
+## §81 — The desktop lineage opens, and much of it is already standing (2026-08-25)
+
+Addendum 40 assimilated verbatim: My AI as a persistent native desktop
+runtime whose visible identity is the COO — one that "sleeps, wakes,
+remembers, resumes, presents, listens, and acts". It is the largest single
+specification supplied so far, and the honest disposition splits it three
+ways: what already exists, what is buildable now, and what is genuinely
+expensive.
+
+### 1. What already exists under other names
+
+More than a first reading suggests, because Milestone 1 built toward this
+without knowing it:
+
+- **§9.1's Agent Conversations view** is the Chatterbox (§77), including the
+  Active/Waiting/Completed states §9.1 names. It carries a fourth state the
+  spec does not — `silent`, a question that timed out — for the reason §77
+  records: folding it into "not completed" buries the actual collaboration
+  failure.
+- **§10's natural-language interface** is the COO chat (§77), already
+  grounded in the same data the views render, already refusing to invent, and
+  already able to say what it cannot do. §10's "natural language is not a
+  separate reporting system, it is another control surface over the same
+  source of truth" is exactly the design §77 argued for.
+- **§11's voice-first interaction** is partly built: speech recognition,
+  speech synthesis, and the barge-in §8.6 demands — which already stops the
+  stream, the voice *and* the microphone together.
+- **§5.2's agent identity persistence** is `agent_names`: the 2026-08-17
+  owner decision that a name is the durable agent and an identity is the desk
+  it sits at. §5.2's "never reassign a persisted agent's name on restart" has
+  been enforced since, and §72 pins it by test.
+- **§15's crash recovery and checkpoints** have their storage half in the
+  continuity work (§59) — backup with tested restore, atomic-by-ordering.
+- **§17's database-first messaging** is what this organization already is;
+  the spec explicitly does not require a broker, and none is wanted.
+
+### 2. What is genuinely new, and buildable now (Phase A)
+
+The native shell, and the *living workspace*. Nothing today persists a tab
+selection, a filter, a scroll position — or a half-typed sentence.
+
+§5.3's draft requirement is the sharpest thing in the document and the best
+acceptance test in it: "If the user types half a sentence and the machine
+crashes before Send, the same text must be present in the same field after
+recovery." It is unambiguous, cheap to build, and impossible to fake.
+
+The shell itself should host the *existing* console rather than reimplement
+it — §18's Phase A says "move the existing web views into the shell or
+recreate them without changing core business logic", and the console is
+already one dependency-free file over five read endpoints.
+
+### 3. §4.1's hard invariant is testable, so it should be tested
+
+"main.py (or equivalent launcher) must not become the business application.
+It is a bootstrapper only." That is the same class of rule as the
+import-time-side-effect guard `tests/test_db_isolation.py` already enforces,
+and the same failure mode: it degrades silently, one convenient addition at
+a time, and nobody notices until the launcher owns half the system. It gets
+a guard.
+
+### 4. The animated presenter is the expensive one, and worth being blunt about
+
+§8.2 rules out the cheap versions explicitly: "a believable animated person,
+not a pulsing dot or static portrait", with gaze, facial expression, lip
+movement, posture and gesture supporting the speech. That is real-time
+avatar rendering plus viseme-driven lip sync plus TTS with timing marks —
+a substantial undertaking, not a sprint, and one where a *poor* result is
+worse than none: an unconvincing human figure damages trust in the system
+behind it, and §3's "presentation follows reality" makes that a
+correctness problem rather than an aesthetic one.
+
+**But the acceptance criteria are kinder than the vision.** Two of them —
+"the animated presenter can direct attention to a real UI element using
+synchronized pointing/highlighting" and "can bring a relevant panel forward
+during explanation and return to the previous layout" — are satisfiable by
+the *pointer and choreography* alone, with no human figure at all. That half
+is genuinely buildable and carries most of the communicative value: knowing
+*what the COO is talking about* is what makes a briefing followable. The
+figure is separable and can come later, or be bought rather than built.
+
+### 5. Two risks to surface early rather than discover late
+
+**Voice in a native shell.** The console's speech recognition is the
+browser's `webkitSpeechRecognition`, which exists in Chrome and Edge. A
+native shell hosting HTML through a system webview may not expose it, and
+§11 makes voice the *default* path rather than a nicety. This wants
+verifying in the first hour of Phase A, not the last.
+
+**The accent limit already recorded.** §77 found that speech synthesis can
+only use voices the operating system has installed, and this machine has
+none for Tamil or Indian English. A desktop shell does not change that; it
+inherits it.
+
+### The queue this generates
+
+Phase-shaped, because the specification is: TQ-30 (native shell + the
+bootstrap invariant), TQ-31 (the living workspace — layout, view state and
+the draft requirement), TQ-32 (voice in the shell, and the natural-language
+control surface reaching the views), TQ-33 (presentation direction — pointer,
+spotlight, panel choreography, deliberately without the human figure), TQ-34
+(role-based Gateway). The animated figure itself and §12's intent-based work
+model are recorded as deferred with reasons rather than queued, because
+neither is a next increment.
+
+---
+
+## §82 — The desktop shell: waking, sleeping, and pinnable (2026-08-25)
+
+TQ-30, addendum 40's Phase A first half. `python -m desktop` now opens a
+native window titled "My AI — COO", starts its own runtime, wakes the
+workforce and hands control to the shell — and closing it puts the
+organization to sleep.
+
+### The measurement that decided the architecture
+
+Addendum 40 §11 makes voice the *default* input path, so §81 flagged one
+risk to settle before building on the shell: can a native webview hear?
+Probed rather than assumed, and the answer split on something easy to get
+wrong:
+
+| loaded as | speechRecognition | mediaDevices | localStorage | secureContext |
+|---|---|---|---|---|
+| inline HTML string | true | **false** | **false** | false |
+| `http://127.0.0.1` | true | **true** | **true** | **true** |
+
+A window given an HTML *string* has no origin, so no secure context, so no
+microphone — the input channel the specification depends on, gone silently.
+Served from loopback, which Chromium treats as secure, everything works.
+Hence `url=` and hence the runtime starting before the window. The shell's
+docstring carries the measurement, and a test asserts the shell never loads
+inline HTML.
+
+### §4.1's invariant is now a guard, not a hope
+
+"main.py must not become the business application. It is a bootstrapper
+only." `desktop/__main__.py` is two statements, and
+`tests/test_desktop_bootstrap.py` fails if it grows a function, a class, or
+an import of any organization module. The same test bounds
+`bootstrap.main` and asserts the shell imports nothing from `backend`,
+`agents` or `gateway` — §7.1's separability, enforced in the direction that
+is easy to lose.
+
+### Sleep was broken, and silently
+
+The first close looked clean and was not: the window and runtime stopped,
+and **twelve agent processes kept running**. `terminate()` on Windows
+bypasses uvicorn's signal handling, so the FastAPI lifespan teardown never
+runs — no `shutdown_agents`, no continuity shutdown backup, and an orphaned
+workforce still writing to the database after the window has closed.
+
+`simulation/harness.py` had already documented this exact trap and its
+remedy, which is the second time today an existing module knew something
+the new one did not (§79 was the first). Fixed the same way: the runtime
+starts in its own process group and receives CTRL_BREAK_EVENT, which uvicorn
+*does* handle; a tree-kill is the fallback and reports itself, because a
+killed runtime means the checkpointing it owed did not happen. Verified
+after: `agents stopped: [coo-1, dummy-1, explorer-1, speculator-1,
+analysis-1], terminated: []` — every agent exited cleanly — and "the
+organization is asleep".
+
+### A continuity defect the sleep test exposed
+
+With backups forced to a one-second interval, the shutdown backup landed on
+top of a periodic one and failed: `PermissionError ... .fi.db.
+continuity-snapshot`. `_snapshot_sqlite` used a **fixed** temp filename, so
+two concurrent backups fought over it — the second either failing on Windows
+or, worse elsewhere, reading a half-written file. Real regardless of the
+artificial interval: the shutdown backup can always overlap a periodic one.
+Temp names are now unique per call, verified with eight concurrent
+snapshots.
+
+### Pinnable, and honest about the last step
+
+`python -m desktop.install` writes a Start Menu shortcut pointing at
+`pythonw.exe` (no console window), with a generated icon and the working
+directory set. Windows needs three things for a proper taskbar button and
+missing any one gives a broken result: the windowless launcher, an icon, and
+an **AppUserModelID matching between the shortcut and the running process** —
+without it the window groups under *Python*, so pinning pins Python and
+launching from the pin produces a second unrelated button. `shell.py` claims
+the same id via `SetCurrentProcessExplicitAppUserModelID`.
+
+Pinning itself is left to the operator, and the installer says so plainly:
+Windows removed the programmatic pinning API in Windows 10 deliberately, and
+every remaining trick is an undocumented shell hack that breaks between
+builds. Shipping one would be shipping something that silently stops working.
+
+### What does *not* persist yet, stated plainly
+
+The organization remembers itself — agents, names, assignments,
+conversations, events, missions, and a continuity backup on clean shutdown.
+The **workspace does not**: which tab was open, which filters were set,
+scroll position, and the half-typed sentence addendum 40 §5.3 makes the
+sharpest requirement in the document. That is TQ-31, and it is the next
+increment rather than an oversight — §5.3's acceptance test ("the same text
+must be present in the same field after recovery") is the one worth building
+against.
