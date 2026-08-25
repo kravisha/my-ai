@@ -26,9 +26,8 @@ holds the queue, not the record.
 > **Owner-directed head of the queue** (2026-08-25, `SPEC_RECONCILIATION.md` §60): **both head
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
 > (market-implied validation §62). The queue's remaining QUEUED work: TQ-07 (consumer-gated),
-> TQ-16 (Model Registry as metadata), TQ-17 (collaboration scoring baseline), TQ-18
-> (per-caller spend attribution). Entries above them in file order are DONE records, not
-> higher-priority work.
+> TQ-17 (collaboration scoring baseline), TQ-18 (per-caller spend attribution). Entries above
+> them in file order are DONE records, not higher-priority work.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -200,13 +199,16 @@ allowed to take down startup.
 
 ### TQ-16 — Model Registry and Model Requirement Profiles, as metadata first
 
-**WANT · QUEUED**
+**WANT · DONE — `SPEC_RECONCILIATION.md` §64**
 
-Source: addendum 35 §3–§5, under addendum 30 §12's metadata-before-code doctrine. The registry
-and per-agent-class requirement profiles as *data*, populated with the one honest row that
-exists (the single configured provider/model, its observed properties) and explicit
-provisional-default markings per 35 §2. No routing engine with one route: routing, fallback,
-and the migration lifecycle activate when the registry holds a second model worth routing to.
+Source: addendum 35 §3–§5, under addendum 30 §12's metadata-before-code doctrine. Built as
+`docs/model_registry.yaml` + `tests/test_model_registry.py` under organization.yaml's
+assertion discipline: one honest configured row with measured facts only (unmeasured fields
+carry no numbers, enforced), six profiles — one per code location that actually reaches the
+model — with call shapes bound to their sizing constants, universal `provisional: true` per
+35 §2, a consumer scan that fails the suite on any undeclared model consumer, and the pinned
+`routing: none_single_model` decision as a tripwire: registering a second model fails the
+suite until routing is revisited deliberately.
 
 ### TQ-17 — Collaboration scoring baseline, from records the system already writes
 
