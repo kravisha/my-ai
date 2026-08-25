@@ -243,8 +243,16 @@ bound. Currency-denominated limits and per-caller *limits* remain deferred with 
 
 ### TQ-19 — Off-machine copy of `backup.key`
 
-**NEED (YELLOW) · QUEUED · owner action, nothing in the repository can do it ·
+**NEED (YELLOW) · DONE 2026-08-25 — owner confirmed an off-machine copy exists ·
 `SPEC_RECONCILIATION.md` §69, `docs/SECOND_FAILURE_DOMAIN.md`**
+
+**Where the copy lives is deliberately not recorded here.** Naming the storage location of a
+recovery credential in a repository tells a reader where to go looking for it; the fact of
+custody is what this queue needs, and the location belongs to the owner
+(`docs/PUBLIC_PRIVATE_BOUNDARY.md`'s rule applied to a credential rather than a document).
+Still open and worth doing: **verify the copy actually decrypts a backup** — text moved through
+any transport can gain a trailing space or lose a character, and an unverified key is §1.4's
+untested-recovery-asset problem wearing a different hat.
 
 Source: addendum 29 §10.3. The encrypted secondary now writes to a Dropbox-synced folder, and
 `backup.key` is deliberately **not** there — key beside ciphertext is the same as no encryption.
