@@ -5638,3 +5638,148 @@ denying rather than permitting; the server and Gateway credentials proven
 mutually non-authenticating with distinct variable names; autostart off by
 default with its flag parsing pinned; the harness declaring its unattended
 start; and the sequence proven extracted rather than inlined.
+
+---
+
+## §75 — Two surfaces, two purposes: the owner settles the front-door question (2026-08-25)
+
+§70 disposition 4 refused to build a second operator UI without deciding its
+relationship to the Gateway, and named that decision as the owner's. It was
+made on 2026-08-25, in the owner's own words:
+
+> "The gateway and the COO consoles have separate purposes. The COO console
+> is also the server console and has a status of everything happening in the
+> entire system. It is like a live newspaper that covers everything that's
+> happening in the system, akin to a nation. The Gateway is a entry point
+> into the system, akin to how Morpheus and Neo enter the Matrix."
+
+### What the distinction actually resolves
+
+They are not two front doors competing for the same job. One is a **door**,
+the other is a **window**:
+
+- **The Gateway is a way in** (addenda 16–17): an external entry point,
+  phone-first, one authenticated Super User holding a conversation with the
+  system. Its subject is *what the operator wants to do*. Its content is a
+  dialogue.
+- **The COO console is the server console**: the operator's view of the
+  organization's whole internal life — departments, engines, agents, queues,
+  idle states, transitions. Its subject is *what the system is doing*. Its
+  content is narration, continuous and about everything at once.
+
+The newspaper framing is the useful test for what belongs in it: a newspaper
+covers a nation whether or not the reader asked, reports what happened rather
+than what the reader wants, and covers the quiet districts too — which is
+exactly addendum 38 §4.2's "continuous operational narration" and §10's
+insistence that components visibly report waiting and idle states, not only
+work.
+
+### Where it lives, and what it is not
+
+Served by the backend, because it *is* the server's console — the Gateway
+runs in its own process on its own port precisely so it can outlive the
+organization's absence (16 §22/§23), and a console whose subject is the
+organization has no reason to live over there.
+
+It is also not a third thing beside `panel/` and `monitor/`, and the boundary
+is worth stating so it stays true. `monitor/app.py` watches client
+conversations. `panel/app.py` is a *control* surface — retire, resume, file
+directives — and reports organizational **state**: who exists, on which
+lifecycle axis, what intelligence is in force. The console reports
+**narration**: what happened, in order, across everything. State answers
+"where do things stand"; narration answers "what has been going on". The
+status stream (§73) already separates those two questions in its own API
+(`current_status` versus `recent`), and the console is the reading surface
+for both.
+
+### The queue this unblocks
+
+TQ-26 becomes buildable and splits honestly in two: the console itself — the
+live feed, its derived filters, and the standing-status view — and the COO
+chat, which is a different kind of work (a model answering from real system
+state, 38 §4.5/§11) and is queued separately as TQ-27 rather than bolted on.
+
+---
+
+## §76 — The console: a newspaper with desks (2026-08-25)
+
+TQ-26, built to the owner's framing from §75 — a live newspaper covering the
+whole organization — and to their follow-on instruction that it carry
+"multiple tabs to view different aspects of the organization in different
+perspectives". Served at `/console` by the backend, because it *is* the
+server's console.
+
+### Sections, in the newspaper's own logic
+
+The **Newsroom** is the front page: continuous narration (38 §4.2), a
+derived source filter, an Errors/Warnings filter, a follow/pause control,
+and a standing-status sidebar answering "where does everything stand" —
+the question a scrolling feed cannot answer without the reader doing the
+work by eye. The desks are **Organization** (every agent, its name, role,
+lifecycle and process state, behavior version and last heartbeat),
+**Strategy** (the Strategic Priority Register in queue order),
+**Simulation** (missions and outcomes), **Alerts** (everything at WARNING
+or worse, plus `remediation`'s corrective recommendations), and
+**Parliament**.
+
+### The Parliament desk is the point of the whole design
+
+It reports that parliament has **not convened**, quotes the reason
+(addendum 32's machinery deferred at §47 — at this population it would be
+ceremony without constituents), and names what stands in its place. A
+blank parliament page would have failed to report that parliament never
+convened; an empty table reads as "nothing happening" when the truth is
+"this institution does not exist yet". Every desk follows that rule: the
+Organization desk with no agents says the workforce starts after login,
+the Alerts desk with nothing wrong says "the quiet districts get reported
+too" — which is 38 §10's insistence that components visibly report waiting
+and idle states, not only work.
+
+### One endpoint, and one broken section cannot blank the paper
+
+`/console/overview` gathers all five desks in a single call, because a page
+polling six endpoints every few seconds would be the log-flooding mistake
+wearing a different hat. Each section is computed behind a `_safe` wrapper
+that turns an exception into that section's own error note — 38 §12's
+"a failed component must not silently disappear", applied to the thing
+doing the reporting. The desks poll every 6s against the feed's 2s: desks
+change far more slowly than narration.
+
+The page is one dependency-free file. No build step, no CDN, no framework:
+the backend is loopback-only and the whole surface is three read endpoints,
+so a bundler would be more machinery than the thing it builds.
+
+### A production bug the tests caught
+
+The console routes were written `def`, and FastAPI runs synchronous routes
+in a worker threadpool — while the connection they read is opened in
+lifespan, on the event loop's thread, and sqlite3 connections are bound to
+the thread that opened them. This would have failed in production, not just
+under test. `gateway/main.py`'s `gateway_db` dependency documents the
+identical hazard and is `async def` for exactly this reason; `/console/feed`,
+`/console/overview`, `/server/status` and `/server/login` now are too.
+
+The tests then had to stop using TestClient for the database-touching
+routes — it runs the app in its own portal thread, so the fixture's
+connection belongs to a different thread again. They await the route
+functions directly instead, which exercises the same code on the thread
+that owns the connection.
+
+### Verified against a real organization, not a fixture
+
+Twelve tests cover the API. The page itself was verified by running a real
+backend with a real workforce and reading it: the Newsroom narrated an
+actual startup (metadata engine through `METADATA_READY`, reference data
+READY at 10 focus assets, COO bootstrapped), the source filter offered
+`server`, `metadata_engine` and `reference_data_engine` — all derived, none
+enumerated — and the Organization desk showed six agents by name (Chen,
+Aiko, Amara, Ana, Anand, Bilal) with live heartbeats and behavior versions.
+The demo backend and all twelve of its processes were stopped afterwards;
+an orphaned population would have kept writing to the database, which is
+§48's own lesson about children outliving their parent.
+
+### What remains
+
+TQ-27, the COO chat: the operator asking questions in natural language and
+getting answers grounded in this same data (38 §4.5/§11). The read API it
+needs is what the desks already render from.

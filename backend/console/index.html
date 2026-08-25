@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<!--
+  The server console (addendum 38 §4; owner decision docs/SPEC_RECONCILIATION.md §75).
+
+  A live newspaper covering the whole organization. Not the Gateway, which is a
+  door *into* the system; this is a window onto its internal life. Not
+  panel/app.py either, which controls and reports state - this reports
+  narration, and gives each aspect of the nation its own page.
+
+  Sections, in the newspaper's own logic: the Newsroom is the front page
+  (continuous narration), and the rest are the desks - Organization, Strategy,
+  Simulation, Alerts, Parliament. A desk with nothing to report says so and
+  says why, because a blank parliament page fails to report that parliament
+  never convened.
+
+  One file, no build step, no dependencies: the backend is loopback-only and
+  the whole surface is three read endpoints.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My AI — Server Console</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#c9d1d9; --dim:#8b949e;
+    --accent:#58a6ff; --info:#3fb950; --warning:#d29922; --error:#f85149;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); height:100vh;
+         display:flex; flex-direction:column;
+         font:14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.02em; }
+  .dim { color:var(--dim); } .accent { color:var(--accent); }
+  #banner { display:none; padding:8px 16px; background:#21262d;
+            border-bottom:1px solid var(--line); color:var(--warning); }
+  nav { display:flex; gap:2px; padding:0 10px; border-bottom:1px solid var(--line);
+        background:var(--panel); overflow-x:auto; }
+  nav button { background:none; border:none; border-bottom:2px solid transparent;
+               color:var(--dim); font:inherit; padding:9px 14px; cursor:pointer; white-space:nowrap; }
+  nav button:hover { color:var(--text); }
+  nav button.on { color:var(--accent); border-bottom-color:var(--accent); }
+  nav .count { font-size:11px; color:var(--dim); }
+  main { flex:1; min-height:0; display:flex; }
+  .tab { display:none; flex:1; min-height:0; }
+  .tab.on { display:flex; }
+  /* Newsroom */
+  #feed-wrap { flex:3; min-width:0; display:flex; flex-direction:column; }
+  #controls { padding:8px 16px; border-bottom:1px solid var(--line);
+              display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  select, .btn { background:var(--panel); color:var(--text); border:1px solid var(--line);
+                 border-radius:5px; padding:4px 9px; font:inherit; cursor:pointer; }
+  .btn.on { border-color:var(--accent); color:var(--accent); }
+  #feed { flex:1; overflow-y:auto; padding:6px 16px 16px; }
+  .row { display:flex; gap:10px; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
+  .row .t { color:var(--dim); flex:none; } .row .s { color:var(--accent); flex:none; }
+  .lvl { flex:none; width:60px; }
+  .INFO .lvl { color:var(--info); } .WARNING .lvl { color:var(--warning); }
+  .ERROR .lvl, .CRITICAL .lvl { color:var(--error); }
+  .WARNING { background:rgba(210,153,34,.07); }
+  .ERROR, .CRITICAL { background:rgba(248,81,73,.09); }
+  aside { flex:1; min-width:230px; max-width:360px; border-left:1px solid var(--line);
+          overflow-y:auto; padding:10px 14px; }
+  /* Desks */
+  .desk { flex:1; overflow-y:auto; padding:16px 20px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim);
+       margin:18px 0 8px; font-weight:600; }
+  h2:first-child { margin-top:0; }
+  table { border-collapse:collapse; width:100%; margin-bottom:6px; }
+  th, td { text-align:left; padding:5px 10px 5px 0; border-bottom:1px solid #21262d;
+           vertical-align:top; font-size:13px; }
+  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase;
+       letter-spacing:.05em; }
+  .badge { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px;
+           border:1px solid var(--line); color:var(--dim); }
+  .badge.ok { color:var(--info); border-color:var(--info); }
+  .badge.attn { color:var(--warning); border-color:var(--warning); }
+  .badge.bad { color:var(--error); border-color:var(--error); }
+  .note { background:var(--panel); border-left:3px solid var(--line); padding:10px 14px;
+          color:var(--dim); margin:10px 0; max-width:70ch; }
+  .note.absent { border-left-color:var(--warning); }
+  .stand { padding:4px 0; border-bottom:1px solid #21262d; }
+  .stand .what { color:var(--dim); font-size:12px; }
+  .empty { color:var(--dim); font-style:italic; }
+  footer { padding:6px 16px; border-top:1px solid var(--line); color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>My AI — Server Console</h1>
+  <span class="dim">stage <span class="accent" id="stage">—</span></span>
+  <span class="dim" id="headline"></span>
+</header>
+<div id="banner"></div>
+
+<nav id="tabs">
+  <button data-tab="newsroom" class="on">Newsroom</button>
+  <button data-tab="organization">Organization <span class="count" id="c-org"></span></button>
+  <button data-tab="strategy">Strategy <span class="count" id="c-strategy"></span></button>
+  <button data-tab="simulation">Simulation <span class="count" id="c-sim"></span></button>
+  <button data-tab="alerts">Alerts <span class="count" id="c-alerts"></span></button>
+  <button data-tab="parliament">Parliament</button>
+</nav>
+
+<main>
+  <section class="tab on" id="tab-newsroom">
+    <div id="feed-wrap">
+      <div id="controls">
+        <label class="dim" for="source">source</label>
+        <select id="source"><option value="">All</option></select>
+        <button class="btn" id="attention">Errors / Warnings</button>
+        <button class="btn on" id="follow">Following</button>
+      </div>
+      <div id="feed"></div>
+    </div>
+    <aside>
+      <h2>Where things stand</h2>
+      <div id="standing"><span class="empty">nothing has reported yet</span></div>
+      <h2>Sources</h2>
+      <div id="sources"><span class="empty">none yet</span></div>
+    </aside>
+  </section>
+
+  <section class="tab desk" id="tab-organization"></section>
+  <section class="tab desk" id="tab-strategy"></section>
+  <section class="tab desk" id="tab-simulation"></section>
+  <section class="tab desk" id="tab-alerts"></section>
+  <section class="tab desk" id="tab-parliament"></section>
+</main>
+
+<footer id="footer">connecting…</footer>
+
+<script>
+// Poll, don't push - the reason panel/app.py already gives: the whole system
+// is built on polling a database, and a console demanding websockets would be
+// the only component asking for a different mechanism.
+const FEED_MS = 2000, DESK_MS = 6000;   // desks change far more slowly than narration
+const state = { seen:0, source:"", attention:false, follow:true, printed:0, tab:"newsroom" };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const clock = (ts) => (ts || "").slice(11,19) || "--:--:--";
+// Whichever source the publisher could honestly fill; status_events leaves the
+// others null rather than padding them.
+const who = (e) => e.source_agent || e.source_engine || e.source_department || "system";
+const empty = (what) => `<div class="empty">${esc(what)}</div>`;
+
+function table(columns, rows, render) {
+  if (!rows.length) return "";
+  return `<table><thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>` +
+         `<tbody>${rows.map(render).join("")}</tbody></table>`;
+}
+
+// --- Newsroom -------------------------------------------------------------
+function renderFeed(events) {
+  if (!events.length) return;
+  const feed = $("feed");
+  for (const e of events.slice().reverse()) {   // API is newest-first; a page reads down
+    const row = document.createElement("div");
+    row.className = "row " + e.severity;
+    row.innerHTML = `<span class="t">[${clock(e.timestamp)}]</span>` +
+                    `<span class="lvl">${esc(e.severity)}</span>` +
+                    `<span class="s">${esc(who(e))}</span><span>${esc(e.message)}</span>`;
+    feed.appendChild(row);
+    state.printed++;
+  }
+  while (feed.childElementCount > 1000) feed.removeChild(feed.firstChild);
+  if (state.follow) feed.scrollTop = feed.scrollHeight;
+}
+
+function renderSources(sources) {
+  const select = $("source");
+  const wanted = ["", ...sources.map((s) => s.name)].join("|");
+  if (wanted !== [...select.options].map((o) => o.value).join("|")) {
+    const chosen = select.value;      // never steal the operator's selection mid-poll
+    select.innerHTML = '<option value="">All</option>';
+    for (const s of sources) {
+      const o = document.createElement("option");
+      o.value = s.name; o.textContent = `${s.name} (${s.kind})`;
+      select.appendChild(o);
+    }
+    select.value = chosen;
+  }
+  $("sources").innerHTML = sources.length ? sources.map((s) =>
+    `<div class="stand"><span class="accent">${esc(s.name)}</span> ` +
+    `<span class="badge${s.attention ? " attn" : ""}">${s.events} event${s.events === 1 ? "" : "s"}` +
+    `${s.attention ? ` · ${s.attention} to review` : ""}</span></div>`).join("") : empty("none yet");
+}
+
+function renderStanding(standing) {
+  $("standing").innerHTML = standing.length ? standing.map((e) =>
+    `<div class="stand"><span class="accent">${esc(who(e))}</span> ` +
+    `<span class="badge">${esc(e.status)}</span>` +
+    `<div class="what">${esc(e.message)}</div></div>`).join("") : empty("nothing has reported yet");
+}
+
+// --- Desks ----------------------------------------------------------------
+function section(data, body) {
+  if (data && data.error) return `<div class="note absent">${esc(data.error)}</div>`;
+  return body();
+}
+
+function renderOrganization(d) {
+  $("tab-organization").innerHTML = section(d, () => {
+    const agents = d.agents || [];
+    $("c-org").textContent = agents.length ? `(${agents.length})` : "";
+    return `<h2>Agents</h2>` + (agents.length ? table(
+      ["Name", "Role", "Identity", "Lifecycle", "Process", "Behavior", "Last heartbeat"], agents, (a) =>
+      `<tr><td class="accent">${esc(a.name || "—")}</td><td>${esc(a.role)}</td>` +
+      `<td class="dim">${esc(a.identity)}</td>` +
+      `<td><span class="badge ${a.lifecycle_state === "active" ? "ok" : ""}">${esc(a.lifecycle_state)}</span></td>` +
+      `<td><span class="badge ${a.process_state === "running" ? "ok" : "attn"}">${esc(a.process_state)}</span></td>` +
+      `<td class="dim">${esc(a.behavior_version || "—")}</td>` +
+      `<td class="dim">${esc(clock(a.last_heartbeat_at))}</td></tr>`)
+      : empty("No agent has been registered. The workforce starts after an operator logs in.")) +
+      `<h2>Naming</h2><div class="note">${d.names_available} name(s) available in the pool. ` +
+      `A name is the durable agent; the identity is the desk it sits at, and the two can come apart.</div>`;
+  });
+}
+
+function renderStrategy(d) {
+  $("tab-strategy").innerHTML = section(d, () => {
+    const rows = d.register || [];
+    $("c-strategy").textContent = d.total ? `(${d.total})` : "";
+    return `<h2>Strategic Priority Register</h2>` + (rows.length ? table(
+      ["Title", "Kind", "Need/Want", "Flag", "Status"], rows, (r) =>
+      `<tr><td>${esc(r.title)}</td><td class="dim">${esc(r.entry_type || "—")}</td>` +
+      `<td>${esc(r.need_or_want || "—")}</td><td>${esc(r.flag || "—")}</td>` +
+      `<td><span class="badge">${esc(r.status)}</span></td></tr>`)
+      : empty("The register is empty. Nothing has been filed by the organization yet.")) +
+      `<div class="note">${esc(d.note || "")}</div>`;
+  });
+}
+
+function renderSimulation(d) {
+  $("tab-simulation").innerHTML = section(d, () => {
+    const rows = d.missions || [];
+    $("c-sim").textContent = d.total ? `(${d.total})` : "";
+    return `<h2>Missions</h2>` + (rows.length ? table(
+      ["Mission", "Strategy", "Mode", "Status", "Note"], rows, (m) =>
+      `<tr><td class="accent">${esc(m.mission_id)}</td><td>${esc(m.strategy)}</td>` +
+      `<td class="dim">${esc(m.run_mode)}</td>` +
+      `<td><span class="badge ${m.status === "COMPLETED" ? "ok" : (m.status === "FAILED" ? "bad" : "")}">` +
+      `${esc(m.status)}</span></td><td class="dim">${esc(m.note || "")}</td></tr>`)
+      : empty("No mission has been run. The Simulation Engine generates training worlds on request."));
+  });
+}
+
+function renderAlerts(d) {
+  $("tab-alerts").innerHTML = section(d, () => {
+    const recent = d.recent || [], corrective = d.corrective || [];
+    $("c-alerts").textContent = recent.length ? `(${recent.length})` : "";
+    return `<h2>Needing attention</h2>` + (recent.length ? table(
+      ["Time", "Severity", "Source", "Message"], recent, (e) =>
+      `<tr class="${esc(e.severity)}"><td class="dim">${esc(clock(e.timestamp))}</td>` +
+      `<td class="lvl">${esc(e.severity)}</td><td class="accent">${esc(who(e))}</td>` +
+      `<td>${esc(e.message)}</td></tr>`)
+      : empty("Nothing has warned or failed. The quiet districts get reported too.")) +
+      `<h2>Recommendations</h2>` + (corrective.length ? table(
+      ["Cause", "Classification", "Findings"], corrective, (c) =>
+      `<tr><td>${esc(c.rule)}</td><td><span class="badge attn">${esc(c.classification)}</span></td>` +
+      `<td class="dim">${esc(c.findings)}</td></tr>`)
+      : `<div class="note">${esc(d.summary || "no corrective work outstanding")}</div>`);
+  });
+}
+
+function renderParliament(d) {
+  $("tab-parliament").innerHTML = section(d, () => d.convened
+    ? empty("Sessions would be listed here.")
+    : `<h2>Not convened</h2><div class="note absent">${esc(d.reason)}</div>` +
+      `<h2>What stands in its place</h2><div class="note">${esc(d.standing_in)}<br><br>` +
+      `${d.filed_entries} entr${d.filed_entries === 1 ? "y" : "ies"} filed to date — see the Strategy desk.</div>`);
+}
+
+// --- polling --------------------------------------------------------------
+async function pollFeed() {
+  try {
+    const p = new URLSearchParams();
+    if (state.source) p.set("source", state.source);
+    if (state.attention) p.set("attention_only", "true");
+    if (state.seen) p.set("since_id", String(state.seen));
+    const res = await fetch(`/console/feed?${p}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (data.events.length) state.seen = Math.max(state.seen, data.events[0].event_id);
+    renderFeed(data.events);
+    renderSources(data.sources || []);
+    renderStanding(data.standing || []);
+
+    const banner = $("banner");
+    if (data.awaiting_login) {
+      banner.style.display = "block";
+      banner.textContent = "Workforce dormant — waiting for an operator login (POST /server/login). " +
+                           "The feed below is the record of what happened before that.";
+    } else { banner.style.display = "none"; }
+    $("footer").textContent = `${state.printed} line(s) printed · feed every ${FEED_MS/1000}s · desks every ${DESK_MS/1000}s`;
+  } catch (err) {
+    // A console that blanks when the server restarts is worse than one that
+    // says so and keeps its history on screen.
+    $("footer").textContent = `backend unreachable (${err.message}) — retrying`;
+  }
+}
+
+async function pollDesks() {
+  try {
+    const res = await fetch("/console/overview");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    if (!d.available) { $("headline").textContent = d.reason || ""; return; }
+    if (d.lifecycle_stage) $("stage").textContent = d.lifecycle_stage;
+    renderOrganization(d.organization || {});
+    renderStrategy(d.strategy || {});
+    renderSimulation(d.simulation || {});
+    renderAlerts(d.alerts || {});
+    renderParliament(d.parliament || {});
+    const agents = (d.organization && d.organization.agents) || [];
+    const attention = ((d.alerts && d.alerts.recent) || []).length;
+    $("headline").textContent =
+      `${agents.length} agent(s)` + (attention ? ` · ${attention} needing attention` : " · all quiet");
+  } catch { /* the feed's footer already reports unreachability */ }
+}
+
+$("tabs").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-tab]");
+  if (!button) return;
+  state.tab = button.dataset.tab;
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b === button));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.id === `tab-${state.tab}`));
+});
+
+function resetFeed() { state.seen = 0; state.printed = 0; $("feed").innerHTML = ""; pollFeed(); }
+$("source").addEventListener("change", (e) => { state.source = e.target.value; resetFeed(); });
+$("attention").addEventListener("click", () => {
+  state.attention = !state.attention;
+  $("attention").classList.toggle("on", state.attention);
+  resetFeed();
+});
+$("follow").addEventListener("click", () => {
+  state.follow = !state.follow;
+  $("follow").classList.toggle("on", state.follow);
+  $("follow").textContent = state.follow ? "Following" : "Paused";
+});
+
+pollFeed(); pollDesks();
+setInterval(pollFeed, FEED_MS);
+setInterval(pollDesks, DESK_MS);
+</script>
+</body>
+</html>

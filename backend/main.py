@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app import admin_auth
@@ -34,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import continuity, fi_db, metadata_engine, missions, reference_data, status_events, strategy
+from backend import continuity, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -45,6 +46,9 @@ from backend.transcripts import TranscriptStore
 # see _controller_poll_loop. Same cadence as an agent's own heartbeat
 # interval (agents/base.py), no reason for it to differ.
 CONTROLLER_POLL_INTERVAL_SECONDS = 1.0
+
+# The server console's static page (§75/TQ-26).
+CONSOLE_DIR = Path(__file__).resolve().parent / "console"
 
 
 async def _controller_poll_loop(controller: Controller) -> None:
@@ -419,7 +423,7 @@ def login(request: LoginRequest):
 
 
 @app.post("/server/login")
-def server_login(request: LoginRequest):
+async def server_login(request: LoginRequest):
     """The operator login addendum 38 §3.1/§3.3 puts in front of everything.
 
     A successful login starts the organization: metadata, reference data, then
@@ -466,8 +470,181 @@ def server_login(request: LoginRequest):
     return report
 
 
+@app.get("/console", include_in_schema=False)
+def console_page():
+    """The server console (addendum 38 §4, owner decision §75): the live
+    newspaper of everything the organization is doing.
+
+    Served by the backend because it *is* the server's console. The Gateway
+    runs in its own process on its own port so it can outlive the
+    organization's absence (16 §22/§23); a console whose entire subject is the
+    organization has no reason to live over there."""
+    return FileResponse(CONSOLE_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/console/feed")
+async def console_feed(
+    limit: int = 200,
+    source: str | None = None,
+    attention_only: bool = False,
+    since_id: int | None = None,
+):
+    """The newspaper itself: narration, newest first, filterable (38 §4.2/§4.4).
+
+    **Async on purpose**, the same reason `gateway/main.py`'s `gateway_db`
+    dependency is: FastAPI runs *synchronous* routes in a worker threadpool,
+    and sqlite3 connections are bound to the thread that opened them. This
+    connection is opened in lifespan, on the event loop's thread, so a sync
+    route would reach it from the wrong thread and raise. The reads here are
+    small and local; blocking the loop for them is the cheaper half of the
+    trade.
+
+    `since_id` lets the page ask only for what it has not printed yet, so a
+    console left open all day sends small deltas rather than re-fetching the
+    whole feed every few seconds - the same restraint 38 §13 asks of the
+    publishers.
+
+    Unauthenticated, like `/server/status` and for a narrower version of the
+    same reason: this backend is loopback-only (28's posture, TQ-04's recorded
+    preconditions), and a console that cannot read the feed cannot be a
+    console. If the backend is ever exposed, this moves behind the operator
+    session in the same change that opens the port - noted here so the
+    coupling is not discovered later."""
+    controller = getattr(app.state, "controller", None)
+    if controller is None:
+        return {"events": [], "sources": [], "standing": [], "awaiting_login": True}
+
+    severities = status_events.ATTENTION_SEVERITIES if attention_only else None
+    events = status_events.recent(
+        controller.conn, limit=min(limit, 500), source=source, severities=severities,
+    )
+    if since_id is not None:
+        events = [event for event in events if event["event_id"] > since_id]
+    return {
+        "events": events,
+        # Derived, never enumerated (38 §4.4): a new department appears in the
+        # filter control because it published, not because the page was edited.
+        "sources": status_events.sources(controller.conn),
+        # "Where does everything stand", which a scrolling feed cannot answer
+        # without the reader doing the work by eye (§4.5).
+        "standing": status_events.current_status(controller.conn),
+        "awaiting_login": getattr(app.state, "startup_report", None) is None,
+    }
+
+
+@app.get("/console/overview")
+async def console_overview():
+    """Everything the console's non-feed tabs render (addendum 38 §4.4's
+    "different perspectives", owner decision §75).
+
+    One endpoint rather than six, because the page polls once and a console
+    that opened six connections every two seconds would be the log-flooding
+    mistake wearing a different hat.
+
+    **Every section reports what actually exists.** Where a capability is not
+    built, the section says so and names why, rather than showing an empty
+    table that reads as "nothing happening" - a newspaper whose parliament
+    page is blank has failed to report that parliament never convened. Async
+    for the thread reason console_feed's docstring gives."""
+    controller = getattr(app.state, "controller", None)
+    if controller is None:
+        return {"available": False, "reason": "Server is still starting."}
+    conn = controller.conn
+
+    def _safe(section, fn):
+        """One broken section must not blank the whole console - 38 §12's
+        'a failed component must not silently disappear', applied to the
+        thing doing the reporting."""
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{section} unavailable: {exc.__class__.__name__}: {exc}"}
+
+    def _organization():
+        agents = conn.fetchall(
+            "SELECT identity, role, lifecycle_state, process_state, behavior_version, "
+            "spawned_at, last_heartbeat_at FROM agent_registry ORDER BY role, identity"
+        )
+        named = {
+            row["assigned_to_identity"]: row["name"]
+            for row in conn.fetchall(
+                "SELECT name, assigned_to_identity FROM agent_names "
+                "WHERE assigned_to_identity IS NOT NULL"
+            )
+        }
+        return {
+            "agents": [{**dict(a), "name": named.get(a["identity"])} for a in agents],
+            "names_available": conn.fetchone(
+                "SELECT COUNT(*) AS n FROM agent_names "
+                "WHERE assigned_to_identity IS NULL AND reserved = 0"
+            )["n"],
+        }
+
+    def _strategy():
+        entries = strategic_register.list_register(conn)
+        return {
+            "register": strategic_register.queue_order(conn)[:25],
+            "total": len(entries),
+            # The development queue is a maintained document, not a table -
+            # §54 recorded why duplicating one into the other would
+            # manufacture two sources of truth. Named so the operator knows
+            # where the other half of "strategy" lives.
+            "note": "The development queue lives in docs/TASK_QUEUE.md; this register holds "
+                    "what the organization itself files (SPEC_RECONCILIATION §54).",
+        }
+
+    def _simulation():
+        runs = missions.list_missions(conn)
+        return {
+            "missions": runs[:25],
+            "total": len(runs),
+        }
+
+    def _alerts():
+        return {
+            "recent": status_events.recent(
+                conn, limit=40, severities=status_events.ATTENTION_SEVERITIES),
+            "corrective": [
+                {"rule": item.rule, "classification": item.classification,
+                 "findings": item.findings, "remedy": getattr(item, "remedy", None)}
+                for item in remediation.corrective_items(conn, limit=20)
+            ],
+            "summary": remediation.summarise(conn),
+        }
+
+    def _parliament():
+        """Honest reporting of a thing that does not exist.
+
+        Addendum 32's parliament, elections and committees are deferred with
+        a stated reason (§47): at a population of a handful of role-agents the
+        machinery would be ceremony without constituents. The register below
+        is what the organization actually files today, and is the closest
+        real thing to a session outcome."""
+        filed = strategic_register.list_register(conn)
+        return {
+            "convened": False,
+            "reason": "No parliament, committee or voting body exists yet. Addendum 32's "
+                      "machinery is deferred with its reason recorded in "
+                      "SPEC_RECONCILIATION §47: at the current population it would be "
+                      "ceremony without constituents.",
+            "standing_in": "The Strategic Priority Register is where proposals are filed "
+                           "and dispositioned today; the owner acts as the Board.",
+            "filed_entries": len(filed),
+        }
+
+    return {
+        "available": True,
+        "lifecycle_stage": (getattr(app.state, "startup_report", None) or {}).get("lifecycle_stage"),
+        "organization": _safe("organization", _organization),
+        "strategy": _safe("strategy", _strategy),
+        "simulation": _safe("simulation", _simulation),
+        "alerts": _safe("alerts", _alerts),
+        "parliament": _safe("parliament", _parliament),
+    }
+
+
 @app.get("/server/status")
-def server_status():
+async def server_status():
     """Whether the workforce is awake, and what the last startup did.
 
     Unauthenticated on purpose, and carrying no state beyond that: a login

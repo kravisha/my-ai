@@ -356,14 +356,27 @@ rather than smuggled in elsewhere.
 
 ### TQ-26 — The COO operator interface
 
-**NEED (GREEN) · BLOCKED on a decision, not on code · `SPEC_RECONCILIATION.md` §70 disposition 4**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §76** (unblocked by the owner decision in §75)
 
-Source: addendum 38 §4, §11. Live status area, filters by department/component, and a chat that
-answers from real system state rather than inventing (38 §4.5's requirement, and §11's rule that
-an unimplemented action be declined explicitly rather than faked). **Blocked deliberately:** the
-Gateway (addenda 16–17) is already an authenticated operator surface with a streaming chat, and
-building a second one without deciding their relationship leaves the system with two front doors.
-That decision is the owner's and precedes the code.
+Source: addendum 38 §4. The live status area and its filters: the *server console*, a live
+newspaper covering everything the system is doing, served by the backend. The owner's decision
+(§75) settled what this is relative to the Gateway — the Gateway is a door (an entry point into
+the system), this is a window (the organization's whole internal life) — and how it differs from
+`panel/` (control and state) and `monitor/` (client conversations): this one reports narration.
+The COO chat that answers from real state is split out as TQ-27, being a different kind of work.
+
+### TQ-27 — The COO chat, answering from real system state
+
+**NEED (GREEN) · QUEUED · follows TQ-26 · `SPEC_RECONCILIATION.md` §75**
+
+Source: addendum 38 §4.5, §11. The operator asks the COO questions in natural language — "what
+stage are we in?", "which departments are idle?", "what failed during startup?" — and the COO
+answers **from the status stream and the registries**, not from invention (§4.5's explicit
+requirement). §11's other rule matters as much: an action that is not implemented must be
+declined explicitly rather than reported as done. Split from TQ-26 because a model answering
+over real state is a different kind of work from rendering a feed, and bolting it on would have
+made one entry that was half UI and half tool-use plumbing. The read API it needs already exists
+(`backend/status_events.py`'s `recent`, `current_status`, `failures`, `sources`).
 
 ---
 
