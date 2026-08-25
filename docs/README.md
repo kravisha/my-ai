@@ -16,6 +16,42 @@ it. The gap analysis is the single most useful file here, and it is public in fu
 
 ---
 
+## Picking up mid-project
+
+If you are joining with no context — a fresh session, or returning after a break — read these four,
+in this order. They are maintained for exactly this purpose.
+
+| Read | For |
+|---|---|
+| [`HANDOFF.md`](HANDOFF.md) | Where the project stands right now: what shipped last session, what is pending, what is blocked, what to do first, and the design decisions that must not be reversed. **Read this before touching anything.** |
+| [`TASK_QUEUE.md`](TASK_QUEUE.md) | The prioritised work queue. Its head block says what is next and why. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Newest `§` sections at the end. Every increment records what was built, what was decided, and what was found by running it. |
+| [`specs/`](specs/) | Implementation specifications for queued-but-unbuilt work, detailed enough to build from without further design. |
+
+**Quick orientation, in one paragraph.** Two processes: the *backend*
+(`backend/main.py`, the organization — agents, the COO Kumbhakarnan, the simulated market, the
+studio at `/console`) and the *Gateway* (`gateway/main.py`, the door — authenticated, role-scoped,
+the only thing intended to face outward). They own separate databases and talk over HTTP. The
+Gateway has three roles (operator, internal, client); every route and every model tool declares a
+capability, and a tripwire test fails if one does not. Client data — conversations, representative
+identity, holdings, credentials — is keyed to a `subject` resolved from the session and never from
+anything a caller sent.
+
+## Active specifications
+
+Work that is specified and queued but not yet built.
+
+| Specification | Queue entry | Status |
+|---|---|---|
+| [`specs/TQ-44_portfolio_ownership_and_isolation.md`](specs/TQ-44_portfolio_ownership_and_isolation.md) | TQ-44 | **SPECIFIED, next to build.** Portfolios as owned entities plus the ownership guard, shipped together because the entity is what creates the attack surface. |
+
+Addendum 44 also generates TQ-45 through TQ-50 (provider abstraction, superuser ownership domain,
+its UI tab, snapshots and audit, the Schwab boundary, and Schwab live — the last blocked on the
+owner obtaining API access). Those are scoped in `TASK_QUEUE.md` and specified when they reach the
+head of the queue.
+
+---
+
 ## Precedence
 
 Documents disagree with each other, so the order matters. Higher layers win.
@@ -60,6 +96,8 @@ A distinction worth knowing before editing anything.
 | [`TIMING_CONSTANTS.md`](TIMING_CONSTANTS.md) | Every constant whose correctness depends on a rate, what that rate is, and whether it has been *measured*. Three real defects were found this way. |
 | [`organization.yaml`](organization.yaml) | The organization as *implemented*, machine-readable. `tests/test_organization_model.py` asserts every claim in it against the code, so a role named here but not built — or built but not named — fails the suite. |
 | [`model_registry.yaml`](model_registry.yaml) | Addendum 35's Model Registry and Requirement Profiles as *implemented*: the one configured engine, its measured facts (unmeasured fields carry no numbers), and a profile per model consumer. `tests/test_model_registry.py` asserts every claim against the code, and the pinned single-model routing decision trips the suite the day a second model is registered. |
+| [`HANDOFF.md`](HANDOFF.md) | Where the project stands between sessions: completed work, pending work, blockers, architectural constraints that must not be violated, and the recommended next task. Rewritten at each checkpoint rather than appended to — it describes the present, not the history. |
+| [`specs/`](specs/) | Implementation specifications for queued work, written so a session with no prior context can build from them. One file per task, superseded by the `SPEC_RECONCILIATION.md` record once built. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | The Strategic Priority Register in paper form — the prioritized queue of work derived from the specifications, with Need/Want classification and status. Realizes addendum 31 §3 and addendum 32 §12 until a machine-readable register exists. |
 | [`SECOND_FAILURE_DOMAIN.md`](SECOND_FAILURE_DOMAIN.md) | How this system stops depending on one machine: the data domain (done — encrypted backups to a synced folder, rehearsed) and the host domain (a runbook for the owner, since provisioning spends money). Its load-bearing step is the restore rehearsal, because §1.4 makes an untested restore a hypothesis. |
 | [`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) | What to actually do, in order, on suspected compromise: preserve evidence, stop the organization, revoke credentials, assess, restore, review. Written for this deployment's real shape, with its limits stated. |
@@ -184,6 +222,17 @@ lineage, supplied 2026-08-18.
 | [9 — On-Demand Portfolio Analysis (canonical)](addenda/addendum_9_on_demand_portfolio_analysis_canonical.md) | |
 | [10 — Implementation Plan v1, First Real Slice](addenda/addendum_10_implementation_plan_v1_first_real_slice.md) | |
 
+**The 2026-08-25/26 lineage** — the desktop runtime, the live studio, COO persistence, and the
+portfolio subsystem. Dispositions for all five are in `SPEC_RECONCILIATION.md` §81 and §85–§97.
+
+| Addendum | What it adds |
+|---|---|
+| [40 — Desktop Runtime & Living Workspace](addenda/addendum_40_desktop_runtime_living_workspace.md) | The desktop form as a persistent living workspace rather than an app: small bootstrap, native shell, continuous checkpointing, voice-first, one organization many windows. §13/§14 are the Gateway's role model and the rule that presentation must never bypass backend authorization. |
+| [41 — Executive Presenter & Live Studio](addenda/addendum_41_executive_presenter_live_studio.md) | The COO as a live presenter named Kumbhakarnan, and the visual direction that reverses an earlier owner instruction: broadcast studio, explicitly **not** a Bloomberg terminal. §23's role-based studio. |
+| [42 — COO Persistence Handling](addenda/addendum_42_coo_persistence_handling.md) | Persist state, not runtime objects. Three version types kept apart, sequential migrations, and §11's rule that missing *facts* are never fabricated. |
+| [43 — Desktop Runtime v2](addenda/addendum_43_desktop_runtime_living_workspace_v2.md) | A tighter restatement of 40, adding search state, panel state, briefing position and presenter state to what must persist. §15/§16 specify the role-scoped Gateway and the personal client agent. |
+| [44 — Client-Owned Holdings + Superuser Portfolio](addenda/addendum_44_client_owned_holdings_superuser_portfolio.md) | **The active specification.** Portfolio ownership and isolation, a separate superuser ownership domain, a broker-agnostic provider interface, and a Schwab boundary prepared but disabled. Generates TQ-44 through TQ-50. |
+
 **Historical** — kept for provenance, not for guidance.
 
 - [1 — Universal Agent](addenda/addendum_1_universal_agent.md) — the base product, unrelated to Financial Intelligence.
@@ -200,8 +249,15 @@ and addendum 12 is public in full.
 **To understand what exists:** gap analysis → `SPEC_RECONCILIATION.md` §2 (superseded statements) →
 `organization.yaml` → the code.
 
-**To pick up development:** gap analysis's closing recommendations → `SPEC_RECONCILIATION.md` §6 (open
-conflicts) → `TIMING_CONSTANTS.md` if touching anything rate-dependent.
+**To pick up development:** [`HANDOFF.md`](HANDOFF.md) → `TASK_QUEUE.md`'s head block → the
+specification in [`specs/`](specs/) for whatever is next. Then gap analysis's closing
+recommendations → `SPEC_RECONCILIATION.md` §6 (open conflicts) → `TIMING_CONSTANTS.md` if touching
+anything rate-dependent.
+
+**To understand the security model:** `SPEC_RECONCILIATION.md` §92 (roles and capabilities, and why
+tools are gated as well as routes) → §93 (the conversation leak and how ownership closed it) → §96
+(client-owned holdings) → §98 (per-client credentials) → addendum 44 §2/§5/§9 for where it is going
+next.
 
 **To understand why something was *not* built:** `SPEC_RECONCILIATION.md` §4 (declined, with reasoning).
 Several things in this system were deliberately left out, and that file says which and why.
