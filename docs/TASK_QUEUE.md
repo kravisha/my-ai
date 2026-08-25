@@ -57,9 +57,8 @@ holds the queue, not the record.
 > TQ-48 (snapshots, provenance, audit), TQ-49 (the Schwab boundary). TQ-50 is blocked on owner
 > action.
 >
-> **TQ-43** (per-client Gateway credentials) is a precondition for most of that: addendum 44
-> assumes multiple clients logging in, and today they share one credential and therefore one
-> subject. Worth doing first or accepting that several entries are worth less than they look.
+> **TQ-43** (per-client Gateway credentials, §98) is **done** — it was the precondition under
+> most of that, and the demo now seeds three clients who each log in as themselves.
 >
 > Also open: **TQ-07** (consumer-gated), **TQ-20** and **TQ-21** (owner actions), **TQ-28**
 > (the isolation guard), and the deferred animated presenter.
@@ -786,7 +785,8 @@ ALPHA, and an `outstanding()` check so a pre-launch step can know rather than ho
 
 ### TQ-43 — Per-client Gateway credentials
 
-**NEED (YELLOW) · QUEUED · exposed by TQ-42 · addendum 43 §15/§16**
+**NEED (YELLOW) · DONE 2026-08-26 · exposed by TQ-42 · addendum 43 §15/§16, addendum 44 §3.2/§9.2/§9.3 ·
+`SPEC_RECONCILIATION.md` §98**
 
 The Gateway has one credential per *role*, so every client shares one password and therefore one
 subject. Everything downstream is already per-client — conversations (§93), the representative's

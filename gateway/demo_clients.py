@@ -34,16 +34,21 @@ Names and positions invented here, holding this system's own synthetic symbols
 (SYN1-SYN10) rather than real tickers. A demo portfolio of real companies is one
 screenshot away from being read as advice about them.
 
-Only `customer` can actually log in, because the Gateway has a single client
-credential today. The rest exist as data — which is enough to show the property
-that matters, that one client's representative cannot see another's positions.
-Per-client credentials are a real gap and are queued as TQ-43 rather than faked
-here.
+All three can log in, each as themselves. That stopped being a gap when TQ-43
+gave clients a registry (§98) — before it they shared one credential and
+therefore one subject, so the demo could show isolation in the data and not at
+the door. Seeding now registers each client with a generated password, printed
+once, so the isolation can be *walked into* rather than only asserted.
+
+The passwords are fixed for demo clients and only for them, because a
+demonstration you cannot log into twice is not one. `DEMO_PASSWORD` is not a
+secret and is not a pattern for real clients, whose passwords are generated and
+shown once by `python -m gateway.clients add`.
 """
 
 from __future__ import annotations
 
-from gateway import client_agent, holdings
+from gateway import client_agent, clients, holdings
 from backend.db import Database
 
 # Development stages only. Same list and same reasoning as
@@ -53,8 +58,12 @@ SEEDABLE_STAGES = ("PRE_ALPHA", "ALPHA")
 # Synthetic symbols from this system's own universe, never real tickers: a demo
 # portfolio of real companies is one screenshot away from being read as advice
 # about them.
+# Fixed, and only for demo clients: a demonstration you cannot log into twice is
+# not one. Real clients get a generated password shown once (gateway/clients.py);
+# this is a convenience for data that is going to be deleted.
+DEMO_PASSWORD = "demo-client-password"
+
 DEMO_CLIENTS: dict[str, list[dict]] = {
-    # The one that can actually log in, because it matches GATEWAY_CLIENT_USER.
     "customer": [
         {"ticker": "SYN1", "shares": 400, "cost_basis": 42.50, "acquired_on": "2024-03-11"},
         {"ticker": "SYN3", "shares": 120, "cost_basis": 118.00, "acquired_on": "2024-09-02"},
@@ -106,13 +115,16 @@ def seed(conn: Database) -> dict:
     stage = _require_development_stage()
     created = {}
     for client_id, positions in DEMO_CLIENTS.items():
+        if clients.get(conn, client_id) is None:
+            clients.register(conn, client_id, display_name=client_id.title(),
+                             password=DEMO_PASSWORD, simulated=True)
         agent = client_agent.ensure(conn, client_id)
         conn.execute("UPDATE client_agents SET simulated = 1 WHERE client_id = ?",
                      (client_id,))
         for position in positions:
             holdings.record(conn, client_id, simulated=True, **position)
         created[client_id] = {"agent": agent["name"], "positions": len(positions)}
-    return {"stage": stage, "clients": created}
+    return {"stage": stage, "clients": created, "password": DEMO_PASSWORD}
 
 
 def simulated_clients(conn: Database) -> list[str]:
@@ -124,6 +136,8 @@ def simulated_clients(conn: Database) -> list[str]:
     is still demo data, and it belongs to a demo client."""
     ids = {r["client_id"] for r in conn.fetchall(
         "SELECT client_id FROM client_agents WHERE simulated = 1")}
+    ids |= {r["client_id"] for r in conn.fetchall(
+        "SELECT client_id FROM clients WHERE simulated = 1")}
     ids |= set(holdings.simulated_client_ids(conn))
     return sorted(ids)
 
@@ -153,8 +167,10 @@ def clear(conn: Database) -> dict:
         f"DELETE FROM client_holdings WHERE client_id IN ({placeholders})", tuple(targets))
     agents_removed = conn.execute_returning_rowcount(
         f"DELETE FROM client_agents WHERE client_id IN ({placeholders})", tuple(targets))
+    logins_removed = conn.execute_returning_rowcount(
+        f"DELETE FROM clients WHERE client_id IN ({placeholders})", tuple(targets))
     return {"clients_removed": len(targets), "holdings_removed": holdings_removed,
-            "agents_removed": agents_removed}
+            "agents_removed": agents_removed, "logins_removed": logins_removed}
 
 
 def outstanding(conn: Database) -> dict:
@@ -204,13 +220,15 @@ def main(argv: list[str] | None = None) -> int:
             for client_id, detail in outcome["clients"].items():
                 print(f"  {client_id}: {detail['positions']} position(s), "
                       f"represented by {detail['agent']}")
+            print(f"all of them log in with the password: {outcome['password']}")
             return 0
 
         if args.command == "clear":
             outcome = clear(conn)
             print(f"removed {outcome['clients_removed']} client(s): "
-                  f"{outcome['holdings_removed']} holding(s) and "
-                  f"{outcome['agents_removed']} agent(s)")
+                  f"{outcome['holdings_removed']} holding(s), "
+                  f"{outcome['agents_removed']} agent(s), "
+                  f"{outcome['logins_removed']} login(s)")
             print(outstanding(conn)["note"])
             return 0
 

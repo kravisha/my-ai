@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
-from gateway import client_agent, holdings, roles
+from gateway import client_agent, clients, holdings, roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -77,6 +77,7 @@ def init_schema(conn: Database) -> None:
     scoreboard.init_schema(conn)
     conn.executescript(client_agent.SCHEMA)
     conn.executescript(holdings.SCHEMA)
+    conn.executescript(clients.SCHEMA)
     _apply_additive_migrations(conn)
 
 

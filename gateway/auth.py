@@ -37,17 +37,25 @@ SUPER_USER_ENV = "GATEWAY_SUPER_USER"
 PASSWORD_HASH_ENV = "GATEWAY_PASSWORD_HASH"
 SESSION_TTL_ENV = "GATEWAY_SESSION_TTL_SECONDS"
 
-# One credential pair per role (TQ-34, §92). The operator's keeps its original
-# variable names: renaming them would log out every existing deployment to buy
-# nothing, and "SUPER_USER" is still what that credential is.
+# One credential pair per *environment-configured* role (TQ-34, §92; narrowed by
+# TQ-43, §98). The operator's keeps its original variable names: renaming them
+# would log out every existing deployment to buy nothing, and "SUPER_USER" is
+# still what that credential is.
 #
-# Every role follows the Super User's rules rather than getting relaxed ones -
-# bcrypt hash only, never plaintext, and unset means that role cannot log in.
-# A second credential is exactly as much of a security boundary as the first.
+# Both follow the Super User's rules rather than getting relaxed ones - bcrypt
+# hash only, never plaintext, and unset means that role cannot log in. A second
+# credential is exactly as much of a security boundary as the first.
+#
+# Clients are deliberately absent. A shared environment variable is
+# an acceptable credential for a role that is one person by definition, and a
+# group password for one that is many - so operator and internal keep theirs,
+# and clients register individually in gateway/clients.py. Leaving a
+# GATEWAY_CLIENT_PASSWORD_HASH configurable "for compatibility" would leave the
+# shared password available, which is the hole TQ-43 closes rather than a
+# migration path away from it.
 ROLE_CREDENTIAL_ENV: dict[str, tuple[str, str]] = {
     roles.ROLE_OPERATOR: (SUPER_USER_ENV, PASSWORD_HASH_ENV),
     roles.ROLE_INTERNAL: ("GATEWAY_INTERNAL_USER", "GATEWAY_INTERNAL_PASSWORD_HASH"),
-    roles.ROLE_CLIENT: ("GATEWAY_CLIENT_USER", "GATEWAY_CLIENT_PASSWORD_HASH"),
 }
 
 DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -96,16 +104,25 @@ def credential_for(role: str) -> tuple[str | None, str | None]:
 
 
 def configured_roles() -> list[str]:
-    """Which roles can log in at all on this machine.
+    """Which roles have an environment credential on this machine.
 
-    Reported by `/health` so an operator can see that the internal and client
-    doors are shut without having to read the environment - a role that silently
-    refuses looks identical to a wrong password from the outside."""
-    return [role for role in roles.ROLES if all(credential_for(role))]
+    Reported so an operator can see that the internal door is shut without
+    reading the environment - a role that silently refuses looks identical to a
+    wrong password from the outside.
+
+    Clients are not listed here and their absence is not a misconfiguration:
+    they authenticate through the registry, and `gateway.clients.listing` is
+    where "who can log in as a client" is answered."""
+    return [role for role in roles.ROLES
+            if role in ROLE_CREDENTIAL_ENV and all(credential_for(role))]
 
 
 def identify(username: str, password: str) -> str | None:
-    """The role this credential belongs to, or None.
+    """The **environment-configured** role this credential belongs to, or None.
+
+    Covers the operator and internal roles only. Clients authenticate through
+    `gateway.clients.authenticate`, which returns an identity rather than a role
+    because a client session needs to know *which* client it is (TQ-43, §98).
 
     Every configured role is checked rather than stopping at the first username
     match, so two roles sharing a username cannot make one of them
@@ -117,7 +134,7 @@ def identify(username: str, password: str) -> str | None:
     belonged to would be guessing at exactly the wrong moment."""
     supplied = (username or "").strip().lower()
     matched = None
-    for role in roles.ROLES:
+    for role in ROLE_CREDENTIAL_ENV:
         name, digest = credential_for(role)
         if name is None or digest is None:
             continue

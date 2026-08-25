@@ -30,12 +30,17 @@ def _hash(password: str) -> str:
 
 @pytest.fixture
 def three_roles(monkeypatch):
-    """One credential per role, so the boundary can be crossed in a test the way
-    it would be crossed in life."""
+    """The environment-configured credentials, so the boundary can be crossed in
+    a test the way it would be crossed in life.
+
+    Two, not three. TQ-43 (§98) took the client role out of the environment: a
+    shared variable is a fair credential for a role that is one person and a
+    group password for one that is many, so clients register individually and
+    are authenticated through `gateway.clients` instead."""
     for role, (user_env, hash_env) in auth.ROLE_CREDENTIAL_ENV.items():
         monkeypatch.setenv(user_env, f"{role}-user")
         monkeypatch.setenv(hash_env, _hash(f"{role}-pass"))
-    return {role: (f"{role}-user", f"{role}-pass") for role in roles.ROLES}
+    return {role: (f"{role}-user", f"{role}-pass") for role in auth.ROLE_CREDENTIAL_ENV}
 
 
 # --- the vocabulary fails closed ---------------------------------------------------
@@ -178,13 +183,35 @@ def test_the_websocket_checks_the_conversation_capability():
 # --- logging in as somebody -----------------------------------------------------------
 
 
-def test_each_credential_resolves_to_its_own_role(three_roles):
+def test_each_environment_credential_resolves_to_its_own_role(three_roles):
     for role, (username, password) in three_roles.items():
         assert auth.identify(username, password) == role
 
 
+def test_the_client_role_has_no_environment_credential():
+    """The change TQ-43 exists for. A shared `GATEWAY_CLIENT_PASSWORD_HASH`
+    would be a group password for every client at once - and leaving it
+    configurable "for compatibility" would leave the hole open rather than
+    provide a way out of it."""
+    assert roles.ROLE_CLIENT not in auth.ROLE_CREDENTIAL_ENV
+    with pytest.raises(roles.UnknownRole):
+        auth.credential_for(roles.ROLE_CLIENT)
+    assert roles.ROLE_CLIENT not in auth.configured_roles()
+
+
+def test_a_registered_client_logs_in_as_itself(gateway_conn, three_roles):
+    """And the identity it gets is the registry's, not the string it typed."""
+    from gateway import clients
+
+    _, password = clients.register(gateway_conn, "alice", display_name="Alice")
+
+    assert clients.authenticate(gateway_conn, "alice", password) == "alice"
+    # The environment path does not know about them at all.
+    assert auth.identify("alice", password) is None
+
+
 def test_a_wrong_password_resolves_to_nobody(three_roles):
-    assert auth.identify("operator-user", "client-pass") is None
+    assert auth.identify("operator-user", "internal-pass") is None
 
 
 def test_an_unconfigured_role_cannot_log_in(monkeypatch):
@@ -204,8 +231,8 @@ def test_an_unconfigured_role_cannot_log_in(monkeypatch):
 def test_a_malformed_hash_refuses_rather_than_raising(monkeypatch):
     """A typo in the environment must not become a 500 that leaks a stack trace
     to an external client."""
-    monkeypatch.setenv("GATEWAY_CLIENT_USER", "c")
-    monkeypatch.setenv("GATEWAY_CLIENT_PASSWORD_HASH", "not-a-bcrypt-hash")
+    monkeypatch.setenv("GATEWAY_INTERNAL_USER", "c")
+    monkeypatch.setenv("GATEWAY_INTERNAL_PASSWORD_HASH", "not-a-bcrypt-hash")
     assert auth.identify("c", "anything") is None
 
 
