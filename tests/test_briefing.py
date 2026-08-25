@@ -363,3 +363,39 @@ def test_the_presenter_has_no_table_of_its_own(conn):
     tables = {row["name"] for row in conn.fetchall(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert not any("presenter" in name for name in tables)
+
+
+def test_a_failure_stamped_at_the_checkpoint_is_not_re_announced(conn):
+    """The sibling of the completed-section boundary, and it was wrong.
+
+    §90 fixed `_completed` by filtering strictly in Python and left `_attention`
+    calling the inclusive form beside it — so a failure bearing exactly the
+    checkpoint's timestamp came back as news on every visit while a completion
+    did not. Found by sweeping every comparison against a clock (§94); fixed by
+    moving the strictness into `status_events.recent`'s parameter and naming it
+    `after`, so neither call site has to remember."""
+    workspace.save(conn, {"activeTab": "newsroom"})
+    since = briefing.last_seen(conn)
+    _publish(conn, "broke exactly then", severity=status_events.SEVERITY_ERROR,
+             status=status_events.STATUS_FAILED)
+    conn.execute("UPDATE status_events SET timestamp = ? WHERE message = ?",
+                 (since, "broke exactly then"))
+
+    assert CATEGORY_ATTENTION not in _categories(briefing.compile(conn, since=since))
+
+
+def test_both_briefing_windows_use_the_same_boundary(conn):
+    """The property that was violated: two sections asking the same question of
+    the same clock must answer it the same way."""
+    workspace.save(conn, {"activeTab": "newsroom"})
+    since = briefing.last_seen(conn)
+    for message, overrides in (
+        ("failed at the boundary", {"severity": status_events.SEVERITY_ERROR,
+                                    "status": status_events.STATUS_FAILED}),
+        ("finished at the boundary", {"status": status_events.STATUS_COMPLETED}),
+    ):
+        _publish(conn, message, **overrides)
+        conn.execute("UPDATE status_events SET timestamp = ? WHERE message = ?",
+                     (since, message))
+
+    assert briefing.compile(conn, since=since)["items"] == []

@@ -42,6 +42,9 @@ holds the queue, not the record.
 >
 > **TQ-39** (the client agent, and the conversation leak it uncovered, §93) is done.
 >
+> **TQ-41** (the clock-comparison sweep, §94) is done — one more bug found, and the rule
+> that came out of it is not the one three fixes in a row suggested.
+>
 > Next: **TQ-40** (the client agent's skills, when there is a real producer behind one). Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
 > TQ-28 (the isolation guard).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
@@ -630,6 +633,17 @@ continuity. TQ-34 built the boundary it sits behind; the agent behind it is stil
 generic assistant. The mechanism already exists — `coo_identity` (§88) is the same shape, one
 organization-scoped identity with its own versioning — so this is that pattern applied per client
 rather than new machinery.
+
+### TQ-41 — Sweep every comparison against a clock
+
+**NEED (GREEN) · DONE 2026-08-26 · owner request · `SPEC_RECONCILIATION.md` §94**
+
+Three bugs in three days shared a shape (§90, §91, §93). Sixty-three comparisons audited: one
+more bug (`status_events`' inclusive `since`, compensated for in one of two briefing call sites
+and not the other), and a rule that is *not* "always use strict" — equality must give the answer
+a zero-width window demands, and which answer that is depends on which side the window sits.
+A blanket rule would have broken `list_stale_active_agents` in the direction of never marking a
+crashed agent crashed.
 
 ### TQ-40 — The client agent's skills
 

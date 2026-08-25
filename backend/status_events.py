@@ -221,14 +221,17 @@ def recent(
     limit: int = 50,
     source: str | None = None,
     severities: tuple[str, ...] | list[str] | None = None,
-    since: str | None = None,
+    after: str | None = None,
     correlation_id: str | None = None,
 ) -> list[dict]:
     """The feed, newest first (§4.2), with §4.4's filters.
 
     `source` matches any of the three source columns, because §4.4's filter
     list mixes departments, engines and agents in one control and an operator
-    picking "Explorer" does not care which column it lives in."""
+    picking "Explorer" does not care which column it lives in.
+
+    `after` is exclusive - see the clause below for why the name carries the
+    semantics rather than a docstring line nobody reads at the call site."""
     clauses, params = [], []
     if source is not None:
         clauses.append("(source_department = ? OR source_engine = ? OR source_agent = ?)")
@@ -239,9 +242,22 @@ def recent(
             raise ValueError(f"unknown severity filter {unknown}; known: {SEVERITIES}")
         clauses.append(f"severity IN ({','.join('?' * len(severities))})")
         params += list(severities)
-    if since is not None:
-        clauses.append("timestamp >= ?")
-        params.append(since)
+    if after is not None:
+        # Strictly after, and the parameter is named for it (TQ-41, §94).
+        #
+        # It was `since` and inclusive, which reads as the conventional meaning
+        # and behaves as the dangerous one: an event bearing exactly the
+        # boundary timestamp came back as new. On Windows that is the normal
+        # case rather than an edge - two consecutive `datetime.now()` calls
+        # return the identical value about 19,997 times in 20,000 - so a caller
+        # asking "what has happened since I last looked" was re-served the same
+        # event on every visit.
+        #
+        # backend/briefing.py used to compensate for this in one of its two call
+        # sites and not the other. Fixing the parameter fixes both, and naming it
+        # `after` means the next caller cannot read it as inclusive.
+        clauses.append("timestamp > ?")
+        params.append(after)
     if correlation_id is not None:
         clauses.append("correlation_id = ?")
         params.append(correlation_id)
@@ -273,11 +289,11 @@ def sources(conn: Database) -> list[dict]:
     return sorted(found.values(), key=lambda item: (item["kind"], item["name"]))
 
 
-def failures(conn: Database, *, limit: int = 50, since: str | None = None) -> list[dict]:
+def failures(conn: Database, *, limit: int = 50, after: str | None = None) -> list[dict]:
     """"What failed during startup?" (§4.5) as a query rather than a scroll.
     ERROR and CRITICAL only - a WARNING is a thing worth seeing, not a
     thing that failed."""
-    return recent(conn, limit=limit, since=since,
+    return recent(conn, limit=limit, after=after,
                   severities=(SEVERITY_ERROR, SEVERITY_CRITICAL))
 
 
