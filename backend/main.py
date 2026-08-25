@@ -32,7 +32,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import continuity, fi_db, missions, reference_data, strategy
+from backend import continuity, fi_db, metadata_engine, missions, reference_data, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -154,15 +154,36 @@ async def lifespan(app: FastAPI):
     # second one under the same permanent identity.
     reconciliation = controller.reconcile_on_start()
     print(f"[controller] reconciled on start: {reconciliation}")
-    # Day Zero rule (addendum 26 §3): reference data precedes waking any
-    # operational agent. Runs on every startup, not just the first - it is
-    # idempotent (backend/reference_data.py's run_reference_engine) and an
-    # existing database still deserves a fresh certification rather than a
-    # trusted stale one.
-    reference_readiness = reference_data.run_reference_engine(controller.conn)
-    readiness = reference_readiness["readiness"]
-    print(f"[reference_data] readiness: {readiness['status']} "
-          f"({readiness['focus_asset_count']} focus assets)")
+    # The Metadata Engine, before reference data and gating it (addendum 39
+    # §14, TQ-23/§72): the one strict ordering constraint that specification
+    # has. Everything downstream of METADATA_READY is allowed to overlap and
+    # use readiness thresholds instead (39 §14's own closing paragraph), but
+    # this edge is hard.
+    metadata = metadata_engine.run(controller.conn)
+    for line in metadata_engine.format_events(metadata["events"]):
+        print(f"[metadata] {line}")
+    if not metadata["ready"]:
+        # 38 §12: a failed component must be visible and its dependents must
+        # not falsely report success. Reference data is not started, and the
+        # workforce is not woken - the same shape the reference gate below
+        # already uses for its own failure.
+        print(
+            "\n" + "!" * 78 + "\n"
+            "! METADATA ENGINE FAILED - REFERENCE DATA AND THE WORKFORCE WERE NOT STARTED.\n"
+            "! Fix the boot configuration (boot_config.json) and restart the server.\n"
+            + "!" * 78 + "\n"
+        )
+        readiness = {"status": "BLOCKED_ON_METADATA", "focus_asset_count": 0, "checks": []}
+    else:
+        # Day Zero rule (addendum 26 §3): reference data precedes waking any
+        # operational agent. Runs on every startup, not just the first - it is
+        # idempotent (backend/reference_data.py's run_reference_engine) and an
+        # existing database still deserves a fresh certification rather than a
+        # trusted stale one.
+        reference_readiness = reference_data.run_reference_engine(controller.conn)
+        readiness = reference_readiness["readiness"]
+        print(f"[reference_data] readiness: {readiness['status']} "
+              f"({readiness['focus_asset_count']} focus assets)")
     # §40's disposition made real: FAILED certification now blocks waking the
     # operational workforce, because Explorer's parity path finally consumes
     # focus assets (_reference_allows_bootstrap's docstring). The Controller

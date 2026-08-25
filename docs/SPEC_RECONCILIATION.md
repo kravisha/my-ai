@@ -5308,3 +5308,108 @@ the vocabulary note), implemented-not-a-subset, wrong types, duplicates,
 empty, a JSON array instead of an object — plus environment-first path
 resolution at call time, frozenness, and the summary line the feed will
 carry.
+
+---
+
+## §72 — The Metadata Engine gets a voice, over datasets it does not own (2026-08-25)
+
+TQ-23. Addendum 39 §12's startup algorithm, built over the datasets that
+already existed rather than the four new tables a literal reading would
+have produced (§70 disposition 1). `backend/metadata_engine.py` — an
+engine, not an agent, following `reference_data.py`'s precedent exactly:
+pure functions over a connection, invoked from startup, no charter, no
+watcher, idle when done.
+
+### What it actually verifies
+
+Agent Names is `agent_names`; Global Asset Classes, Implemented List and
+Focus List are `asset_classes`' three flags. The engine owns no schema. It
+verifies, reconciles where there is state that can drift, counts, and
+publishes — and 39 §12 step 8's summary comes out in the spec's own field
+names (`names_available`, `global_asset_classes`, `implemented_items`,
+`active_focus_items`) so an operator holding the specification recognizes
+the line.
+
+### The duplication this increment had to resolve
+
+Building TQ-22 created a second declaration of one fact:
+`reference_data.CAPABILITY_FOCUS_CLASSES` (which seeds a fresh database)
+and `boot_config.implemented_asset_classes` (which declares scope to
+operators) both say what the software can process. Two models of one fact
+is what the Conflict Rule forbids, and it could not be left implicit.
+
+**Resolution: boot configuration is the authority.** The constant remains
+the seed-time default for a database created before any metadata pass;
+where database and configuration disagree, the engine changes the database
+and *announces the correction as a WARNING event*. That is not 39 §13's
+forbidden "destroy operator changes without explicit instruction" —
+`boot_config.json` is version-controlled, so it is the explicit
+instruction, and the change is reported rather than swallowed. A test pins
+the two declarations equal so they cannot drift apart unnoticed, the same
+drift-guard `organization.yaml` and `model_registry.yaml` apply to their
+own claims.
+
+The reconciliation runs in both directions, because 39 §10's requirement is
+symmetric: "nothing else should be falsely marked implemented" means
+switching capabilities *off* as readily as on.
+
+### The Focus List, honestly halved
+
+39 §11's Focus List has two halves here and only one is a table. The
+asset-class half is `in_focus` and is reported. The development half —
+`PRE_ALPHA_STARTUP_OBSERVABILITY` and its siblings — is declared in
+`boot_config.json` and lives nowhere else on purpose: a focus table that
+merely restated a version-controlled file would be a table nothing writes
+to, wearing the appearance of a capability. Both halves are counted; only
+the half with drifting state is reconciled.
+
+### Events without an event store
+
+39 §12 requires the engine to *publish*, and TQ-24's durable stream does
+not exist yet. So `run()` returns structured events and the caller prints
+them — exactly what `run_reference_engine`'s caller already does with its
+readiness line. The event shape is deliberately a *subset* of addendum 38
+§4.3's schema, with absent fields left absent rather than null-padded: an
+engine is not an agent and startup is not a task, and inventing empty
+fields to look schema-complete is how a schema stops meaning anything.
+TQ-24 adopts these events rather than replacing them.
+
+### The one hard gate
+
+39 §14's single strict ordering constraint is now enforced in
+`backend/main.py`: the Metadata Engine runs first, and the Reference Data
+Engine is started only inside the `ready` branch. A failed metadata pass
+prints the same loud banner the reference gate already uses and leaves
+reference data unstarted and the workforce unwoken — 38 §12's requirement
+that a failed component be visible and its dependents not falsely report
+success. Everything downstream stays free to overlap on readiness
+thresholds, per 39 §14's own closing paragraph; only this edge is hard.
+
+The ordering is pinned by a source assertion rather than a running server,
+for the reason `_reference_allows_bootstrap` was extracted as a pure
+function in the first place: this repository's TestClient has a known
+lifespan-thread quirk, documented in `backend/main.py`'s own lifespan
+docstring.
+
+### A small legibility fix, found by reading the output
+
+The first narration said "Agent Names verified: 40 available of 41",
+which invites the reader to hunt for an agent holding the 41st. There is
+none: this database seeds one *reserved* name (the CEO's) that no agent
+holds. Available, assigned and reserved are now counted apart. Worth
+recording because it was found by looking at the feed rather than by a
+test — which is the whole argument for observability being a deliverable.
+
+### Verified
+
+Fourteen new tests (1789 passing): the published sequence in 39 §12's
+order, all four datasets verified under the spec's own names, the summary's
+four counts with real numbers, the lifecycle stage published; idempotency
+— repeated runs changing no counts and no row counts, a second run
+reporting no corrections and no warnings, and **an assigned agent name
+surviving three restarts** (39 §13's sharpest clause); boot configuration
+winning both directions of the implemented reconciliation with the
+correction announced; the two declarations pinned equal; an unloadable
+boot configuration failing visibly without raising and without claiming
+any dataset verified; an exhausted name pool warning rather than passing
+quietly; and the §14 gate asserted against the startup source.

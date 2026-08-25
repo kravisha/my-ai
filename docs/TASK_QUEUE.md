@@ -317,7 +317,7 @@ a persisted stage the COO can read at startup. Deliberately not a second configu
 
 ### TQ-23 — Metadata Engine as a named, observable startup phase
 
-**NEED (GREEN) · QUEUED · depends on TQ-22 · `SPEC_RECONCILIATION.md` §70**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §72**
 
 Source: addendum 39 §7, §12, §13, §14. The *work* already exists — schema init, seeding, the
 fail-closed reference gate — but no component announces itself, verifies the four datasets
