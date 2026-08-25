@@ -6562,3 +6562,102 @@ things this session found, and the console repeating a falsehood about the
 organization is precisely the failure mode the console exists to prevent.
 
 Suite: **1939 passing**.
+
+---
+
+## §87 — The gate now governs the thing that spawns (2026-08-25, TQ-38)
+
+The defect recorded in TQ-38, with the cause corrected: I attributed the spawning
+to `reconcile_on_start`, which is read-only and only reports. The real path was
+one layer down.
+
+### What was actually happening
+
+`_controller_poll_loop` started unconditionally, outside the login branch. Every
+tick it called `process_next_directive()` and `watch_coo()`. On a restart where
+the previous session had left a COO row `active` with a stale heartbeat,
+`watch_coo` did exactly what the Fault Tolerance Framework §4 tells it to —
+diagnosed a failed subordinate and recovered it. The revived COO saw its roles
+were short and filed spawn directives; `process_next_directive`, in the same
+loop, executed them. Five more agents.
+
+Reproduced on a copy of the real database, which held precisely that state — six
+agents `active`/`process_state='running'` with stale heartbeats and **no pending
+directives**, confirming the spawn came from the watcher rather than a queued
+backlog.
+
+Neither half was wrong on its own. The login gate correctly governed
+`_operational_startup`; the watcher correctly recovered a failed COO. The defect
+lived in the seam, which is why the fix and its test are both about the seam.
+
+### The design question, decided
+
+Should recovery be exempt from the login gate? An agent orphaned by a crash
+arguably *should* be restored regardless.
+
+**Decided: no.** The duty of care exists to keep a *started* workforce alive.
+Where no operator has started one, there is nothing to keep alive, and
+"recovery" is starting a workforce while wearing recovery's clothes. So the duty
+attaches to the workforce rather than to the process: it begins when the
+workforce does.
+
+What still runs while dormant is the Controller's own heartbeat. Its liveness is
+not workforce activity, and suppressing it would make a healthy Controller
+indistinguishable from a dead one.
+
+The gate is passed as a **callable**, not a boolean. The gate opens later, when
+an operator logs in; a value snapshotted at lifespan would hold the loop shut
+for the life of the process — the same defect wearing the opposite sign, and now
+its own test.
+
+### The half that matters more: the console could state a falsehood
+
+`awaiting_login` was derived from `startup_report is None` and rendered as
+though it meant "nothing is running". Those are two different facts —
+authorisation, and the world — and a server can legitimately be dormant while
+agents survive an unclean shutdown.
+
+`live_agents()` now answers the second question directly, from **heartbeats**
+rather than `agent_registry.process_state`: process_state is what the registry
+was last told, and an unclean shutdown leaves it claiming "running" for
+processes that died with the machine. A heartbeat inside the threshold cannot be
+stale by construction — something had to write it. The threshold is the same 45s
+the Controller and the COO already use, so three components cannot hold three
+opinions about who is alive.
+
+Where the two facts contradict each other, the server now **says so loudly**
+rather than smoothing it over: a WARNING into the event stream, a distinct
+startup banner naming the identities, and a console that leads with "N agents
+running that nobody started" instead of "the organization is asleep". After the
+gate fix this server can no longer create that contradiction, but it can still
+walk into one, and that is exactly when the operator needs to see it — a second
+workforce started on top of orphans is a genuinely bad outcome.
+
+`/server/status` was deliberately left alone. It promises in its own docstring
+to report "no counts, no identities, no configuration" because it answers a
+pre-login screen; the console endpoints, which already expose the full event
+stream and the agent roster, are the right place for this.
+
+### Found by looking, again — including at my own fix
+
+The first version of `live_agents()` counted `controller-1`, so a dormant server
+announced *"1 agent(s) are heartbeating... nothing in this process started them"*
+about **its own Controller**, which heartbeats every tick by design. The fix for
+a console that stated a falsehood had introduced a fresh one, and no test caught
+it — it appeared on the first line of the first real startup. The Controller runs
+inside this process rather than as a subprocess, so it is the one row that can
+never be a stray; `test_the_controller_is_not_counted_as_a_stray_agent` pins it.
+
+### Verified against real processes, all three branches
+
+- **Dormant, stale COO in the database:** no agent spawned; before the fix six
+  appeared within the first second.
+- **Gate opens:** the automation path started the workforce normally —
+  `awaiting_login: False`, `live_agents: 5` (five workforce agents, the
+  Controller correctly excluded, matching the COO's own count of six).
+- **Orphans present:** the server was killed leaving its agents alive, and the
+  restart printed the alarm banner naming all five and published the WARNING.
+  Reconciliation reported `{'coo': 'adopted'}` — and the process list showed two
+  live COOs, which is the duplicate this machinery exists to prevent.
+
+Suite: **1946 passing**.

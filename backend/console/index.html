@@ -442,7 +442,9 @@ function renderSources(sources){
 function renderLead(d){
   const st=d.standing||[];
   const attn=(d.sources||[]).reduce((n,s)=>n+(s.attention||0),0);
-  const headline=d.awaiting_login
+  const headline=(d.awaiting_login && d.live_agents>0)
+    ? `${d.live_agents} agent${d.live_agents===1?"":"s"} running that nobody started`
+    : d.awaiting_login
     ? "The organization is asleep, waiting to be woken."
     : (attn ? `${attn} item${attn===1?"":"s"} want attention`
             : (st.length ? (st[0].message || "The organization is running quietly.")
@@ -762,13 +764,19 @@ async function pollFeed(){
     const d=await r.json();
     if(d.events.length)S.seen=Math.max(S.seen,d.events[0].event_id);
     renderLead(d); renderFeed(d.events); renderSources(d.sources||[]); renderStanding(d.standing||[]);
-    // The lifecycle stage comes from the operational startup report, which
-    // does not exist until the workforce starts. "dormant" is the true answer
-    // in that window; an em dash reads as a value the console failed to fetch.
-    if(d.awaiting_login) $("stage").textContent="dormant";
+    // Two facts, never collapsed into one (TQ-38). "Awaiting login" is about
+    // authorisation; "live agents" is about the world. The console used to
+    // report the first and call it the second, and so announced a dormant
+    // workforce while six agents worked behind it.
+    const live=d.live_agents;
+    const contradiction=d.awaiting_login && live>0;
+    if(d.awaiting_login) $("stage").textContent=contradiction?"UNACCOUNTED":"dormant";
+    $("stage").style.color=contradiction?"var(--err)":"";
     $("live").className="pill live"; $("live").innerHTML='<i class="dot"></i>ON AIR';
     $("footer").textContent=`${S.printed} line(s) this session · feed ${FEED_MS/1000}s · desks ${DESK_MS/1000}s`
-      +(d.awaiting_login?" · workforce dormant, awaiting operator login":"");
+      +(contradiction
+          ? ` · ⚠ ${live} agent(s) running but no operator has started a workforce — see Alerts`
+          : (d.awaiting_login?" · workforce dormant, awaiting operator login":""));
   }catch(err){
     // A console that blanks when the server restarts is worse than one that
     // says so and keeps its history on screen.

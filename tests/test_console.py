@@ -182,7 +182,10 @@ def test_feed_before_the_database_is_known_is_empty_not_an_error(monkeypatch):
     monkeypatch.setattr(backend_main.app.state, "db_path", None, raising=False)
     body = asyncio.run(backend_main.console_feed(limit=50, source=None,
                                                  attention_only=False, since_id=None))
-    assert body == {"events": [], "sources": [], "standing": [], "awaiting_login": True}
+    assert body == {"events": [], "sources": [], "standing": [], "awaiting_login": True,
+                    # Not 0: with no database, "how many agents are running" has
+                    # no answer, and 0 would be an answer (TQ-38, §87).
+                    "live_agents": None}
 
 
 # --- the whole startup, as the operator would read it ------------------------------
@@ -201,3 +204,75 @@ def test_a_real_startup_is_readable_end_to_end(wired):
     assert any("Metadata ready" in m for m in messages)
     assert "metadata_engine" in {s["name"] for s in body["sources"]}
     assert body["standing"][0]["status"] == status_events.STATUS_IDLE
+
+
+# --- the console cannot state a falsehood about the workforce (TQ-38, §87) --------
+
+
+def test_awaiting_login_and_live_agents_are_reported_as_separate_facts(wired):
+    """The console said "workforce dormant, awaiting operator login" while six
+    agents worked behind it, because it derived one fact from the other:
+    `awaiting_login` came from `startup_report is None`, and the page rendered
+    that as though it meant "nothing is running".
+
+    They are different questions. One is about authorisation - has an operator
+    started a workforce in this process. The other is about the world - are
+    agents running. A server can be dormant while agents survive an unclean
+    shutdown, and that is exactly the situation the operator most needs to see.
+    """
+    conn, _ = wired
+    fi_db.register_agent(conn, "speculator-1", "speculator", pid=4242)
+    fi_db.record_heartbeat(conn, "speculator-1")
+
+    body = _feed(wired)
+
+    assert body["awaiting_login"] is True, "no operator has started a workforce"
+    assert body["live_agents"] == 1, (
+        "an agent heartbeating right now must be reported as running, whatever "
+        "the startup report says"
+    )
+
+
+def test_a_genuinely_dormant_server_reports_no_live_agents(wired):
+    """The ordinary case, asserted so the previous test cannot pass by always
+    returning a number greater than zero."""
+    conn, _ = wired
+    assert _feed(wired)["live_agents"] == 0
+
+
+def test_liveness_comes_from_heartbeats_not_from_the_registry_s_belief(wired):
+    """`agent_registry.process_state` says "running" for every process the
+    machine lost in an unclean shutdown - it is what the registry was last
+    told, not what is true. A heartbeat inside the threshold cannot be stale by
+    construction, because something had to write it."""
+    conn, _ = wired
+    fi_db.register_agent(conn, "analysis-1", "analysis", pid=99)
+    # Registered, never heartbeated: claimed by the registry, silent in fact.
+    assert _feed(wired)["live_agents"] == 0
+
+    stale = "2020-01-01T00:00:00+00:00"
+    conn.execute("UPDATE agent_registry SET process_state='running', "
+                 "last_heartbeat_at=? WHERE identity='analysis-1'", (stale,))
+    assert _feed(wired)["live_agents"] == 0, (
+        "a six-year-old heartbeat is not a running process"
+    )
+
+
+def test_the_controller_is_not_counted_as_a_stray_agent(wired):
+    """The Controller heartbeats every tick *by design*, including while the
+    server is dormant, so that a healthy Controller is distinguishable from a
+    dead one. It runs inside this process rather than as a subprocess.
+
+    The first version of the liveness check counted it, and a dormant server
+    announced "1 agent(s) are heartbeating... nothing in this process started
+    them" about its own Controller. Found by starting the server and reading
+    what it printed - the fix for a console that stated a falsehood had
+    introduced a fresh one."""
+    from backend.controller import CONTROLLER_IDENTITY
+
+    conn, backend_main = wired
+    fi_db.register_agent(conn, CONTROLLER_IDENTITY, "controller", pid=1)
+    fi_db.record_heartbeat(conn, CONTROLLER_IDENTITY)
+
+    assert _feed(wired)["live_agents"] == 0
+    assert backend_main.live_agents(conn) == []
