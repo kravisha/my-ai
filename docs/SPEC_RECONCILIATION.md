@@ -6762,3 +6762,122 @@ that found the real defects in §86, applied to something that turned out to be
 fine.
 
 Suite: **1970 passing**.
+
+---
+
+## §89 — The migration pipeline, built before it is needed (2026-08-25, TQ-36)
+
+Addendum 42 §7–§10, §14, §22, §23 built as `backend/migrations.py`, plus one
+addition to `backend/db.py` that §23 turned out to require.
+
+### A reasoned exception to "no empty machinery"
+
+This system's standing rule is that machinery with no user does not get built,
+and this module breaks it deliberately. §23's ordering —
+
+> Validate source snapshot. Create backup snapshot. Record source schema. Record
+> target schema. Run migration. Validate migrated state. Only then mark the new
+> state active.
+
+— has all of its value *before* the first upgrade, because the failure it
+prevents is destroying state during one. A pipeline written when the first
+migration is written is a pipeline whose first production run is also its first
+run ever, on the day it matters most.
+
+So the engine exists and the registry is honest. Both registered stores
+(`workspace`, `coo_identity`) are at version 1 and declare **no migration
+steps**, and each carries a `note` saying *why* it has none — because "no
+migrations registered" and "migrations forgotten" look identical from an empty
+dict. `status()` reports "up to date" rather than implying work is pending.
+
+The engine's first user is its test suite, which registers a `probe` store with
+real 1→2 and 2→3 steps. That is not a mock: it is what makes the ladder
+trustworthy on the day a real store gains a rung.
+
+### `Database.transaction`, and why it had to be added
+
+"Only then mark the new state active" is unimplementable when every write
+commits as it goes — which is what `Database` did, correctly, for every other
+caller in this system. A run failing at step three would leave the first two
+applied and the version column claiming neither had run: the half-migrated state
+§23 exists to prevent.
+
+So `Database` gained a transaction context manager. Two decisions inside it are
+worth recording:
+
+- **Not reentrant.** A nested block that silently joined the outer one would let
+  the inner code believe it had committed while an outer rollback could still
+  undo it, and that belief is precisely what a caller reaches for a transaction
+  to avoid.
+- **`executescript` is refused inside one.** sqlite3 issues a COMMIT before
+  running it, so allowing it would end the transaction while the block still
+  looked atomic — a trap that surfaces only when a rollback is needed and turns
+  out not to have happened.
+
+### Three refusals that are the actual safety
+
+- **A missing rung stops.** State at 5 with no `5→6` registered refuses rather
+  than skipping, because jumping it hands version-9 code a version-5 shape while
+  the version column claims otherwise. Not forceable: `--force` re-runs steps a
+  developer has edited, and must not invent one that does not exist.
+- **State from the future is left alone** (§22). Not corruption, and the remedy
+  is not a reset. Overwriting a newer build's state because this one cannot read
+  it destroys exactly what §22 says to preserve.
+- **No backup, no migration.** §23 asks for a pre-upgrade snapshot; when one
+  cannot be taken the default is to stop, and its id is recorded against the
+  attempt so a rollback does not depend on somebody remembering which backup
+  came before which run.
+
+Failures are rows in `schema_migrations`, not absences. An audit trail that only
+records successes cannot answer the question anybody actually asks it after an
+incident. A failed migration also publishes a status event the console renders —
+§22's "alert the operator", which a failed migration always warrants, because it
+is the one failure where doing nothing and doing something are both potentially
+destructive.
+
+### The escape hatches, which are the YELLOW half
+
+§14: "Persistence must help development, not trap developers inside stale
+state." That became a live risk the moment TQ-35 landed — before it, a developer
+could delete the database and start over; now that throws away the COO. All
+eight of §14's hatches have a real target today, and they are a CLI because that
+is how a developer reaches for them:
+
+```
+python -m backend.migrations status | inspect | history | migrate | snapshots | restore | reset
+```
+
+`reset` is gated twice: it requires `--yes`, and it refuses outside PRE_ALPHA or
+ALPHA — the same reasoning as §74's plaintext-password gate. An escape hatch that
+can be pulled in production is not a development convenience; one that destroys
+the only copy is what §22 forbids, wearing a helpful name. It fails closed on an
+unreadable boot config, because "I could not tell what stage this is" must not
+resolve to "go ahead and wipe it". Verified against the real code by pointing
+`BOOT_CONFIG_PATH` at a PRODUCTION config and watching it refuse with the COO
+still in place.
+
+Disabling persistence (§14's fourth hatch) is `MYAI_PERSISTENCE_DISABLED=1`,
+because it has to hold for a session rather than a command. `workspace.save`
+writes nothing and **says so** in its return value: silently pretending to save
+would be worse than not offering the hatch, since a developer who cannot tell
+"saved" from "deliberately not saved" is exactly who §14 is written for.
+
+### Found by running it
+
+`status` against a copy of the real database — which predates `coo_identity` —
+reported `UNREADABLE - no such table`. Wrong twice over: it reads as corruption,
+sending a developer hunting for damage that is not there, and it is the *normal*
+condition of every database written before a store was added, which is precisely
+the population a migration tool serves.
+
+`Store` now names its table, so "never created here" is a distinct answer from
+"unreadable" and from "created but empty". Naming the table also deleted a
+second, hand-maintained store→table map inside `reset` that would have drifted.
+
+One test bug worth recording because it would have passed vacuously: the
+alert-on-failure test registered a store at `code_version=3` with one step, so
+the run refused for a *missing rung* and never reached the failure path it
+claimed to test. It now asserts the action is `failed` before asserting the
+alarm.
+
+Suite: **2006 passing**.

@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, coo_identity, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import competency, compliance, coo_identity, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1396,6 +1396,10 @@ def init_schema(conn: Database) -> None:
     # the code, rather than a label the current implementation happens to use.
     # Same reason as every module above - this module must not import fi_db back.
     conn.executescript(coo_identity.SCHEMA)
+    # The migration audit trail (addendum 42 §15/§23, §89). Created here rather
+    # than by the pipeline itself so that the table recording a failed migration
+    # cannot be the thing that is missing when one fails.
+    conn.executescript(migrations.SCHEMA)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1522,7 +1526,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
-         workspace.SCHEMA, coo_identity.SCHEMA)
+         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
