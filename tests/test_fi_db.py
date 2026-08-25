@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from backend import fi_db
+from backend import coo_identity, fi_db
 
 
 def test_init_schema_is_idempotent(conn):
@@ -603,7 +603,14 @@ def test_list_agent_names_assigned_only_filter(conn):
     fi_db.register_agent(conn, "dummy-1", "dummy", 111)
     assigned = fi_db.list_agent_names(conn, assigned_only=True)
     assert [n["assigned_to_identity"] for n in assigned] == ["dummy-1"]
-    assert len(fi_db.list_agent_names(conn)) == len(fi_db.AGENT_NAME_POOL) + 1  # + reserved CEO name
+    # The pool plus the two reserved names: the CEO's, and the COO's
+    # (coo_identity.DEFAULT_NAME, reserved since TQ-35 so the pool cannot hand
+    # "Kumbhakarnan" to an ordinary agent). Named rather than counted, so a
+    # future reservation fails here with a readable diff instead of an
+    # off-by-one.
+    names = {row["name"] for row in fi_db.list_agent_names(conn)}
+    assert names == set(fi_db.AGENT_NAME_POOL) | {fi_db.CEO_DISPLAY_NAME,
+                                                  coo_identity.DEFAULT_NAME}
 
 
 # --- Pre-Alpha static metadata: Security Universe (Consolidated §10/§21) ---
@@ -654,7 +661,8 @@ def test_seeding_is_idempotent_across_repeated_init(conn):
     fi_db.init_schema(conn)
 
     assert fi_db.get_agent_name(conn, "dummy-1") == name_before
-    assert len(fi_db.list_agent_names(conn)) == len(fi_db.AGENT_NAME_POOL) + 1
+    assert {row["name"] for row in fi_db.list_agent_names(conn)} == (
+        set(fi_db.AGENT_NAME_POOL) | {fi_db.CEO_DISPLAY_NAME, coo_identity.DEFAULT_NAME})
     assert len(fi_db.list_security_universe(conn)) == len(fi_db.SECURITY_UNIVERSE_SEED)
 
 

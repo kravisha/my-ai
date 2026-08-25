@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import competency, compliance, coo_identity, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1392,6 +1392,10 @@ def init_schema(conn: Database) -> None:
     # and half-written. Same reason as every module above - this module must
     # not import fi_db back.
     conn.executescript(workspace.SCHEMA)
+    # Kumbhakarnan (addendum 42 §3/§19, §88): the COO as an entity that outlives
+    # the code, rather than a label the current implementation happens to use.
+    # Same reason as every module above - this module must not import fi_db back.
+    conn.executescript(coo_identity.SCHEMA)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1518,7 +1522,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
-         workspace.SCHEMA)
+         workspace.SCHEMA, coo_identity.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
@@ -1560,6 +1564,20 @@ def _seed_static_metadata(conn: Database) -> None:
         "INSERT INTO agent_names (name, reserved, schema_version) VALUES (?, 1, ?) "
         "ON CONFLICT(name) DO UPDATE SET reserved = 1",
         (CEO_DISPLAY_NAME, SCHEMA_VERSION),
+    )
+    # The COO's identity, and its name taken out of circulation. Reserving it
+    # is the same mechanism the CEO name uses above, and it closes a real
+    # collision: without it the name pool could hand "Kumbhakarnan" to an
+    # ordinary agent, and the organization would contain two of him.
+    #
+    # Reserved by the *stored* name rather than by the constant, so a rename
+    # (coo_identity.rename) moves the reservation with it instead of protecting
+    # a name nobody answers to any more.
+    identity = coo_identity.ensure(conn)
+    conn.execute(
+        "INSERT INTO agent_names (name, reserved, schema_version) VALUES (?, 1, ?) "
+        "ON CONFLICT(name) DO UPDATE SET reserved = 1",
+        (identity["name"], SCHEMA_VERSION),
     )
     for symbol in SECURITY_UNIVERSE_SEED:
         conn.execute(

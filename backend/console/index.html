@@ -250,7 +250,7 @@
       <circle cx="16" cy="34" r="4.5" fill="#f0b429" opacity=".8"/>
       <circle cx="84" cy="34" r="4.5" fill="#f0b429" opacity=".8"/>
     </svg>
-    <div class="nameplate"><b>Kumbhakarnan</b><i>Chief Operating Officer</i></div>
+    <div class="nameplate"><b id="coo-name">Kumbhakarnan</b><i id="coo-role">Chief Operating Officer</i></div>
     <div id="pstate">at rest</div>
 
     <nav id="tabs">
@@ -308,7 +308,7 @@
 
 <section id="coo">
   <div id="coobar">
-    <span class="name">Kumbhakarnan</span>
+    <span class="name" id="coo-name-bar">Kumbhakarnan</span>
     <span class="dim" id="coo-state">ready</span>
     <select id="lang" title="Answer language"></select>
     <button class="btn" id="mic" title="Speak to the COO">🎤 Voice</button>
@@ -318,7 +318,7 @@
     <button class="btn" id="clear">Clear</button>
   </div>
   <div id="transcript">
-    <div class="msg coo"><div class="from">Kumbhakarnan</div><div class="body">Good to see you. Ask me about any desk — what stage we are in, who is working, what failed, what the simulated market is doing. I answer from the organization's own state, and I will say plainly when I do not have something. You can also just tell me where to look: "show me the conversations".</div></div>
+    <div class="msg coo"><div class="from" id="coo-greeting-from">Kumbhakarnan</div><div class="body">Good to see you. Ask me about any desk — what stage we are in, who is working, what failed, what the simulated market is doing. I answer from the organization's own state, and I will say plainly when I do not have something. You can also just tell me where to look: "show me the conversations".</div></div>
   </div>
   <form id="compose">
     <input id="q" autocomplete="off" placeholder="Ask, or direct the view…   (Enter to send · Esc to interrupt)">
@@ -335,7 +335,12 @@
 // it streams because interruptibility requires it.
 const FEED_MS=2000, DESK_MS=6000, FIN_MS=8000;
 const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,tab:"newsroom",
-         speak:false,listening:false,history:[],abort:null,tape:0};
+         speak:false,listening:false,history:[],abort:null,tape:0,
+         // Who the operator is talking to, from /console/identity (§88). The
+         // markup's default is a fallback for a console that cannot reach the
+         // backend, never the source of truth - a name held only in a template
+         // is a name a redeploy can change silently, which is what 42 §19 forbids.
+         cooName:"Kumbhakarnan"};
 
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s??"").replace(/[&<>]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
@@ -862,7 +867,7 @@ async function ask(question){
   interrupt();
   say("Operator",question,"me");
   S.history.push({role:"user",content:question});
-  const body=say("Kumbhakarnan","","coo"); body.parentElement.classList.add("thinking");
+  const body=say(S.cooName,"","coo"); body.parentElement.classList.add("thinking");
   presenterState("thinking"); $("coo-state").textContent="considering…";
 
   S.abort=new AbortController();
@@ -915,7 +920,7 @@ $("compose").addEventListener("submit",(e)=>{e.preventDefault();const q=$("q").v
   saveWorkspace("flush");   // the draft is gone the moment it is sent
   ask(q);});
 $("clear").addEventListener("click",()=>{S.history=[];$("transcript").innerHTML="";
-  say("Kumbhakarnan","Cleared.","coo");});
+  say(S.cooName,"Cleared.","coo");});
 $("speak").addEventListener("click",()=>{
   S.speak=!S.speak; scheduleSave(); $("speak").classList.toggle("on",S.speak);
   if(!S.speak)speechSynthesis.cancel();
@@ -948,6 +953,21 @@ if(SR){
 
 /* ---------------- boot ---------------- */
 (async function boot(){
+  try{
+    const who=await (await fetch("/console/identity")).json();
+    if(who.exists&&who.name){
+      S.cooName=who.name;
+      $("coo-name").textContent=who.name;
+      $("coo-name-bar").textContent=who.name;
+      $("coo-greeting-from").textContent=who.name;
+      document.title=`My AI — ${who.name}`;
+      $("coo-name").title=`${who.name} · created ${(who.created_at||"").slice(0,10)}`+
+        `
+Identity version ${who.identity_version}, carried through `+
+        `${who.software_versions_survived} software version(s).`;
+    }
+  }catch{/* the markup's default stands; a console that cannot ask who the COO
+            is still has to open */}
   try{
     const l=await (await fetch("/console/languages")).json();
     $("lang").innerHTML=l.languages.map(x=>`<option value="${esc(x.code)}">${esc(x.label)}</option>`).join("");

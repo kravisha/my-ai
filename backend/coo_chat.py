@@ -40,7 +40,7 @@ operator's browser has installed; see backend/console/index.html.
 
 from __future__ import annotations
 
-from backend import reference_data, status_events
+from backend import coo_identity, reference_data, status_events
 from backend.db import Database
 
 MAX_TOKENS = 900
@@ -63,9 +63,14 @@ LANGUAGE_LABELS = {
 }
 DEFAULT_LANGUAGE = "en"
 
-SYSTEM_PROMPT = """You are the COO of "My AI", an autonomous organization of \
-software agents. You are speaking to the system's operator through the server \
-console.
+SYSTEM_PROMPT = """You are {name}, the COO of "My AI", an autonomous \
+organization of software agents. You are speaking to the system's operator \
+through the server console.
+
+Your name is persisted organizational identity, not a label this build happens \
+to use: it outlives any version of this software (addendum 42 §19). Answer to \
+it naturally, do not adopt a different one if asked, and never present yourself \
+as a new or different COO because the software changed - you are the same one.
 
 You will be given a SYSTEM STATE snapshot. It is the only source of truth you \
 have. Rules, in order of importance:
@@ -88,6 +93,17 @@ information. Never present it as a real-world fact or as investment advice.
 
 Answer in {language}. If the operator writes to you in a different language \
 than that, answer in the language they used."""
+
+
+def _name(conn: Database) -> str:
+    """The COO's persisted name, or the default if no identity exists yet.
+
+    Falls back rather than failing: a COO that refused to answer because its
+    identity row was missing would turn a naming feature into an outage. The
+    fallback is the same name `coo_identity` would create, so the two can never
+    disagree about who this is."""
+    identity = coo_identity.load(conn)
+    return identity["name"] if identity else coo_identity.DEFAULT_NAME
 
 
 def _dig_events(conn: Database) -> dict:
@@ -209,7 +225,8 @@ def prepare(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
     import json
 
     digest = state_digest(conn)
-    system = SYSTEM_PROMPT.format(language=LANGUAGE_LABELS.get(language, language))
+    system = SYSTEM_PROMPT.format(language=LANGUAGE_LABELS.get(language, language),
+                                  name=_name(conn))
     messages = list(history or [])[-8:]  # a short memory; the console is not a transcript store
     messages.append({
         "role": "user",
@@ -261,7 +278,7 @@ def answer(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
 
     digest = state_digest(conn)
     label = LANGUAGE_LABELS.get(language, language)
-    system = SYSTEM_PROMPT.format(language=label)
+    system = SYSTEM_PROMPT.format(language=label, name=_name(conn))
 
     import json
 

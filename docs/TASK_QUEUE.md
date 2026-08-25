@@ -29,9 +29,11 @@ holds the queue, not the record.
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
 > **Current focus: the live studio** (addenda 41–43, assimilated 2026-08-25, §85) — **TQ-33**,
 > the visual redesign, because addendum 41 makes the look a requirement and the console as built
-> is the terminal it forbids — **done 2026-08-25**, as is **TQ-38** (the dormancy gate that
-> did not hold, §87). Next: TQ-35 (Kumbhakarnan's persisted identity), TQ-36 (migrations
-> and the developer escape hatch), TQ-37 (briefing rhythm), TQ-34 (role-based Gateway).
+> is the terminal it forbids — **done 2026-08-25** (§86), as are **TQ-38** (the dormancy gate
+> that did not hold, §87) and **TQ-35** (Kumbhakarnan as persisted identity, §88).
+>
+> Next: **TQ-36**, the migration pipeline and the developer's escape hatch, now unblocked by
+> TQ-35 — then TQ-37 (the briefing rhythm) and TQ-34 (role-based Gateway).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -557,7 +559,7 @@ That test is part of the fix.
 
 ### TQ-35 — Kumbhakarnan: the COO's identity as persisted state
 
-**NEED (GREEN) · QUEUED · addendum 42 §3, §19, §20 · `SPEC_RECONCILIATION.md` §85 disposition 2**
+**NEED (GREEN) · DONE 2026-08-25 · addendum 42 §3, §4, §19, §20 · `SPEC_RECONCILIATION.md` §88**
 
 The COO gets a name that outlives the code. 42 §19: "changing implementation versions must not
 silently replace the COO's identity." The principle already exists — `agent_names` makes a name the

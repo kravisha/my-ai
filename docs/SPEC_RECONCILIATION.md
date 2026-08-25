@@ -6661,3 +6661,104 @@ never be a stray; `test_the_controller_is_not_counted_as_a_stray_agent` pins it.
   live COOs, which is the duplicate this machinery exists to prevent.
 
 Suite: **1946 passing**.
+
+---
+
+## §88 — Kumbhakarnan becomes an entity (2026-08-25, TQ-35)
+
+Addendum 42 §3/§4/§19/§20 built as `backend/coo_identity.py`. The requirement in
+one sentence, §19: "Changing implementation versions must not silently replace
+the COO's identity."
+
+### What already existed, and what did not
+
+The principle lived here in a narrower form. The owner decision of 2026-08-17
+made `agent_names` the durable agent and `agent_registry.identity` the desk it
+sits at, so a name already survived a process, a crash and a respawn.
+
+What did not exist was an identity that survives *the code*. An agent identity
+answers "who is at this desk". This answers "who is the COO", and the answer has
+to be the same tomorrow when the implementation behind it is different.
+
+### Three versions, deliberately not one
+
+§4 is unusually explicit — "Do not assume software version and persistence
+schema version are the same" — so three fields that are never collapsed:
+
+- **Software version**, from `backend.version.code_version()`. Changes on every
+  commit; means nothing about the identity.
+- **Schema version**, the shape of the stored row. What TQ-36 will step through.
+- **Identity version**, the persona. Changes when Kumbhakarnan is *meant* to
+  change, which is an owner decision and not something a deployment does.
+
+Collapsing any two would let a routine deploy look like a new person, or a
+persona change look like a migration. Both are the failure §19 names, and
+`versions()` reports all three side by side so the distinction is answerable
+rather than merely documented.
+
+### The seams, which are where this could go wrong
+
+**Creation happens once across processes**, not once per import: `init_schema`
+runs in every agent process, so the INSERT is guarded by a UNIQUE on
+`organization_id` plus a re-read, rather than a check-then-write two starting
+agents could interleave with. Tested with two connections to one file.
+
+**A newer schema is refused, never overwritten.** §22 preserves material that
+fails validation; recreating the COO because this build could not read his row
+would be the silent replacement §19 forbids, arrived at from the other side.
+
+**Renaming exists but costs a reason.** §19's requirement is not immutability —
+it is that the name never changes *silently*. An unexplained history entry would
+satisfy the letter and miss the point, so `rename()` refuses a blank reason.
+
+### Not empty machinery
+
+The house rule — no table nothing writes to — applies with force here, because a
+persisted identity nothing reads is exactly as useless as a hardcoded string.
+Three integrations, each closing something real:
+
+1. **The console renders the name from `/console/identity`**, not from markup. A
+   name in a template is a name a redeploy can change without anybody noticing.
+   Verified by renaming the COO in the database and reloading: nameplate, chat
+   bar, greeting and tab title all followed.
+2. **`coo_chat`'s system prompt is built from the stored name**, so the COO
+   answers *to* it, and is told explicitly not to present itself as a new or
+   different COO when the software changes.
+3. **The name is reserved in `agent_names`**, by the stored value rather than
+   the constant, so a rename moves the reservation. This closes a genuine
+   collision: without it the pool could hand "Kumbhakarnan" to an ordinary agent
+   and the organization would contain two of him. The test drains the entire
+   pool rather than sampling it — with 40 names, handing out five and finding no
+   clash would prove nothing.
+
+Two existing tests failed on this and were right to: the pool is now 40 names
+plus two reservations. Both assertions were rewritten to *name* the reserved
+identities rather than count them, so the next reservation fails with a readable
+diff instead of an off-by-one.
+
+### Specified, not invented (§11)
+
+The seeded personality, voice and visual identity are the owner's own
+specifications — addendum 41 §4/§12/§13, addendum 42 §20, and the language
+preference recorded in §77 — and each carries a `source` field naming where it
+came from, asserted by a test. `relationship_history` starts as an empty list
+because none has been recorded, which is accurate and different from the
+`needs_reconstruction` vocabulary §11 reserves for facts that were *lost*.
+`software_version` comes from `code_version()`, whose contract is "a true answer
+or 'unknown'".
+
+§20's constraint — an original interpretation, not a copy of any film,
+television, comic, game or commercial depiction — is stored *with* the identity
+rather than left in a document, so whoever eventually renders the presenter
+reads it from the state they are rendering.
+
+### One non-finding, recorded because it looked like a defect
+
+The identity endpoint appeared to return mojibake (`Â§` where `§` belonged).
+It did not: the response carried correct UTF-8 throughout, and the corruption
+was `python -m json.tool` decoding the pipe as cp1252 on this machine. Checked
+by reading the raw bytes rather than trusting the rendering — the same habit
+that found the real defects in §86, applied to something that turned out to be
+fine.
+
+Suite: **1970 passing**.
