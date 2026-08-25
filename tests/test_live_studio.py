@@ -180,3 +180,51 @@ def test_the_finance_desk_still_says_simulated(script: str):
     banner by accident."""
     assert "SIMULATED" in script
     assert "note sim" in script, "the simulated banner lost its distinct treatment"
+
+
+# --- the briefing drives the choreography TQ-33 left inert (TQ-37, §90) ------------
+
+
+def test_the_briefing_drives_the_focus_and_dim_classes(script: str, html: str):
+    """TQ-33 built `.card.focus` and `.dimmed` and nothing used them. §8's
+    "relevant panel comes into focus, nonessential information visually
+    recedes" is what they were for, and a stylesheet nothing drives is
+    decoration rather than behaviour."""
+    assert ".card.focus" in html and ".dimmed" in html
+    assert "spotlight" in script, "nothing drives the focus treatment"
+    assert 'classList.add("focus")' in script
+    assert 'classList.add("dimmed")' in script
+    # And it clears: an annotation that outlives its sentence is §7's
+    # "meaningless animation" with extra steps.
+    assert "clearSpotlight" in script
+
+
+def test_interrupting_stops_the_briefing_too(script: str):
+    """§9 makes interruption a first-class primitive. A briefing that kept
+    advancing while the operator was being answered would be the console
+    talking over itself."""
+    interrupt = re.search(r"function interrupt\(\)\{.*?\n\}", script, re.S)
+    assert interrupt, "no interrupt function"
+    assert "endBriefing" in interrupt.group(0)
+
+
+def test_the_presenter_position_is_checkpointed(script: str):
+    """§21 and addendum 43: briefing position, topic and pending interruption
+    survive a restart - in the workspace payload, because §22 forbids the
+    presenter owning a store of its own."""
+    collect = re.search(r"function collectWorkspace\(\)\{.*?\n\}", script, re.S)
+    assert collect, "no collectWorkspace"
+    body = collect.group(0)
+    for field in ("briefingPosition", "topic", "pendingInterruption"):
+        assert field in body, f"the presenter's {field} is not checkpointed"
+
+
+def test_a_restored_briefing_offers_to_resume_rather_than_starting_to_talk(script: str):
+    """The distinction §9 actually asks for: "may ask whether to resume". A
+    briefing that started narrating because a tab was reopened is the opposite
+    of resuming where the operator left off."""
+    restore = re.search(r"async function restoreWorkspace\(\)\{.*?\n\}", script, re.S)
+    assert restore, "no restoreWorkspace"
+    body = restore.group(0)
+    assert "pendingInterruption" in body
+    assert "playBriefing" not in body, "restoring must not start playback"

@@ -106,6 +106,14 @@
   .badge{margin-left:auto;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;}
   .badge.attn{color:var(--warn);font-weight:700;}
   .railnote{margin-top:auto;font-size:11px;line-height:1.5;color:var(--dim);opacity:.72;}
+  aside .btn{width:100%;text-align:center;font-size:12.5px;padding:7px 10px;}
+  /* The lower third while a briefing is running: §16's status strip, saying
+     which item of how many rather than only that something is happening. */
+  #briefbar{display:none;align-items:center;gap:10px;padding:7px 22px;font-size:12.5px;
+            background:var(--gold-dim);border-bottom:1px solid #f0b42944;color:#f6d68d;}
+  #briefbar.on{display:flex;}
+  #briefbar .pos{font-variant-numeric:tabular-nums;letter-spacing:.08em;font-weight:700;}
+  #briefbar .cat{text-transform:uppercase;letter-spacing:.14em;font-size:10px;font-weight:700;}
 
   /* the stage */
   #stage-area{flex:1;min-width:0;display:flex;flex-direction:column;}
@@ -252,6 +260,9 @@
     </svg>
     <div class="nameplate"><b id="coo-name">Kumbhakarnan</b><i id="coo-role">Chief Operating Officer</i></div>
     <div id="pstate">at rest</div>
+    <button class="btn" id="brief" title="Ask for the live briefing (addendum 41 §8)">▶ Brief me</button>
+    <button class="btn" id="resume" style="display:none"
+            title="Pick the briefing up where it was interrupted (§9)">↻ Resume briefing</button>
 
     <nav id="tabs">
       <button data-tab="newsroom" class="on"><i class="mark"></i>Briefing</button>
@@ -307,6 +318,11 @@
 </main>
 
 <section id="coo">
+  <div id="briefbar">
+    <span class="pos" id="brief-pos"></span>
+    <span class="cat" id="brief-cat"></span>
+    <span id="brief-text"></span>
+  </div>
   <div id="coobar">
     <span class="name" id="coo-name-bar">Kumbhakarnan</span>
     <span class="dim" id="coo-state">ready</span>
@@ -340,7 +356,16 @@ const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,tab:
          // markup's default is a fallback for a console that cannot reach the
          // backend, never the source of truth - a name held only in a template
          // is a name a redeploy can change silently, which is what 42 §19 forbids.
-         cooName:"Kumbhakarnan"};
+         cooName:"Kumbhakarnan",
+         // §21's presenter state. Held here and checkpointed into the
+         // workspace, never in a store of its own: §22 says the presenter must
+         // not own critical business state, and the cheapest way to guarantee
+         // that is for it to own no store at all.
+         briefItems:[], briefPos:0, briefTopic:null, briefPending:null,
+         briefPlaying:false, briefTimer:null,
+         // The spotlight target, held as state so it can be re-asserted after
+         // the desks re-render underneath it.
+         spotView:null, spotFocus:null};
 
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s??"").replace(/[&<>]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
@@ -381,6 +406,148 @@ function presenterState(state){
   p.className=(state==="speaking"||state==="listening")?state:"";
   p.textContent={speaking:"presenting",listening:"listening",thinking:"considering"}[state]||"at rest";
 }
+
+/* ---------------- the live briefing (addendum 41 §8/§9/§16/§21) ------------
+   The presenter's behaviour without its body. Three things the specification
+   asks for, and they are separable from the animated figure entirely:
+
+   §8  the display follows the narration - the named view opens and the thing
+       being talked about comes forward while the rest recedes. TQ-33 built
+       `.card.focus` and `.dimmed`; this is what drives them.
+   §9  interruption is a first-class primitive, so anything the operator does
+       stops the briefing mid-item and *offers to resume* rather than
+       forgetting where it was.
+   §21 the position survives a restart, because it lives in the workspace
+       payload with everything else the operator had open.
+
+   §22 is satisfied by construction: this owns nothing. Losing all of it costs
+   the operator their place in a sentence. */
+const BRIEF_MS = 5200;          // one item's dwell; a briefing is read, not raced
+
+function briefingState(){
+  return {position: S.briefPos, topic: S.briefTopic,
+          pending: S.briefPending, playing: S.briefPlaying};
+}
+
+function clearSpotlight(){
+  document.querySelectorAll(".card.focus").forEach(c=>c.classList.remove("focus"));
+  document.querySelectorAll(".tab.dimmed").forEach(t=>t.classList.remove("dimmed"));
+}
+
+// Applied from state rather than done once, because the desks re-render under
+// it. The pollers rewrite a scene's innerHTML every few seconds, which destroys
+// the highlighted card while the scene element - not replaced - keeps its
+// `dimmed` class. The result was everything receding and nothing coming
+// forward: the exact inverse of §8, and invisible until you watch a briefing
+// run for longer than one poll interval.
+function applySpotlight(){
+  clearSpotlight();
+  if(!S.spotView || !S.spotFocus) return;
+  const scene=$(`tab-${S.spotView}`); if(!scene) return;
+  const needle=String(S.spotFocus).toLowerCase();
+  const card=[...scene.querySelectorAll(".card")]
+    .find(c=>(c.innerText||"").toLowerCase().includes(needle));
+  // No match, no dimming. Receding everything to highlight nothing would be
+  // worse than leaving the desk alone.
+  if(!card) return;
+  scene.classList.add("dimmed");
+  card.classList.add("focus");
+  return card;
+}
+
+function spotlight(view, focus){
+  S.spotView=view||null; S.spotFocus=focus||null;
+  if(view) selectTab(view);
+  const card=applySpotlight();
+  if(card) card.scrollIntoView({behavior:"smooth", block:"center"});
+}
+
+// Re-asserted only while a briefing is running: outside one there is nothing to
+// hold, and a permanent interval to do nothing is the kind of cost §7 calls
+// meaningless.
+setInterval(()=>{ if(S.briefPlaying && S.spotFocus) applySpotlight(); }, 700);
+
+function showBriefItem(item, index, total){
+  $("briefbar").classList.add("on");
+  $("brief-pos").textContent=`${index+1}/${total}`;
+  $("brief-cat").textContent=(item.category||"").replace(/_/g," ");
+  $("brief-text").textContent=item.text;
+  spotlight(item.view, item.focus);
+  presenterState("speaking");
+  // `brief()` opens by interrupting whatever was running, which leaves this
+  // label reading "interrupted" while the presenter is visibly presenting.
+  // Two labels for one state, disagreeing.
+  $("coo-state").textContent="briefing";
+  S.briefTopic=item.text;
+  if(S.speak) speak(item.text);
+}
+
+function endBriefing(reason){
+  clearTimeout(S.briefTimer); S.briefTimer=null;
+  S.briefPlaying=false;
+  $("briefbar").classList.remove("on");
+  S.spotView=null; S.spotFocus=null;
+  clearSpotlight();
+  presenterState("rest");
+  $("coo-state").textContent = reason==="interrupted" ? "interrupted" : "ready";
+  // §9's last step: "may ask whether to resume the prior briefing". Offered
+  // only when there is somewhere to go back to - a button that resumes a
+  // finished briefing teaches the operator to ignore it.
+  const resumable = reason==="interrupted" && S.briefItems.length
+                    && S.briefPos < S.briefItems.length;
+  $("resume").style.display = resumable ? "" : "none";
+  S.briefPending = resumable ? S.briefPos : null;
+  if(reason==="finished"){ S.briefPos=0; S.briefTopic=null; }
+  scheduleSave();
+}
+
+function playBriefing(from){
+  const items=S.briefItems;
+  if(!items.length){ endBriefing("finished"); return; }
+  S.briefPlaying=true;
+  $("resume").style.display="none";
+  let index = from|0;
+
+  const step=()=>{
+    if(!S.briefPlaying) return;             // interrupted between ticks
+    if(index>=items.length){ endBriefing("finished"); return; }
+    S.briefPos=index;
+    showBriefItem(items[index], index, items.length);
+    index++;
+    S.briefTimer=setTimeout(step, BRIEF_MS);
+  };
+  step();
+  scheduleSave();
+}
+
+async function brief(from){
+  interrupt();                              // a new briefing supersedes anything running
+  try{
+    const data=await (await fetch("/console/briefing")).json();
+    S.briefItems=data.items||[];
+    if(!S.briefItems.length){
+      say(S.cooName, data.note || "Nothing to report.", "coo");
+      endBriefing("finished");
+      return;
+    }
+    // The briefing is spoken *and* written: the transcript is what an operator
+    // scrolls back to, and a briefing that existed only as a moving strip
+    // would be unreadable ten seconds later.
+    const opener=(data.note?data.note+" ":"")
+      + S.briefItems.map(i=>i.text).join(" ");
+    say(S.cooName, opener, "coo");
+    playBriefing(from||0);
+  }catch(err){
+    say(S.cooName, `I could not put a briefing together: ${err.message}`, "coo", "err");
+    endBriefing("finished");
+  }
+}
+
+$("brief").addEventListener("click",()=>brief(0));
+$("resume").addEventListener("click",()=>{
+  $("resume").style.display="none";
+  playBriefing(S.briefPending||0);
+});
 
 /* ---------------- the live strip ---------------- */
 function renderTape(fin){
@@ -634,6 +801,15 @@ function collectWorkspace(){
       // The requirement itself: unsent text is user intent (§5.3).
       cooQuestion: ($("q") || {}).value || "",
     },
+    // Addendum 41 §21 / addendum 43: where the briefing had got to, what it
+    // was about, and whether an interruption is still owed a resume. Declarative
+    // like everything else here - the items themselves are *not* stored, because
+    // they are derived state that would be stale by the time it was read.
+    presenter: {
+      briefingPosition: S.briefPos,
+      topic: S.briefTopic,
+      pendingInterruption: S.briefPending,
+    },
     savedAt: new Date().toISOString(),
   };
 }
@@ -684,6 +860,19 @@ async function restoreWorkspace(){
   // The draft, restored into the same field it was typed in (§5.3).
   const draft = (ws.drafts || {}).cooQuestion || "";
   if (draft && $("q")) $("q").value = draft;
+
+  // §21: the presenter resumes where it was. The *offer* is restored, never
+  // the playback - a briefing that started talking on its own because a tab was
+  // reopened would be the opposite of resuming where the operator left off.
+  const presenter = ws.presenter || {};
+  S.briefPos = presenter.briefingPosition || 0;
+  S.briefTopic = presenter.topic || null;
+  if (presenter.pendingInterruption != null){
+    S.briefPending = presenter.pendingInterruption;
+    $("resume").style.display = "";
+    $("resume").title = `Kumbhakarnan was interrupted at item ${S.briefPending + 1}` +
+                        (S.briefTopic ? `: ${S.briefTopic}` : "");
+  }
 
   if (ws.activeTab) selectTab(ws.activeTab);
   if (ws.feedScroll) setTimeout(() => { const f = $("feed"); if (f) f.scrollTop = ws.feedScroll; }, 400);
@@ -808,9 +997,9 @@ async function pollFinance(){
 }
 
 /* ---------------- the COO conversation ---------------- */
-function say(from,text,cls){
+function say(from,text,cls,extra){
   const d=document.createElement("div");
-  d.className="msg "+(cls||"");
+  d.className="msg "+(cls||"")+(extra?" "+extra:"");
   d.innerHTML=`<div class="from">${esc(from)}</div><div class="body">${esc(text)}</div>`;
   $("transcript").appendChild(d); $("transcript").scrollTop=$("transcript").scrollHeight;
   return d.querySelector(".body");
@@ -856,6 +1045,11 @@ function interrupt(){
   if(S.abort){S.abort.abort();S.abort=null;}
   speechSynthesis.cancel();
   if(S.recog&&S.listening){try{S.recog.stop();}catch{}}
+  // §9: "COO stops speaking immediately." A briefing that kept advancing while
+  // the operator was being answered would be the console talking over itself -
+  // and it is stopped *before* the state is reported, so the reported state is
+  // never one the console has already left.
+  if(S.briefPlaying) endBriefing("interrupted");
   presenterState("rest");
   $("coo-state").textContent="interrupted";
 }

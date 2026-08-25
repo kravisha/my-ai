@@ -6881,3 +6881,99 @@ claimed to test. It now asserts the action is `failed` before asserting the
 alarm.
 
 Suite: **2006 passing**.
+
+---
+
+## §90 — The briefing, and the choreography that follows it (2026-08-25, TQ-37)
+
+Addendum 41 §8, §9, §16, §21, §22 built as `backend/briefing.py`, a
+`/console/briefing` endpoint, and the console behaviour that makes the display
+track the narration. The animated figure stays deferred (§85 disposition 4);
+none of §8's communicative value turned out to depend on it.
+
+### Every line is a fact, or it is not said
+
+§8 gives four example lines, and every one is a count or a name — which means
+every one can be wrong in a way the operator cannot check. A confidently wrong
+briefing is worse than no briefing. So:
+
+**"While you were away" needs a real window.** It comes from the operator's own
+workspace checkpoint (§83), which is written continuously while somebody is at
+the console and not at all while nobody is. With no checkpoint there is no
+window, and the briefing says so rather than describing an unknown interval —
+"since you were last here" over a guess is a fabricated claim wearing a helpful
+phrase.
+
+**One of §8's four examples is deliberately not implemented.** "This item needs
+your approval" has no source: nothing in this system records that the owner's
+approval is pending. The Strategic Priority Register has `blocked`, which is a
+different fact and is reported as itself. Manufacturing an approval queue to
+satisfy an example would be exactly the fabrication everything else here exists
+to prevent, and a test asserts no briefing line ever mentions approval.
+
+### §16's rhythm: the main story, not a fixed report order
+
+The briefing leads with whatever is most true — attention when anything wants
+it, otherwise the largest thing that changed, otherwise what is underway. A
+briefing that always opened with "completed" would be a report; §16 asks for a
+broadcast.
+
+### §22 satisfied by construction
+
+The presenter owns no state at all. `compile()` is a pure read (asserted by
+counting every table before and after), and §21's position, topic and pending
+interruption live in the **workspace payload** — declarative view state, §5.4's
+own category, already discardable and already restored. A presenter that dies
+loses the operator's place in a sentence and nothing else. There is deliberately
+no `presenter` table, and a test asserts none appears.
+
+Restoring the position *offers* to resume; it never starts playing. A briefing
+that began narrating because a tab was reopened is the opposite of resuming
+where the operator left off.
+
+### The dead stylesheet from TQ-33 gets its driver
+
+TQ-33 built `.card.focus` and `.dimmed` and nothing used them. §8's "relevant
+panel comes into focus… nonessential information visually recedes" is what they
+were for. Each briefing item names a view and, where there is one, the thing to
+bring forward.
+
+### Three defects, all found by watching it rather than by the suite
+
+1. **The spotlight inverted itself after one poll.** The desks re-render every
+   two seconds; a poller rewrote the scene's `innerHTML`, destroying the
+   highlighted card while the scene element — not replaced — kept its `dimmed`
+   class. The result was everything receding and nothing coming forward: the
+   exact inverse of §8, and invisible until a briefing ran longer than one poll
+   interval. The spotlight target is now held as state and re-asserted while a
+   briefing plays.
+
+2. **"Nothing happened" was said when the truth was "I cannot tell".** An empty
+   briefing with no window is *both* facts, and the first version reported only
+   the reassuring half. Now both are said.
+
+3. **An event stamped at exactly the checkpoint was reported as new.**
+   `status_events.recent(since=…)` is inclusive, which is right for a feed and
+   wrong for "what happened since you left" — it would re-announce the same item
+   on every visit. Not theoretical: Windows' clock granularity is coarse enough
+   that publishing an event and checkpointing the workspace in the same tick
+   produces identical timestamps, which is precisely how the test failed. The
+   briefing now compares strictly, erring toward omitting a borderline item
+   rather than repeating it.
+
+A fourth, cosmetic: `brief()` opens by interrupting whatever was running, which
+left the chat bar reading "interrupted" while the presenter rail read
+"presenting" — two labels for one state, disagreeing.
+
+### Verified against a live backend
+
+A real briefing compiled from a copy of the real database, with a genuine
+one-hour window taken from the actual last checkpoint. Watched it play: the
+status strip advancing 1/2 → 2/2, the view switching from the briefing to the
+conversations desk as the narration moved, and the SERVER card held forward in
+gold while the two beneath it receded. Escape stopped it mid-item, cleared the
+dimming, returned the presenter to rest and offered a resume that continued at
+the right place; a full page reload still offered it, with the topic in the
+tooltip, without starting to talk.
+
+Suite: **2040 passing**.
