@@ -21,6 +21,7 @@ import sys
 import time
 
 from agents import introspection
+from app import model_budget
 from backend import fi_db
 from backend.version import code_version
 
@@ -80,6 +81,12 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
     free instead of needing to remember it."""
     if db_path is None:
         db_path = os.environ.get("FI_DB_PATH", str(fi_db.DB_PATH))
+    # Every model call this process makes is this agent's spend (TQ-18,
+    # SPEC_RECONCILIATION §66). Declared here, in the one run loop every
+    # agent shares, so a future agent is attributed without remembering to
+    # ask - the same reasoning the work_fn exception guard below is written
+    # here rather than in each agent.
+    model_budget.set_caller(identity)
     conn = fi_db.get_connection(db_path)
     fi_db.init_schema(conn)
     # Computed here, once per life, not per heartbeat: which code this process

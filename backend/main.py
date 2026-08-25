@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from app import admin_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
+from app import model_budget
 from app.model_budget import BudgetExceededError
 from app.model_gateway import call_reasoning_model
 from app.permissions import RESOURCE_PATHS, PermissionManager
@@ -141,6 +142,10 @@ async def lifespan(app: FastAPI):
     # itself as the first agent - it *is* this server process) -> Controller
     # creates COO. Every agent COO wants after this goes through the normal
     # directive queue, picked up by the poll loop above.
+    # This process's model spend is the backend's own - /chat and anything
+    # else in-process (TQ-18, §66). Agent subprocesses declare their own
+    # identity in agents/base.py and are never counted here.
+    model_budget.set_caller("backend")
     controller = Controller()
     controller.bootstrap_self()
     # §10: a restarting process must not assume the world stayed frozen while it
