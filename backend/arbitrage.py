@@ -6,19 +6,21 @@ ARB-002, 003, 006, 007, 008, 009, 010 and 011, plus the Phase 2 members
 with data to work with: ARB-012 (calendar consistency, cross-expiry, via
 its own scan_calendar entry point) and ARB-015/ARB-016 as D-class
 Diagnostics under their own schema (the Phase 2 sections at the bottom).
-The rest of ARB-013 through ARB-030 stays roadmap.
+ARB-013 (forward vs synthetic) and ARB-014 (cash-and-carry) joined with the
+world's forward leg (SPEC_RECONCILIATION §61), completing Phase 1's list;
+the rest of ARB-017 through ARB-030 stays roadmap.
 
-## ARB-013 is not built
+## ARB-013 / ARB-014: the forward leg (SPEC_RECONCILIATION §61)
 
-Addendum 27's Phase 1 list names ARB-013 (forward/futures vs synthetic
-forward), but no forward/futures instrument exists anywhere in this system -
-not in backend/canonical.py's asset classes ("stock", "stock_option"), not in
-simulation/parity_world.py's generator, not in any provider. A detector for
-an instrument nothing produces and nothing consumes would be exactly the
-empty machinery this project refuses elsewhere (docs/SPEC_RECONCILIATION.md
-SS39's stance on network source adapters, SS34's stance on Issuer Master).
-Left for a future reconciliation entry to record alongside the rest of this
-increment.
+Long recorded here as "not built" because no forward instrument existed
+anywhere in the system; simulation/parity_world.py's forward variants now
+generate one (TQ-14, the owner-directed world increment), so the two
+detectors that price against it exist: ARB-013 (forward vs synthetic
+forward, Phase 1's last member) and ARB-014 (cash-and-carry, Phase 2) under
+their own `scan_forward` entry point, parallel to `scan_calendar`. The
+world's forwards are *forwards*, not futures - no variation margin, no
+convexity adjustment - and `ForwardQuote` says so; a futures adapter owes
+addendum 27's margin/convexity adjustments before reusing these detectors.
 
 Pure module, no schema, no imports from fi_db or backend.db's Database class -
 a detector is "a pure deterministic function over a versioned MarketSnapshot +
@@ -1203,15 +1205,222 @@ def scan_calendar(
     return found
 
 
+# =============================================================================
+# ARB-013 / ARB-014 - the forward leg (addendum 27 §11; SPEC_RECONCILIATION §61)
+# =============================================================================
+#
+# Both detectors price an actual forward quote against what other instruments
+# imply it should cost: ARB-013 against the option-synthetic forward
+# (European C - P = DF*(F - K), the spec's own line), ARB-014 against the
+# carried underlying. Neither direction of ARB-013 touches stock - selling a
+# rich forward against a bought synthetic is two derivative legs plus the
+# forward, no borrow required - which is exactly why a forward market makes
+# borrow-blocked parity signals tradeable and why the world only grows
+# forwards inside their own scenario family (simulation/parity_world.py's
+# module note: a fair forward beside a borrow_cost trap would falsify that
+# trap's own promise).
+
+
+@dataclass(frozen=True)
+class ForwardQuote:
+    """One executable forward market on a ChainSnapshot's underlying, for
+    one expiry. A *forward*, deliberately: no variation margin, no
+    futures/forward convexity - addendum 27's ARB-013 names both as required
+    adjustments "when material", and here they are structurally zero rather
+    than silently omitted. A futures instrument needs its own type and its
+    own adjustments before these detectors may price it. Prices are per
+    share of underlying, the same unit every option quote here uses."""
+
+    expiry_days: int
+    quote: Quote
+
+
+def _forward_coherence(chain: ChainSnapshot, forward: ForwardQuote) -> None:
+    """Caller-error validation, the _pair_coherence split: comparing a
+    forward against a chain at a different expiry is a bug at the call site,
+    not a market condition to return reason codes for."""
+    if chain.expiry_days != forward.expiry_days:
+        raise ValueError(
+            f"forward/chain expiry mismatch: chain at {chain.expiry_days}d, "
+            f"forward at {forward.expiry_days}d"
+        )
+
+
+def detect_arb013(
+    chain: ChainSnapshot, forward: ForwardQuote, strike: float,
+    costs: CostConfig, stale_tolerance_seconds: float = 10.0,
+) -> Opportunity | NoOpportunity:
+    """FORWARD VS SYNTHETIC FORWARD (addendum 27 §"ARB-013") at one strike.
+
+    European C - P = DF*(F - K); synthetic long = Cask - Pbid, synthetic
+    short = Cbid - Pask (the spec's executable sides, verbatim). All edges
+    in present value per share:
+
+    'sell_forward' (forward rich): sell the forward at bid, buy the
+    synthetic long. Gross = DF*(Fbid - K) - (Cask - Pbid).
+    'buy_forward' (forward cheap): buy the forward at ask, sell the
+    synthetic. Gross = (Cbid - Pask) - DF*(Fask - K).
+
+    Both directions are classification A: European exercise, deterministic
+    carry, and no stock leg - the package is contractually locked once
+    filled, borrow never enters. Three legs (call, put, forward) for costs
+    and hard stops; the underlying is not traded and is not checked."""
+    _forward_coherence(chain, forward)
+    sq = _find_strike(chain, strike)
+    stops = _package_hard_stops(
+        (sq.call, sq.put, forward.quote), chain.as_of, chain.style, stale_tolerance_seconds
+    )
+    if stops:
+        return NoOpportunity(reason_codes=[code for code in _HARD_STOP_ORDER if code in stops])
+
+    df = _discount_factor(chain.r, chain.expiry_days)
+    costs3 = costs.for_legs(3)
+    candidates = []
+
+    sell_gross = df * (forward.quote.bid - strike) - (sq.call.ask - sq.put.bid)
+    sell_net = sell_gross - costs3
+    if sell_net > 0:
+        candidates.append(("sell_forward", sell_net, sell_gross,
+                           [forward.quote.bid_size, sq.call.ask_size, sq.put.bid_size]))
+
+    buy_gross = (sq.call.bid - sq.put.ask) - df * (forward.quote.ask - strike)
+    buy_net = buy_gross - costs3
+    if buy_net > 0:
+        candidates.append(("buy_forward", buy_net, buy_gross,
+                           [forward.quote.ask_size, sq.call.bid_size, sq.put.ask_size]))
+
+    if candidates:
+        direction, net, gross, sides = max(candidates, key=lambda c: c[1])
+        return Opportunity(
+            detector_id="ARB-013", direction=direction, gross_edge_per_share=gross,
+            net_edge_per_share=net, capacity_units=_capacity(sides), classification="A",
+            inputs={
+                "strike": strike, "expiry_days": chain.expiry_days,
+                "symbol": chain.symbol, "entity_id": chain.entity_id, "as_of": chain.as_of,
+            },
+        )
+    return NoOpportunity(reason_codes=["no_edge"])
+
+
+def detect_arb014(
+    chain: ChainSnapshot, forward: ForwardQuote,
+    costs: CostConfig, stale_tolerance_seconds: float = 10.0,
+) -> Opportunity | NoOpportunity:
+    """CASH-AND-CARRY (addendum 27 §"ARB-014"): the forward against the
+    carried underlying, dated cash flows - pv_div is the chain's own dated
+    dividend PV, never a blind S*exp((r-q)T) (the spec's warning, verbatim).
+    All edges in present value per share:
+
+    'carry' (forward rich): buy stock at ask, receive PV(div), sell the
+    forward at bid. Gross = DF*Fbid + pv_div - Sask. Classification A - long
+    stock needs no borrow.
+    'reverse_carry' (forward cheap): short stock at bid (borrow required -
+    None means this direction is unavailable, 'missing_borrow' recorded
+    exactly as ARB-001's reversal records it, never priced at zero), pay
+    manufactured dividends, buy the forward at ask. Gross =
+    Sbid - pv_div - DF*Fask, net of an explicit borrow cost
+    (Sbid * fee * T, ARB-001's own convention). Classification B - the
+    borrow assumption must hold to expiry.
+
+    Two legs (stock, forward) for costs and hard stops; options are not
+    traded and not checked. No strike exists in this package - its inputs
+    carry none, and consumers that key on strikes must handle that (the
+    scan-level note on parity_events in agents/explorer.py)."""
+    _forward_coherence(chain, forward)
+    stops = _package_hard_stops(
+        (chain.underlying, forward.quote), chain.as_of, chain.style, stale_tolerance_seconds
+    )
+    if stops:
+        return NoOpportunity(reason_codes=[code for code in _HARD_STOP_ORDER if code in stops])
+
+    df = _discount_factor(chain.r, chain.expiry_days)
+    t_years = _t_years(chain.expiry_days)
+    costs2 = costs.for_legs(2)
+    candidates = []
+
+    carry_gross = df * forward.quote.bid + chain.pv_div - chain.underlying.ask
+    carry_net = carry_gross - costs2
+    if carry_net > 0:
+        candidates.append(("carry", carry_net, carry_gross, "A",
+                           [forward.quote.bid_size, chain.underlying.ask_size]))
+
+    reverse_gross = chain.underlying.bid - chain.pv_div - df * forward.quote.ask
+    reverse_pre_borrow_net = reverse_gross - costs2
+    reverse_available = chain.borrow_fee_annual is not None
+    if reverse_available:
+        borrow_cost = chain.underlying.bid * chain.borrow_fee_annual * t_years
+        reverse_net = reverse_pre_borrow_net - borrow_cost
+        if reverse_net > 0:
+            candidates.append(("reverse_carry", reverse_net, reverse_gross, "B",
+                               [forward.quote.ask_size, chain.underlying.bid_size]))
+
+    if candidates:
+        direction, net, gross, classification, sides = max(candidates, key=lambda c: c[1])
+        return Opportunity(
+            detector_id="ARB-014", direction=direction, gross_edge_per_share=gross,
+            net_edge_per_share=net, capacity_units=_capacity(sides), classification=classification,
+            inputs={
+                "expiry_days": chain.expiry_days,
+                "symbol": chain.symbol, "entity_id": chain.entity_id, "as_of": chain.as_of,
+            },
+        )
+    reasons = ["no_edge"]
+    if not reverse_available and carry_net <= 0 and reverse_pre_borrow_net > 0:
+        reasons.append("missing_borrow")
+    return NoOpportunity(reason_codes=reasons)
+
+
+def scan_forward(
+    chains: list[ChainSnapshot] | tuple[ChainSnapshot, ...],
+    forwards: list[ForwardQuote] | tuple[ForwardQuote, ...],
+    costs: CostConfig = CostConfig(),
+    stale_tolerance_seconds: float = 10.0,
+) -> list[Opportunity]:
+    """The forward-leg entry point, parallel to scan_chain/scan_calendar:
+    each forward against its own expiry's chain - ARB-014 once (stock vs
+    forward), ARB-013 at every strike (synthetic vs forward). Hard-stopped
+    and no-edge packages silently skipped, results sorted by net edge
+    descending, both matching the siblings' convention.
+
+    No forwards is a legitimate no-op (most worlds have no forward listed -
+    that is the world's own statement about instrument existence, not an
+    error). A forward with no chain at its expiry is a caller error: this
+    world never produces one (the carry inputs live on the chain), and
+    silently skipping it would hide a broken feed."""
+    chains_by_expiry: dict[int, ChainSnapshot] = {}
+    for chain in chains:
+        if chain.expiry_days in chains_by_expiry:
+            raise ValueError(f"duplicate chain for expiry {chain.expiry_days}d")
+        chains_by_expiry[chain.expiry_days] = chain
+
+    found: list[Opportunity] = []
+    for forward in forwards:
+        chain = chains_by_expiry.get(forward.expiry_days)
+        if chain is None:
+            raise ValueError(
+                f"forward at {forward.expiry_days}d has no chain at that expiry; "
+                f"chains cover {sorted(chains_by_expiry)}"
+            )
+        result = detect_arb014(chain, forward, costs, stale_tolerance_seconds)
+        if isinstance(result, Opportunity):
+            found.append(result)
+        for sq in chain.strikes:
+            result = detect_arb013(chain, forward, sq.strike, costs, stale_tolerance_seconds)
+            if isinstance(result, Opportunity):
+                found.append(result)
+    found.sort(key=lambda o: o.net_edge_per_share, reverse=True)
+    return found
+
+
 # --- Phase 2 diagnostics: ARB-015 / ARB-016 (addendum 27 §11 Phase 2) -------
 #
-# The first Phase 2 members that have data to work with in this system.
-# ARB-014 (cash-and-carry) needs the same forward/futures instruments ARB-013
-# does; ARB-012 needs a second expiry no snapshot carries; 017/019/020 need
-# American worlds STYLES refuses. What remains buildable is the pair the spec
-# itself marks as *signals*: option-implied dividend (015) and implied
-# borrow/financing basis (016) — "difference alone is not arbitrage" (015),
-# "usually B/D rather than A" (016).
+# The first Phase 2 members that had data to work with in this system
+# (ARB-012 and the forward pair 013/014 have since gotten theirs — the
+# calendar section and the forward section above; 017/019/020 still need
+# American worlds STYLES refuses). This pair is what the spec itself marks
+# as *signals*: option-implied dividend (015) and implied borrow/financing
+# basis (016) — "difference alone is not arbitrage" (015), "usually B/D
+# rather than A" (016).
 #
 # Hence a separate schema. Addendum 27 §8 requires "schema-level separation
 # of D from arbitrage": a Diagnostic is not an Opportunity, has no edge, no

@@ -94,7 +94,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend import reference_data
-from backend.arbitrage import ChainSnapshot, CostConfig, Opportunity, Quote, StrikeQuotes, scan_calendar, scan_chain
+from backend.arbitrage import (
+    ChainSnapshot, CostConfig, ForwardQuote, Opportunity, Quote, StrikeQuotes,
+    scan_calendar, scan_chain, scan_forward,
+)
 from backend.canonical import Observation, Provenance
 from backend.db import parse_timestamp
 # Aliased, not `from backend import observations`: this module defines its
@@ -114,7 +117,8 @@ from simulation import pricing
 STRATEGY_PARITY = "put_call_parity_arbitrage"
 STRATEGY_CROSS_STRIKE = "options_arbitrage_phase1"
 STRATEGY_CALENDAR = "options_arbitrage_calendar"
-STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE, STRATEGY_CALENDAR)
+STRATEGY_FORWARD = "options_arbitrage_forward"
+STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE, STRATEGY_CALENDAR, STRATEGY_FORWARD)
 
 # A convention, not a measurement: an arbitrary fixed Monday afternoon inside
 # a nominal equity session. Every timestamp a run produces derives from this
@@ -171,14 +175,48 @@ CROSS_GENUINE_VARIANTS = (VARIANT_CROSS_BUMP, VARIANT_CROSS_DIP)
 VARIANT_CALENDAR_BUMP = "calendar_bump"
 VARIANT_CALENDAR_SPREAD_ARTIFACT = "calendar_spread_artifact"
 
+# The four forward variants (ARB-013/014's training world, SPEC_RECONCILIATION
+# §61, TQ-14): the world's first new *instrument* rather than a new relation
+# among existing ones. A listed forward exists on the underlying ONLY in these
+# scenarios - deliberately per-variant, not world-wide, because a fair forward
+# beside the existing traps would falsify their promises: a borrow_cost trap's
+# parity gap is unprofitable only because the reversal needs stock borrow, and
+# ARB-013's synthetic-vs-forward package needs no stock at all, so the same
+# gap against a fair forward is genuine arbitrage. Instrument existence is the
+# world's own statement, made per scenario (single-stock forwards being listed
+# or not is a fact about a market, not a defect).
+#
+# 'forward_bump'/'forward_dip' shift ONE expiry's forward mid off fair (rich /
+# cheap) with the chain untouched - so parity, every cross-strike relation and
+# every calendar relation are exactly invariant (nothing they price moved),
+# and what moves is exactly what ARB-013 (per strike) and ARB-014 (vs the
+# underlying) price. 'forward_spread_artifact' is the trap: the same shift,
+# erased by widening the forward's own spread until the organization's
+# scan_forward finds nothing. 'forward_none' is the clean control WITH the
+# instrument present: a fair forward, an untouched chain, zero expected
+# detections - false-positive material specific to the new instrument, which
+# plain 'none' (no forward at all) cannot provide.
+VARIANT_FORWARD_BUMP = "forward_bump"
+VARIANT_FORWARD_DIP = "forward_dip"
+VARIANT_FORWARD_SPREAD_ARTIFACT = "forward_spread_artifact"
+VARIANT_FORWARD_NONE = "forward_none"
+FORWARD_GENUINE_VARIANTS = (VARIANT_FORWARD_BUMP, VARIANT_FORWARD_DIP)
+FORWARD_VARIANTS = FORWARD_GENUINE_VARIANTS + (VARIANT_FORWARD_SPREAD_ARTIFACT, VARIANT_FORWARD_NONE)
+
 VARIANTS = (
     PARITY_VARIANTS + CROSS_GENUINE_VARIANTS
     + (VARIANT_CROSS_SPREAD_ARTIFACT, VARIANT_CALENDAR_BUMP, VARIANT_CALENDAR_SPREAD_ARTIFACT)
+    + FORWARD_VARIANTS
 )
 TRAP_VARIANTS = (
     VARIANT_SPREAD_ARTIFACT, VARIANT_CARRY_EFFECT, VARIANT_BORROW_COST, VARIANT_STALE_QUOTE,
-    VARIANT_CROSS_SPREAD_ARTIFACT, VARIANT_CALENDAR_SPREAD_ARTIFACT,
+    VARIANT_CROSS_SPREAD_ARTIFACT, VARIANT_CALENDAR_SPREAD_ARTIFACT, VARIANT_FORWARD_SPREAD_ARTIFACT,
 )
+# Clean controls: variants whose ground truth promises zero detections with
+# nothing injected at all ('forward_none' carries a fair instrument, but fair
+# is not an injection). Grouped so evaluate() and the clean-skew redraw treat
+# them uniformly.
+CLEAN_VARIANTS = (VARIANT_NONE, VARIANT_FORWARD_NONE)
 
 # Equal weight per variant - a convention (scenario diversity, addendum 25
 # SS21), not a measured training-curriculum split. A caller wanting a
@@ -224,10 +262,29 @@ DEFAULT_SCENARIO_MIX_CALENDAR = {
     VARIANT_NONE: 0.10,
 }
 
+# The forward strategy's default curriculum, same disclosure discipline: the
+# forward variants carry the largest combined share (they are the strategy's
+# point, and forward_none is their own false-positive control), with parity,
+# cross-strike and calendar material kept present so a forward-trained run
+# still exercises the rest of the library. Weights sum to 1.0.
+DEFAULT_SCENARIO_MIX_FORWARD = {
+    VARIANT_FORWARD_BUMP: 0.175,
+    VARIANT_FORWARD_DIP: 0.175,
+    VARIANT_FORWARD_SPREAD_ARTIFACT: 0.15,
+    VARIANT_FORWARD_NONE: 0.10,
+    VARIANT_GENUINE: 0.10,
+    VARIANT_CROSS_BUMP: 0.075,
+    VARIANT_CALENDAR_BUMP: 0.075,
+    VARIANT_SPREAD_ARTIFACT: 0.05,
+    VARIANT_BORROW_COST: 0.05,
+    VARIANT_NONE: 0.05,
+}
+
 DEFAULT_SCENARIO_MIX_BY_STRATEGY = {
     STRATEGY_PARITY: DEFAULT_SCENARIO_MIX,
     STRATEGY_CROSS_STRIKE: DEFAULT_SCENARIO_MIX_CROSS,
     STRATEGY_CALENDAR: DEFAULT_SCENARIO_MIX_CALENDAR,
+    STRATEGY_FORWARD: DEFAULT_SCENARIO_MIX_FORWARD,
 }
 
 # Strike grid as moneyness (K/S - 1) and listed expiries in days - both
@@ -257,6 +314,7 @@ CHATTER_SIGNAL_RATIO_DEFAULT = 0.5
 CHATTER_HANDLE_POOL = tuple(f"user{n}" for n in range(1000, 1030))
 OPTION_SIZE_RANGE = (10, 200)                 # contracts, per quote side
 UNDERLYING_SIZE_RANGE = (100, 2000)           # shares, per quote side
+FORWARD_SIZE_RANGE = (100, 2000)              # share-equivalents, per quote side - a convention
 
 IV_FLOOR, IV_CEILING = 0.05, 1.5
 
@@ -498,10 +556,11 @@ class GroundTruth:
     # lives in one field.
     affected_strikes: list | None = None
     # 'cross_strike' for the two genuine cross variants (bump/dip),
-    # 'calendar' for the genuine calendar bump (§56); None for every other
-    # variant, traps included - a trap's whole point is that it looks like
-    # its genuine sibling but resolves to no opportunity, so it carries no
-    # expected family to grade against.
+    # 'calendar' for the genuine calendar bump (§56), 'forward' for the two
+    # genuine forward variants (§61); None for every other variant, traps
+    # included - a trap's whole point is that it looks like its genuine
+    # sibling but resolves to no opportunity, so it carries no expected
+    # family to grade against.
     expected_family: str | None = None
 
 
@@ -518,6 +577,11 @@ class ScenarioWorld:
     rows: tuple[ChainRow, ...]
     ground_truth: GroundTruth
     chatter: tuple[dict, ...]
+    # The forward leg (§61): one listed forward per expiry, present only in
+    # FORWARD_VARIANTS scenarios - an empty tuple means the instrument does
+    # not exist in this scenario's market, which is a world fact, not a
+    # missing field (module note above VARIANT_FORWARD_BUMP).
+    forwards: tuple[ForwardQuote, ...] = ()
 
 
 # --- chain construction --------------------------------------------------------
@@ -1222,6 +1286,164 @@ def _inject_calendar_spread_artifact(rng: random.Random, rows: list[ChainRow], s
     )
 
 
+# --- the forward leg (§61, TQ-14) ---------------------------------------------
+
+# The one expiry whose forward the genuine/trap injectors move - the middle
+# listed expiry, the same convention the cross-strike variants use for their
+# ladder. The other expiries' forwards stay fair, so a detection through them
+# is a stray the evaluator names.
+FORWARD_TARGET_EXPIRY = EXPIRY_DAYS[1]
+
+# Direction sets per genuine variant: what the organization's own detectors
+# can legitimately report for each shift sign. A rich forward (bump) trades as
+# ARB-013 'sell_forward' and ARB-014 'carry'; a cheap one (dip) as
+# 'buy_forward' and 'reverse_carry'. Anything else at the target expiry is
+# world drift, not a second correct answer.
+FORWARD_EXPECTED_DIRECTIONS = {
+    VARIANT_FORWARD_BUMP: {"sell_forward", "carry"},
+    VARIANT_FORWARD_DIP: {"buy_forward", "reverse_carry"},
+}
+
+
+def _fair_forward_mid(spot: float, r: float, q: float, expiry_days: int) -> float:
+    """F = (S - PV(div)) / DF - the no-arbitrage forward for the same carry
+    inputs the chain is priced from, so in a clean world DF*(F - K) equals
+    the mid C - P at every strike *exactly* and the forward leg is silent by
+    construction (the clean-world guarantee, pinned by property test rather
+    than only asserted here)."""
+    t_years = expiry_days / 365
+    return (spot - pricing.pv_div(spot, q, t_years)) / math.exp(-r * t_years)
+
+
+def _build_forwards(rng: random.Random, spot: float, r: float, q: float,
+                    spread_pct: float, quoted_at: str) -> tuple[ForwardQuote, ...]:
+    """One fair forward per listed expiry, quoted with the same relative
+    spread basis every other instrument here uses."""
+    forwards = []
+    for expiry_days in EXPIRY_DAYS:
+        mid = _fair_forward_mid(spot, r, q, expiry_days)
+        half_spread = mid * spread_pct / 2
+        forwards.append(ForwardQuote(
+            expiry_days=expiry_days,
+            quote=_quote_from_mid(rng, mid, half_spread, FORWARD_SIZE_RANGE, quoted_at),
+        ))
+    return tuple(forwards)
+
+
+def _shift_forward(forwards: tuple[ForwardQuote, ...], expiry_days: int, shift: float,
+                   extra_half_spread: float = 0.0) -> tuple[ForwardQuote, ...]:
+    """One expiry's forward re-mid'd (and optionally widened), sizes and
+    timestamp kept - the same only-what-the-variant-intends discipline
+    _requote_keep_sizes gives every other injector."""
+    shifted = []
+    for fwd in forwards:
+        if fwd.expiry_days != expiry_days:
+            shifted.append(fwd)
+            continue
+        mid, hs = _mid_and_half_spread(fwd.quote)
+        shifted.append(ForwardQuote(
+            expiry_days=fwd.expiry_days,
+            quote=_requote_keep_sizes(mid + shift, hs + extra_half_spread, fwd.quote),
+        ))
+    return tuple(shifted)
+
+
+def _forward_shift_floor(rows: list[ChainRow], forwards: tuple[ForwardQuote, ...],
+                         r: float) -> float:
+    """The smallest |shift| that makes the ATM ARB-013 package at the target
+    expiry clear strictly. At fair mids the package's gross is
+    DF*shift - DF*hs_fwd - hs_call - hs_put, so the floor is
+    hs_fwd + (hs_call + hs_put + costs3)/DF - mirroring the detector's own
+    arithmetic (the _calendar_lift_floor discipline) so floor and answer key
+    cannot disagree about what "clears" means."""
+    atm = rows[_locate_row(rows, expiry_days=FORWARD_TARGET_EXPIRY, moneyness=0.00)]
+    fwd = next(f for f in forwards if f.expiry_days == FORWARD_TARGET_EXPIRY)
+    _, hs_fwd = _mid_and_half_spread(fwd.quote)
+    _, hs_call = _mid_and_half_spread(atm.call)
+    _, hs_put = _mid_and_half_spread(atm.put)
+    df = math.exp(-r * FORWARD_TARGET_EXPIRY / 365)
+    return hs_fwd + (hs_call + hs_put + _INJECTION_COSTS.for_legs(3)) / df
+
+
+def _verify_forward_scan(rows: list[ChainRow], forwards: tuple[ForwardQuote, ...],
+                         underlying: Quote, r: float, q: float, spot: float,
+                         borrow_fee_annual: float | None, as_of: str) -> list[Opportunity]:
+    """scan_forward through the organization's own entry point over trial
+    chains - the injectors' verification loop, shared so genuine, trap and
+    clean branches all judge the world with the same scan the answer key
+    runs."""
+    chains = _trial_chains(rows, underlying, r, q, spot, borrow_fee_annual, as_of)
+    return scan_forward(chains, forwards, _INJECTION_COSTS)
+
+
+def _inject_forward_shift(rng: random.Random, rows: list[ChainRow],
+                          forwards: tuple[ForwardQuote, ...], variant: str,
+                          underlying: Quote, spot: float, r: float, q: float,
+                          borrow_fee_annual: float | None,
+                          config: MissionConfig) -> tuple[tuple[ForwardQuote, ...], float]:
+    """The genuine forward variants: one expiry's forward mid shifted off
+    fair - up for 'forward_bump' (rich), down for 'forward_dip' (cheap) -
+    with the chain untouched, so every same-expiry and cross-expiry option
+    relation is exactly invariant (nothing they price moved; no algebra
+    needed, unlike the lift variants). Verified with the organization's own
+    scan_forward: it must fire at the target expiry in a direction the shift
+    sign explains, and nowhere else.
+
+    Returns (forwards, deviation) with deviation SIGNED the way the mid
+    moved - ground truth records what was done, not just its size."""
+    sign = 1.0 if variant == VARIANT_FORWARD_BUMP else -1.0
+    floor = _forward_shift_floor(rows, forwards, r)
+    deviation = sign * max(rng.uniform(*config.deviation_range), floor + 0.05)
+    shifted = _shift_forward(forwards, FORWARD_TARGET_EXPIRY, deviation)
+
+    fired = _verify_forward_scan(rows, shifted, underlying, r, q, spot,
+                                 borrow_fee_annual, config.base_time)
+    expected = FORWARD_EXPECTED_DIRECTIONS[variant]
+    matching = [o for o in fired if o.inputs["expiry_days"] == FORWARD_TARGET_EXPIRY
+                and o.direction in expected]
+    stray = [o for o in fired if o not in matching]
+    if not matching:  # pragma: no cover - world-integrity check, not expected to trigger
+        raise RuntimeError(
+            f"forward shift of {deviation:+.4f} produced no {sorted(expected)} package at "
+            f"{FORWARD_TARGET_EXPIRY}d - the shift floor is wrong"
+        )
+    if stray:  # pragma: no cover - same
+        raise RuntimeError(
+            f"forward shift leaked {len(stray)} package(s) beyond the target expiry/"
+            f"directions (first: {stray[0].detector_id} {stray[0].direction} at "
+            f"{stray[0].inputs['expiry_days']}d) - fair forwards elsewhere have drifted"
+        )
+    return shifted, deviation
+
+
+def _inject_forward_spread_artifact(rng: random.Random, rows: list[ChainRow],
+                                    forwards: tuple[ForwardQuote, ...],
+                                    underlying: Quote, spot: float, r: float, q: float,
+                                    borrow_fee_annual: float | None,
+                                    config: MissionConfig) -> tuple[tuple[ForwardQuote, ...], float]:
+    """The forward trap: the same off-fair shift (random side), erased by
+    widening the shifted forward's own spread until scan_forward over every
+    expiry finds nothing - a mid-level forward mispricing the forward's own
+    executable band swallows. addendum 27's non-negotiable rule, in
+    forward form; the chain is never touched."""
+    sign = rng.choice((1.0, -1.0))
+    floor = _forward_shift_floor(rows, forwards, r)
+    deviation = sign * max(rng.uniform(*config.deviation_range), floor + 0.05)
+
+    extra_hs = abs(deviation) / 2
+    for _ in range(50):
+        widened = _shift_forward(forwards, FORWARD_TARGET_EXPIRY, deviation, extra_half_spread=extra_hs)
+        surviving = _verify_forward_scan(rows, widened, underlying, r, q, spot,
+                                         borrow_fee_annual, config.base_time)
+        if not surviving:
+            return widened, deviation
+        extra_hs += max(o.net_edge_per_share for o in surviving) + 0.05
+    raise RuntimeError(  # pragma: no cover - safety valve, not expected to trigger
+        f"forward trap failed to converge to zero forward packages after 50 widening "
+        f"iterations (shift={deviation:+.4f})"
+    )
+
+
 # --- chatter (addendum 25 SS11/SS12) --------------------------------------------
 
 _SIGNAL_TEMPLATES = (
@@ -1337,7 +1559,8 @@ def _build_scenario(
         q = config.q_range[1]
     borrow_fee = rng.uniform(*config.borrow_fee_range)
     skew = draw_skew(rng)
-    if variant == VARIANT_NONE or variant in TRAP_VARIANTS or variant == VARIANT_CALENDAR_BUMP:
+    if (variant in CLEAN_VARIANTS or variant in TRAP_VARIANTS
+            or variant == VARIANT_CALENDAR_BUMP or variant in FORWARD_GENUINE_VARIANTS):
         # SS45's first finding: 'localized_distortion' is not itself an
         # injection, but its isolated IV mountain genuinely violates
         # cross-strike bounds around the bumped cell regardless of what (if
@@ -1363,7 +1586,11 @@ def _build_scenario(
         # can absorb - a distortion's pre-existing cross-strike violation
         # would poison the grade with a failure the lift never caused. Same
         # instrument (skew diversity minus one shape), same reason (ground
-        # truth must not promise what the drawn world contradicts).
+        # truth must not promise what the drawn world contradicts). The
+        # genuine forward variants (§61) join for the same reason one family
+        # over: their 'forward' family grades ANY option-relation detection
+        # as world drift, and their injector never touches the chain at all
+        # - the chain must simply have been clean to begin with.
         clean_rng = random.Random(f"{config.seed}:scenario:{index}:clean-skew")
         # Two rejection criteria: the shape §45 identified (kept explicit, so
         # the guarantee does not silently rest on the property check alone),
@@ -1391,6 +1618,7 @@ def _build_scenario(
     expected_executable = False
     expected_direction = None
     expected_family = None
+    forwards: tuple[ForwardQuote, ...] = ()
 
     if variant == VARIANT_GENUINE:
         idx = rng.randrange(len(rows))
@@ -1453,6 +1681,38 @@ def _build_scenario(
             rng, rows, spot, r, q, underlying, borrow_fee, config,
         )
         affected_expiry_days = EXPIRY_DAYS[0]
+    elif variant in FORWARD_VARIANTS:
+        # The instrument exists in this scenario (module note above
+        # VARIANT_FORWARD_BUMP): fair forwards on every listed expiry first,
+        # then whatever the variant does to exactly one of them.
+        forwards = _build_forwards(rng, spot, r, q, config.spread_pct, config.base_time)
+        if variant in FORWARD_GENUINE_VARIANTS:
+            forwards, injected_deviation = _inject_forward_shift(
+                rng, rows, forwards, variant, underlying, spot, r, q, borrow_fee, config,
+            )
+            affected_expiry_days = FORWARD_TARGET_EXPIRY
+            expected_executable = True
+            expected_family = "forward"
+            expected_direction = (
+                "sell_forward" if variant == VARIANT_FORWARD_BUMP else "buy_forward"
+            )
+        elif variant == VARIANT_FORWARD_SPREAD_ARTIFACT:
+            forwards, injected_deviation = _inject_forward_spread_artifact(
+                rng, rows, forwards, underlying, spot, r, q, borrow_fee, config,
+            )
+            affected_expiry_days = FORWARD_TARGET_EXPIRY
+        else:  # VARIANT_FORWARD_NONE: fair instrument, nothing injected -
+            # but 'fair is silent' is this variant's whole promise, so it is
+            # verified with the organization's own scan rather than trusted
+            # to the closed form (the same discipline every injector applies).
+            fired = _verify_forward_scan(rows, forwards, underlying, r, q, spot,
+                                         borrow_fee, config.base_time)
+            if fired:  # pragma: no cover - world-integrity check, not expected to trigger
+                raise RuntimeError(
+                    f"fair forwards produced {len(fired)} package(s) on a clean chain "
+                    f"(first: {fired[0].detector_id} {fired[0].direction}) - "
+                    "the fair-forward arithmetic has drifted from the pricing kernel"
+                )
     # VARIANT_NONE: nothing injected.
 
     ground_truth = GroundTruth(
@@ -1469,6 +1729,7 @@ def _build_scenario(
         scenario_id=scenario_id, entity_id=entity_id, symbol=symbol, spot=spot,
         underlying=underlying, r=r, q=q, borrow_fee_annual=borrow_fee,
         rows=tuple(rows), ground_truth=ground_truth, chatter=chatter,
+        forwards=forwards,
     )
 
 
@@ -1511,6 +1772,20 @@ def build_option_chain_observation(scenario: ScenarioWorld, config: MissionConfi
                   "pv_div_by_expiry": pv_div_by_expiry},
         "chain": chain,
     }
+    if scenario.forwards:
+        # The forward leg (§61), additive: the key is absent - not empty -
+        # when the scenario's market lists no forward, so stored worlds from
+        # before this increment and non-forward scenarios read back
+        # identically to how they always did.
+        payload["forwards"] = [
+            {
+                "expiry_days": fwd.expiry_days,
+                "bid": fwd.quote.bid, "ask": fwd.quote.ask,
+                "bid_size": fwd.quote.bid_size, "ask_size": fwd.quote.ask_size,
+                "quoted_at": fwd.quote.quoted_at,
+            }
+            for fwd in scenario.forwards
+        ]
     return Observation(
         entity_id=scenario.entity_id, data_class="option_chain", observed_at=config.base_time,
         payload=payload,
@@ -1595,6 +1870,14 @@ def answer_key(scenario: ScenarioWorld, config: MissionConfig) -> list[Opportuni
     # entry point Explorer's _parity_work runs, so world and organization
     # keep judging the same relations.
     opportunities.extend(scan_calendar(chains, costs, stale_tolerance_seconds=config.stale_tolerance_seconds))
+    # §61: and scan_forward the day the forward leg did, same reasoning. Only
+    # when the scenario's market lists forwards - the scan itself treats no
+    # forwards as a legitimate no-op, but skipping the call entirely keeps
+    # the answer key's shape aligned with what the world actually generated.
+    if scenario.forwards:
+        opportunities.extend(scan_forward(
+            chains, scenario.forwards, costs, stale_tolerance_seconds=config.stale_tolerance_seconds,
+        ))
     return opportunities
 
 
@@ -1636,6 +1919,38 @@ def evaluate(scenario: ScenarioWorld, opportunities: list[Opportunity]) -> dict:
       trap or 'none' scenario needs zero detections at all, of anything."""
     gt = scenario.ground_truth
     detections = [_detection_record(o) for o in opportunities]
+
+    if gt.expected_family == "forward":
+        # §61: the shift never touches the chain, so ANY option-relation
+        # detection (parity, cross-strike, calendar) is the world drifting -
+        # graded as its own named failure, the calendar family's discipline
+        # applied to the new instrument. A matching detection is a forward
+        # package (ARB-013/014) at the shifted expiry in a direction the
+        # shift sign explains; anything else the forward detectors report is
+        # a stray the injector should not have produced.
+        expected_directions = FORWARD_EXPECTED_DIRECTIONS[gt.variant]
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        chain_hits = [d for d in detections
+                      if d["detector_id"] not in ("ARB-001", "ARB-013", "ARB-014")]
+        forward_hits = [d for d in detections if d["detector_id"] in ("ARB-013", "ARB-014")]
+        matching = [d for d in forward_hits if d["expiry_days"] == gt.affected_expiry_days
+                    and d["direction"] in expected_directions]
+        stray = [d for d in forward_hits if d not in matching]
+
+        if arb001_hits:
+            outcome, reasons = "FAIL", ["unexpected_parity_hit"]
+        elif chain_hits:
+            outcome, reasons = "FAIL", ["unexpected_chain_hit"]
+        elif stray:
+            outcome, reasons = "FAIL", ["stray_detection"]
+        elif matching:
+            outcome, reasons = "PASS", []
+        else:
+            outcome, reasons = "FAIL", ["injection_missed"]
+        return {
+            "scenario_id": scenario.scenario_id, "ground_truth": asdict(gt),
+            "detections": detections, "outcome": outcome, "reasons": reasons,
+        }
 
     if gt.expected_family == "calendar":
         # §56: the whole-ladder lift preserves parity and every same-expiry
@@ -1703,7 +2018,9 @@ def evaluate(scenario: ScenarioWorld, opportunities: list[Opportunity]) -> dict:
             outcome, reasons = "PASS", []
         else:
             outcome = "FAIL"
-            reasons = ["trap_leaked"] if gt.variant != VARIANT_NONE else ["false_positive"]
+            # Clean controls ('none', and §61's fair-forward 'forward_none')
+            # have nothing to leak - a detection there is a false positive.
+            reasons = ["trap_leaked"] if gt.variant not in CLEAN_VARIANTS else ["false_positive"]
 
     return {
         "scenario_id": scenario.scenario_id,
@@ -1844,13 +2161,13 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     # "genuine" for strategy-coverage purposes (addendum 25 SS18) means any
     # variant the mix could produce a real, floored opportunity from - the
     # original single VARIANT_GENUINE plus the two cross-strike genuine
-    # variants (SS45's deferred item) plus the calendar bump (§56), since a
-    # strategy's own curriculum may never draw the classic parity genuine at
-    # all and still deserves to certify COMPLETED once it exercises its own
-    # material.
+    # variants (SS45's deferred item) plus the calendar bump (§56) plus the
+    # two forward shifts (§61), since a strategy's own curriculum may never
+    # draw the classic parity genuine at all and still deserves to certify
+    # COMPLETED once it exercises its own material.
     def _is_genuine(variant: str) -> bool:
         return (variant == VARIANT_GENUINE or variant in CROSS_GENUINE_VARIANTS
-                or variant == VARIANT_CALENDAR_BUMP)
+                or variant == VARIANT_CALENDAR_BUMP or variant in FORWARD_GENUINE_VARIANTS)
 
     strategy_exercised = any(
         _is_genuine(report["ground_truth"]["variant"]) and report["outcome"] == "PASS"
@@ -1862,7 +2179,7 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     detected = sum(1 for r in scenario_reports if _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] == "PASS")
     missed = sum(1 for r in scenario_reports if _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] != "PASS")
     false_positives = sum(1 for r in scenario_reports if not _is_genuine(r["ground_truth"]["variant"]) and r["outcome"] == "FAIL")
-    opportunities_injected = sum(1 for s in scenarios if s.ground_truth.variant != VARIANT_NONE)
+    opportunities_injected = sum(1 for s in scenarios if s.ground_truth.variant not in CLEAN_VARIANTS)
     pass_count = sum(1 for r in scenario_reports if r["outcome"] == "PASS")
 
     metrics = {

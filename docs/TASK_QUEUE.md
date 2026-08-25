@@ -170,15 +170,19 @@ Engine and Simulation Engine first — is recorded in §60 and ordered here.
 
 ### TQ-14 — Simulation Engine: world capabilities for the blocked detector families
 
-**NEED (YELLOW) · QUEUED · owner-directed head of queue (2026-08-25, §60)**
+**NEED (YELLOW) · IN_PROGRESS · owner-directed head of queue (2026-08-25, §60) ·
+scope item 1 DONE — `SPEC_RECONCILIATION.md` §61**
 
 Source: addendum 25 (the world's own spec), addendum 34 §6–§8 (the engine must evolve when
-training needs outgrow it), and the blocked register below. The training world prices equity
-option chains only; every blocked detector family waits on it. Scope, in order of leverage:
-a forward/futures leg (unblocks TQ-B1's ARB-013/014 — the smallest increment that turns two
-blocked detectors into buildable ones), then event-stepped scenario shape per 34 §6
-(State(t) + Event(t) → State(t+1), seeds reproducible) as the step toward continuous Monte
-Carlo operation. American-style worlds (TQ-B3) remain a larger, separate increment.
+training needs outgrow it), and the blocked register below. Scope item 1 — the forward leg —
+is built: four forward variants under their own `options_arbitrage_forward` strategy, ARB-013
+and ARB-014 as their detectors (TQ-B1 resolved; Phase 1 of addendum 27 §11 is now complete),
+wired through the answer key, the stored payload, Explorer, evaluation and diagnosis. The
+instrument is per-variant, not world-wide, for the finance recorded in §61 (a fair forward
+beside a borrow_cost trap falsifies the trap). Remaining scope: event-stepped scenario shape
+per 34 §6 (State(t) + Event(t) → State(t+1), seeds reproducible) as the step toward
+continuous Monte Carlo operation. American-style worlds (TQ-B3) remain a larger, separate
+increment.
 
 ### TQ-15 — Reference Data Engine: market-implied validation of declared dividends and borrow
 
@@ -228,12 +232,12 @@ tracing. Currency-denominated limits remain deferred within §52.
 
 ### TQ-B1 — ARB-013 and ARB-014 (forward/futures detectors)
 
-**Source: addendum 27 §11 Phase 1 (013) and Phase 2 (014).** Blocked: the training world
-(addendum 25) generates equity option chains only — no forward or futures instruments exist for
-either detector to price against, and inventing them is a world-design increment (addendum 25's
-scope), not a detector increment. **The unblocking increment is now queued as TQ-14's first
-scope item** (owner-directed, §60); this entry moves to the main queue when the forward leg
-exists.
+**RESOLVED — `SPEC_RECONCILIATION.md` §61.** The blocker was always the instrument, and TQ-14's
+first scope item built it: the world lists forwards in the four forward variants' scenarios,
+and ARB-013/014 price against them under `scan_forward`. What remains of this entry's original
+wording is the *futures* half: the built instrument is a forward (no variation margin, no
+convexity), and a futures adapter owes addendum 27's adjustments before reusing the detectors —
+deferred until a futures instrument has a reason to exist.
 
 ### TQ-B2 — ARB-012 (calendar consistency)
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend import observations as observation_store
-from backend.arbitrage import ChainSnapshot, ParitySnapshot, Quote, StrikeQuotes
+from backend.arbitrage import ChainSnapshot, ForwardQuote, ParitySnapshot, Quote, StrikeQuotes
 from backend.canonical import Observation
 
 # StoredPost carries no source label of its own in the stored chatter payload
@@ -80,6 +80,18 @@ class StoredChainProvider:
             )
             for row in payload["chain"]
         ]
+
+
+def forward_quotes(observation: Observation) -> list[ForwardQuote]:
+    """The stored observation's forward leg (SPEC_RECONCILIATION §61), for
+    backend/arbitrage.py's scan_forward. An absent 'forwards' key means the
+    scenario's market listed no forward - worlds stored before the increment
+    and non-forward scenarios alike - and reads back as the empty list
+    scan_forward treats as a legitimate no-op."""
+    return [
+        ForwardQuote(expiry_days=row["expiry_days"], quote=_quote_from_leg(row))
+        for row in observation.payload.get("forwards", [])
+    ]
 
 
 def chain_snapshots(observation: Observation) -> list[ChainSnapshot]:
