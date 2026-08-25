@@ -1,6 +1,6 @@
 # Design Documents
 
-Everything governing this system's design, in one place. Forty files here, accumulated across
+Everything governing this system's design, in one place. Forty-four files here, accumulated across
 several design sessions, and five more held privately; this index says what each one is, which govern
 which, and what order to read them in.
 
@@ -23,6 +23,7 @@ Documents disagree with each other, so the order matters. Higher layers win.
 | Layer | Document | Authority |
 |---|---|---|
 | **Constitutional** | `JARVIS_CONSTITUTION.md` — **held privately** | **Supreme.** Governs principles. Where an addendum conflicts, the constitution wins and the addendum is reconciled to it. |
+| Architectural | [`addenda/`](addenda) 34–37 (Organizational Doctrine, second set) | Canonical **for training-through-simulation, multi-LLM model strategy, the Department of Education, and continuous optimization**. Extends 28–33 with the learning machinery: how needs become curricula, Monte Carlo simulations, trained and certified behavior, and measured real-world effect. Nearly all roadmap. Where these touch the built training loop (13), the simulation world (25), or the provider layer (16 §24), record the disposition in `SPEC_RECONCILIATION.md` §60 rather than assuming the newer set wins. |
 | Architectural | [`addenda/`](addenda) 28–33 (Organizational Doctrine) | Canonical **for the target organizational structure: security defense, business continuity, systemic evolution, strategy, governance, and strategic doctrine**. A description of the organization MyAI is to become, not of the built system — nearly all of it is roadmap. Where these touch the FI addenda (11–15), the Gateway lineage (16–18), or Day Zero (21–27), record the disposition in `SPEC_RECONCILIATION.md` §47 rather than assuming the newer set wins. |
 | Architectural | [`addenda/`](addenda) 21–27 (Day Zero lineage) | Canonical **for Day Zero startup, reference data, the simulation training world, and the arbitrage library**. Builds on 20's engine architecture. 22 is held privately. Within the lineage, 24 governs 26 where they differ. Where these touch other lineages, record the disposition in `SPEC_RECONCILIATION.md` §39 rather than assuming the higher number wins. |
 | Architectural | [`addenda/`](addenda) 16–18 (Gateway lineage) | Canonical **for the external communication boundary and backend infrastructure only**. A separate subject from 2–15, not a newer set of it — these neither supersede nor are governed by the Financial Intelligence addenda. Where the two ever touch the same question, record it in `SPEC_RECONCILIATION.md` rather than assuming the higher number wins. |
@@ -40,7 +41,7 @@ those resolutions live, because the addenda themselves are marked do-not-edit.
 
 A distinction worth knowing before editing anything.
 
-- **Verbatim** — `addenda/` 1–14, 16–18 and 20–33 are unedited copies of supplied specifications. They are
+- **Verbatim** — `addenda/` 1–14, 16–18 and 20–37 are unedited copies of supplied specifications. They are
   the authoritative source and are never changed; disagreements with them get recorded elsewhere.
 - **Maintained** — `JARVIS_GAP_ANALYSIS.md`, `SPEC_RECONCILIATION.md`, `TIMING_CONSTANTS.md` and
   `organization.yaml` are this project's own records, edited as the design and the code move.
@@ -120,6 +121,23 @@ queued in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 | [31 — Strategy Department](addenda/addendum_31_strategy_department.md) | What to pursue and in what order: Need/Want classification, GREEN→CRITICAL flags, the Strategic Priority Register, petitions, champions, commissions, Horizon Intelligence, Board sessions, Development Plans. |
 | [32 — Governance Framework & Parliamentary System](addenda/addendum_32_governance_framework_parliamentary_system.md) | How the organization governs itself: civilian character, dual departmental leadership, two-tier democracy, committees, priority queues, Quick-Win and high-cost classification, verified constitutional implementation. |
 | [33 — Strategic Principles](addenda/addendum_33_strategic_principles.md) | Constitutional-level doctrine addending 31: never become a dinosaur, strategy over brute force, blind-spot reviews, cooperation first with competition as tie-breaker, responsible growth, strategic humility. Directives SP1–SP17. |
+
+**Organizational Doctrine, second set (34–37)** — the lineage's continuation, supplied
+2026-08-25: the learning machinery. How the organization detects a need, debates it,
+converts it into curriculum and Monte Carlo simulation, trains and certifies agents,
+rolls the behavior out, and checks reality against the prediction — plus the
+multi-LLM strategy and the optimization discipline that keep the whole thing
+efficient. Nearly everything here is roadmap;
+[`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §60 records what already exists
+under other names, the owner's priority decision, and what is deferred with
+reasons. The work it generates is queued in [`TASK_QUEUE.md`](TASK_QUEUE.md).
+
+| | |
+|---|---|
+| [34 — Training and Monte Carlo Simulation Framework](addenda/addendum_34_training_and_monte_carlo_simulation_framework.md) | The integrating loop: need → governance → directive → curriculum → Monte Carlo scenarios → training → certification → controlled rollout → lag-aware predicted-versus-actual review. Simulation as an evolving environment, not a question bank; collaboration as the primary training dimension; the nine-stage simulation maturity path. |
+| [35 — Multi-LLM Enterprise Strategy](addenda/addendum_35_multi_llm_enterprise_strategy.md) | AGENT != MODEL. Model Registry, per-agent-class Model Requirement Profiles, cost-aware routing that never silently downgrades critical work, model-migration lifecycle, and collaboration quality as a model-fit criterion. |
+| [36 — Department of Education](addenda/addendum_36_department_of_education.md) | Curriculum Architect and deliberately cheap trainers; versioned curricula; structured trainer feedback; simulation requests from curriculum needs; the Speculator curriculum as the worked example; collaboration as the universal top-priority competency. |
+| [37 — Evolution: Continuous Optimization](addenda/addendum_37_evolution_continuous_optimization.md) | Optimization as a permanent sub-department of Evolution: measure, benchmark, evaluate agent-to-LLM fit and routing, recommend on evidence, change only through governance, compare predicted with observed. Directives O1–O9; collaboration as a non-negotiable constraint. |
 
 **Financial Intelligence, third set (11–15)** — the current architecture.
 

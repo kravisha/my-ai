@@ -4301,3 +4301,116 @@ per-destination retention counts, a remote provider (the interface §48
 built is still what makes one an adapter rather than a redesign), and
 backup of `.env` (§48's exclusion reasoning stands: secrets recover by
 re-issuance, not restore).
+
+---
+
+## §60 — The learning machinery arrives: four documents, and the owner points at the engines (2026-08-25)
+
+Four documents supplied 2026-08-25, forming the Organizational Doctrine
+lineage's second set (34–37): the Training and Monte Carlo Simulation
+Framework (34), the Multi-LLM Enterprise Strategy (35), the Department of
+Education (36), and Evolution's Continuous Optimization addendum (37).
+Assimilated verbatim per convention; precedence row and index block added
+to `docs/README.md`; the work they generate is queued below and in
+`TASK_QUEUE.md`. Together they describe how the organization *learns*:
+need → governance → curriculum → simulation → training → certification →
+controlled rollout → predicted-versus-actual review. Nearly everything is
+roadmap, and the honest dispositions below say what already exists under
+other names.
+
+**The owner's priority decision, recorded as Strategy acting through the
+Board (31 §3):** among the work this set generates, the Reference Data
+Engine and the Simulation Engine come first. That is also what the
+lineages themselves would choose — every blocked detector family (TQ-B1,
+TQ-B3) waits on world capabilities, and §55 already named reference-data
+validation as the diagnostics' natural first consumer — but it is
+recorded here as an owner directive, not an inference.
+
+### Boundary dispositions
+
+1. **34 (Training/Monte Carlo) against 13 (the built training loop) and 25
+   (the built training world).** The disposition shape of §47's 30-vs-13
+   ruling, extended: **13 governs the built loop, 25 governs the built
+   world**, and 34 is adopted as the direction both evolve toward. Against
+   34 §20's maturity path, the built system stands at stages 1–2:
+   single-agent skill drills (missions, evaluation, certification) exist;
+   scenario provenance and seed-reproducibility exist (the continuity
+   backup's own exclusion rule relies on runs being reproducible from
+   scenario + seed + code version); pairwise collaboration exists in
+   *mechanism* (cross-checks, UQI) but is neither drilled nor scored. What
+   34 concretely demands next is world capability — instruments, events,
+   noise, rare-and-ordinary periods — which is addendum 25's scope and
+   exactly where the blocked queue already points (TQ-B1's forward leg,
+   TQ-B3's American worlds). TQ-14.
+
+2. **35 (Multi-LLM) against 16 §24 and the built provider layer.** The
+   principle AGENT != MODEL is already load-bearing: `app/model_provider.py`
+   exists because addendum 16 §24 forbade a "Claude Gateway", callers walk
+   plain dictionaries rather than SDK types, and the vendor is constructed
+   in exactly one place (where §52's budget breaker wraps it). But the
+   system is single-provider, single-model in fact: `MODEL` is one
+   constant, there is no registry, no per-agent-class requirement profile,
+   no routing, no fallback. 35's own discipline governs the increment:
+   default mappings are provisional hypotheses, and 30 §12 says metadata
+   and policy before code — so the first increment is the **Model
+   Registry and Model Requirement Profiles as data**, populated with
+   today's one honest row, not a routing engine with one route. TQ-16.
+   Routing, fallback, and the migration lifecycle activate when the
+   registry holds a second model worth routing to.
+
+3. **36 (Education) against the built loop.** The Curriculum Architect's
+   *function* — versioned knowledge, deciding what agents train on,
+   refining it on evaluation evidence — exists distributed across the
+   addendum-13 machinery (versioned strategies, peer groups, the
+   training/evaluation/certification records). No agent holds the role,
+   and at the current population the §47 precedent applies: new
+   departmental machinery waits until a real curriculum need the existing
+   loop cannot express. What is genuinely new and actionable now is 36
+   §8's substance: **collaboration as a scored competency**. The
+   organization already produces the raw material (cross-check questions
+   and answers, UQI latencies, answer usefulness is graded nowhere) and
+   34 §17 supplies the dimensions. A measurement-first increment — score
+   what already happens before drilling what doesn't — is queued. TQ-17.
+   The professor layer defers itself (36 §2.3); the Speculator curriculum
+   (36 §10) waits on the collaboration scoring it would be graded by.
+
+4. **37 (Optimization) against §52 and §58.** The addendum names a
+   discipline the repository has already practiced once, end to end: §58
+   *was* an optimization act — measure (~500k tokens/hour), hypothesize
+   (chains re-bought at pipeline latency), change one bounded thing (the
+   origination cooldown), measure again (zero steady-state), record. O7's
+   predicted-versus-observed comparison happened in miniature. What is
+   missing is the *substrate* for doing this continuously: the spend
+   ledger is per-UTC-day and process-wide, and §52 explicitly deferred
+   per-caller attribution. That deferral now has its consumer — 37 §3.1's
+   "measure organizational resource use" — so it is promoted to the
+   queue. TQ-18. A dedicated Optimization Agent waits with the rest of
+   the departmental machinery; O1–O9 are adopted as doctrine now.
+
+5. **The leadership gate (34 §18, 36 §9, 37 §9), stated three times in one
+   day.** The set's most emphatic rule — collaboration is a hard
+   promotion gate — currently has nothing to gate: no promotion machinery
+   exists. Recorded as a standing constraint that binds the day promotion
+   machinery is built, so it cannot be built without it.
+
+6. **34 §3 / 35 §9 (multi-viewpoint governance debate) against §47's
+   parliamentary deferral.** Same deferral, same reason, unchanged: at
+   the current population, staged debate would be ceremony. The new
+   detail worth keeping — model *diversity* as a debate mechanism, and
+   model identity never substituting for evidence — is recorded here for
+   the day the parliament exists.
+
+### The queue after assimilation
+
+TQ-13 (this work, done). Owner-directed head of the queue: **TQ-14**
+(Simulation Engine: grow the training world the capabilities the blocked
+detector families need, forward instruments first — unblocking TQ-B1 —
+stepping toward 34's event-driven environment) and **TQ-15** (Reference
+Data Engine: the §55-named increment — validate declared dividends and
+borrow against the market using ARB-015/016, addendum 24 §6's validation
+duty meeting its first market-implied cross-check). Then TQ-16 (Model
+Registry as metadata), TQ-17 (collaboration scoring baseline), TQ-18
+(per-caller spend attribution). Deferred with reasons in the queue:
+Education's departmental machinery, the professor layer, routing/
+migration machinery, the Optimization Agent, staged debate, and the
+leadership gate's enforcement point.

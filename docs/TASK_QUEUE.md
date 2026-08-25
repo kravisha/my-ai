@@ -23,6 +23,11 @@ holds the queue, not the record.
 
 ## Queue, in priority order
 
+> **Current head of the queue** (owner-directed 2026-08-25, `SPEC_RECONCILIATION.md` §60):
+> **TQ-14** (Simulation Engine world capabilities), then **TQ-15** (Reference Data Engine
+> market-implied validation). Entries above them in file order are DONE records, not
+> higher-priority work.
+
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
 **NEED (GREEN) · QUICK_WIN · DONE — `SPEC_RECONCILIATION.md` §47**
@@ -153,6 +158,70 @@ a second destination, unconditionally Fernet-encrypted — closing §48's record
 reason (same failure domain) stops applying the moment a copy leaves the machine. The key is
 Tier-0 recovery material; its custody obligation is printed at generation and recorded in §59.
 
+### TQ-13 — Assimilate the Organizational Doctrine second set (addenda 34–37)
+
+**NEED (GREEN) · QUICK_WIN · DONE — `SPEC_RECONCILIATION.md` §60**
+
+Source: the four documents supplied 2026-08-25 (Training & Monte Carlo Simulation Framework,
+Multi-LLM Enterprise Strategy, Department of Education, Evolution's Continuous Optimization
+addendum). Verbatim assimilation into `addenda/` 34–37, index and precedence in `README.md`,
+dispositions in §60, and the entries below. The owner's priority directive — Reference Data
+Engine and Simulation Engine first — is recorded in §60 and ordered here.
+
+### TQ-14 — Simulation Engine: world capabilities for the blocked detector families
+
+**NEED (YELLOW) · QUEUED · owner-directed head of queue (2026-08-25, §60)**
+
+Source: addendum 25 (the world's own spec), addendum 34 §6–§8 (the engine must evolve when
+training needs outgrow it), and the blocked register below. The training world prices equity
+option chains only; every blocked detector family waits on it. Scope, in order of leverage:
+a forward/futures leg (unblocks TQ-B1's ARB-013/014 — the smallest increment that turns two
+blocked detectors into buildable ones), then event-stepped scenario shape per 34 §6
+(State(t) + Event(t) → State(t+1), seeds reproducible) as the step toward continuous Monte
+Carlo operation. American-style worlds (TQ-B3) remain a larger, separate increment.
+
+### TQ-15 — Reference Data Engine: market-implied validation of declared dividends and borrow
+
+**NEED (YELLOW) · QUEUED · owner-directed second (2026-08-25, §60)**
+
+Source: addendum 24 §6 (validation duty), §55's own closing sentence (the diagnostics' first
+consumer, named there as the natural next increment), addendum 34 §2 (need discovery from
+operational evidence). ARB-015/016 already compute the market-implied dividend and financing
+bands; the Reference Data Engine declares pv_div and borrow state and today validates them
+against nothing. Scope: a validation pass that cross-checks declared reference data against
+the diagnostics' executable-band findings, recording disagreement as a reference-data finding
+(fail-closed vocabulary, per the engine's existing readiness discipline) — not as a trade.
+
+### TQ-16 — Model Registry and Model Requirement Profiles, as metadata first
+
+**WANT · QUEUED**
+
+Source: addendum 35 §3–§5, under addendum 30 §12's metadata-before-code doctrine. The registry
+and per-agent-class requirement profiles as *data*, populated with the one honest row that
+exists (the single configured provider/model, its observed properties) and explicit
+provisional-default markings per 35 §2. No routing engine with one route: routing, fallback,
+and the migration lifecycle activate when the registry holds a second model worth routing to.
+
+### TQ-17 — Collaboration scoring baseline, from records the system already writes
+
+**WANT · QUEUED**
+
+Source: addendum 34 §16–§17, addendum 36 §8 (collaboration as top-priority competency),
+addendum 37 §8 (a non-negotiable optimization constraint). The organization already produces
+cross-check questions, answers, and UQI latencies; nothing scores them. Scope: measurement
+first — score the collaboration that already happens (response usefulness, responsiveness,
+handoff completeness where observable) before building drills for what doesn't. Feeds the
+leadership gate (§60 disposition 5) whenever promotion machinery exists.
+
+### TQ-18 — Optimization measurement baseline: per-caller spend attribution
+
+**WANT · QUEUED**
+
+Source: addendum 37 §3–§4 ("measure organizational resource use"), closing §52's recorded
+deferral now that its consumer exists. Scope: attribute model spend per caller/agent in the
+existing ledger so optimization findings like §58's can be routine reads instead of manual
+tracing. Currency-denominated limits remain deferred within §52.
+
 ---
 
 ## Blocked
@@ -162,7 +231,9 @@ Tier-0 recovery material; its custody obligation is printed at generation and re
 **Source: addendum 27 §11 Phase 1 (013) and Phase 2 (014).** Blocked: the training world
 (addendum 25) generates equity option chains only — no forward or futures instruments exist for
 either detector to price against, and inventing them is a world-design increment (addendum 25's
-scope), not a detector increment. Unblocks if/when the simulation grows a forward leg.
+scope), not a detector increment. **The unblocking increment is now queued as TQ-14's first
+scope item** (owner-directed, §60); this entry moves to the main queue when the forward leg
+exists.
 
 ### TQ-B2 — ARB-012 (calendar consistency)
 
@@ -200,3 +271,24 @@ the §6 scenario engine — a substantially larger increment than any detector.
   training loop built under addendum 13 already performs train→evaluate→certify with separated
   roles; §47 records the mapping. New machinery only when a real systemic evolution needs a
   directive the existing loop cannot express.
+- **Education's departmental machinery: Curriculum Architect and trainer agents** (addendum 36
+  §1–§2, §5) — the function exists distributed across the addendum-13 loop (versioned
+  strategies, evaluation feedback); a role-holding agent waits, per §47's precedent, until a
+  curriculum need the existing loop cannot express. The **professor layer** defers itself
+  (36 §2.3). §60 disposition 3.
+- **Model routing, fallback, and the migration lifecycle** (addendum 35 §7, §10) — activate
+  when the Model Registry (TQ-16) holds a second model worth routing to; a routing engine with
+  one route is machinery without a decision to make. §60 disposition 2.
+- **The Optimization Agent as a dedicated role** (addendum 37 §4) — the discipline is adopted
+  (O1–O9, practiced once in §58) and its measurement substrate is queued (TQ-18); the
+  role-holding agent waits with the rest of the departmental machinery. §60 disposition 4.
+- **Leadership collaboration gate enforcement** (addenda 34 §18, 36 §9, 37 §9) — no promotion
+  machinery exists to gate. Recorded in §60 disposition 5 as a standing constraint that binds
+  the day promotion machinery is built.
+- **Multi-viewpoint staged debate, including model-diversity debate** (addendum 34 §3, 35 §9)
+  — the §47 parliamentary deferral, unchanged; the model-diversity detail is preserved in §60
+  disposition 6 for the day a parliament exists.
+- **Simulation maturity stages 3–9** (addendum 34 §20) — role workflows through continuous
+  whole-organization Monte Carlo, historical validation, shadow operation. The world is at
+  stages 1–2; TQ-14 is the honest next rung, and each further stage is its own increment
+  gated on the one before it.
