@@ -4588,3 +4588,101 @@ misdeclared rate under its own field via ARB-016, readiness and
 validation_status both untouched by disagreement, a moved market recorded
 as a new fact, a malformed observation named-not-fatal, and the source
 registration with its deliberate bottom rank.
+
+---
+
+## §63 — The world learns to tick: State(t) + Event(t) → State(t+1) (2026-08-25)
+
+TQ-14's remaining scope, closing the owner-directed head of the queue: the
+Market Data Simulation Engine's first step from frozen moments toward
+addendum 34 §6's Monte Carlo shape. A scenario can now be a *timeline* — a
+short sequence of complete world states over simulated time, under a new
+`options_arbitrage_timeline` strategy with its own default curriculum.
+
+### The event vocabulary of increment one
+
+Three events. `market_drift`: every step after the first, the spot takes a
+small seeded step (bounded well inside the spread basis, a disclosed
+convention) and every instrument reprices from it consistently — ordinary
+movement in which nothing is mispriced, which is 34 §7's "ordinary periods
+where nothing interesting happens" finally rendered with the market
+actually moving rather than frozen. `opportunity_onset` /
+`opportunity_resolution`: the scheduled variant's injection appears at a
+drawn step (never step 0 — a world that starts broken has no onset EVENT,
+and the event is the point) and disappears at a drawn later step, which
+may be past the end of the watched window: not every opportunity resolves
+while you are looking. Detection now has a WHEN.
+
+### Nothing new to trust
+
+The deliberate architecture: every step IS a `ScenarioWorld` with its own
+honest ground truth — the scheduled variant while live, the clean control
+while quiet — so per-step grading is the *existing* `evaluate()` and
+`answer_key()`, unchanged. "Found while live, silent while quiet" is the
+same PASS the static grader already defines, inherited rather than
+reinvented; a timeline passes only when every one of its moments does.
+Injection reuses the static injectors verbatim (each already verifies
+through the organization's own scans), with the injection stream recreated
+from one per-scenario salt at every live step so the drawn target is
+identical across the window: one persistent opportunity, not a new one
+per step. The per-step deviation is recorded per step, because the floor
+under it drifts with the spreads.
+
+### Three world-honesty decisions
+
+1. **The ladder is fixed at step 0.** Listed contracts do not re-strike
+   because the underlying drifted, and a ladder that followed the spot
+   would erase the very moneyness drift a stepped world exists to
+   exhibit. (`_build_rows` grew a fixed-ladder override rather than a
+   parallel builder.)
+2. **A forward-scheduled timeline lists its forward at EVERY step** —
+   fair when quiet (the step ground truth is §61's `forward_none` clean
+   control, reused exactly), shifted when live. An instrument that
+   appeared exactly when mispriced would teach the spurious correlation
+   "forward listed ⟹ opportunity", which no market exhibits.
+3. **Only genuine variants and the clean control are schedulable.** A
+   trap's teaching value is in its look, not its timing; the static
+   curriculum already carries every trap, and the mix is refused — not
+   silently degraded — if it draws one. Chatter is likewise absent from
+   timeline steps: the Speculator-side timeline (chatter that leads, lags,
+   or contradicts the moving market) is its own increment, and empty
+   chatter is honest where synchronized chatter would be invented.
+
+The clean-skew redraw generalizes with the shape: every timeline (quiet
+steps promise zero detections) redraws until the candidate skew renders
+clean at EVERY step's drifted spot, against the actual fixed-ladder rows,
+through scan_chain, scan_calendar, and — on forward schedules —
+scan_forward. Sub-day steps only (`step_seconds` validated < 86400):
+integer expiry_days held constant across a timeline is honest for minutes
+and hours and a lie for days.
+
+### The stored sequence, and its named consumer
+
+`store_timeline` writes one option_chain Observation per step, so
+Explorer's `latest_chain` returns the newest state of a market that
+moves, and `replay` preserves the whole sequence; the summary records the
+full schedule (variant, onset, resolution, per-step ground truth). The
+consumer that joins an agent's detection timestamps against that schedule
+— grading detection LATENCY, the thing a static world cannot measure — is
+named here as the natural next increment, not presumed built.
+
+### Verified
+
+Sixteen new tests (1727 passing): strategy registration and mix validity,
+step-shape validation including the sub-day bound, trap schedules refused,
+window/event geometry, whole-quiet timelines silent with the run honestly
+reporting RETRY_REQUIRED (a run that never exercised its material says
+so), spot drifting while the ladder holds and time strictly advancing,
+every schedulable variant detected exactly in its window (parametrized
+across all five), fair forwards at every step of a forward schedule, one
+persistent target across a live window, seed reproducibility of entire
+timelines, and the stored sequence giving Explorer the newest state with
+the distinct-asset constraint enforced. The first end-to-end smoke: 6
+timelines, 48 steps, every moment graded PASS.
+
+### What remains beyond this increment
+
+Addendum 34 §6's fuller trial vocabulary — provider outages, delayed and
+missing data, agent unavailability, deceptive information, collaboration
+events — and its stages 3–9. Each is its own increment with its own
+consumer; the state-transition shape they all need now exists.
