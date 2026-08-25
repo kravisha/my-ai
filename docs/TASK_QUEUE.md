@@ -638,9 +638,9 @@ only today, with real skills to come. Both recorded in §92.
 ### TQ-44 — Portfolios as owned entities, with the guard that makes them safe
 
 **NEED (GREEN) · PLANNED — not implemented · addendum 44 §3, §5, §9, §12, §15.1, §15.5,
-§20 Phase 1+3 · `SPEC_RECONCILIATION.md` §97 · plan: `docs/plans/TQ-44_portfolios_as_owned_entities.md`**
+§20 Phase 1+3 · `SPEC_RECONCILIATION.md` §97 · spec: `docs/specs/TQ-44_portfolio_ownership_and_isolation.md`**
 
-The full implementation plan is written and is detailed enough to build from without further
+A full implementation specification is written and is detailed enough to build from without further
 design work — objective, design decisions, files, dependencies, security implications, required
 tests, acceptance criteria, and three genuinely open questions worth deciding first.
 
