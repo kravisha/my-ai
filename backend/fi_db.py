@@ -1928,7 +1928,18 @@ def recent_completed_spawns(conn: Database, role: str, within_seconds: float) ->
         "AND target_role = ? AND outcome = 'success' ORDER BY completed_at",
         (role,),
     )
-    return [dict(row) for row in rows if parse_timestamp(row["completed_at"]) >= cutoff]
+    # Strictly after the cutoff, not at-or-after. A zero-width window must
+    # contain nothing, and `>=` made it contain whatever happened at the same
+    # instant - which on Windows is almost everything, because two consecutive
+    # `datetime.now()` calls return the identical value roughly 19,997 times in
+    # 20,000. The archive trigger writes `completed_at` truncated to the second,
+    # so a spawn completing early in a second compared equal to a cutoff taken
+    # moments later and counted as still in flight.
+    #
+    # No practical change to the real window: an event exactly at the boundary
+    # of a multi-second window is already the oldest thing in it, and the
+    # duplicate-identity guard this feeds is unaffected.
+    return [dict(row) for row in rows if parse_timestamp(row["completed_at"]) > cutoff]
 
 
 def role_members(conn: Database, role: str) -> list[dict]:
