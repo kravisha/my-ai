@@ -7255,7 +7255,7 @@ Suite: **2098 passing**, twice.
 
 ---
 
-## §94 — Every comparison against a clock, audited (2026-08-26, TQ-41)
+## §94 — Every comparison against a clock, audited (2026-08-26, TQ-42)
 
 Three bugs in three days shared a shape (§90's briefing window, §91's heartbeat,
 §93's zero-width spawn window), so the owner asked for a sweep of the rest.
@@ -7454,3 +7454,118 @@ Neither is deferred for want of effort, and both now say so to the client's face
 rather than only in this document.
 
 Suite: **2120 passing**.
+
+---
+
+## §96 — Client-owned holdings, and demo clients built to be removable (2026-08-26, TQ-41)
+
+§95 left `portfolio_analysis` declared and unbuilt with a precise reason: the
+only portfolio in this system belongs to the operator. This is the data model
+that answers it, plus — on owner direction the same day — simulated clients to
+see it working, built so that removing them before going live is a command
+rather than an archaeology exercise.
+
+### Where holdings honestly come from
+
+The design turns on one question, and the wrong answers are instructive. A
+brokerage integration does not exist. An upload needs a surface the Gateway's
+client does not have. The operator provisioning them is the original bug wearing
+a helpful face.
+
+What is left is what a personal representative actually does: **you tell them
+what you hold, and they remember.** That has no leak surface at all — the data is
+the client's because the client supplied it — and it is the relationship addendum
+43 §16 describes rather than a mechanism bolted beside it.
+
+### Three decisions worth their reasons
+
+**No account column.** `app/privacy_filter.py` stores `account_id` and strips it
+on egress, which is right for a file it does not own. This schema is ours, so
+the stronger form is available and taken: the field does not exist. A column
+that is absent cannot be leaked by a future reader who forgets to sanitize, and
+"never stored" survives a refactor in a way "always stripped" does not.
+
+**Arithmetic is computed, never narrated.** `concentration()` returns numbers
+this module worked out. A model asked to percentage-weight a portfolio produces
+something *shaped* like arithmetic, and somebody's money is the last place a
+plausible-looking number belongs.
+
+**Nothing is ever valued.** No market value, no gain, no loss. Every price this
+organization can produce is simulated (addendum 25), and applying one to a
+client's real positions would present synthetic output as real — what §95 refused
+for trade ideas, arriving one field over. The report *says* it is unpriced rather
+than leaving the absence to be noticed, because a report that silently omitted
+market value would read as a portfolio worth its cost basis.
+
+That third decision produced a more precise skill than the one it replaced.
+`portfolio_analysis` is now available; `portfolio_valuation` is newly declared
+and unbuilt, because building the first one exposed that weighting needs only
+what somebody paid while valuing needs a price nobody here has.
+
+### The tools cannot be talked into another client's book
+
+Every holdings tool takes its client id from the **session**, never from an
+argument. The model is never asked whose holdings to read, so "read somebody
+else's" is not a call it is able to construct — and a test asserts no
+client-reachable tool schema exposes a `client_id`, `subject` or `owner`
+property, so a future tool cannot quietly acquire one.
+
+Verified adversarially against a running Gateway. Asked to list `avery`'s and
+`morgan`'s positions by a caller claiming to be an administrator, the agent
+called no tool at all and answered:
+
+> "I don't have access to other clients' data… I have no admin or lookup
+> function to pull records for 'avery' or 'morgan', authorized or not."
+
+### The demo clients, and the instruction that shaped them
+
+Owner direction: *"simulate some clients and client holdings"*, and *"use the
+simulated client data for now and remove it later before live"*.
+
+The second half is what shaped `gateway/demo_clients.py`. Demo data merely
+*intended* to be removed is demo data that ships, because by the time anybody
+looks nobody is certain which rows it was. So every simulated row is **flagged**,
+seeding **refuses outside PRE_ALPHA/ALPHA** (the same gate and reasoning as §89's
+destructive hatches, failing closed when the stage cannot be read), and
+`outstanding()` exists so a pre-launch step can *know* rather than hope.
+
+The three clients hold synthetic symbols only — a demo portfolio of real
+companies is one screenshot away from being read as advice about them — and are
+deliberately awkward: one is 100% concentrated, one is missing a cost basis, so
+the report has something true and uncomfortable to say rather than a happy path.
+
+### Found by looking at the database afterwards
+
+Talking to a demo client's agent records holdings through the **ordinary** tool,
+which does not flag them simulated — correctly, because the client did state
+them. `clear()` deleted only flagged rows, so a position stated during a demo
+session survived, orphaned to a customer who no longer existed.
+
+Clearing now works **by client rather than by row flag**: anything owned by a
+demo client is demo data, whatever route it arrived by. Verified end to end — a
+seeded database plus one conversationally-recorded holding cleared to zero rows
+in both tables.
+
+### Verified by having the conversation
+
+Real client session, real model call. Asked how concentrated the portfolio was,
+the agent called `analyse_holdings` rather than doing the arithmetic itself and
+reported weights matching the seed exactly (SYN10 28.25%, SYN1 26.25%, SYN7
+23.64%, SYN3 21.86%, top three 78%), opening with *"based on cost basis (not
+current value, since I don't have real prices)"* unprompted.
+
+Told about a new position in conversation, it recorded it. Asked what the
+portfolio was worth today, it refused with the reason:
+
+> "This system has no real market prices… current value and gain/loss would both
+> be numbers I'd have to invent rather than facts."
+
+### Queued rather than faked
+
+Only `customer` can actually log in, because the Gateway has one client
+credential. The other two exist as data, which is enough to demonstrate the
+property that matters. **Per-client credentials are a real gap** — a client
+Gateway with one shared client password is not a client Gateway — and are queued
+as TQ-43 rather than papered over here.
+
+Suite: **2156 passing**.

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
-from gateway import client_agent, roles
+from gateway import client_agent, holdings, roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -76,6 +76,7 @@ def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
     scoreboard.init_schema(conn)
     conn.executescript(client_agent.SCHEMA)
+    conn.executescript(holdings.SCHEMA)
     _apply_additive_migrations(conn)
 
 
@@ -100,6 +101,10 @@ _ADDITIVE_COLUMNS = {
     # is one whose owner is genuinely unknown, and handing it to whoever asks
     # next is precisely the leak this column exists to close.
     "conversations": {"owner": "TEXT"},
+    # Demo data, flagged rather than named (TQ-41, §96). Clearing it before
+    # going live is then exact instead of a careful guess at which rows a
+    # naming convention covered.
+    "client_agents": {"simulated": "INTEGER NOT NULL DEFAULT 0"},
 }
 
 

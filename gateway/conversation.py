@@ -204,7 +204,8 @@ def record_assistant_message(conn: Database, conversation_id: int, text: str) ->
 
 def run_turn(
     db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS,
-    *, role: str, agent_name: str | None = None,
+    *, role: str, subject: str | None = None,
+    agent_name: str | None = None,
 ) -> Iterator[dict]:
     """One turn, tools and all, as a stream of events:
 
@@ -221,6 +222,11 @@ def run_turn(
     would mean a caller that forgot to pass one got the most permissive
     behaviour, which is the failure mode an authorization check least survives -
     and this is the path a client reaches, so it is the one that matters most.
+
+    `subject` is whose turn it is, and it is what the holdings tools read as
+    their client id (TQ-42, §96). It travels from the session rather than from
+    anything the model can say, which is what makes "read another client's
+    positions" not a call the model is able to construct.
     """
     offered = tools.for_role(role)
     # A client talks to their representative; everyone else talks to the
@@ -253,7 +259,8 @@ def run_turn(
             for block in final["content"]:
                 if block.get("type") != "tool_use":
                     continue
-                outcome = tools.execute(conn, block["name"], block.get("input") or {}, role=role)
+                outcome = tools.execute(conn, block["name"], block.get("input") or {},
+                                        role=role, subject=subject)
                 yield {"type": "tool", "name": block["name"], "ok": "error" not in outcome}
                 results.append({
                     "type": "tool_result",

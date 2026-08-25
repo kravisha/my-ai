@@ -72,7 +72,7 @@ def test_the_operator_holds_everything_and_the_client_almost_nothing():
     executive command center."""
     assert roles.capabilities(roles.ROLE_OPERATOR) == frozenset(roles.CAPABILITIES)
     assert roles.capabilities(roles.ROLE_CLIENT) == frozenset(
-        {roles.CAP_CONVERSE, roles.CAP_SESSION})
+        {roles.CAP_CONVERSE, roles.CAP_SESSION, roles.CAP_HOLDINGS})
     # The one that matters most: a client cannot see the organization.
     for withheld in (roles.CAP_STUDIO, roles.CAP_SYSTEM_STATUS,
                      roles.CAP_SCOREBOARD_READ, roles.CAP_REPOSITORY_READ):
@@ -245,16 +245,38 @@ def test_a_session_cannot_be_issued_for_a_role_that_does_not_exist(gateway_conn)
 # --- the half that would have been the breach ---------------------------------------------
 
 
-def test_a_client_is_offered_no_tools_at_all(three_roles):
+def test_a_client_is_offered_only_its_own_holdings(three_roles):
     """The personal agent, as specified: "clients usually interact with a
     personal representative agent rather than seeing the entire organization"
-    (43 §15). Today that agent answers from what it knows and has no reach into
-    the organization at all.
+    (43 §15).
 
-    When it gains real skills - portfolio analysis, trade ideas - each arrives
-    as its own capability and its own entry in TOOL_CAPABILITY, rather than by
-    widening what `converse` is allowed to mean."""
-    assert tools.for_role(roles.ROLE_CLIENT) == []
+    This asserted `== []` until TQ-41, and the prediction it carried came true
+    exactly: the client gained a real skill, and it arrived as its own
+    capability and its own TOOL_CAPABILITY entries rather than by widening what
+    `converse` means. What must not change is the second half - the reach into
+    the *organization* is still nothing at all, which is what the negative
+    assertion below holds and why it is written as a denylist of the dangerous
+    tools rather than only as an allowlist of the safe ones."""
+    offered = {tool["name"] for tool in tools.for_role(roles.ROLE_CLIENT)}
+    assert offered == {"record_holding", "list_holdings", "forget_holding",
+                       "analyse_holdings"}
+    for organizational in ("read_repository_file", "list_repository_files",
+                           "publish_document", "jarvis_status", "jarvis_agent",
+                           "technology_review", "list_scoreboard_items",
+                           "file_scoreboard_item"):
+        assert organizational not in offered, (
+            f"a client is being offered {organizational!r}, which reads the organization")
+
+
+def test_every_tool_a_client_can_reach_takes_its_subject_from_the_session(three_roles):
+    """The property that makes the holdings tools safe to grant at all: none of
+    them accepts a client id as an argument, so "read somebody else's positions"
+    is not a call the model is able to construct (TQ-41, §96)."""
+    for tool in tools.for_role(roles.ROLE_CLIENT):
+        properties = set((tool.get("input_schema") or {}).get("properties") or {})
+        for forbidden in ("client_id", "client", "subject", "owner", "user"):
+            assert forbidden not in properties, (
+                f"{tool['name']} lets the model name whose data to read")
 
 
 def test_an_operator_is_offered_every_tool(three_roles):

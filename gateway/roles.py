@@ -85,11 +85,15 @@ CAP_PUBLISH = "publish"
 # addendum 40 §13.1 forbids a duplicate: "The Gateway is a secure
 # browser-accessible window into the same running organization."
 CAP_STUDIO = "studio"
+# A client's own holdings - what they have told their representative they hold
+# (TQ-42, §96). Subject-scoped by construction: every function behind it takes
+# the client id, so the capability cannot reach anybody else's positions.
+CAP_HOLDINGS = "holdings"
 
 CAPABILITIES = (
     CAP_SCOREBOARD_READ, CAP_SCOREBOARD_WRITE, CAP_TECHNOLOGY_READ,
     CAP_TECHNOLOGY_FILE, CAP_SYSTEM_STATUS, CAP_CONVERSE, CAP_SESSION,
-    CAP_REPOSITORY_READ, CAP_PUBLISH, CAP_STUDIO,
+    CAP_REPOSITORY_READ, CAP_PUBLISH, CAP_STUDIO, CAP_HOLDINGS,
 )
 
 # What each capability guards, in the words an operator would use. Carried here
@@ -107,6 +111,7 @@ DESCRIPTIONS = {
     CAP_REPOSITORY_READ: "list and read the project's source files",
     CAP_PUBLISH: "publish documents into the repository",
     CAP_STUDIO: "see the full command centre",
+    CAP_HOLDINGS: "record and review the holdings you have told me about",
 }
 
 # §14: "Sensitive operational views must be withheld from roles that do not
@@ -126,7 +131,14 @@ GRANTS: dict[str, frozenset[str]] = {
     # 43 §15: clients "usually interact with a personal representative agent
     # rather than seeing the entire organization". One surface, and it is a
     # conversation.
-    ROLE_CLIENT: frozenset({CAP_CONVERSE, CAP_SESSION}),
+    # Holdings reach the client because this is the role with nowhere else to
+    # keep them (§96). The operator holds the capability too - every role
+    # invariant here is "operator has all of them", and carving out an
+    # exception would be a surprise for a smaller gain than it costs - but the
+    # operator already owns a portfolio properly through app/tools/portfolio.py.
+    # Naming is what keeps those apart: these are holdings *told to a
+    # representative*, never a broker account and never data/portfolio.xlsx.
+    ROLE_CLIENT: frozenset({CAP_CONVERSE, CAP_SESSION, CAP_HOLDINGS}),
 }
 
 

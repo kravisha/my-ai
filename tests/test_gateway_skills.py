@@ -89,25 +89,43 @@ def test_duplicate_skills_are_refused():
 # --- what a client actually has today ----------------------------------------------
 
 
-def test_a_client_can_converse_and_nothing_more():
-    """The owner's "initially this will be limited to giving info", asserted."""
+def test_a_client_can_converse_and_keep_its_own_holdings():
+    """This asserted `== {"conversation"}` under the owner's "initially this will
+    be limited to giving info". TQ-41 delivered the first real skill, so the
+    assertion moves - and the thing it was protecting is now held by
+    `test_no_skill_a_client_can_invoke_reads_organization_data` above, which is
+    the invariant rather than the snapshot."""
     available = {s.name for s in skills.available_for(roles.ROLE_CLIENT)}
-    assert available == {"conversation"}
+    assert available == {"conversation", "portfolio_analysis"}
 
 
-def test_the_two_named_skills_are_declared_and_unbuilt():
-    """Declared rather than absent, so the agent can answer the question a
-    client will actually ask instead of improvising."""
+def test_what_is_still_unbuilt_is_declared_rather_than_absent():
+    """Declared rather than absent, so the agent answers the question a client
+    will actually ask instead of improvising.
+
+    `portfolio_analysis` left this set when TQ-41 built it, and
+    `portfolio_valuation` joined it - which is the more precise blocker that
+    building the first one exposed: holdings can be weighted by what somebody
+    paid without any price at all, but they cannot be valued."""
     unbuilt = {s.name for s in skills.unbuilt_for(roles.ROLE_CLIENT)}
-    assert unbuilt == {"portfolio_analysis", "trade_ideas"}
+    assert unbuilt == {"portfolio_valuation", "trade_ideas"}
 
 
-def test_the_portfolio_reason_names_the_real_blocker():
-    """Not "not implemented". The blocker is that the only portfolio in this
-    system belongs to the operator, and that is what the client is told."""
-    reason = next(s for s in skills.SKILLS if s.name == "portfolio_analysis").blocked_reason
-    assert "operator" in reason
-    assert "per-client" in reason or "client-owned" in reason
+def test_the_valuation_reason_names_the_real_blocker():
+    """Not "not implemented". Weighting holdings needs only what the client
+    paid; valuing them needs a price this system does not have, and that
+    distinction is what the client is told."""
+    reason = next(s for s in skills.SKILLS if s.name == "portfolio_valuation").blocked_reason
+    assert "simulated" in reason.lower()
+    assert "price" in reason.lower()
+
+
+def test_the_built_skill_carries_no_blocked_reason():
+    """A skill that is available and still explaining why it is not would be
+    telling a client two contradictory things."""
+    built = next(s for s in skills.SKILLS if s.name == "portfolio_analysis")
+    assert built.status == skills.STATUS_AVAILABLE
+    assert built.blocked_reason is None
 
 
 def test_the_trade_ideas_reason_names_the_simulation():
@@ -187,5 +205,6 @@ def test_the_capability_paragraph_comes_from_the_registry():
 
 def test_describe_separates_the_two_kinds_of_no():
     described = skills.describe(roles.ROLE_CLIENT)
-    assert [s["name"] for s in described["available"]] == ["conversation"]
+    assert [s["name"] for s in described["available"]] == [
+        "conversation", "portfolio_analysis"]
     assert all(s["reason"] for s in described["unbuilt"])

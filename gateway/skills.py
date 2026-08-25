@@ -99,14 +99,23 @@ SKILLS: tuple[Skill, ...] = (
     ),
     Skill(
         name="portfolio_analysis",
-        summary="look at the client's holdings and answer questions about them",
-        capability=roles.CAP_CONVERSE,
+        summary=("remember the holdings the client tells you about, and work out weights "
+                 "and concentration across them from what they paid"),
+        capability=roles.CAP_HOLDINGS,
+        scope=SCOPE_SUBJECT,
+        status=STATUS_AVAILABLE,
+    ),
+    Skill(
+        name="portfolio_valuation",
+        summary="tell the client what their holdings are worth now, or what they have made",
+        capability=roles.CAP_HOLDINGS,
         scope=SCOPE_SUBJECT,
         status=STATUS_UNBUILT,
         blocked_reason=(
-            "There is a portfolio in this system, but it is the operator's, not yours - one "
-            "file, one owner, no per-client holdings. Reading it for you would hand you "
-            "somebody else's positions. This needs client-owned holdings first, not a wire-up."
+            "This system has no real market prices - everything it generates is simulated "
+            "training data (addendum 25). Current value, gain and loss all need a real "
+            "price, so they are arithmetic I would have to invent. Cost basis is a fact "
+            "the client told me; what it is worth today is a fact nobody here has."
         ),
     ),
     Skill(
