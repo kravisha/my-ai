@@ -141,6 +141,18 @@ after: zero steady-state spend, ceiling ~one chain per security per hour.
 (damage bounded to limit + one reply), refusals recorded in the ledger, `/chat` mapping to a
 legible 503. Per-caller attribution and currency-denominated limits deferred within §52.
 
+### TQ-12 — Business Continuity slice 2: automated backup, retention, encrypted secondary
+
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §59**
+
+Source: addendum 29 §45 ("automated backup ... SHALL exist" — §48's copy was manual), §7.6
+(retention), §10 (encryption before leaving the failure domain). A backup loop in the backend
+lifespan plus a clean-shutdown backup (interval = the de facto RPO, 6h default, env-tunable,
+0 disables); retention pruning in the mirror of creation order; `CONTINUITY_SECONDARY_ROOT` as
+a second destination, unconditionally Fernet-encrypted — closing §48's recorded deferral, whose
+reason (same failure domain) stops applying the moment a copy leaves the machine. The key is
+Tier-0 recovery material; its custody obligation is printed at generation and recorded in §59.
+
 ---
 
 ## Blocked

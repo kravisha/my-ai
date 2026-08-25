@@ -191,6 +191,203 @@ def test_backup_ids_are_unique_and_time_ordered(tmp_path):
     assert set(listed) == {first["backup_id"], second["backup_id"]}
 
 
+# --- The §59 increment: policy settings, retention, the encrypted secondary ---
+
+
+def test_policy_settings_fail_loud_on_bad_values(monkeypatch):
+    """A typo'd policy value must refuse, not silently become the default
+    (the model_budget._limit contract, restated for continuity)."""
+    monkeypatch.delenv(continuity.INTERVAL_ENV, raising=False)
+    monkeypatch.delenv(continuity.RETENTION_ENV, raising=False)
+    assert continuity.backup_interval_seconds() == continuity.DEFAULT_BACKUP_INTERVAL_SECONDS
+    assert continuity.retention_count() == continuity.DEFAULT_RETENTION_COUNT
+
+    monkeypatch.setenv(continuity.INTERVAL_ENV, "six hours")
+    with pytest.raises(ValueError, match="not a number"):
+        continuity.backup_interval_seconds()
+    monkeypatch.setenv(continuity.INTERVAL_ENV, "-1")
+    with pytest.raises(ValueError, match="negative"):
+        continuity.backup_interval_seconds()
+    # 0 is legal for the interval (it means: automated backups off)...
+    monkeypatch.setenv(continuity.INTERVAL_ENV, "0")
+    assert continuity.backup_interval_seconds() == 0.0
+    # ...but not for retention: keeping zero backups is not a retention policy.
+    monkeypatch.setenv(continuity.RETENTION_ENV, "0")
+    with pytest.raises(ValueError, match="at least one"):
+        continuity.retention_count()
+
+
+def test_ensure_backup_key_creates_once_then_reuses(tmp_path, capsys):
+    key_path = tmp_path / "backup.key"
+    first = continuity.ensure_backup_key(key_path)
+    assert key_path.exists()
+    assert "NEW backup encryption key" in capsys.readouterr().out
+    second = continuity.ensure_backup_key(key_path)
+    assert second == first
+    # Reuse is silent: the loud warning belongs to generation only.
+    assert capsys.readouterr().out == ""
+
+
+def _encrypted(tmp_path, key_name="backup.key"):
+    inner = continuity.LocalDirectoryProvider(tmp_path / "secondary")
+    key = continuity.ensure_backup_key(tmp_path / key_name)
+    return continuity.EncryptedProvider(inner, key), inner
+
+
+def test_encrypted_provider_stores_ciphertext_roundtrips_plaintext(tmp_path):
+    provider, inner = _encrypted(tmp_path)
+    provider.put("a/b.txt", b"credentials live here")
+    # Through the wrapper: plaintext. On the destination: not.
+    assert provider.get("a/b.txt") == b"credentials live here"
+    assert b"credentials" not in inner.get("a/b.txt")
+    caps = provider.capabilities()
+    assert caps["provider"] == "encrypted+local_directory"
+    assert caps["encryption"] is True
+
+
+def test_backup_through_encrypted_provider_verifies_and_restores(tmp_path):
+    """The full §1.4 exercise on the secondary path: create, verify, restore,
+    read back — with manifest hashes of the *plaintext*, so a primary set and
+    a secondary set of the same files carry comparable integrity records."""
+    sources, conn = _sources(tmp_path)
+    provider, inner = _encrypted(tmp_path)
+    manifest = create_backup(provider, sources=sources)
+    conn.close()
+
+    assert manifest["encryption"] == "fernet"
+    users_entry = next(e for e in manifest["files"] if e["restore_path"] == "users.json")
+    # Plaintext hash in the manifest; ciphertext (a different hash) at rest.
+    assert continuity._sha256(inner.get(users_entry["name"])) != users_entry["sha256"]
+    assert verify_backup(provider, manifest["backup_id"]) == []
+
+    restored_root = tmp_path / "restored"
+    restore_backup(provider, manifest["backup_id"], restored_root)
+    assert (restored_root / "users.json").read_bytes() == (tmp_path / "live" / "users.json").read_bytes()
+    restored = sqlite3.connect(restored_root / "fi.db")
+    names = [row[0] for row in restored.execute("SELECT name FROM things ORDER BY id")]
+    restored.close()
+    assert names == ["alpha", "beta"]
+
+
+def test_wrong_key_is_a_verification_failure_not_a_crash(tmp_path):
+    """Tampered ciphertext and a wrong key look identical from outside: the
+    file will not decrypt. Verify reports it per file; restore refuses the
+    whole set, fail-closed, exactly as it does on a hash mismatch."""
+    sources, conn = _sources(tmp_path)
+    provider, inner = _encrypted(tmp_path)
+    manifest = create_backup(provider, sources=sources)
+    conn.close()
+
+    wrong = continuity.EncryptedProvider(inner, continuity.ensure_backup_key(tmp_path / "other.key"))
+    failures = verify_backup(wrong, manifest["backup_id"])
+    assert failures and all("unreadable" in f for f in failures)
+    with pytest.raises(ValueError, match="refusing to restore"):
+        restore_backup(wrong, manifest["backup_id"], tmp_path / "restored")
+
+
+def test_prune_keeps_newest_sets_and_removes_every_file(tmp_path):
+    sources, conn = _sources(tmp_path)
+    provider = LocalDirectoryProvider(tmp_path / "store")
+    manifests = [create_backup(provider, sources=sources) for _ in range(4)]
+    conn.close()
+
+    pruned = continuity.prune_backups(provider, keep=2)
+    assert pruned == [m["backup_id"] for m in manifests[:2]]
+    kept = [m["backup_id"] for m in list_backups(provider)]
+    assert kept == [m["backup_id"] for m in manifests[2:]]
+    # No orphan files linger from the pruned sets.
+    for backup_id in pruned:
+        assert provider.list(f"{backup_id}/") == []
+    # Pruning to the current size is a no-op.
+    assert continuity.prune_backups(provider, keep=2) == []
+    with pytest.raises(ValueError, match="at least one"):
+        continuity.prune_backups(provider, keep=0)
+
+
+def test_prune_does_not_touch_incomplete_sets(tmp_path):
+    """Files without a manifest are an interrupted write, not a backup —
+    prune_backups has no authority over them (they may be a create_backup in
+    progress right now)."""
+    sources, conn = _sources(tmp_path)
+    provider = LocalDirectoryProvider(tmp_path / "store")
+    create_backup(provider, sources=sources)
+    conn.close()
+    provider.put("bk-20990101T000000Z-ffffff/files/fi.db", b"in-flight bytes")
+
+    assert continuity.prune_backups(provider, keep=1) == []
+    assert provider.get("bk-20990101T000000Z-ffffff/files/fi.db") == b"in-flight bytes"
+
+
+def test_run_backup_cycle_writes_primary_plain_and_secondary_encrypted(tmp_path, monkeypatch):
+    sources, conn = _sources(tmp_path)
+    monkeypatch.setattr(continuity, "BACKUP_ROOT", tmp_path / "primary")
+    monkeypatch.setenv(continuity.SECONDARY_ROOT_ENV, str(tmp_path / "secondary"))
+    monkeypatch.setenv(continuity.KEY_PATH_ENV, str(tmp_path / "backup.key"))
+    monkeypatch.delenv(continuity.RETENTION_ENV, raising=False)
+
+    results = continuity.run_backup_cycle(sources=sources)
+    conn.close()
+    assert results["primary"]["ok"] and results["primary"]["encryption"] == "none"
+    assert results["secondary"]["ok"] and results["secondary"]["encryption"] == "fernet"
+
+    # The primary holds plaintext, the secondary does not — same content,
+    # different failure-domain posture.
+    primary_raw = continuity.LocalDirectoryProvider(tmp_path / "primary")
+    secondary_raw = continuity.LocalDirectoryProvider(tmp_path / "secondary")
+    users_primary = next(n for n in primary_raw.list() if n.endswith("users.json"))
+    users_secondary = next(n for n in secondary_raw.list() if n.endswith("users.json"))
+    assert b"alice" in primary_raw.get(users_primary)
+    assert b"alice" not in secondary_raw.get(users_secondary)
+
+    # And the secondary is restorable through the wrapper — the §1.4 proof
+    # for the destination that actually leaves the failure domain.
+    wrapped = continuity.EncryptedProvider(
+        secondary_raw, continuity.ensure_backup_key(tmp_path / "backup.key"))
+    restore_backup(wrapped, results["secondary"]["backup_id"], tmp_path / "restored")
+    assert (tmp_path / "restored" / "users.json").read_bytes() == \
+        (tmp_path / "live" / "users.json").read_bytes()
+
+
+def test_run_backup_cycle_enforces_retention_each_pass(tmp_path, monkeypatch):
+    sources, conn = _sources(tmp_path)
+    monkeypatch.setattr(continuity, "BACKUP_ROOT", tmp_path / "primary")
+    monkeypatch.delenv(continuity.SECONDARY_ROOT_ENV, raising=False)
+    monkeypatch.setenv(continuity.RETENTION_ENV, "1")
+
+    first = continuity.run_backup_cycle(sources=sources)
+    second = continuity.run_backup_cycle(sources=sources)
+    conn.close()
+    assert first["primary"]["pruned"] == []
+    assert second["primary"]["pruned"] == [first["primary"]["backup_id"]]
+    provider = continuity.LocalDirectoryProvider(tmp_path / "primary")
+    assert [m["backup_id"] for m in list_backups(provider)] == [second["primary"]["backup_id"]]
+    assert "secondary" not in first  # no secondary configured, none invented
+
+
+def test_run_backup_cycle_destinations_fail_independently(tmp_path, monkeypatch):
+    """Two destinations that share a failure mode are not two failure
+    domains: a broken secondary must cost nothing but its own copy."""
+    sources, conn = _sources(tmp_path)
+
+    class BrokenProvider(continuity.StorageProvider):
+        def put(self, name, data):
+            raise OSError("disk full")
+
+        def capabilities(self):
+            return {"provider": "broken", "encryption": True}
+
+    good = LocalDirectoryProvider(tmp_path / "primary")
+    monkeypatch.setattr(continuity, "backup_destinations",
+                        lambda: [("primary", good), ("secondary", BrokenProvider())])
+    monkeypatch.delenv(continuity.RETENTION_ENV, raising=False)
+
+    results = continuity.run_backup_cycle(sources=sources)
+    conn.close()
+    assert results["primary"]["ok"]
+    assert results["secondary"] == {"ok": False, "error": "OSError: disk full"}
+    assert len(list_backups(good)) == 1
+
+
 def test_critical_sources_names_the_real_backup_domain():
     """The domain is the gitignored state: both databases, both credential
     files, and the per-user tree. Paths resolve through the owning modules'
