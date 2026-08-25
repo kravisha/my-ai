@@ -4516,3 +4516,75 @@ State(t) + Event(t) → State(t+1)) remains queued under TQ-14, and the
 American-style world (TQ-B3) remains a larger, separate increment.
 ARB-013/014 against *futures* (margin, convexity) waits for a futures
 instrument with a reason to exist.
+
+---
+
+## §62 — The market becomes a source: reference data meets its first outside witness (2026-08-25)
+
+TQ-15, owner-directed second in §60's ordering, and the consumer §55 named
+the day ARB-015/016 were built: reference-data validation now cross-checks
+what the organization *declares* about dividends and financing against
+what executable option quotes *imply* — the Reference Data Engine's first
+check against anything other than this database's own consistency.
+
+### The market as a registered source
+
+`market_implied` joins `reference_sources` as a `derived` source, ranked
+below every declaring source on purpose. The reasoning is the spec's own
+sentence read in both directions: "difference alone is not arbitrage" —
+and difference alone is not proof the declaration is wrong either. A
+diagnostic can mean a bad declaration OR a mispriced market, and nothing
+at this layer can tell which; so the market never overwrites, it only
+disagrees, and the disagreement lands where every disagreement in this
+engine lands: `reference_conflicts`, append-only, addendum 24 §13's "a
+disagreement is data, not something to hide."
+
+### One disagreement, many witnesses
+
+`diagnose_chain` reports per strike; the *declaration* is per (asset,
+field, expiry). Twenty strikes flagging the same declared pv_div are one
+disagreement with twenty witnesses, so findings aggregate to the max-gap
+strike with the witness count carried (`n_strikes`), and one conflict row
+records each distinct fact. Dedup is `ingest`'s own discipline verbatim —
+once per distinct disagreement, not once per run, so the every-startup
+certification adds nothing against an unchanged observation — while a
+*changed* band (a new observation moved the market) is a new fact and a
+new row. `market_implied_conflicts(conn)` is the read side for whatever
+consumes this next.
+
+### Read/write split, and what never happens
+
+`validate()` stays read-only — it reports the cross-check as a new
+`market_implied_consistency` check but records nothing; the recording is
+`certify_readiness`'s (the function that already writes), placed before
+validate() runs so the conflicts count the same certification reports
+already includes its own discoveries. Three things deliberately never
+happen: a market disagreement never blocks readiness (ok=True always, the
+`unresolved_conflicts` discipline), never flips `validation_status`
+('invalid' means structurally broken, which a healthy record with a
+contested dividend is not), and a cross-check *error* on one malformed
+observation never takes down certification — the asset is named in the
+check detail and the engine certifies on, because blocking the whole
+organization's startup on one broken stored payload would be the outage
+the engine exists to prevent.
+
+### Activation is data presence
+
+No stored chains — including the observations table not existing at all —
+is "nothing to cross-check yet", not a failure: the check activates the
+way `providers/stored_data.py`'s adapters do. The chain reconstruction is
+that module's own `chain_snapshots` (lazy-imported at call time, the
+layering-preserving idiom), so the cross-check reads the market through
+exactly the translation Explorer trades through, not a copy that could
+drift.
+
+### Verified
+
+Eight new tests (1711 passing): the nothing-to-cross-check silence, the
+clean-world control (the world's own chains agree with their own carry by
+construction), a misdeclared dividend found/recorded/aggregated to one row
+per (asset, field, expiry) and deduplicated across re-certifications, a
+misdeclared rate under its own field via ARB-016, readiness and
+validation_status both untouched by disagreement, a moved market recorded
+as a new fact, a malformed observation named-not-fatal, and the source
+registration with its deliberate bottom rank.

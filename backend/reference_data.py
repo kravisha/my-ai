@@ -41,6 +41,21 @@ adapter interface is real and the seed universe flows through it as the
 first (and, for now, only) adapter; EDGAR/OpenFIGI arrive with the Alpha
 focus universe, behind this same interface.
 
+## The market as a source (TQ-15, SPEC_RECONCILIATION §62)
+
+Validation grew its first cross-check against something other than this
+database's own consistency: for every focus asset with a stored option-chain
+observation, the ARB-015/016 diagnostics (backend/arbitrage.py's
+diagnose_chain) test the declared carry inputs - pv_div per expiry, r -
+against the executable band the market's own quotes imply. A declaration
+outside the band is recorded in reference_conflicts as a disagreement
+between the declaring source and 'market_implied' (a registered source,
+ranked below every declaring one). It is data, never a readiness blocker,
+and never a validity verdict: "difference alone is not arbitrage" cuts both
+ways - it is not proof the declaration is wrong either. The check activates
+on data presence (no stored chains, nothing to cross-check), the same
+discipline providers/stored_data.py states for its own adapter.
+
 ## Fail-closed, always
 
 `certify_readiness` never claims READY on a check that failed (addendum 24
@@ -117,7 +132,20 @@ IDENTIFIER_REQUIREMENTS = ("required", "optional")
 REFERENCE_SOURCE_SEED = [
     ("security_universe", "seed", 100, "the seeded synthetic universe"),
     ("fred", "public_api", 80, "FRED public series - see providers/historical.py"),
+    # The market itself, as a source (TQ-15, SPEC_RECONCILIATION §62): what
+    # executable option quotes imply about dividends and financing, via
+    # backend/arbitrage.py's ARB-015/016 diagnostics. Ranked below every
+    # declaring source on purpose - a diagnostic can mean the declaration is
+    # wrong OR the market is mispriced, and the spec's own words ("difference
+    # alone is not arbitrage") cut both ways: difference alone is not proof
+    # the declaration is wrong either. It never overwrites; it only disagrees.
+    ("market_implied", "derived", 10, "executable-band cross-check via ARB-015/016 (diagnose_chain)"),
 ]
+
+# The reference_conflicts.offering_source value the market-implied cross-check
+# records under, and the field each diagnostic contests.
+MARKET_IMPLIED_SOURCE = "market_implied"
+_MARKET_FIELD_BY_DETECTOR = {"ARB-015": "pv_div", "ARB-016": "r"}
 
 # Fields ingest() will fill when NULL and flag as a conflict when an offered
 # value disagrees with an already-held one. Deliberately excludes
@@ -512,6 +540,134 @@ def _focus_asset_count(conn: Database) -> int:
     return row["n"] if row else 0
 
 
+def _market_implied_diagnostics(conn: Database) -> dict:
+    """The market-implied cross-check (TQ-15, SPEC_RECONCILIATION §62; the
+    consumer §55 named for the ARB-015/016 diagnostics): for every focus
+    asset with a stored option-chain observation, run diagnose_chain over
+    the chains the observation reconstructs to and report every declared
+    carry input (pv_div per expiry, r) that lies outside the executable
+    band the market's own quotes imply.
+
+    Aggregated per (asset, field, expiry) rather than per strike: the
+    *declaration* is per expiry, and twenty strikes flagging the same
+    declared pv_div are one disagreement with twenty witnesses, not twenty
+    disagreements - the max-gap strike represents it, with the witness
+    count carried. Read-only, like everything validate() calls; recording
+    is certify_readiness's job (_record_market_findings below).
+
+    A missing observations table (a database fi_db has never initialized)
+    and assets with no stored chain are both "nothing to cross-check yet",
+    not failures - the check activates on data presence, the
+    providers/stored_data.py discipline."""
+    summary = {"assets_checked": 0, "assets_without_observations": 0, "findings": [], "errors": []}
+    if conn.fetchone(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'observations'"
+    ) is None:
+        return summary
+
+    # Lazy, the parity_world-imports-harness idiom: providers/stored_data is
+    # the one translation from stored payload to ChainSnapshot (drift-free by
+    # being shared with Explorer), and importing it at module scope would
+    # invert the layering for every reference_data importer that never
+    # cross-checks.
+    from backend.arbitrage import diagnose_chain
+    from providers.stored_data import StoredChainProvider, chain_snapshots
+
+    provider = StoredChainProvider(conn)
+    for asset in list_focus_assets(conn):
+        entity_id, symbol = asset["entity_id"], asset["primary_identifier"]
+        try:
+            observation = provider.latest_chain(entity_id)
+            if observation is None:
+                summary["assets_without_observations"] += 1
+                continue
+            summary["assets_checked"] += 1
+            grouped: dict[tuple[str, int], dict] = {}
+            for chain in chain_snapshots(observation):
+                for diagnostic in diagnose_chain(chain):
+                    field_name = _MARKET_FIELD_BY_DETECTOR[diagnostic.detector_id]
+                    expiry_days = diagnostic.inputs["expiry_days"]
+                    key = (field_name, expiry_days)
+                    held = grouped.get(key)
+                    if held is None or diagnostic.gap > held["gap"]:
+                        grouped[key] = {
+                            "entity_id": entity_id, "symbol": symbol,
+                            "field": field_name, "expiry_days": expiry_days,
+                            "detector_id": diagnostic.detector_id,
+                            "declared": diagnostic.declared,
+                            "implied_low": diagnostic.implied_low,
+                            "implied_high": diagnostic.implied_high,
+                            "gap": diagnostic.gap, "strike": diagnostic.strike,
+                            "n_strikes": (held["n_strikes"] + 1) if held else 1,
+                            "held_source": observation.provenance.source,
+                        }
+                    else:
+                        held["n_strikes"] += 1
+            summary["findings"].extend(
+                grouped[key] for key in sorted(grouped)
+            )
+        except Exception as exc:  # noqa: BLE001 - an undiagnosable asset is reported, not fatal
+            # A cross-check that cannot run on one asset must neither crash
+            # certification nor silently vanish - it is named in the check
+            # detail so a broken feed is visible.
+            summary["errors"].append(f"{entity_id}: {exc.__class__.__name__}: {exc}")
+    return summary
+
+
+def _record_market_findings(conn: Database, findings: list[dict]) -> int:
+    """Each finding into reference_conflicts, the same append-only shape and
+    the same once-per-distinct-disagreement dedup ingest() applies: the
+    pipeline runs on every startup, and re-inserting the identical open
+    disagreement each time would grow the table without adding a fact. A
+    *changed* band (a new observation moved the market) is a new fact and
+    gets a new row. Returns how many rows were actually added."""
+    added = 0
+    for finding in findings:
+        held_value = str(finding["declared"])
+        offered_value = json.dumps(
+            {k: finding[k] for k in
+             ("detector_id", "expiry_days", "implied_low", "implied_high", "gap", "strike", "n_strikes")},
+            sort_keys=True,
+        )
+        already = conn.fetchone(
+            "SELECT 1 FROM reference_conflicts WHERE entity_id = ? AND field = ? "
+            "AND held_value = ? AND offered_value = ? AND offering_source = ?",
+            (finding["entity_id"], finding["field"], held_value, offered_value, MARKET_IMPLIED_SOURCE),
+        )
+        if already is None:
+            conn.execute(
+                "INSERT INTO reference_conflicts "
+                "(entity_id, field, held_value, held_source, offered_value, offering_source, detected_at, schema_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (finding["entity_id"], finding["field"], held_value, finding["held_source"],
+                 offered_value, MARKET_IMPLIED_SOURCE, now_iso(), SCHEMA_VERSION),
+            )
+            added += 1
+    return added
+
+
+def market_implied_conflicts(conn: Database, entity_id: str | None = None) -> list[dict]:
+    """The recorded market-implied disagreements, offered_value parsed - the
+    read side for whatever consumes the cross-check next (an admin surface,
+    a remediation pass). Newest first."""
+    if entity_id is None:
+        rows = conn.fetchall(
+            "SELECT * FROM reference_conflicts WHERE offering_source = ? ORDER BY id DESC",
+            (MARKET_IMPLIED_SOURCE,),
+        )
+    else:
+        rows = conn.fetchall(
+            "SELECT * FROM reference_conflicts WHERE offering_source = ? AND entity_id = ? ORDER BY id DESC",
+            (MARKET_IMPLIED_SOURCE, entity_id),
+        )
+    parsed = []
+    for row in rows:
+        row = dict(row)
+        row["offered_value"] = json.loads(row["offered_value"])
+        parsed.append(row)
+    return parsed
+
+
 def validate(conn: Database) -> list[dict]:
     """Every automated check addendum 24 §16/26 §14 asks for that this
     schema can actually evaluate. Returns the list itself - certify_readiness
@@ -580,6 +736,31 @@ def validate(conn: Database) -> list[dict]:
         else "no (scheme, value) has two live holders - the partial index should make this impossible",
     })
 
+    market = _market_implied_diagnostics(conn)
+    finding_bits = [
+        f"{f['symbol']} {f['field']}@{f['expiry_days']}d declared {f['declared']:.4g} vs "
+        f"[{f['implied_low']:.4g}, {f['implied_high']:.4g}] ({f['n_strikes']} strike(s))"
+        for f in market["findings"]
+    ]
+    error_bits = [f"cross-check error {e}" for e in market["errors"]]
+    checks.append({
+        "check": "market_implied_consistency",
+        # ok=True always, the unresolved_conflicts discipline: a diagnostic
+        # means the declaration and the market disagree, and the spec's own
+        # words cut both ways - it is not proof the declaration is wrong, so
+        # it is recorded (certify_readiness), never a readiness blocker.
+        # Errors in the cross-check itself are also data here: an asset that
+        # cannot be diagnosed is named, and blocking the whole organization
+        # on it would let one malformed observation take down startup.
+        "ok": True,
+        "detail": (
+            f"{market['assets_checked']} asset(s) cross-checked against executable bands, "
+            f"{market['assets_without_observations']} with no stored chain"
+            + (f"; disagreements: {'; '.join(finding_bits)}" if finding_bits else "; no disagreements")
+            + (f"; {'; '.join(error_bits)}" if error_bits else "")
+        ),
+    })
+
     conflict_count = conn.fetchone("SELECT COUNT(*) AS n FROM reference_conflicts")["n"]
     checks.append({
         "check": "unresolved_conflicts",
@@ -594,7 +775,17 @@ def certify_readiness(conn: Database) -> dict:
     """Runs validate(), decides READY/FAILED, stamps validation_status on
     every focus-class master row, and appends the record - always, even on
     FAILED, since a failed certification is itself part of the audit trail
-    addendum 24 §17 asks for (fail closed, not fail silent)."""
+    addendum 24 §17 asks for (fail closed, not fail silent).
+
+    The market-implied cross-check's findings are recorded FIRST (this is
+    the writing half validate() deliberately does not do - validate stays
+    read-only), so the unresolved_conflicts count validate() then reports
+    already includes this certification's own discoveries. validation_status
+    stamping is deliberately untouched by market findings: 'invalid' means
+    the record is structurally broken (missing required identifiers), and a
+    market disagreement is a conflict about a healthy record, not a broken
+    one."""
+    _record_market_findings(conn, _market_implied_diagnostics(conn)["findings"])
     checks = validate(conn)
     status = "READY" if all(c["ok"] for c in checks) else "FAILED"
 
