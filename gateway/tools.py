@@ -35,6 +35,7 @@ truthful value.
 """
 
 from backend.db import Database
+from gateway import roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -271,9 +272,72 @@ TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
 
-def execute(conn: Database, name: str, arguments: dict) -> dict:
+# Which capability each tool requires (TQ-34, §92).
+#
+# This map is the sharpest thing in the Gateway's authorization story, because
+# without it every route check is theatre: a client who may only "talk to the
+# agent" would simply *ask the agent* to read a repository file, and the agent
+# would do it. Addendum 40 §14's rule - the presentation layer must never
+# bypass backend authorization - applies with more force to a tool list than to
+# a dashboard, since a model will happily reach for anything it is offered.
+#
+# Enforced in two places on purpose. `for_role` filters what the model is
+# *offered*, which is presentation and stops it attempting refusals; `execute`
+# checks again, which is the boundary, because a model can name a tool nobody
+# offered it.
+TOOL_CAPABILITY = {
+    "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
+    "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
+    "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
+    "add_scoreboard_note": roles.CAP_SCOREBOARD_WRITE,
+    "resolve_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
+    "list_repository_files": roles.CAP_REPOSITORY_READ,
+    "read_repository_file": roles.CAP_REPOSITORY_READ,
+    "publish_document": roles.CAP_PUBLISH,
+    "jarvis_status": roles.CAP_SYSTEM_STATUS,
+    "jarvis_agent": roles.CAP_SYSTEM_STATUS,
+    "technology_review": roles.CAP_TECHNOLOGY_READ,
+}
+
+
+class ToolNotPermitted(PermissionError):
+    """A role reached for a tool it does not hold the capability for."""
+
+
+def for_role(role: str) -> list[dict]:
+    """The tools this role may actually use.
+
+    A client holds only `converse`, so this returns **nothing** for them - which
+    is the correct shape of the personal agent today: it answers from what it
+    knows and has no reach into the organization. When a client agent gains real
+    skills (portfolio analysis, trade ideas), each arrives as its own capability
+    and its own entry above, rather than by widening what `converse` means."""
+    granted = roles.capabilities(role)
+    return [tool for tool in TOOLS
+            if TOOL_CAPABILITY.get(tool["name"]) in granted]
+
+
+def permitted(role: str, name: str) -> bool:
+    required = TOOL_CAPABILITY.get(name)
+    if required is None:
+        # An unmapped tool is refused rather than allowed. A tool added without
+        # a capability is a mistake, and the safe reading of a mistake here is
+        # "nobody", not "everybody".
+        return False
+    return roles.allows(role, required)
+
+
+def execute(conn: Database, name: str, arguments: dict, *, role: str) -> dict:
     """Runs one tool call. Returns `{"error": ...}` rather than raising, for every
-    failure the model could plausibly cause."""
+    failure the model could plausibly cause.
+
+    The role is required, not optional. A default would mean a caller that forgot
+    to pass one silently got the most permissive behaviour, which is the failure
+    mode an authorization check least survives."""
+    if not permitted(role, name):
+        # Refused as data, like every other tool failure, so the model can tell
+        # the user plainly instead of the turn collapsing.
+        return {"error": f"Not permitted: your role ({role}) cannot use {name}."}
     try:
         if name == "file_scoreboard_item":
             item_id = scoreboard.file_item(

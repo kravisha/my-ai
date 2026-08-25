@@ -41,6 +41,7 @@ writing it into `gateway.db` would put a second copy of an authenticated session
 on disk for no benefit.
 """
 
+import json
 import os
 from typing import Callable
 
@@ -159,6 +160,85 @@ class JarvisClient:
             return self._unavailable(f"The Jarvis backend answered {status} for {path}.")
         return {"available": True, **body}
 
+    def console(self, path: str) -> tuple[int, dict]:
+        """Proxy one of the backend console's read endpoints (TQ-34, §92).
+
+        Addendum 40 §13.1: the Gateway "must never create a duplicate COO,
+        duplicate organization, or independent source of truth". So the studio an
+        operator sees through the Gateway is not a second console reading a
+        second copy of anything - it is this proxy in front of the same
+        endpoints the desktop console calls, answering out of the same database.
+        Addendum 43 §17's "one organization, many windows", implemented as a
+        window rather than as a second room.
+
+        Reads only, and the caller passes a path from a fixed allowlist rather
+        than anything a browser sent - a proxy that forwarded arbitrary paths
+        into a loopback-only backend would be a hole straight through the
+        boundary addendum 16 §7 exists to draw.
+
+        Returns (status, body) rather than the `available` shape the rest of
+        this class uses, because the console's own routes already answer
+        honestly when the organization is quiet and the page renders that
+        itself."""
+        try:
+            status, body = self._transport(path, None)
+        except requests.RequestException as unreachable:
+            return 503, self._unavailable(
+                f"The Jarvis backend at {backend_url()} did not answer "
+                f"({unreachable.__class__.__name__}).")
+        return status, body
+
+    def console_write(self, path: str, body: bytes, *, method: str = "PUT") -> tuple[int, dict]:
+        """Forward one studio write to the backend.
+
+        Kept separate from `console` and from every other method on this class,
+        which are GETs by design (see the module docstring: the Gateway cannot
+        retire an agent or file a directive). This does not widen that: the
+        workspace is the operator's own view state, not organizational
+        lifecycle, and the allowlist in gateway/main.py is what decides which
+        paths may arrive here at all."""
+        try:
+            response = requests.request(
+                method, f"{backend_url().rstrip('/')}{path}", data=body,
+                headers={"Content-Type": "application/json"},
+                timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
+            )
+        except requests.RequestException as unreachable:
+            return 503, {"error": f"backend unreachable ({unreachable.__class__.__name__})"}
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {}
+
+    def console_stream(self, path: str, body: bytes):
+        """Forward a streaming POST and yield the bytes as they arrive.
+
+        A blocking generator on purpose - `gateway.streaming.iterate_in_thread`
+        is what turns it into something an async socket can consume without
+        occupying the event loop, and that module exists because this shape kept
+        recurring."""
+        try:
+            with requests.post(
+                f"{backend_url().rstrip('/')}{path}", data=body,
+                headers={"Content-Type": "application/json"},
+                stream=True,
+                # No read timeout: the whole point is a response that arrives
+                # over seconds. The connect timeout still bounds a dead backend.
+                timeout=(CONNECT_TIMEOUT_SECONDS, None),
+            ) as response:
+                if response.status_code != 200:
+                    yield _sse_error(f"the backend answered {response.status_code}")
+                    return
+                for chunk in response.iter_content(chunk_size=None):
+                    if chunk:
+                        yield chunk
+        except requests.RequestException as unreachable:
+            # Reported in the stream's own vocabulary, so the console renders it
+            # as an answer it could not get rather than as a broken page.
+            yield _sse_error(
+                f"the backend at {backend_url()} did not answer "
+                f"({unreachable.__class__.__name__})")
+
     def status(self) -> dict:
         """The organization as it stands: who exists, on which of the two
         lifecycle axes, and whether anything looks unhealthy.
@@ -202,3 +282,14 @@ class JarvisClient:
         """One agent in full - what the UQI would be asked about, and what a
         question like "why did explorer-1 restart" needs."""
         return self._fetch(f"/admin/agents/{identity}")
+
+
+def _sse_error(reason: str) -> bytes:
+    """One server-sent event in the shape backend/console/index.html parses.
+
+    The console already renders a `{"type": "error"}` event as an answer it
+    could not get. Reusing that vocabulary means a Gateway-side failure looks
+    like every other failure the page knows how to explain, instead of like a
+    broken stream."""
+    payload = json.dumps({"type": "error", "error": reason})
+    return f"data: {payload}\n\n".encode("utf-8")

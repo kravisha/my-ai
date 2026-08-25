@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
+from gateway import roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -87,6 +88,12 @@ def init_schema(conn: Database) -> None:
 # the worst place to find out.
 _ADDITIVE_COLUMNS = {
     "scoreboard_items": {"signature": "TEXT"},
+    # The role a session was issued under (TQ-34, §92). Deliberately with no
+    # default: a session predating roles gets NULL, and NULL is refused rather
+    # than resolved to anything. Defaulting it to the operator would silently
+    # promote every session that existed before the boundary did, which is the
+    # one upgrade outcome a security column must not have.
+    "sessions": {"role": "TEXT"},
 }
 
 
@@ -116,17 +123,48 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_session(conn: Database, ttl_seconds: int) -> tuple[str, str]:
+def create_session(conn: Database, ttl_seconds: int, role: str) -> tuple[str, str]:
     """Issues a token and records only its digest. Returns (token, expires_at);
-    the token itself is never persisted and cannot be recovered from this row."""
+    the token itself is never persisted and cannot be recovered from this row.
+
+    The role is required rather than defaulted (TQ-34, §92). A caller that had
+    verified a credential and then let this fill in a role would be guessing at
+    precisely the moment the answer is known."""
+    if role not in roles.ROLES:
+        raise roles.UnknownRole(f"cannot issue a session for unknown role {role!r}")
     token = secrets.token_urlsafe(32)
     now = _now()
     expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
     conn.execute(
-        "INSERT INTO sessions (token_hash, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?)",
-        (_hash(token), now.isoformat(), expires_at, now.isoformat()),
+        "INSERT INTO sessions (token_hash, created_at, expires_at, last_seen_at, role) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (_hash(token), now.isoformat(), expires_at, now.isoformat(), role),
     )
     return token, expires_at
+
+
+def session_role(conn: Database, token: str) -> str | None:
+    """The role a live session was issued under, or None if there is no usable
+    session behind this token.
+
+    None covers three cases on purpose - no such token, expired, or issued
+    before sessions carried roles - because the caller does the same thing with
+    all three: refuse, and say to log in again. Distinguishing them in the
+    answer would tell an unauthenticated caller which of their guesses was
+    closest."""
+    row = conn.fetchone(
+        "SELECT expires_at, role FROM sessions WHERE token_hash = ?", (_hash(token),))
+    if row is None or row["role"] is None:
+        return None
+    if datetime.fromisoformat(row["expires_at"]) <= _now():
+        return None
+    if row["role"] not in roles.ROLES:
+        return None
+    conn.execute(
+        "UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?",
+        (_now().isoformat(), _hash(token)),
+    )
+    return row["role"]
 
 
 def session_is_valid(conn: Database, token: str) -> bool:

@@ -169,7 +169,8 @@ def record_assistant_message(conn: Database, conversation_id: int, text: str) ->
 
 
 def run_turn(
-    db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS
+    db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS,
+    *, role: str,
 ) -> Iterator[dict]:
     """One turn, tools and all, as a stream of events:
 
@@ -180,7 +181,14 @@ def run_turn(
     The `reply` event carries everything the user saw, including any text said
     before a tool call - the transcript should match the conversation, not just
     its final paragraph.
+
+    `role` is required and has no default (TQ-34, §92). It decides which tools
+    the model is offered and is checked again when one is called. A default here
+    would mean a caller that forgot to pass one got the most permissive
+    behaviour, which is the failure mode an authorization check least survives -
+    and this is the path a client reaches, so it is the one that matters most.
     """
+    offered = tools.for_role(role)
     messages = model_messages(history)
     said: list[str] = []
     conn = store.get_connection(db_path)
@@ -188,7 +196,7 @@ def run_turn(
     try:
         for _ in range(MAX_TOOL_ROUNDS):
             final = None
-            for event in provider.stream(SYSTEM_PROMPT, messages, tools.TOOLS, max_tokens):
+            for event in provider.stream(SYSTEM_PROMPT, messages, offered, max_tokens):
                 if event["type"] == "text":
                     said.append(event["text"])
                     yield event
@@ -206,7 +214,7 @@ def run_turn(
             for block in final["content"]:
                 if block.get("type") != "tool_use":
                     continue
-                outcome = tools.execute(conn, block["name"], block.get("input") or {})
+                outcome = tools.execute(conn, block["name"], block.get("input") or {}, role=role)
                 yield {"type": "tool", "name": block["name"], "ok": "error" not in outcome}
                 results.append({
                     "type": "tool_result",

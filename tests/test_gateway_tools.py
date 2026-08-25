@@ -6,11 +6,23 @@ the model can read and correct itself from. A tool that raises ends the turn; a
 tool that returns `{"error": ...}` lets the assistant try again.
 """
 
-from gateway import repositories, scoreboard, tools
+from gateway import repositories, roles, scoreboard, tools
+
+
+def execute(conn, name, arguments, role=roles.ROLE_OPERATOR):
+    """These tests all exercise operator-level tools, so they default to that
+    role rather than repeating it twenty-three times.
+
+    `tools.execute` itself has no default (TQ-34, §92): a caller that forgot to
+    pass a role would otherwise get the most permissive behaviour, which is the
+    failure mode an authorization check least survives. The default lives here,
+    in the tests, where being permissive is the point - and what a *client* can
+    reach is asserted separately, in tests/test_gateway_roles.py."""
+    return tools.execute(conn, name, arguments, role=role)
 
 
 def test_filing_through_a_tool_returns_the_item_it_created(gateway_conn):
-    result = tools.execute(
+    result = execute(
         gateway_conn,
         "file_scoreboard_item",
         {
@@ -33,7 +45,7 @@ def test_the_model_cannot_choose_its_own_provenance(gateway_conn):
     the filer controls is not provenance."""
     assert "source" not in _schema("file_scoreboard_item")["properties"]
 
-    result = tools.execute(
+    result = execute(
         gateway_conn, "file_scoreboard_item", {"question": "q", "source": "technology-agent"}
     )
 
@@ -44,13 +56,13 @@ def test_importance_defaults_to_informational(gateway_conn):
     """The safe default. An assistant that omits the field is not asserting
     urgency, and treating an omission as urgent would make the level meaningless
     within a day."""
-    result = tools.execute(gateway_conn, "file_scoreboard_item", {"question": "q"})
+    result = execute(gateway_conn, "file_scoreboard_item", {"question": "q"})
 
     assert result["filed"]["importance"] == "informational"
 
 
 def test_a_refused_write_comes_back_as_a_readable_error(gateway_conn):
-    result = tools.execute(
+    result = execute(
         gateway_conn, "file_scoreboard_item", {"question": "q", "importance": "critical"}
     )
 
@@ -68,38 +80,38 @@ def test_a_malformed_call_does_not_raise(gateway_conn):
         ("add_scoreboard_note", {"item_id": 1}),
         ("resolve_scoreboard_item", {"item_id": None, "resolution": "x"}),
     ]:
-        result = tools.execute(gateway_conn, name, arguments)
+        result = execute(gateway_conn, name, arguments)
         assert "error" in result, f"{name} {arguments} should have been reported, not raised"
 
 
 def test_an_unknown_tool_is_reported(gateway_conn):
-    assert "error" in tools.execute(gateway_conn, "delete_everything", {})
+    assert "error" in execute(gateway_conn, "delete_everything", {})
 
 
 def test_listing_carries_the_open_counts(gateway_conn):
     """So the assistant can answer "what is outstanding" without a second call,
     and so its answer and the client's badge come from the same source."""
-    tools.execute(gateway_conn, "file_scoreboard_item", {"question": "a", "importance": "urgent"})
+    execute(gateway_conn, "file_scoreboard_item", {"question": "a", "importance": "urgent"})
 
-    result = tools.execute(gateway_conn, "list_scoreboard_items", {})
+    result = execute(gateway_conn, "list_scoreboard_items", {})
 
     assert len(result["items"]) == 1
     assert result["open_counts"]["urgent"] == 1
 
 
 def test_reading_an_item_includes_its_discussion(gateway_conn):
-    item_id = tools.execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
-    tools.execute(gateway_conn, "add_scoreboard_note", {"item_id": item_id, "note": "a thought"})
+    item_id = execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
+    execute(gateway_conn, "add_scoreboard_note", {"item_id": item_id, "note": "a thought"})
 
-    result = tools.execute(gateway_conn, "get_scoreboard_item", {"item_id": item_id})
+    result = execute(gateway_conn, "get_scoreboard_item", {"item_id": item_id})
 
     assert [note["note"] for note in result["item"]["notes"]] == ["a thought"]
 
 
 def test_resolving_through_a_tool_closes_the_item(gateway_conn):
-    item_id = tools.execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
+    item_id = execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
 
-    result = tools.execute(
+    result = execute(
         gateway_conn,
         "resolve_scoreboard_item",
         {"item_id": item_id, "resolution": "Tunnel, not a forwarded port."},
@@ -110,9 +122,9 @@ def test_resolving_through_a_tool_closes_the_item(gateway_conn):
 
 
 def test_resolving_with_no_stated_decision_is_refused(gateway_conn):
-    item_id = tools.execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
+    item_id = execute(gateway_conn, "file_scoreboard_item", {"question": "q"})["filed"]["id"]
 
-    result = tools.execute(
+    result = execute(
         gateway_conn, "resolve_scoreboard_item", {"item_id": item_id, "resolution": ""}
     )
 
@@ -125,7 +137,7 @@ def test_every_declared_tool_is_dispatchable(gateway_conn):
     fail at - and it would fail as 'Unknown tool', which reads like a bug in the
     model rather than a gap in the dispatcher."""
     for tool in tools.TOOLS:
-        result = tools.execute(gateway_conn, tool["name"], {})
+        result = execute(gateway_conn, tool["name"], {})
         assert result.get("error", "") != f"Unknown tool {tool['name']!r}."
 
 
@@ -155,22 +167,22 @@ def test_the_git_tools_report_that_nothing_is_configured(gateway_conn, monkeypat
     monkeypatch.delenv(repositories.PUBLIC_REPO_ENV, raising=False)
 
     for name in ("list_repository_files", "read_repository_file", "publish_document"):
-        result = tools.execute(gateway_conn, name, {"path": "docs/x.md", "content": "c", "message": "m"})
+        result = execute(gateway_conn, name, {"path": "docs/x.md", "content": "c", "message": "m"})
         assert repositories.PRIVATE_REPO_ENV in result["error"]
 
 
 def test_reading_a_file_through_a_tool(gateway_conn, private_repo):
-    listed = tools.execute(gateway_conn, "list_repository_files", {"prefix": "docs"})
+    listed = execute(gateway_conn, "list_repository_files", {"prefix": "docs"})
     assert listed["files"] == ["docs/existing.md"]
     assert listed["visibility"] == "private"
 
-    read = tools.execute(gateway_conn, "read_repository_file", {"path": "docs/existing.md"})
+    read = execute(gateway_conn, "read_repository_file", {"path": "docs/existing.md"})
     assert "Some text." in read["content"]
 
 
 def test_an_untracked_file_is_refused_through_the_tool(gateway_conn, private_repo):
     """The .env case, reached the way the model would reach it."""
-    result = tools.execute(gateway_conn, "read_repository_file", {"path": "secret.env"})
+    result = execute(gateway_conn, "read_repository_file", {"path": "secret.env"})
 
     assert "not tracked" in result["error"]
 
@@ -178,7 +190,7 @@ def test_an_untracked_file_is_refused_through_the_tool(gateway_conn, private_rep
 def test_publishing_through_a_tool_defaults_to_the_private_repository(
     gateway_conn, private_repo, public_repo
 ):
-    result = tools.execute(
+    result = execute(
         gateway_conn,
         "publish_document",
         {"path": "docs/spec.md", "content": "# Spec\n", "message": "Add the spec"},
@@ -193,7 +205,7 @@ def test_a_public_publish_without_confirmation_is_refused_readably(
     gateway_conn, private_repo, public_repo
 ):
     """The model gets told why, in terms that tell it what to do next: ask."""
-    result = tools.execute(
+    result = execute(
         gateway_conn,
         "publish_document",
         {
@@ -211,7 +223,7 @@ def test_a_public_publish_without_confirmation_is_refused_readably(
 def test_private_material_bound_for_the_public_repository_is_refused(
     gateway_conn, private_repo, public_repo
 ):
-    result = tools.execute(
+    result = execute(
         gateway_conn,
         "publish_document",
         {

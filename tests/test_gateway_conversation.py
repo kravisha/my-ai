@@ -6,7 +6,7 @@ are properties of the turn itself and the socket would only obscure them.
 
 import threading
 
-from gateway import conversation, scoreboard, store
+from gateway import conversation, roles, scoreboard, store
 
 
 class ScriptedProvider:
@@ -52,8 +52,11 @@ class ScriptedProvider:
         }
 
 
-def events_of(db_path, history, provider):
-    return list(conversation.run_turn(db_path, history, provider))
+def events_of(db_path, history, provider, role=roles.ROLE_OPERATOR):
+    """Defaults to the operator, because these tests are about the turn's
+    mechanics rather than about who is having it. What a client's turn can and
+    cannot reach is asserted in tests/test_gateway_roles.py."""
+    return list(conversation.run_turn(db_path, history, provider, role=role))
 
 
 def test_the_reply_includes_text_said_before_a_tool_call(tmp_path, gateway_conn):
