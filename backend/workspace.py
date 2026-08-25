@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS workspace_state (
 """
 
 
+# Addendum 42 §14's fourth hatch, named here rather than imported from
+# backend.migrations: that module registers this one as a store, and the
+# dependency has to run in exactly one direction.
+_PERSISTENCE_DISABLED_ENV = "MYAI_PERSISTENCE_DISABLED"
+
+
+def _persistence_disabled() -> bool:
+    """Read at call time, not import: a developer sets this for a session and
+    expects it to take effect, not to require a restart of something."""
+    import os
+
+    return (os.environ.get(_PERSISTENCE_DISABLED_ENV) or "").strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
 class WorkspaceTooLarge(ValueError):
     """A surface tried to store more than a workspace should hold."""
 
@@ -99,7 +114,19 @@ def save(conn: Database, payload: dict, *, surface: str = SURFACE_CONSOLE) -> di
 
     Returns the stored record's metadata so a caller can show that saving is
     genuinely happening - a persistence feature nobody can observe is one
-    nobody trusts."""
+    nobody trusts.
+
+    Honours addendum 42 §14's fourth escape hatch: with
+    MYAI_PERSISTENCE_DISABLED set, this writes nothing and *says so* in the
+    return value. Silently pretending to save would be worse than not offering
+    the hatch at all - a developer who cannot tell the difference between
+    "saved" and "deliberately not saved" is exactly the person §14 is written
+    for."""
+    if _persistence_disabled():
+        return {"surface": surface, "disabled": True,
+                "reason": f"{_PERSISTENCE_DISABLED_ENV} is set; nothing was written",
+                "updated_at": None, "revision": None, "bytes": 0}
+
     if not isinstance(payload, dict):
         raise ValueError(f"workspace payload must be an object; got {type(payload).__name__}")
 

@@ -32,8 +32,9 @@ holds the queue, not the record.
 > is the terminal it forbids — **done 2026-08-25** (§86), as are **TQ-38** (the dormancy gate
 > that did not hold, §87) and **TQ-35** (Kumbhakarnan as persisted identity, §88).
 >
-> Next: **TQ-36**, the migration pipeline and the developer's escape hatch, now unblocked by
-> TQ-35 — then TQ-37 (the briefing rhythm) and TQ-34 (role-based Gateway).
+> **TQ-36** (the migration pipeline and the escape hatches, §89) is done too.
+>
+> Next: **TQ-37** (the presenter frame and the briefing rhythm), then TQ-34 (role-based Gateway).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -569,8 +570,8 @@ identity and visual identity, versioned separately from the software (42 §4's t
 
 ### TQ-36 — The migration pipeline, and the developer's escape hatch
 
-**NEED (YELLOW) · QUEUED · depends on TQ-35 · addendum 42 §7–§10, §14, §22, §23 ·
-`SPEC_RECONCILIATION.md` §85 disposition 3**
+**NEED (YELLOW) · DONE 2026-08-25 · addendum 42 §7–§10, §14, §22, §23 ·
+`SPEC_RECONCILIATION.md` §89**
 
 Sequential `migrate_5_to_6`-style steps rather than one giant converter (42 §9), each deterministic,
 logged and idempotent where practical; 42 §23's ordering (validate → backup → migrate → validate →
