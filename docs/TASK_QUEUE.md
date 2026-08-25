@@ -501,8 +501,8 @@ control surface over one source of truth, not a second reporting system.
 
 ### TQ-33 — The live studio: the look, and the choreography
 
-**NEED (GREEN) · QUEUED · addenda 41 §2/§5/§7/§14/§15/§19/§20, 40 §8.3–§8.5 ·
-`SPEC_RECONCILIATION.md` §85**
+**NEED (GREEN) · DONE 2026-08-25 · addenda 41 §2/§5/§7/§14/§15/§19/§20, 40 §8.3–§8.5 ·
+`SPEC_RECONCILIATION.md` §86**
 
 Promoted from WANT to NEED, and widened: addendum 41 makes the *look* a requirement rather than a
 preference, in the strongest terms the lineage has used. §18: "If an implementation looks like a
