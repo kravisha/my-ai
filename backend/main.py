@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy
+from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -699,6 +699,38 @@ class CooChatRequest(BaseModel):
     question: str
     language: str = coo_chat.DEFAULT_LANGUAGE
     history: list[dict] = []
+
+
+class WorkspaceSave(BaseModel):
+    workspace: dict
+
+
+@app.get("/console/workspace")
+async def console_workspace_load():
+    """Rehydrate the workspace (addendum 40 §4.1 step 5, §5).
+
+    Always answers, even when there is nothing to restore or the stored state
+    is unusable - the console must open either way, and §15 asks that resumed
+    work be clearly distinguished from work that could not be."""
+    return await _console_read(
+        workspace.load,
+        {"restored": False, "reason": "the runtime is still starting", "workspace": {}})
+
+
+@app.put("/console/workspace")
+async def console_workspace_save(request: WorkspaceSave):
+    """Checkpoint the workspace. Called continuously, not on close (§5.1).
+
+    Runs on a worker thread like every other database route here (§78), so a
+    keystroke's checkpoint never competes with the event loop."""
+    try:
+        saved = await _console_read(
+            lambda conn: workspace.save(conn, request.workspace), None)
+    except workspace.WorkspaceTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc))
+    if saved is None:
+        raise HTTPException(status_code=503, detail="Server is still starting.")
+    return saved
 
 
 @app.get("/console/finance")

@@ -6223,3 +6223,75 @@ sharpest requirement in the document. That is TQ-31, and it is the next
 increment rather than an oversight — §5.3's acceptance test ("the same text
 must be present in the same field after recovery") is the one worth building
 against.
+
+---
+
+## §83 — The living workspace: a half-typed sentence survives a kill (2026-08-25)
+
+TQ-31, addendum 40 Phase A's substance and the specification's own sharpest
+acceptance test. §5.3: "If the user types half a sentence and the machine
+crashes before Send, the same text must be present in the same field after
+recovery."
+
+Verified literally, not approximated. Typed `why is Explorer waiting on
+Specul` into the running desktop app, switched to the Chatterbox tab, set a
+filter, sent nothing and saved nothing. Killed every process outright — no
+window close, no shutdown, no flush. Relaunched. The masthead came back
+reading **RESUMED 12:49:34 · draft kept**, the Chatterbox tab was selected,
+and the unsent sentence was in the same field.
+
+### Server-side, because the workspace belongs to the organization
+
+`localStorage` would have been easier and wrong. §4.1 makes rehydrating the
+workspace a step of *the COO's* wake sequence; §20's reference experience has
+the COO greeting an operator whose half-typed question is still there; §5.2
+lists the workspace beside the agent registry as state the system restores. A
+workspace only the browser knows is one the COO cannot speak about, cannot
+restore onto a second machine, and that `continuity` does not back up.
+
+### Three design consequences of §5.3
+
+1. **Continuous, never on close** (§5.1). A crash gets no chance to flush, so
+   anything writing only on exit fails by construction. Debounced at 700ms —
+   that debounce *is* the loss window a hard power-cut can take, small enough
+   that a sentence survives and large enough that typing is not network
+   traffic. `pagehide` flushes through `sendBeacon`, which still delivers when
+   a normal fetch would be cancelled.
+2. **One transaction per write** (§15). A single-row UPSERT: a torn save
+   cannot leave half a workspace, and a save that *raises* leaves the previous
+   one intact — pinned by test.
+3. **A read never fails.** Unreadable state starts fresh and says so; the
+   operator loses a tab selection, not their application. State from a
+   *newer* schema version is refused rather than discarded, because deleting
+   what an upgrade could migrate is the worse error.
+
+### Three bugs found by driving the real interface
+
+None of them were visible from the backend, and the last one is the
+instructive one:
+
+- `S.tab` had no initial value, so a workspace saved before the first click
+  recorded `activeTab: null` and restored nothing.
+- The tab listener was attached *inside* the async boot, after two awaits —
+  so tabs were dead for the first few hundred milliseconds and a click in
+  that window vanished silently. Now wired synchronously: the interface must
+  respond from the first paint.
+- **`selectTab` was never defined at all.** A patch had matched on
+  `const empty=(what)=>` where the file said `const empty=(t)=>`, so the
+  replacement silently did nothing. Every other replacement in that patch
+  carried an assertion; that one did not. The lesson is narrow and worth
+  keeping: an unasserted string replacement is a change that reports success
+  whether or not it happened.
+
+### What persists now, and what still does not
+
+Persisted: active tab, source filter, attention filter, follow state,
+language, chosen voice, speech toggle, feed scroll position, and unsent draft
+text — restored before the first poll paints, so startup reads as waking
+rather than assembling (§16).
+
+Not yet: window size and position (the shell owns those and pywebview does
+not report them back), and §5.2's voice-interaction state — an interrupted
+question's context. Both are honest gaps rather than oversights; the second
+belongs with TQ-32's voice work, where the state it would restore actually
+exists.

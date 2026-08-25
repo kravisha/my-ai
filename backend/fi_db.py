@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage
+from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1388,6 +1388,10 @@ def init_schema(conn: Database) -> None:
     # from. Created here for the same reason as every module above - this
     # module must not import fi_db back.
     conn.executescript(status_events.SCHEMA)
+    # The living workspace (addendum 40 §5, §83): what the operator had open
+    # and half-written. Same reason as every module above - this module must
+    # not import fi_db back.
+    conn.executescript(workspace.SCHEMA)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1513,7 +1517,8 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     applied = _reconcile_triggers(conn)
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
-         reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA)
+         reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
+         workspace.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

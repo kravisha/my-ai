@@ -157,6 +157,7 @@
   <span class="pill">STAGE <b id="stage">—</b></span>
   <span class="pill" id="agents-pill">— AGENTS</span>
   <span class="pill" id="attn-pill">ALL QUIET</span>
+  <span class="pill" id="resumed" style="display:none"></span>
   <span id="clock"></span>
 </header>
 
@@ -229,7 +230,7 @@
 // component asking for a different mechanism. The chat is the exception, and
 // it streams because interruptibility requires it.
 const FEED_MS=2000, DESK_MS=6000, FIN_MS=8000;
-const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,
+const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,tab:"newsroom",
          speak:false,listening:false,history:[],abort:null,tape:0};
 
 const $=(id)=>document.getElementById(id);
@@ -239,6 +240,23 @@ const clock=(ts)=>(ts||"").slice(11,19)||"--:--:--";
 // rest null rather than padding them.
 const who=(e)=>e.source_agent||e.source_engine||e.source_department||"system";
 const empty=(t)=>`<div class="empty">${esc(t)}</div>`;
+
+function selectTab(name){
+  // One path for restoring a tab and for clicking one, so a resumed workspace
+  // cannot reach a state a click could never produce.
+  S.tab = name;
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===name));
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.id===`tab-${name}`));
+}
+
+// Wired synchronously, not inside boot(): boot awaits two fetches before it
+// finishes, and a tab clicked in that window used to do nothing at all. The
+// interface must respond from the first paint.
+document.getElementById("tabs").addEventListener("click",(e)=>{
+  const b=e.target.closest("button[data-tab]"); if(!b)return;
+  selectTab(b.dataset.tab);
+  if (typeof scheduleSave === "function") scheduleSave();
+});
 const num=(n,d=2)=>Number(n).toFixed(d);
 const signed=(n)=>(n>0?"+":"")+num(n);
 function table(cols,rows,fn){return rows.length?`<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(fn).join("")}</tbody></table>`:"";}
@@ -383,6 +401,102 @@ function renderParliament(d){
     `<h2>Not convened</h2><div class="note absent">${esc(d.reason)}</div>`+
     `<h2>What stands in its place</h2><div class="note">${esc(d.standing_in)}<br><br>`+
     `${d.filed_entries} entr${d.filed_entries===1?"y":"ies"} filed to date — see Strategy.</div>`);
+}
+
+
+/* ---------------- the living workspace (addendum 40 §5) ------------------
+   Continuous checkpointing, never a Save button (§5.1). A crash gets no
+   chance to flush, so anything that only wrote on close would fail §5.3 by
+   construction.
+
+   Debounced rather than per-keystroke: §16 asks for "negligible user-visible
+   latency", and a POST per character would be neither negligible nor kind to
+   the database. SAVE_DEBOUNCE_MS is the loss window a hard power-cut can
+   take - small enough that a half-typed sentence survives, large enough that
+   typing does not become network traffic.
+
+   Also flushed on pagehide/visibilitychange, which covers the ordinary close
+   properly: sendBeacon still delivers when the page is going away and a
+   normal fetch would be cancelled. */
+const SAVE_DEBOUNCE_MS = 700;
+let saveTimer = null, lastSaved = "";
+
+function collectWorkspace(){
+  // Declarative state only (§5.4): what to restore, never anything
+  // reconstructable from it.
+  return {
+    activeTab: S.tab,
+    source: S.source,
+    attention: S.attention,
+    follow: S.follow,
+    language: ($("lang") || {}).value || "en",
+    voice: ($("voice") || {}).value || "",
+    speak: S.speak,
+    feedScroll: Math.round(($("feed") || {}).scrollTop || 0),
+    drafts: {
+      // The requirement itself: unsent text is user intent (§5.3).
+      cooQuestion: ($("q") || {}).value || "",
+    },
+    savedAt: new Date().toISOString(),
+  };
+}
+
+async function saveWorkspace(reason){
+  const ws = collectWorkspace();
+  const body = JSON.stringify({workspace: ws});
+  // Skip identical payloads - the draft is the only thing that changes often
+  // and re-writing an unchanged workspace every second is noise in the
+  // database and in the revision count.
+  const fingerprint = JSON.stringify({...ws, savedAt: null});
+  if (fingerprint === lastSaved && reason !== "flush") return;
+  lastSaved = fingerprint;
+  try{
+    if (reason === "flush" && navigator.sendBeacon){
+      // A normal fetch is cancelled when the page goes away; a beacon is not.
+      navigator.sendBeacon("/console/workspace", new Blob([body], {type:"application/json"}));
+      return;
+    }
+    await fetch("/console/workspace", {method:"PUT", headers:{"Content-Type":"application/json"}, body});
+  }catch{ /* the next checkpoint will carry it; a failed save must not interrupt typing */ }
+}
+
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveWorkspace("debounce"), SAVE_DEBOUNCE_MS);
+}
+
+async function restoreWorkspace(){
+  let data;
+  try{ data = await (await fetch("/console/workspace")).json(); }
+  catch{ return; }
+  if (!data.restored){
+    // Not an error worth shouting about, but §15 wants resumed work
+    // distinguished from work that was not - so say which happened.
+    if (data.corrupt || data.stale_build) $("footer").textContent = data.reason;
+    return;
+  }
+  const ws = data.workspace || {};
+
+  if (ws.language && $("lang")) { $("lang").value = ws.language; loadVoices(); }
+  if (ws.voice && $("voice")) $("voice").value = ws.voice;
+  if (ws.speak){ S.speak = true; $("speak").classList.add("on"); }
+  if (ws.source){ S.source = ws.source; }
+  if (ws.attention){ S.attention = true; $("attention").classList.add("on"); }
+  if (ws.follow === false){ S.follow = false; $("follow").classList.remove("on"); $("follow").textContent = "Paused"; }
+
+  // The draft, restored into the same field it was typed in (§5.3).
+  const draft = (ws.drafts || {}).cooQuestion || "";
+  if (draft && $("q")) $("q").value = draft;
+
+  if (ws.activeTab) selectTab(ws.activeTab);
+  if (ws.feedScroll) setTimeout(() => { const f = $("feed"); if (f) f.scrollTop = ws.feedScroll; }, 400);
+
+  const when = (data.updated_at || "").slice(11, 19);
+  const pill = $("resumed");
+  pill.style.display = "";
+  pill.textContent = `RESUMED ${when}` + (draft ? " · draft kept" : "");
+  pill.title = `Workspace restored from checkpoint ${data.revision} at ${data.updated_at}` +
+               (draft ? `\nUnsent text was preserved (addendum 40 §5.3).` : "");
 }
 
 /* ---------------- polling ---------------- */
@@ -584,10 +698,12 @@ async function ask(question){
   }
 }
 
-$("compose").addEventListener("submit",(e)=>{e.preventDefault();const q=$("q").value;$("q").value="";ask(q);});
+$("compose").addEventListener("submit",(e)=>{e.preventDefault();const q=$("q").value;$("q").value="";
+  saveWorkspace("flush");   // the draft is gone the moment it is sent
+  ask(q);});
 $("clear").addEventListener("click",()=>{S.history=[];$("transcript").innerHTML="";say("COO","Cleared.","coo");});
 $("speak").addEventListener("click",()=>{
-  S.speak=!S.speak; $("speak").classList.toggle("on",S.speak);
+  S.speak=!S.speak; scheduleSave(); $("speak").classList.toggle("on",S.speak);
   if(!S.speak)speechSynthesis.cancel();
 });
 
@@ -627,17 +743,27 @@ if(SR){
   loadVoices();
   $("lang").addEventListener("change",loadVoices);
 
-  document.getElementById("tabs").addEventListener("click",(e)=>{
-    const b=e.target.closest("button[data-tab]"); if(!b)return;
-    document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
-    document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.id===`tab-${b.dataset.tab}`));
-  });
   const reset=()=>{S.seen=0;S.printed=0;$("feed").innerHTML="";pollFeed();};
-  $("source").addEventListener("change",(e)=>{S.source=e.target.value;reset();});
+  $("source").addEventListener("change",(e)=>{S.source=e.target.value;reset();scheduleSave();});
   $("attention").addEventListener("click",()=>{S.attention=!S.attention;
-    $("attention").classList.toggle("on",S.attention);reset();});
+    $("attention").classList.toggle("on",S.attention);reset();scheduleSave();});
   $("follow").addEventListener("click",()=>{S.follow=!S.follow;
-    $("follow").classList.toggle("on",S.follow);$("follow").textContent=S.follow?"Following":"Paused";});
+    $("follow").classList.toggle("on",S.follow);$("follow").textContent=S.follow?"Following":"Paused";
+    scheduleSave();});
+
+  // Restore before the first poll paints, so the operator does not watch
+  // their workspace being assembled (§16: startup should feel like waking).
+  await restoreWorkspace();
+
+  // Every surface that carries intent checkpoints as it changes (§5.1/§5.3).
+  $("q").addEventListener("input", scheduleSave);
+  $("lang").addEventListener("change", scheduleSave);
+  $("voice").addEventListener("change", scheduleSave);
+  $("feed").addEventListener("scroll", scheduleSave, {passive:true});
+  // The ordinary close, and the tab being hidden - a beacon survives both
+  // where a fetch would be cancelled.
+  addEventListener("pagehide", () => saveWorkspace("flush"));
+  addEventListener("visibilitychange", () => { if (document.hidden) saveWorkspace("flush"); });
 
   pollFeed(); pollDesks(); pollFinance(); pollChatterbox();
   setInterval(pollFeed,FEED_MS); setInterval(pollDesks,DESK_MS); setInterval(pollFinance,FIN_MS); setInterval(pollChatterbox,DESK_MS);

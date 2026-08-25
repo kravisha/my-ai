@@ -447,7 +447,10 @@ Phase B blocker discovered too late.
 
 ### TQ-31 — The living workspace: layout, view state, and the draft requirement
 
-**NEED (GREEN) · QUEUED · depends on TQ-30 · addendum 40 §5 · `SPEC_RECONCILIATION.md` §81**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §83.** §5.3 verified literally: a half-typed
+sentence, a selected tab and a filter all survived killing every process with no shutdown. Saved
+continuously server-side (the COO must be able to speak about the workspace), one transaction per
+write, and a read that never fails.
 
 Phase A's substance, and the part with the sharpest acceptance test in the whole document
 (40 §5.3): "If the user types half a sentence and the machine crashes before Send, the same text
