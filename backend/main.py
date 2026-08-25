@@ -17,7 +17,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, workspace
+from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -51,7 +51,52 @@ CONTROLLER_POLL_INTERVAL_SECONDS = 1.0
 CONSOLE_DIR = Path(__file__).resolve().parent / "console"
 
 
-async def _controller_poll_loop(controller: Controller) -> None:
+# How long an agent may go quiet before this server stops counting it as live.
+# Deliberately the same 45s the Controller and the COO already use for the same
+# judgement (controller.COO_SILENCE_THRESHOLD_SECONDS, coo.HEALTH_STALE_...),
+# so three components cannot hold three opinions about who is alive.
+LIVE_HEARTBEAT_THRESHOLD_SECONDS = 45.0
+
+
+def live_agents(conn) -> list[str]:
+    """Which agents are *observably* working, by their own heartbeats.
+
+    Separate from `startup_report`, and the separation is the point (TQ-38,
+    §87). "An operator started the workforce" is a fact about authorisation;
+    "agents are running" is a fact about the world. The console conflated them,
+    reported the first, and told the operator the organization was dormant while
+    six agents worked behind it.
+
+    Read from heartbeats rather than `agent_registry.process_state`, because
+    process_state is the registry's *belief* and an unclean shutdown leaves it
+    claiming "running" for processes that died with the machine. A heartbeat
+    inside the threshold cannot be stale by construction: something wrote it.
+
+    The Controller is excluded, and getting this wrong once is instructive: the
+    first version of this function counted `controller-1` and the dormant server
+    duly announced "1 agent(s) are heartbeating... nothing in this process
+    started them" about *its own Controller*, which heartbeats every tick by
+    design. The Controller is not workforce - it lives inside this process
+    rather than in a subprocess (the confirmed process model), so it is the one
+    row here that can never be a stray."""
+    rows = conn.fetchall(
+        "SELECT identity, role, last_heartbeat_at FROM agent_registry "
+        "WHERE lifecycle_state = ? AND identity != ?",
+        (fi_db.LIFECYCLE_ACTIVE, CONTROLLER_IDENTITY)
+    )
+    alive = []
+    for row in rows:
+        age = fi_db.heartbeat_age_seconds(dict(row))
+        threshold = watch.silence_threshold_seconds(
+            row["role"], LIVE_HEARTBEAT_THRESHOLD_SECONDS)
+        if age is not None and age < threshold:
+            alive.append(row["identity"])
+    return alive
+
+
+async def _controller_poll_loop(
+    controller: Controller, workforce_started: Callable[[], bool]
+) -> None:
     """Stands in for what a human would otherwise have to trigger by hand:
     repeatedly calls process_next_directive() so COO's spawn/retire requests
     (rows in coo_directives) actually get acted on. Runs as a plain asyncio
@@ -60,16 +105,36 @@ async def _controller_poll_loop(controller: Controller) -> None:
     model), so this needs no subprocess or IPC of its own.
 
     Takes the Controller as an argument rather than reading a module global, so
-    the loop cannot outlive or disagree with the instance lifespan created."""
+    the loop cannot outlive or disagree with the instance lifespan created.
+
+    **Nothing here spawns while the server is dormant** (addendum 38 §3.3; the
+    defect is TQ-38, §87). This loop used to run in full regardless of the login
+    gate, and the two halves of the process disagreed in the worst possible
+    direction: the banner said "SERVER UP, WORKFORCE DORMANT" while `watch_coo`
+    revived a COO left stale by the previous session, the revived COO filed
+    spawn directives for its short roles, and `process_next_directive` executed
+    them. Six agents, doing real work, behind a server that believed it was
+    asleep.
+
+    The tension is real but resolvable. The Controller's duty of care (Fault
+    Tolerance Framework §4) exists to keep a *started* workforce alive; where no
+    operator has started one, there is nothing to keep alive, and "recovery" is
+    starting a workforce while wearing recovery's clothes. So the duty attaches
+    to the workforce, not to the process: it begins when the workforce does.
+
+    What still runs while dormant is this Controller's own heartbeat. Its
+    liveness is not workforce activity, and suppressing it would make a healthy
+    Controller indistinguishable from a dead one."""
     while True:
         controller.record_self_heartbeat()
-        controller.process_next_directive()
-        # The Controller's duty of care toward the one subordinate it manages
-        # (Fault Tolerance Framework §4). Rate-limits itself, so calling it every
-        # tick costs a comparison rather than a query - see Controller.watch_coo.
-        # Nothing watched the COO before this: if it died, the health evaluation
-        # that notices every other agent's silence died with it.
-        controller.watch_coo()
+        if workforce_started():
+            controller.process_next_directive()
+            # The Controller's duty of care toward the one subordinate it manages
+            # (Fault Tolerance Framework §4). Rate-limits itself, so calling it every
+            # tick costs a comparison rather than a query - see Controller.watch_coo.
+            # Nothing watched the COO before this: if it died, the health evaluation
+            # that notices every other agent's silence died with it.
+            controller.watch_coo()
         await asyncio.sleep(CONTROLLER_POLL_INTERVAL_SECONDS)
 
 
@@ -291,20 +356,50 @@ async def lifespan(app: FastAPI):
         print(f"[startup] {AUTOSTART_ENV} set - starting the workforce unattended")
         app.state.startup_report = _operational_startup(controller, operator=None)
     else:
-        status_events.publish(
-            controller.conn, "awaiting_login",
-            "Server ready; workforce dormant until an operator authenticates",
-            status=status_events.STATUS_WAITING, department="server",
-        )
-        print(
-            "\n" + "=" * 78 + "\n"
-            "= SERVER UP, WORKFORCE DORMANT. The COO and every agent wait for an operator\n"
-            "= login (addendum 38 §3.3). POST /server/login with the Server Superuser\n"
-            f"= credentials to begin the startup sequence, or set {AUTOSTART_ENV}=1 for\n"
-            "= unattended automation.\n"
-            + "=" * 78 + "\n"
-        )
-    poll_task = asyncio.create_task(_controller_poll_loop(controller))
+        # Say what is true, not what is intended. The banner used to assert
+        # dormancy unconditionally, and printed it four lines below
+        # "[COO] 6 agents (6 active)" without noticing (TQ-38, §87). Agents left
+        # heartbeating by an unclean shutdown are a real situation this server
+        # cannot fix from here - it did not start them and has not been
+        # authorised to stop them - so the honest response is to report the
+        # contradiction loudly rather than paper over it.
+        strays = live_agents(controller.conn)
+        if strays:
+            status_events.publish(
+                controller.conn, "workforce_unaccounted",
+                f"Server is dormant but {len(strays)} agent(s) are heartbeating: "
+                f"{', '.join(sorted(strays))}. Nothing in this process started them.",
+                severity=status_events.SEVERITY_WARNING,
+                status=status_events.STATUS_FAILED, department="server",
+            )
+            print(
+                "\n" + "=" * 78 + "\n"
+                f"! SERVER UP, WORKFORCE DORMANT - BUT {len(strays)} AGENT(S) ARE RUNNING.\n"
+                f"! {', '.join(sorted(strays))}\n"
+                "! This process did not start them; they are most likely survivors of an\n"
+                "! unclean shutdown. Stop them before logging in, or the workforce this\n"
+                "! server starts will be the second one on this database.\n"
+                + "=" * 78 + "\n"
+            )
+        else:
+            status_events.publish(
+                controller.conn, "awaiting_login",
+                "Server ready; workforce dormant until an operator authenticates",
+                status=status_events.STATUS_WAITING, department="server",
+            )
+            print(
+                "\n" + "=" * 78 + "\n"
+                "= SERVER UP, WORKFORCE DORMANT. The COO and every agent wait for an operator\n"
+                "= login (addendum 38 §3.3). POST /server/login with the Server Superuser\n"
+                f"= credentials to begin the startup sequence, or set {AUTOSTART_ENV}=1 for\n"
+                "= unattended automation.\n"
+                + "=" * 78 + "\n"
+            )
+    # Read through app.state on every tick rather than captured once: the gate
+    # opens later, when an operator logs in, and a boolean snapshotted here
+    # would hold the loop shut for the life of the process.
+    poll_task = asyncio.create_task(_controller_poll_loop(
+        controller, lambda: getattr(app.state, "startup_report", None) is not None))
     # Automated backup (addendum 29 §45, SPEC_RECONCILIATION §59). Interval 0
     # disables automated continuity entirely - the loop AND the shutdown
     # backup below - which is the test suite's and a developer's opt-out;
@@ -569,11 +664,18 @@ async def console_feed(
             # "Where does everything stand", which a scrolling feed cannot
             # answer without the reader doing the work by eye (§4.5).
             "standing": status_events.current_status(conn),
+            # Two different facts, reported separately on purpose (TQ-38, §87):
+            # whether an operator has authorised a workforce, and whether one is
+            # actually running. The console said "dormant" on the strength of
+            # the first while the second was six.
             "awaiting_login": getattr(app.state, "startup_report", None) is None,
+            "live_agents": len(live_agents(conn)),
         }
 
     return await _console_read(
-        work, {"events": [], "sources": [], "standing": [], "awaiting_login": True})
+        work,
+        {"events": [], "sources": [], "standing": [], "awaiting_login": True,
+         "live_agents": None})
 
 
 @app.get("/console/overview")

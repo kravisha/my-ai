@@ -29,8 +29,8 @@ holds the queue, not the record.
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
 > **Current focus: the live studio** (addenda 41–43, assimilated 2026-08-25, §85) — **TQ-33**,
 > the visual redesign, because addendum 41 makes the look a requirement and the console as built
-> is the terminal it forbids — **done 2026-08-25**. **TQ-38 (RED) jumps the queue**: the server
-> reports a dormant workforce while six agents run. Then TQ-35 (Kumbhakarnan's persisted identity), TQ-36 (migrations
+> is the terminal it forbids — **done 2026-08-25**, as is **TQ-38** (the dormancy gate that
+> did not hold, §87). Next: TQ-35 (Kumbhakarnan's persisted identity), TQ-36 (migrations
 > and the developer escape hatch), TQ-37 (briefing rhythm), TQ-34 (role-based Gateway).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
@@ -501,7 +501,14 @@ Most of 41 §27's acceptance criteria are satisfied by this entry alone.
 
 ### TQ-38 — The server reports a dormant workforce while six agents are working
 
-**NEED (RED) · QUEUED · found 2026-08-25 while verifying TQ-33 · addendum 38 §3.3**
+**NEED (RED) · DONE 2026-08-25 · `SPEC_RECONCILIATION.md` §87 · addendum 38 §3.3**
+
+> Fixed. The cause recorded below is wrong in one detail and §87 corrects it:
+> `reconcile_on_start` is read-only and only reports. The spawning came from
+> `_controller_poll_loop`, which ran in full regardless of the gate — `watch_coo`
+> revived the stale COO, which filed spawn directives that the same loop executed.
+> The loop is now gated on the workforce having been started, and the console
+> reports authorisation and observed liveness as two separate facts.
 
 The dormancy gate and the controller's start-up reconciliation disagree, and the
 console repeats the wrong one.

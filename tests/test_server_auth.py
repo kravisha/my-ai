@@ -212,3 +212,75 @@ def test_startup_sequence_is_extracted_from_lifespan():
     assert callable(backend_main._operational_startup)
     source = backend_main._operational_startup.__doc__ or ""
     assert "38 §5" in source or "startup sequence" in source
+
+
+# --- the gate governs the loop that actually spawns (TQ-38, §87) -----------------
+
+
+@pytest.mark.anyio
+async def test_a_dormant_server_does_not_spawn_or_revive_anything():
+    """The defect TQ-38 records, in one assertion.
+
+    The login gate governed `_operational_startup` and nothing else, while the
+    Controller's poll loop - the thing that *actually* spawns - ran regardless.
+    A COO left stale by a previous session was revived by `watch_coo`, filed
+    spawn directives for its short roles, and `process_next_directive` executed
+    them. Six agents, working, behind a server whose banner said dormant.
+
+    Neither half is exotic; each is correct alone. The bug lived in the seam,
+    which is why the assertion is about the seam rather than about either
+    function's behaviour.
+    """
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from backend import main as backend_main
+
+    controller = MagicMock()
+    task = asyncio.create_task(
+        backend_main._controller_poll_loop(controller, lambda: False))
+    await asyncio.sleep(0.05)
+    task.cancel()
+
+    # It stays alive and visible...
+    assert controller.record_self_heartbeat.called, (
+        "a dormant Controller that stops heartbeating is indistinguishable from a dead one"
+    )
+    # ...and touches nothing that could start a workforce.
+    assert not controller.process_next_directive.called
+    assert not controller.watch_coo.called
+
+
+@pytest.mark.anyio
+async def test_once_the_workforce_starts_the_loop_does_its_whole_job():
+    """The other half: the gate must open, not merely close. A fix that left
+    the Controller permanently muzzled would trade a workforce nobody
+    authorised for a workforce nobody supervises."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from backend import main as backend_main
+
+    controller = MagicMock()
+    task = asyncio.create_task(
+        backend_main._controller_poll_loop(controller, lambda: True))
+    await asyncio.sleep(0.05)
+    task.cancel()
+
+    assert controller.process_next_directive.called
+    assert controller.watch_coo.called
+
+
+def test_the_gate_is_read_every_tick_not_captured_once():
+    """The predicate is a callable rather than a boolean for a reason: the gate
+    opens *later*, when an operator logs in. A value snapshotted at lifespan
+    would hold the loop shut for the life of the process, which is the same
+    defect wearing the opposite sign."""
+    import inspect
+
+    from backend import main as backend_main
+
+    signature = inspect.signature(backend_main._controller_poll_loop)
+    assert "workforce_started" in signature.parameters
+    source = inspect.getsource(backend_main._controller_poll_loop)
+    assert "workforce_started()" in source, "the gate is read, not captured"
