@@ -4964,3 +4964,61 @@ manual" — true when written, false the moment this file landed. Rewritten
 to name the enforcement and keep the manual run only for the case CI
 genuinely cannot cover: picking the project back up after time away,
 before anything has been pushed.
+
+---
+
+## §68 — The suite runs on Linux, and a deferral gets cheaper (2026-08-25)
+
+An experiment, run because the owner asked the right question about a note
+§67 had left in the workflow: *is Linux compatibility worth the extra work?*
+
+The audit that preceded the experiment answered a different question than
+expected — **there was no extra work to do.** The codebase was already
+written portable and nobody had noticed: no Windows-only dependency in
+either requirements file, no hardcoded drive letters or backslash paths,
+every path through `pathlib`, subprocess launches through `sys.executable`,
+and every `sys.platform` branch (`simulation/harness.py`,
+`simulation/faults.py`) already carrying its non-Windows side. So the
+question stopped being "is porting worth it" and became "is verifying a
+property we already paid for worth one runner", which is a much cheaper
+question with an obvious answer.
+
+### The result
+
+`ubuntu-latest` added beside `windows-latest` with `fail-fast: false`, run
+as a pull request so a red result could not take master's gate down with
+it. Both platforms: **1758 passed, 5 deselected** — identical counts, which
+is the check that matters. A green run with fewer collected tests would
+have been a hollow pass, and comparing the numbers is how that stays
+distinguishable from a real one.
+
+A side finding worth recording: Linux ran the suite in **85s against
+Windows' 332s**. With GitHub billing Windows runners at twice the Linux
+rate, a Linux run costs roughly an eighth of a Windows one. Windows stays
+in the matrix regardless — it is the platform this system actually runs on,
+and dropping it would verify everything except reality.
+
+### What it changed
+
+`TASK_QUEUE.md`'s continuity deferral said multi-machine recovery waits
+because "single-machine deployment; there is no second failure domain to
+fail over to." That premise is now cheaper to change: a second failure
+domain no longer implies a second *Windows* machine, and §59's encrypted
+secondary backup is already built to be the thing restored onto a small
+Linux host. The entry stays deferred — nothing is provisioned, and
+provisioning is an owner decision carrying a recurring cost — but it is now
+deferred for a price rather than for an impossibility, which is a
+different kind of deferral and is recorded as one.
+
+### The reasoning that nearly went the other way
+
+Worth keeping, because the first assessment was wrong. Asked whether to
+keep the Linux note at all, the initial answer was to delete it: this
+repository refuses machinery without a consumer (§64's router with one
+route, `arbitrage.py`'s refusal to build ARB-013 before a forward existed),
+and Linux looked exactly like a consumer that does not exist. What
+overturned it was the audit: the consumer is not hypothetical — it is
+addendum 29 §1.3's "no single point of irrecoverable failure", a NEED the
+doctrine already names and defers for precisely the reason this relieves.
+The rule against empty machinery is about building things nothing uses; it
+was never about declining to *measure* something already built.

@@ -281,6 +281,11 @@ the §6 scenario engine — a substantially larger increment than any detector.
 - **Multi-region, multi-zone, clean-room recovery, failover orchestration** (addendum 29 §14,
   §18–§21, §34) — single-machine deployment; there is no second failure domain to fail over to.
   TQ-02 creates the first recovery copy, which is the honest first rung of 29 §44's maturity ladder.
+  **The obstacle shrank on 2026-08-25** (`SPEC_RECONCILIATION.md` §68): the suite is now proven
+  to pass on Linux, so a second failure domain no longer means buying a second Windows machine —
+  a small Linux host would do, and §59's encrypted secondary is already the thing to restore onto
+  it. Still deferred (nothing is provisioned, and provisioning is an owner decision with a
+  recurring cost), but deferred for a *price* now rather than for an impossibility.
 - **Distillation of addendum 33 into constitutional directives** (33 §0) — the constitution is held
   privately; distilling into it is an owner action, not a repository action.
 - **Evolution Directives / trainer hierarchy as separate machinery** (addendum 30 §4–§6) — the
