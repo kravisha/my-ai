@@ -7147,3 +7147,108 @@ same organization, through a different door.
   skill is its own capability, never a widening of `converse`.
 
 Suite: **2072 passing**.
+
+---
+
+## §93 — A representative, and a memory that is finally theirs (2026-08-25, TQ-39)
+
+Addendum 43 §16 and addendum 41 §24 built as `gateway/client_agent.py`, plus the
+conversation-ownership fix that turned out to be the real content of this entry.
+
+### The breach TQ-34 created the conditions for
+
+`store.current_conversation_id` was "newest wins" across the whole database,
+with no owner. That was **correct** while the Gateway had exactly one credential
+— one person, one conversation — and became a leak the moment §92 added two more
+roles.
+
+Reproduced against a running Gateway before it was fixed. An operator's
+transcript was seeded, a client logged in, and the socket's opening frame
+handed the client:
+
+```
+[user] OPERATOR SECRET: the Q4 position and the API key rotation plan
+[assistant] Understood - filed under the operator's private board.
+```
+
+Conversations now carry an `owner`, and the owner is the **subject** — the
+account that logged in — rather than the role. Relationship continuity belongs
+to a person (§16), and scoping by role would have given every client one shared
+representative and one shared transcript, which is the same bug with a smaller
+blast radius.
+
+Sessions gained a `subject` column beside `role`, both with **no default**. A
+session predating either is refused rather than resolved to somebody. On the
+upgrade the pre-existing conversation is orphaned rather than handed to whoever
+asks next: its owner is genuinely unknown, and "it was almost certainly the
+operator's" is exactly the reasoning that creates leaks. The rows are not
+deleted — unreachable, preserved, §22's habit applied to a transcript.
+
+Found by asking what §16's "scoped memory" actually meant in this codebase, and
+discovering it meant nothing yet.
+
+### The agent, in the shape §88 already established
+
+`client_agents` is `coo_identity` one level down: created once, stable
+thereafter, refused rather than replaced when written by a newer schema.
+
+**The name comes from the Gateway's own pool, not the organization's.**
+`fi_db.AGENT_NAME_POOL` is the obvious source and the wrong one — it lives in
+the backend's database, which the Gateway reaches over HTTP, so drawing from it
+would make meeting your representative for the first time impossible during a
+backend outage. Addendum 16 §23 forbids exactly that, and a representative who
+cannot introduce themselves during an outage is not continuity. Names are chosen
+deterministically from the client's own id so the same person gets the same name
+even before the row exists, then persisted, then never reused.
+
+**Familiarity is earned, never claimed.** `greet` returns `returning` and the
+previous visit from the record, so a first meeting is not greeted as a reunion.
+A system that claimed to remember somebody it had never met would be the fastest
+possible way to stop feeling like a familiar representative.
+
+**Scoped memory is deliberately not a field on this table.** Storing it here
+would make it something this module could get wrong; owning the conversation
+means a client cannot reach another's transcript even if `client_agent` were
+absent entirely. A test asserts the table has no memory column, so the
+separation cannot quietly erode.
+
+### Two defects found by looking, both in the client's only capability
+
+**An empty tool list was being sent to the model API.** A client is offered no
+tools (§92), and conversing is the *only* thing they can do — so `tools=[]`
+becoming a 400 would break that one thing, and only for them. "No tools" and "an
+empty tools array" are different requests and the API is entitled to reject the
+second; the parameter is now omitted when there is nothing to send.
+
+**The face does not exist, and the record says so.** 43 §16 asks for a stable
+face. Nothing renders one for the COO either, and §85 recorded why a still image
+standing in for an animated presenter fails the specification rather than
+approximating it. The identity carries a visual record for a future renderer to
+read, with `rendered: false` and the reason.
+
+### One unrelated defect, fixed in its own commit
+
+The full suite failed once on `test_a_stale_reservation_expires` and passed four
+times in isolation. Not a flake and not caused by this work:
+`recent_completed_spawns` compared `>=` against its cutoff, so a **zero-width
+window contained whatever happened at the same instant** — and equality is the
+normal case here, since two consecutive `datetime.now()` calls return the
+identical value about **19,997 times in 20,000** on this machine, and the archive
+trigger truncates `completed_at` to the second.
+
+Fixed to a strict comparison. No practical change to the real window — an event
+exactly at the boundary of a multi-second window is already its oldest member —
+and the duplicate-identity guard it feeds is asserted to still catch a spawn in
+flight. This is the third bug in this family (§90's briefing window, §91's
+heartbeat); the pattern is now unmistakable enough to be worth stating: **on
+Windows, any comparison against "now" that uses `>=` is comparing against a
+clock that has not moved.**
+
+### Still deferred
+
+The animated face, for the reason above. And the client agent's *skills* —
+portfolio analysis, trade ideas — remain TQ-40, with the mechanism already
+decided in §92: each skill is its own capability, never a widening of
+`converse`.
+
+Suite: **2098 passing**, twice.

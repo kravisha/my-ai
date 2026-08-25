@@ -97,6 +97,18 @@ class ModelProvider(Protocol):
         ...
 
 
+def _tool_argument(tools: list) -> dict:
+    """Omit `tools` entirely when there are none, rather than sending an empty
+    list (TQ-39, §93).
+
+    "No tools" and "an empty tools array" are not the same request, and the API
+    is entitled to reject the second. That distinction stopped being academic
+    when the Gateway began scoping tools by role: a client is offered none at
+    all, and conversing is their *only* capability - so an empty array turning
+    into a 400 would break the one thing they can do, and only for them."""
+    return {"tools": tools} if tools else {}
+
+
 class AnthropicProvider:
     """The one implementation there is. Named for its vendor so that a second one
     can exist without either pretending to be generic."""
@@ -122,7 +134,7 @@ class AnthropicProvider:
             max_tokens=max_tokens,
             system=system,
             messages=messages,
-            tools=tools,
+            **_tool_argument(tools),
         )
 
     def stream(
@@ -140,7 +152,7 @@ class AnthropicProvider:
             max_tokens=max_tokens,
             system=system,
             messages=messages,
-            tools=tools,
+            **_tool_argument(tools),
         ) as stream:
             for fragment in stream.text_stream:
                 yield {"type": "text", "text": fragment}

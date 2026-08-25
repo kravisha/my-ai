@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
-from gateway import roles
+from gateway import client_agent, roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -75,6 +75,7 @@ def init_schema(conn: Database) -> None:
     caller never has to know how many modules have tables in it."""
     conn.executescript(SCHEMA)
     scoreboard.init_schema(conn)
+    conn.executescript(client_agent.SCHEMA)
     _apply_additive_migrations(conn)
 
 
@@ -93,7 +94,12 @@ _ADDITIVE_COLUMNS = {
     # than resolved to anything. Defaulting it to the operator would silently
     # promote every session that existed before the boundary did, which is the
     # one upgrade outcome a security column must not have.
-    "sessions": {"role": "TEXT"},
+    "sessions": {"role": "TEXT", "subject": "TEXT"},
+    # Who a conversation belongs to (TQ-39, §93). No default, and NULL is
+    # refused rather than treated as anybody's: a conversation predating owners
+    # is one whose owner is genuinely unknown, and handing it to whoever asks
+    # next is precisely the leak this column exists to close.
+    "conversations": {"owner": "TEXT"},
 }
 
 
@@ -123,7 +129,8 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def create_session(conn: Database, ttl_seconds: int, role: str) -> tuple[str, str]:
+def create_session(conn: Database, ttl_seconds: int, role: str,
+                   subject: str | None = None) -> tuple[str, str]:
     """Issues a token and records only its digest. Returns (token, expires_at);
     the token itself is never persisted and cannot be recovered from this row.
 
@@ -136,11 +143,26 @@ def create_session(conn: Database, ttl_seconds: int, role: str) -> tuple[str, st
     now = _now()
     expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
     conn.execute(
-        "INSERT INTO sessions (token_hash, created_at, expires_at, last_seen_at, role) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (_hash(token), now.isoformat(), expires_at, now.isoformat(), role),
+        "INSERT INTO sessions (token_hash, created_at, expires_at, last_seen_at, role, subject) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (_hash(token), now.isoformat(), expires_at, now.isoformat(), role, subject or role),
     )
     return token, expires_at
+
+
+def session_subject(conn: Database, token: str) -> str | None:
+    """Which account a live session belongs to, or None.
+
+    Separate from `session_role` because they answer different questions: the
+    role decides what may be done, the subject decides whose memory it is. A
+    Gateway that conflated them would give two clients one conversation."""
+    row = conn.fetchone(
+        "SELECT expires_at, role, subject FROM sessions WHERE token_hash = ?", (_hash(token),))
+    if row is None or row["role"] is None or row["subject"] is None:
+        return None
+    if datetime.fromisoformat(row["expires_at"]) <= _now():
+        return None
+    return row["subject"]
 
 
 def session_role(conn: Database, token: str) -> str | None:
@@ -206,23 +228,34 @@ def purge_expired_sessions(conn: Database) -> int:
 # feature, and adding the identifier later would mean migrating the messages.
 
 
-def current_conversation_id(conn: Database) -> int:
-    """The conversation a reconnecting client resumes, created on first use.
+def current_conversation_id(conn: Database, owner: str) -> int:
+    """The conversation *this owner* resumes, created on first use.
 
-    Newest wins. A client that disconnects and returns is continuing a
-    conversation, not starting one - which is the behaviour §9 asks for and the
-    reason the transcript is persisted at all."""
-    row = conn.fetchone("SELECT id FROM conversations ORDER BY id DESC LIMIT 1")
+    `owner` is required, and the reason is a breach rather than a preference
+    (TQ-39, §93). This used to be "newest wins" across the whole database, which
+    was correct while the Gateway had exactly one credential and became a leak
+    the moment TQ-34 added two more: a client connecting received the operator's
+    entire transcript in the socket's opening frame. Reproduced before it was
+    fixed, which is how it is known rather than suspected.
+
+    Owner is the *subject* - the account that logged in - not the role.
+    Relationship continuity (addendum 43 §16) belongs to a person, and two
+    clients sharing a role must not share a memory."""
+    if not (owner or "").strip():
+        raise ValueError("a conversation must belong to somebody")
+    row = conn.fetchone(
+        "SELECT id FROM conversations WHERE owner = ? ORDER BY id DESC LIMIT 1", (owner,))
     if row is not None:
         return row["id"]
-    return conn.execute_returning_id(
-        "INSERT INTO conversations (created_at) VALUES (?)", (_now().isoformat(),)
-    )
+    return start_conversation(conn, owner)
 
 
-def start_conversation(conn: Database) -> int:
+def start_conversation(conn: Database, owner: str) -> int:
+    if not (owner or "").strip():
+        raise ValueError("a conversation must belong to somebody")
     return conn.execute_returning_id(
-        "INSERT INTO conversations (created_at) VALUES (?)", (_now().isoformat(),)
+        "INSERT INTO conversations (created_at, owner) VALUES (?, ?)",
+        (_now().isoformat(), owner),
     )
 
 
