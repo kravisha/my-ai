@@ -29,6 +29,10 @@ simulation/runs/
 # exactly as sensitive - gateway.db session rows and sessions.json are
 # credentials in the backup too.
 backups/
+# The secondary-destination encryption key (backend/continuity.py's
+# ensure_backup_key): Tier-0 recovery material. A copy belongs OFF this
+# machine; no copy ever belongs in the repository.
+backup.key
 # The model-spend ledger (app/model_budget.py): live local state, one row per
 # UTC day, shared by every process that calls the model.
 model_spend.db

@@ -59,6 +59,7 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 | `min_observations` (regime binding) | 30 | Observations before a regime estimate is trusted | Reached in seconds at ten securities | **OK** |
 | `min_graded_reports` (lens validity) | 10 | Grades before a lens is judged | Reached in minutes | **OK** |
 | `SESSION_LIFETIME` (session) | 7 days | Operator session length | A policy, not a rate | **n/a** |
+| `DEFAULT_BACKUP_INTERVAL_SECONDS` (continuity) | 6 h | The de facto RPO — a crash loses at most this much | A disclosed convention, not a measured requirement; env-tunable, 0 disables | **n/a** |
 
 ---
 

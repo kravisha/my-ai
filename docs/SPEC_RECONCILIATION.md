@@ -4205,3 +4205,99 @@ train agents to escalate non-tradeable signals. Diagnostics get a consumer
 when reference-data validation wants a market-implied cross-check on its
 declared dividends and borrow — that consumer is named here as the natural
 next increment, not presumed built.
+
+---
+
+## §59 — The backup grows a pulse, a memory limit, and a copy that leaves the machine (2026-08-25)
+
+§48 built the recovery copy and recorded three honest gaps in it: backups
+happened only when a human remembered to run the CLI, every set lived on
+the same disk as the originals, and nothing ever deleted anything. This
+increment closes all three, which is addendum 29 §45's "automated backup
+of critical persistent state SHALL exist" finally meaning *automated*.
+
+### The policy, four environment variables
+
+All resolved at call time, all fail-loud through the `model_budget._limit`
+contract (a typo'd policy value refuses rather than silently becoming the
+default): `CONTINUITY_BACKUP_INTERVAL_SECONDS` (default 21600 — six hours,
+a disclosed convention recorded in TIMING_CONSTANTS.md, not a measured RPO
+requirement; 0 disables automated continuity entirely),
+`CONTINUITY_RETENTION_COUNT` (default 14 complete sets per destination;
+zero is refused — keeping no backups is not a retention policy),
+`CONTINUITY_SECONDARY_ROOT` (unset means no secondary — the module cannot
+invent where the second disk is), and `CONTINUITY_KEY_PATH`.
+
+### The loop, and the shutdown backup
+
+`_backup_loop` runs as a third asyncio task in the backend lifespan,
+sleep-first, cycle in a worker thread (hashing user_data/ must not stall
+the event loop the Controller shares), every failure printed and survived
+— a backup loop that dies once, silently, forever is §1.8's "silently
+weakened recoverability" in its purest form. The clean-shutdown path takes
+one more backup *after* every writer has stopped, so the interval-sized
+RPO window only ever spans a crash. The CLI keeps working regardless;
+`backup` now runs the full cycle (all destinations, then retention).
+
+### Retention prunes in the mirror of creation order
+
+`prune_backups` deletes each doomed set manifest-first: §48's manifest-last
+create ordering defines files-without-a-manifest as "not a backup", so an
+interrupted prune leaves debris that is already invisible to listing,
+verification, and restore. The same invariant that makes an interrupted
+create harmless makes an interrupted delete harmless. Incomplete sets are
+deliberately not prune's to touch — they may be a create in progress.
+
+### The secondary is encrypted unconditionally, closing §48's deferral
+
+§48 deferred encryption-before-upload (29 §10.1) *because* the only
+adapter stayed in the primary failure domain. A secondary destination
+exists precisely to leave that domain, so the moment the deferral's reason
+stops applying, so does the deferral: there is no plaintext-secondary
+option. `EncryptedProvider` wraps any provider the way BudgetedProvider
+wraps the model — put/get are the only places bytes cross the boundary, so
+manifests, verification, and restore work unchanged, and the destination
+never holds decryption authority (§10.2). Manifest hashes are of the
+plaintext, which is what makes a primary set and a secondary set of the
+same files carry comparable integrity records. An unreadable file — or an
+unreadable manifest — is a verification *finding*, not a crash, and the
+fail-closed restore refuses on it exactly as on a hash mismatch.
+
+The key (`ensure_backup_key`, gitignored, generated loudly on first use)
+is Tier-0 recovery material: §10.3 stated bluntly, a perfectly encrypted
+backup with a lost key is not a backup. A copy belongs OFF this machine,
+because the disaster that takes the primary disk takes the key with it.
+
+### Two destinations that share a failure mode are not two failure domains
+
+`run_backup_cycle` isolates destinations from each other: a full secondary
+disk costs exactly its own copy, never the primary's, and the outcome —
+including the failure text — lands in a per-destination summary the loop
+prints. Config errors that precede the per-destination split (an
+unreadable key file) fail the whole cycle loudly and are survived by the
+loop wrapper.
+
+### Verified
+
+Twelve new tests (1672 passing): fail-loud policy parsing including the
+0-interval/0-retention asymmetry, key generation loud-once-then-silent,
+ciphertext at rest with plaintext roundtrip, the full create → verify →
+restore → reopen-and-read exercise through the encrypted path (§1.4
+applies to the secondary too), wrong-key as a per-file and whole-manifest
+verification failure with restore refusing, retention keeping the newest
+sets with no orphan files and no authority over incomplete sets, the
+two-destination cycle with plaintext primary / encrypted secondary proven
+different at rest and the secondary proven restorable, retention enforced
+each pass, and destination-failure isolation. Live smoke test against the
+real backup domain: full cycle to two scratch destinations, secondary
+listed, verified intact, and restored through `--secondary` — the CLI
+flag that exists because an encrypted copy nobody can restore from the
+command line is not a recovery asset.
+
+### Still deliberately not done
+
+Incrementals (`parent` stays null — full sets at this data size),
+per-destination retention counts, a remote provider (the interface §48
+built is still what makes one an adapter rather than a redesign), and
+backup of `.env` (§48's exclusion reasoning stands: secrets recover by
+re-issuance, not restore).

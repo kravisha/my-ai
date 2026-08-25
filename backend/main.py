@@ -31,7 +31,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import fi_db, missions, reference_data, strategy
+from backend import continuity, fi_db, missions, reference_data, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -64,6 +64,41 @@ async def _controller_poll_loop(controller: Controller) -> None:
         # that notices every other agent's silence died with it.
         controller.watch_coo()
         await asyncio.sleep(CONTROLLER_POLL_INTERVAL_SECONDS)
+
+
+def _log_backup_cycle(results: dict) -> None:
+    """One line per destination, and a failure is a loud line, not a silent
+    return value — a backup loop that fails quietly is addendum 29 §1.8's
+    'silently weakened recoverability' in its purest form."""
+    for label, outcome in results.items():
+        if outcome.get("ok"):
+            pruned = f", pruned {len(outcome['pruned'])}" if outcome.get("pruned") else ""
+            print(f"[continuity] {label}: {outcome['backup_id']} "
+                  f"({outcome['files']} file(s), encryption {outcome['encryption']}{pruned})")
+        else:
+            print(f"[continuity] {label}: BACKUP FAILED — {outcome['error']}")
+
+
+async def _backup_loop() -> None:
+    """The automated backup addendum 29 §45 requires (SPEC_RECONCILIATION §59):
+    every interval, one run_backup_cycle across every configured destination.
+
+    Sleep-first, not backup-first: the shutdown backup in lifespan covers the
+    state this process started from, so an immediate startup copy would
+    duplicate it; the interval is the de facto RPO either way. The cycle runs
+    in a worker thread because it is honest blocking I/O — hashing every file
+    in user_data/ must not stall the event loop the Controller shares.
+    Exceptions that escape run_backup_cycle's per-destination isolation
+    (configuration errors like an unreadable key file) are caught here so the
+    loop survives to report them again next interval rather than dying once,
+    silently, forever."""
+    while True:
+        await asyncio.sleep(continuity.backup_interval_seconds())
+        try:
+            results = await asyncio.to_thread(continuity.run_backup_cycle)
+            _log_backup_cycle(results)
+        except Exception as exc:  # noqa: BLE001 - the loop must outlive any one failure
+            print(f"[continuity] backup cycle FAILED: {exc.__class__.__name__}: {exc}")
 
 
 def _reference_allows_bootstrap(readiness: dict) -> bool:
@@ -143,10 +178,18 @@ async def lifespan(app: FastAPI):
             + "!" * 78 + "\n"
         )
     poll_task = asyncio.create_task(_controller_poll_loop(controller))
+    # Automated backup (addendum 29 §45, SPEC_RECONCILIATION §59). Interval 0
+    # disables automated continuity entirely - the loop AND the shutdown
+    # backup below - which is the test suite's and a developer's opt-out;
+    # the manual CLI (python -m backend.continuity backup) is unaffected.
+    backup_interval = continuity.backup_interval_seconds()
+    backup_task = asyncio.create_task(_backup_loop()) if backup_interval > 0 else None
     try:
         yield
     finally:
         poll_task.cancel()
+        if backup_task is not None:
+            backup_task.cancel()
         # Stop the workforce before stopping ourselves. subprocess children
         # outlive their parent, so without this a server stop left every agent
         # running and writing to the database - see Controller.shutdown_agents.
@@ -156,6 +199,18 @@ async def lifespan(app: FastAPI):
         # Controller.shutdown_self.
         controller.shutdown_self()
         controller.close()
+        # The shutdown backup, last, once every writer above has finished: a
+        # clean stop leaves a copy of exactly the state a restart will resume
+        # from, so the interval-sized RPO window only ever spans a *crash*.
+        # After controller.close() because continuity opens its own
+        # connections; guarded because a failed backup must not turn a clean
+        # shutdown into a dirty one - it is reported, and the periodic loop's
+        # last set still stands.
+        if backup_interval > 0:
+            try:
+                _log_backup_cycle(continuity.run_backup_cycle())
+            except Exception as exc:  # noqa: BLE001
+                print(f"[continuity] shutdown backup FAILED: {exc.__class__.__name__}: {exc}")
 
 
 app = FastAPI(title="My AI Backend", lifespan=lifespan)

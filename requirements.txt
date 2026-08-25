@@ -13,3 +13,8 @@ bcrypt==5.0.0
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
 requests==2.34.2
+# Backup encryption (backend/continuity.py's EncryptedProvider, addendum 29
+# §10, SPEC_RECONCILIATION §59): Fernet for the secondary recovery copy.
+# Deferred-imported, so nothing pays for it until an encrypted destination
+# is actually configured.
+cryptography==50.0.0
