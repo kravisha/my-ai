@@ -4747,3 +4747,80 @@ unmeasured-means-no-number, profiles referencing registered models and
 real ROLE_CHARTERS roles with empty fallbacks, call shapes matching
 their sizing constants by import, and the consumer scan closing over
 agents/, backend/, app/, and gateway/.
+
+---
+
+## §65 — Collaboration gets measured before it gets taught (2026-08-25)
+
+TQ-17. Three of the four new addenda make collaboration the organization's
+highest-priority competency and a hard leadership gate (34 §16–§18, 36 §8–§9,
+37 §8–§9). This increment does the half that is honest today: **measure the
+collaboration that already happens**, before building drills for what does
+not.
+
+### Two dimensions, from records nobody had to invent
+
+`backend/competency.py` grows `collaboration_responsiveness` (cross-checks
+addressed to a desk's role that got an answer) and `uqi_responsiveness`
+(Universal Query Interface questions to its identity that got one). Both
+read records the organization has written since the Discovery Slice — no
+new table, no new writer, nothing that would be the "table nothing writes
+to" error this codebase refuses elsewhere. The module's own note about
+which dimensions it cannot compute moved with the code rather than being
+left to rot: the collaboration pair arrived exactly when its mechanisms
+did, and handoff completeness still has none (a report does not name the
+cross-check it grew from, so requester-side follow-through has no
+queryable linkage — named, not silently omitted).
+
+### What "responsive" means, and where that judgment lives
+
+Two vocabulary decisions, both taken from `fi_db`'s own constant block
+rather than invented here. **`no_evidence` counts as an answer**: a
+responder that looked and found nothing has said something informative,
+and scoring it as a failure would teach agents to stay quiet rather than
+report an empty hand. **Latency folds into the rate**: the timeout
+machinery (`expire_stale_cross_checks`, `expire_stale_uqi_requests`)
+already marks a slow answer `unanswered`, so answered-at-all *is*
+answered-in-time and no separate latency score is needed. The
+answered/unanswered judgment is made in `fi_db.competency_evidence`,
+where the status vocabulary lives; `competency.py` receives
+`{'answered': bool}` and only counts — the same split that keeps the
+scoring module a pure, database-free function.
+
+In-flight requests are deliberately not evidence: a pending question says
+nothing about a desk yet, and counting it against them would score an
+agent for work still in progress.
+
+### The four rules, unchanged
+
+`competency.py`'s existing discipline carried over without exception, and
+each is pinned by test. **Absent is not zero** — a desk nobody has asked
+anything is unstated, never a low score (min_samples 5 for cross-checks, 3
+for the rarer UQI traffic; starting values to be replaced by measurement,
+disclosed as such like every other floor in that file). **No universal
+score** — collaboration is its own dimension, never blended into
+analytical quality. **Earned, never assigned.** And **attribution by
+tenure**: cross-checks attribute through the *span's role* and UQI through
+the *span's identity*, both under the half-open rule `attributed_work`
+uses, so duty assigned while a desk sat there stays with whoever sat
+there across a transfer.
+
+### The gate this feeds, still unbuilt
+
+§60's disposition 5 stands unchanged: no promotion machinery exists, so
+the hard collaboration gate has nothing to gate. What changed is that the
+gate now has a *number* to read when it is built — which is the honest
+order (34 §17's scoring dimensions before 34 §18's gate), not a deferral
+of the requirement.
+
+### Verified
+
+Twelve new tests (1747 passing): the dimensions declared separately,
+absent-is-not-zero for both, answered cross-checks scoring and stating,
+`no_evidence` counted as an answer, silence lowering the rate, in-flight
+requests excluded, UQI scored on its own traffic and provably independent
+of cross-check traffic, another role's and another identity's traffic
+excluded, duty-before-transfer staying with the desk that held it (with
+the successor's own single sample correctly unstated), the evidence
+gatherer's shape, and `profile()` tolerating evidence dicts predating the
+new keys.
