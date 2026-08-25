@@ -388,6 +388,28 @@ def test_run_backup_cycle_destinations_fail_independently(tmp_path, monkeypatch)
     assert len(list_backups(good)) == 1
 
 
+def test_cli_loads_dotenv_before_reading_policy(tmp_path, monkeypatch, capsys):
+    """§69's regression: the CLI must read .env, or a configured secondary
+    destination is invisible to it.
+
+    Found in production use, not by a test - a real CONTINUITY_SECONDARY_ROOT
+    sat in .env and `python -m backend.continuity backup` wrote to the
+    primary alone and reported success. The server process only ever saw
+    .env because something else in its import graph loaded it; nothing in
+    this module's graph did. That is a silent half-backup on the exact path
+    INCIDENT_RESPONSE.md sends a human down mid-incident."""
+    calls = []
+    import dotenv
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: calls.append(True))
+    monkeypatch.setenv(continuity.ROOT_ENV, str(tmp_path / "store"))
+    monkeypatch.delenv(continuity.SECONDARY_ROOT_ENV, raising=False)
+
+    assert continuity.main(["list"]) == 0
+    capsys.readouterr()
+    assert calls, "the CLI ran without loading .env; a configured secondary would be invisible"
+
+
 def test_critical_sources_names_the_real_backup_domain():
     """The domain is the gitignored state: both databases, both credential
     files, and the per-user tree. Paths resolve through the owning modules'

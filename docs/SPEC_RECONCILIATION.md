@@ -5022,3 +5022,85 @@ addendum 29 §1.3's "no single point of irrecoverable failure", a NEED the
 doctrine already names and defers for precisely the reason this relieves.
 The rule against empty machinery is about building things nothing uses; it
 was never about declining to *measure* something already built.
+
+---
+
+## §69 — The second failure domain, half of it real (2026-08-25)
+
+Owner-directed: provision a Linux host for the second failure domain. Half
+of that is done and half of it cannot be done by this system, and the split
+is worth stating precisely because the two halves are routinely conflated.
+
+### The finding that outranked the request
+
+Before anything was provisioned, an inventory found
+`CONTINUITY_SECONDARY_ROOT` **unset**. §59 built the encrypted-secondary
+machinery earlier the same day; nothing had ever configured it. Every
+backup this system had taken still sat on the same disk as the originals —
+the exact condition §59 exists to end, still true because building a
+capability and enabling it are different acts. Recorded here because the
+gap between "shipped" and "in effect" is where this class of failure
+lives.
+
+### A real bug, found by using the thing
+
+Configuring the secondary and running the CLI produced the wrong answer:
+`python -m backend.continuity backup` wrote to the primary alone and
+reported success. Cause: **the CLI never loaded `.env`.** The backend
+server reads it only because something in its import graph calls
+`load_dotenv`; nothing in `backend/continuity.py`'s graph does.
+
+This is §1.8's "silently weakened recoverability" in the worst possible
+place — `INCIDENT_RESPONSE.md` sends a human to the CLI mid-incident, and
+it would have quietly given them half a backup. Fixed in `main()` rather
+than at import (importing a module stays free — the lesson
+`tests/test_db_isolation.py` exists to keep), with a regression test that
+fails if the CLI ever stops loading `.env`. Worth noting how it was
+found: not by the 1758-test suite, but by configuring a real destination
+and reading the output. Tests check what someone thought to ask.
+
+### The data domain: done
+
+Dropbox-synced folder as the secondary, chosen by the owner. Verified
+end to end rather than asserted:
+
+- both destinations written in one cycle (`primary` plaintext, `secondary`
+  `encryption fernet`);
+- the Dropbox copy is genuinely ciphertext — `users.json` there begins
+  `gAAAAAB…` and contains no readable JSON;
+- `backup.key` is **not** in Dropbox (key beside ciphertext is the same as
+  no encryption);
+- a full restore rehearsal from the Dropbox set: verify → restore → reopen,
+  giving 40 tables and `PRAGMA integrity_check: ok`, with both JSON files
+  parsing. §1.4 satisfied for this destination.
+
+The rehearsal artifacts were deleted immediately: a restored set contains
+decrypted credentials.
+
+### The host domain: not provisioned, and why
+
+Standing up a VPS requires creating an account and entering payment
+details — actions this system does not take on the owner's behalf, and
+there is no cloud CLI or credential on the machine to use instead.
+`docs/SECOND_FAILURE_DOMAIN.md` is the answer instead: a provider-neutral
+runbook whose load-bearing step is the restore rehearsal, since §1.4 makes
+an untested restore a hypothesis rather than a recovery asset. It rests on
+§68's result — the suite is verified green on Linux, so a second domain
+does not mean a second Windows licence.
+
+### What the owner still has to do, and nothing can do for them
+
+Put a copy of `backup.key` somewhere that is neither this machine nor this
+Dropbox account. The key is deliberately absent from the secondary, which
+means the disaster that takes this disk takes the key with it and turns
+every encrypted copy into noise. No amount of code closes this; it is
+custody, and it is named in the runbook and printed by the generator
+itself.
+
+### Deliberately not claimed
+
+Not failover (nothing promotes a second host), not live replication (the
+RPO is the backup interval, six hours by default), not geographic
+separation (29 §14 stays deferred). The `TASK_QUEUE.md` deferral is
+updated rather than closed: the data half is real, the host half waits on
+provisioning.

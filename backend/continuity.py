@@ -563,6 +563,22 @@ def run_backup_cycle(sources: list[dict] | None = None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The CLI loads .env; importing this module does not (§69).
+    #
+    # Found by configuring a real secondary destination and watching the CLI
+    # ignore it: the server process reads .env only because something in its
+    # import graph calls load_dotenv, and nothing in this module's graph
+    # does - so `python -m backend.continuity backup` wrote to the primary
+    # alone and reported success, which is §1.8's "silently weakened
+    # recoverability" on the exact path INCIDENT_RESPONSE.md sends a human
+    # down mid-incident. Loaded here rather than at import so importing this
+    # module stays free (the lesson tests/test_db_isolation.py exists to
+    # keep), and after argparse would be too late for nothing - it is the
+    # first thing main does.
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         prog="python -m backend.continuity",
         description="Backup and restore of critical persistent state (addendum 29, slice 1).",
