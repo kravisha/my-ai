@@ -42,7 +42,7 @@ from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, client_agent, conversation, exposure, jarvis, roles, scoreboard, store, technology
+from gateway import auth, client_agent, clients, conversation, exposure, jarvis, roles, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -299,7 +299,18 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
         logger.warning("login attempt against an unconfigured Gateway from %s", caller)
         raise HTTPException(status_code=503, detail=auth.NOT_CONFIGURED_MESSAGE)
 
+    # Environment roles first, then the client registry (TQ-43, §98). Order
+    # matters and is not arbitrary: a role credential is configured out of band
+    # by whoever runs the process, so it wins any collision - and
+    # `clients.register` refuses to create the collision in the first place, so
+    # this ordering is a second line rather than the only one.
     role = auth.identify(request.username, request.password)
+    subject = request.username.strip().lower() if role else None
+    if role is None:
+        client_id = clients.authenticate(conn, request.username, request.password)
+        if client_id is not None:
+            role, subject = roles.ROLE_CLIENT, client_id
+
     if role is None:
         # Counted, and logged with the address, because on a service reachable
         # from the internet "somebody guessed wrong" and "somebody is guessing"
@@ -314,8 +325,11 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     login_limiter.record_success(caller)
+    # The subject is what `clients.authenticate` resolved, never the string the
+    # caller typed - a typed name is a claim, and the registry is what turns it
+    # into an identity (addendum 44 §9.2).
     token, expires_at = store.create_session(
-        conn, auth.session_ttl_seconds(), role, subject=request.username.strip().lower())
+        conn, auth.session_ttl_seconds(), role, subject=subject)
     logger.info("%s logged in from %s, session expires %s", role, caller, expires_at)
     return {"token": token, "expires_at": expires_at, "role": role,
             "capabilities": sorted(roles.capabilities(role))}

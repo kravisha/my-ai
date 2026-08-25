@@ -7699,3 +7699,119 @@ throughout; today they share one credential and therefore one subject. The
 isolation this specification asks for is real and tested at the data layer, but
 the doorway that would let two clients actually be two people does not exist, and
 several of these entries are worth less than they look until it does.
+
+---
+
+## §98 — Two clients become two people (2026-08-26, TQ-43)
+
+The precondition §96 recorded and §97 restated: everything downstream of a client
+session had been per-client for days — conversations (§93), the representative's
+identity (§93), holdings (§96) — and all of it keyed off a `subject` that only
+one person could ever be. The Gateway had one credential per **role**, so every
+client shared a password and therefore shared an identity.
+
+The isolation was real and tested at the data layer. The doorway that would let
+two clients actually be two people did not exist.
+
+### The line, drawn by cardinality
+
+`gateway/auth.py` keeps credentials in the process environment and explains why
+at length: a route that could grant that privilege would be an escalation
+surface, and whoever controls the process already controls its data.
+
+That reasoning is sound for a role that is **one person by definition**. It does
+not survive contact with a role that is many. A shared environment variable for
+"every client" is not a credential — it is a group password, and the thing it
+protects is somebody's money.
+
+So the split is by cardinality rather than convenience:
+
+- **operator, internal** — one each, environment, out of band. Unchanged.
+- **client** — many, registered in `clients`, one credential and one identity
+  apiece.
+
+`ROLE_CREDENTIAL_ENV` no longer carries an entry for the client role at all.
+Leaving `GATEWAY_CLIENT_PASSWORD_HASH` configurable "for compatibility" would
+have left the shared password available, which is the hole this closes rather
+than a migration path away from it.
+
+### Provisioning is a command, not a route
+
+`python -m gateway.clients add`, the same shape as `backend.migrations` and
+`gateway.demo_clients`. A route that mints credentials is an escalation surface;
+a command runs as whoever controls the process, who already controls the
+database.
+
+The password is **generated, printed once, stored only as a bcrypt hash**. There
+is no path that recovers it, including for the operator — a registry that could
+show a client's password would be a registry worth stealing. `listing()` and
+`get()` do not return the hash either, so nothing outside the module can print
+one by accident.
+
+### Four refusals worth their reasons
+
+**A client may not take a configured role's name.** A client and a role answering
+to one name is an ambiguity about *who somebody is*, and the safe resolution of
+that is to refuse it at creation rather than pick a winner at authentication.
+
+**Client ids are constrained, not free text.** They end up in log lines, audit
+rows and error messages; a handle containing a newline or a quote is a formatting
+bug waiting to be an injection one.
+
+**An unrecognised status denies rather than defaulting.** A status this build
+cannot interpret is not one it may act on, and guessing what it permits is the
+wrong direction to guess in.
+
+**Removing a login does not remove a person.** `remove()` deletes the credential
+and leaves holdings, conversations and the representative untouched. Deleting
+somebody's financial records as a side effect of revoking a login is not a
+decision that function is entitled to make.
+
+### §9.3 applied to the login itself
+
+Addendum 44 §9.3: an error must not reveal that another client exists. Returning
+early for an unregistered name leaks exactly that through timing, so an unknown
+username is compared against a **decoy hash** and costs the same as a wrong
+password. Rate limiting remains the real defence; this closes the cheaper oracle
+beside it.
+
+Asserted structurally rather than with a stopwatch — a timing assertion on a
+shared CI runner measures the runner.
+
+### The subject is resolved, never typed
+
+`authenticate` returns a **client id**, not a boolean, and that id becomes the
+session's subject. A caller that verified a credential and then trusted the typed
+name would be taking a claim as an identity at the exact moment the answer is
+known (addendum 44 §9.2). A test reads the login route's source to check the
+typed name never reaches `create_session`.
+
+Environment roles are tried first and win any collision — but `register` refuses
+to create the collision, so the ordering is a second line rather than the only
+one.
+
+### Verified by three people logging in
+
+The demo now seeds three clients with real logins, so the isolation can be
+*walked into* rather than only asserted:
+
+| client | representative | conversation |
+|---|---|---|
+| customer | Nadim | 1 |
+| avery | Farida | 2 |
+| morgan | Yusra | 3 |
+
+Asked the same question — *"what do I hold, and how concentrated am I?"* — avery
+was told SYN2 is 98.33% of cost (955,200 of 971,409) and morgan was told 55/45
+across two priced positions with SYN6 excluded for having no cost basis. Both
+arithmetic checks out against the seed; both volunteered that the weights are by
+cost rather than market value.
+
+The old shared credential returns 401, as does a wrong password and an unknown
+name — three failures that look identical from outside.
+
+Demo logins are flagged `simulated` and cleared with the rest of the demo data,
+so §96's "removable before live" property extends to the credentials rather than
+leaving three accounts behind.
+
+Suite: **2187 passing**.
