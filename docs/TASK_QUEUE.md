@@ -23,10 +23,12 @@ holds the queue, not the record.
 
 ## Queue, in priority order
 
-> **Current head of the queue** (owner-directed 2026-08-25, `SPEC_RECONCILIATION.md` §60):
-> **TQ-14's remaining scope** — event-stepped scenario shape per addendum 34 §6 (its forward-leg
-> scope item and TQ-15's market-implied validation are both DONE, §61/§62). Entries above it in
-> file order are DONE records, not higher-priority work.
+> **Owner-directed head of the queue** (2026-08-25, `SPEC_RECONCILIATION.md` §60): **both head
+> items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
+> (market-implied validation §62). The queue's remaining QUEUED work: TQ-07 (consumer-gated),
+> TQ-16 (Model Registry as metadata), TQ-17 (collaboration scoring baseline), TQ-18
+> (per-caller spend attribution). Entries above them in file order are DONE records, not
+> higher-priority work.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -170,19 +172,18 @@ Engine and Simulation Engine first — is recorded in §60 and ordered here.
 
 ### TQ-14 — Simulation Engine: world capabilities for the blocked detector families
 
-**NEED (YELLOW) · IN_PROGRESS · owner-directed head of queue (2026-08-25, §60) ·
-scope item 1 DONE — `SPEC_RECONCILIATION.md` §61**
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §61 (forward leg) and §63 (event-stepped
+timeline) · owner-directed head of queue (2026-08-25, §60)**
 
-Source: addendum 25 (the world's own spec), addendum 34 §6–§8 (the engine must evolve when
-training needs outgrow it), and the blocked register below. Scope item 1 — the forward leg —
-is built: four forward variants under their own `options_arbitrage_forward` strategy, ARB-013
-and ARB-014 as their detectors (TQ-B1 resolved; Phase 1 of addendum 27 §11 is now complete),
-wired through the answer key, the stored payload, Explorer, evaluation and diagnosis. The
-instrument is per-variant, not world-wide, for the finance recorded in §61 (a fair forward
-beside a borrow_cost trap falsifies the trap). Remaining scope: event-stepped scenario shape
-per 34 §6 (State(t) + Event(t) → State(t+1), seeds reproducible) as the step toward
-continuous Monte Carlo operation. American-style worlds (TQ-B3) remain a larger, separate
-increment.
+Source: addendum 25 (the world's own spec), addendum 34 §6–§8, and the blocked register below.
+Scope item 1 (§61): four forward variants under `options_arbitrage_forward`, ARB-013/014 as
+their detectors (TQ-B1 resolved; addendum 27 §11 Phase 1 complete), wired end to end; the
+instrument is per-variant for the finance §61 records. Scope item 2 (§63): the
+`options_arbitrage_timeline` strategy — State(t) + Event(t) → State(t+1) over a fixed listed
+ladder with seeded market drift, opportunity onset/resolution windows, per-step grading through
+the existing evaluate(), and stored step sequences whose detection-latency consumer is named.
+Addendum 34's fuller trial vocabulary (outages, delayed data, collaboration events, stages
+3–9) is future work per §63; American-style worlds (TQ-B3) remain a larger, separate increment.
 
 ### TQ-15 — Reference Data Engine: market-implied validation of declared dividends and borrow
 

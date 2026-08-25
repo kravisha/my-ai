@@ -118,7 +118,9 @@ STRATEGY_PARITY = "put_call_parity_arbitrage"
 STRATEGY_CROSS_STRIKE = "options_arbitrage_phase1"
 STRATEGY_CALENDAR = "options_arbitrage_calendar"
 STRATEGY_FORWARD = "options_arbitrage_forward"
-STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE, STRATEGY_CALENDAR, STRATEGY_FORWARD)
+STRATEGY_TIMELINE = "options_arbitrage_timeline"
+STRATEGIES = (STRATEGY_PARITY, STRATEGY_CROSS_STRIKE, STRATEGY_CALENDAR, STRATEGY_FORWARD,
+              STRATEGY_TIMELINE)
 
 # A convention, not a measurement: an arbitrary fixed Monday afternoon inside
 # a nominal equity session. Every timestamp a run produces derives from this
@@ -280,11 +282,59 @@ DEFAULT_SCENARIO_MIX_FORWARD = {
     VARIANT_NONE: 0.05,
 }
 
+# The event-stepped timeline (addendum 34 §6, SPEC_RECONCILIATION §63,
+# TQ-14's remaining scope): a scenario becomes a short sequence of world
+# states - State(t) + Event(t) -> State(t+1) - instead of one frozen moment.
+# The event vocabulary of this first increment:
+#
+# - 'market_drift': every step after the first, the spot takes a small
+#   seeded step and every instrument reprices from it consistently -
+#   ordinary movement in which nothing is mispriced (34 §7's "ordinary
+#   periods where nothing interesting happens", the correctly-do-nothing
+#   material, now with the market actually moving).
+# - 'opportunity_onset' / 'opportunity_resolution': the scheduled variant's
+#   injection appears at a drawn step and disappears at a later drawn step
+#   (which may be the end - not every opportunity resolves inside the
+#   window you watched). Detection now has a WHEN, not just a whether.
+#
+# Only genuine variants and the clean control are timeline-schedulable
+# (TIMELINE_VARIANTS): a trap's teaching value is in its look, not its
+# timing, and the static curriculum already carries every trap - deferred
+# rather than duplicated. The strike ladder is FIXED from the step-0 spot
+# for the whole timeline: listed contracts do not re-strike because the
+# underlying drifted, and a ladder that followed the spot would erase the
+# very moneyness drift a stepped world exists to exhibit.
+TIMELINE_VARIANTS = (
+    VARIANT_GENUINE, VARIANT_CROSS_BUMP, VARIANT_CALENDAR_BUMP,
+    VARIANT_FORWARD_BUMP, VARIANT_FORWARD_DIP, VARIANT_NONE,
+)
+DEFAULT_SCENARIO_MIX_TIMELINE = {
+    VARIANT_GENUINE: 0.20,
+    VARIANT_CROSS_BUMP: 0.15,
+    VARIANT_CALENDAR_BUMP: 0.15,
+    VARIANT_FORWARD_BUMP: 0.125,
+    VARIANT_FORWARD_DIP: 0.125,
+    VARIANT_NONE: 0.25,
+}
+
+EVENT_MARKET_DRIFT = "market_drift"
+EVENT_OPPORTUNITY_ONSET = "opportunity_onset"
+EVENT_OPPORTUNITY_RESOLUTION = "opportunity_resolution"
+
+N_STEPS_DEFAULT = 8
+STEP_SECONDS_DEFAULT = 60.0
+# Per-step relative spot move bound - ordinary drift, sized well inside the
+# 1% relative spread basis so movement alone can never look like an edge.
+# A convention (TIMING_CONSTANTS.md's disclosure discipline), not a
+# volatility measurement.
+SPOT_DRIFT_PCT_MAX = 0.002
+
 DEFAULT_SCENARIO_MIX_BY_STRATEGY = {
     STRATEGY_PARITY: DEFAULT_SCENARIO_MIX,
     STRATEGY_CROSS_STRIKE: DEFAULT_SCENARIO_MIX_CROSS,
     STRATEGY_CALENDAR: DEFAULT_SCENARIO_MIX_CALENDAR,
     STRATEGY_FORWARD: DEFAULT_SCENARIO_MIX_FORWARD,
+    STRATEGY_TIMELINE: DEFAULT_SCENARIO_MIX_TIMELINE,
 }
 
 # Strike grid as moneyness (K/S - 1) and listed expiries in days - both
@@ -386,6 +436,12 @@ class MissionConfig:
     stale_tolerance_seconds: float = STALE_TOLERANCE_DEFAULT
     chatter_per_scenario: int = CHATTER_PER_SCENARIO_DEFAULT
     chatter_signal_ratio: float = CHATTER_SIGNAL_RATIO_DEFAULT
+    # The timeline entry points' shape (addendum 34 §6, §63): how many world
+    # states one scenario steps through, and the simulated seconds between
+    # them. Ignored by the static entry points; validated for every mission
+    # so a config is either wholly valid or wholly rejected.
+    n_steps: int = N_STEPS_DEFAULT
+    step_seconds: float = STEP_SECONDS_DEFAULT
 
     def __post_init__(self) -> None:
         self.asset_classes = tuple(self.asset_classes)
@@ -442,6 +498,13 @@ class MissionConfig:
             raise ValueError(f"stale_tolerance_seconds must be positive; got {self.stale_tolerance_seconds!r}")
         if self.chatter_per_scenario < 0:
             raise ValueError("chatter_per_scenario must be non-negative")
+        if self.n_steps < 2:
+            raise ValueError(f"n_steps must be at least 2 (one step is the static world); got {self.n_steps!r}")
+        if not (0 < self.step_seconds < 86400):
+            # Sub-day steps only: integer expiry_days are held constant
+            # across a timeline, which is honest for minutes and hours and a
+            # lie for multi-day steps (the near expiry would really decay).
+            raise ValueError(f"step_seconds must be in (0, 86400); got {self.step_seconds!r}")
         if not (0 <= self.chatter_signal_ratio <= 1):
             raise ValueError(f"chatter_signal_ratio must be in [0, 1]; got {self.chatter_signal_ratio!r}")
         try:
@@ -639,13 +702,24 @@ def _build_underlying_quote(rng: random.Random, spot: float, spread_pct: float, 
     return _quote_from_mid(rng, spot, half_spread, UNDERLYING_SIZE_RANGE, quoted_at)
 
 
-def _build_rows(rng: random.Random, spot: float, r: float, q: float, skew: Skew, spread_pct: float, quoted_at: str) -> list[ChainRow]:
+def _build_rows(rng: random.Random, spot: float, r: float, q: float, skew: Skew, spread_pct: float,
+                quoted_at: str, strikes_by_moneyness: dict[float, float] | None = None) -> list[ChainRow]:
     """Every (moneyness, expiry) cell, priced from the same (spot, r, q,
     sigma) inputs for both legs - parity holds by construction unless a
-    variant perturbs a specific row afterward."""
+    variant perturbs a specific row afterward.
+
+    `strikes_by_moneyness` is the timeline's fixed-ladder override (§63):
+    listed strikes are set once at step 0 and do not re-strike as the spot
+    drifts, so a later step prices the SAME contracts at a new spot. The
+    grid moneyness stays each row's identity (it keys the skew and
+    _locate_row), disclosed as listing-time moneyness rather than the
+    drifting spot's."""
     rows = []
     for moneyness in MONEYNESS_GRID:
-        strike = _round_strike(spot * (1 + moneyness))
+        if strikes_by_moneyness is None:
+            strike = _round_strike(spot * (1 + moneyness))
+        else:
+            strike = strikes_by_moneyness[moneyness]
         for expiry_days in EXPIRY_DAYS:
             t_years = expiry_days / 365
             sigma = skew.iv(moneyness, expiry_days)
@@ -2203,3 +2277,377 @@ def run_parity_exercise(conn, config: MissionConfig, runs_dir: Path | None = Non
     }
     report["summary_path"] = _write_summary(config.mission_id, report, runs_dir)
     return report
+
+# --- the event-stepped timeline (addendum 34 §6; SPEC_RECONCILIATION §63) ------
+#
+# TQ-14's remaining scope: State(t) + Event(t) -> State(t+1). A timeline is a
+# short sequence of full world states over simulated time - the market drifts
+# every step, the scheduled variant's injection appears at a drawn onset step
+# and disappears at a drawn resolution step (or persists to the end), and
+# every step is a complete ScenarioWorld with its OWN ground truth, so the
+# per-step promise is graded by the same evaluate() the static world uses:
+# nothing new to trust, the whole existing grading vocabulary inherited.
+#
+# For a forward-scheduled timeline the forward exists at EVERY step - fair
+# when quiet (the step ground truth is §61's forward_none clean control),
+# shifted when live. An instrument that appeared exactly when mispriced would
+# teach the spurious correlation "forward listed => opportunity", which no
+# real market exhibits.
+#
+# Chatter is deliberately absent from timeline steps in this increment: the
+# Speculator-side timeline (chatter that leads, lags, or contradicts the
+# moving market) is its own curriculum increment with its own design, and
+# empty chatter is honest where synchronized chatter would be invented.
+
+
+@dataclass(frozen=True)
+class TimelineStep:
+    """One simulated moment: the world's full state at t, the events that
+    produced it from t-1, and whether the scheduled opportunity is live."""
+
+    step: int
+    observed_at: str
+    events: tuple[str, ...]
+    live: bool
+    world: ScenarioWorld
+
+
+@dataclass(frozen=True)
+class ScenarioTimeline:
+    """One scenario's whole sequence. `variant` is the SCHEDULED variant;
+    each step's own ground truth carries what is true at that step (the
+    scheduled variant while live, the clean control while quiet). The live
+    window is [onset_step, resolution_step); resolution_step ==
+    len(steps) means the opportunity persisted past the end of the watched
+    window, and both are None on a 'none' schedule."""
+
+    scenario_id: str
+    entity_id: str
+    symbol: str
+    variant: str
+    onset_step: int | None
+    resolution_step: int | None
+    steps: tuple[TimelineStep, ...]
+
+
+def _spot_path(config: MissionConfig, index: int, spot0: float) -> list[float]:
+    """The market-drift event stream: a seeded random walk, one small
+    relative step per timeline step, from its own salted stream so schedule
+    draws and drift draws can never perturb each other."""
+    drift_rng = random.Random(f"{config.seed}:timeline:{index}:drift")
+    spots, spot = [], spot0
+    for k in range(config.n_steps):
+        if k > 0:
+            spot = round(spot * (1 + drift_rng.uniform(-SPOT_DRIFT_PCT_MAX, SPOT_DRIFT_PCT_MAX)), 4)
+        spots.append(spot)
+    return spots
+
+
+def _step_time(config: MissionConfig, k: int) -> str:
+    return (parse_timestamp(config.base_time) + timedelta(seconds=k * config.step_seconds)).isoformat()
+
+
+def _timeline_inject(variant: str, inject_rng: random.Random, rows: list[ChainRow],
+                     forwards: tuple[ForwardQuote, ...], spot: float, r: float, q: float,
+                     underlying: Quote, borrow_fee: float | None,
+                     step_config: MissionConfig) -> tuple[list[ChainRow], tuple[ForwardQuote, ...], dict]:
+    """The scheduled variant applied to one live step's state, through the
+    SAME injectors the static world uses - each already verifies through the
+    organization's own scans that it fired where intended and leaked
+    nowhere. Returns (rows, forwards, ground-truth field updates).
+
+    `inject_rng` is recreated from one per-scenario salt at every live step,
+    so the drawn target (row index, deviation draw) is identical across the
+    window: one persistent opportunity, not a different one per step. The
+    *floor* under the deviation can move a little with the drifting spreads,
+    so each step's ground truth records that step's actual deviation."""
+    if variant == VARIANT_GENUINE:
+        idx = inject_rng.randrange(len(rows))
+        rows, deviation = _inject_genuine(inject_rng, rows, idx, spot, r, q, underlying, step_config)
+        return rows, forwards, {
+            "affected_strike": rows[idx].strike, "affected_expiry_days": rows[idx].expiry_days,
+            "injected_deviation": deviation, "expected_executable": True,
+            "expected_direction": "conversion",
+        }
+    if variant == VARIANT_CROSS_BUMP:
+        idx_prev, idx_mid = _cross_strike_indices(rows)
+        rows, deviation = _inject_cross_bump(inject_rng, rows, idx_prev, idx_mid, step_config)
+        return rows, forwards, {
+            "affected_strike": rows[idx_mid].strike, "affected_expiry_days": 30,
+            "affected_strikes": [rows[idx_prev].strike, rows[idx_mid].strike],
+            "injected_deviation": deviation, "expected_executable": True,
+            "expected_family": "cross_strike",
+        }
+    if variant == VARIANT_CALENDAR_BUMP:
+        rows, deviation = _inject_calendar_bump(
+            inject_rng, rows, spot, r, q, underlying, borrow_fee, step_config,
+        )
+        return rows, forwards, {
+            "affected_expiry_days": EXPIRY_DAYS[0], "injected_deviation": deviation,
+            "expected_executable": True, "expected_family": "calendar",
+        }
+    if variant in FORWARD_GENUINE_VARIANTS:
+        forwards, deviation = _inject_forward_shift(
+            inject_rng, rows, forwards, variant, underlying, spot, r, q, borrow_fee, step_config,
+        )
+        return rows, forwards, {
+            "affected_expiry_days": FORWARD_TARGET_EXPIRY, "injected_deviation": deviation,
+            "expected_executable": True, "expected_family": "forward",
+            "expected_direction": "sell_forward" if variant == VARIANT_FORWARD_BUMP else "buy_forward",
+        }
+    raise ValueError(
+        f"variant {variant!r} is not timeline-schedulable; supported: {TIMELINE_VARIANTS}"
+    )
+
+
+def _build_timeline(config: MissionConfig, focus_assets: list[dict], index: int,
+                    forced_asset: dict | None = None) -> ScenarioTimeline:
+    scenario_id = f"{config.mission_id}-t{index}"
+    rng = random.Random(f"{config.seed}:timeline:{index}")
+
+    # Same draw discipline as _build_scenario: the choice draw always runs
+    # so the stream is identical whether or not the asset was forced.
+    drawn = rng.choice(focus_assets)
+    asset = forced_asset if forced_asset is not None else drawn
+    entity_id, symbol = asset["entity_id"], asset["primary_identifier"]
+    spot0 = _spot_for_symbol(config.seed, symbol)
+
+    variant = _draw_variant(rng, config.scenario_mix)
+    if variant not in TIMELINE_VARIANTS:
+        raise ValueError(
+            f"scenario_mix drew {variant!r}, which is not timeline-schedulable; "
+            f"a timeline mission's mix must draw only from {TIMELINE_VARIANTS}"
+        )
+    r = rng.uniform(*config.r_range)
+    q = rng.uniform(*config.q_range)
+    borrow_fee = rng.uniform(*config.borrow_fee_range)
+    skew = draw_skew(rng)
+
+    # The schedule: onset never at step 0 (a world that starts broken has no
+    # onset EVENT - the event is the point), resolution exclusive and
+    # allowed to be n_steps (persisted past the watched window).
+    if variant == VARIANT_NONE:
+        onset = resolution = None
+    else:
+        onset = rng.randrange(1, config.n_steps - 1)
+        resolution = rng.randrange(onset + 1, config.n_steps + 1)
+
+    spots = _spot_path(config, index, spot0)
+    # Fixed ladder from the step-0 spot (module note above TIMELINE_VARIANTS).
+    strikes_by_moneyness = {m: _round_strike(spot0 * (1 + m)) for m in MONEYNESS_GRID}
+    forward_scheduled = variant in FORWARD_GENUINE_VARIANTS
+
+    def _quiet_states_clean(candidate: Skew) -> bool:
+        """Every step's QUIET rendering of this skew, scanned with the
+        organization's own entry points at that step's drifted spot - the
+        per-step generalization of _skew_renders_clean, against the actual
+        fixed-ladder row shape the timeline will use. Sizes are the only
+        thing the trial rng draws, and sizes never move an edge, so
+        trial-clean implies final-clean exactly."""
+        for k in range(config.n_steps):
+            at = _step_time(config, k)
+            trial_rng = random.Random(f"{config.seed}:timeline:{index}:clean-trial:{k}")
+            trial_underlying = _build_underlying_quote(trial_rng, spots[k], config.spread_pct, at)
+            trial_rows = _build_rows(trial_rng, spots[k], r, q, candidate, config.spread_pct, at,
+                                     strikes_by_moneyness=strikes_by_moneyness)
+            chains = _trial_chains(trial_rows, trial_underlying, r, q, spots[k], borrow_fee, at)
+            for chain in chains:
+                if scan_chain(chain, _INJECTION_COSTS):
+                    return False
+            if scan_calendar(chains, _INJECTION_COSTS):
+                return False
+            if forward_scheduled:
+                trial_forwards = _build_forwards(trial_rng, spots[k], r, q, config.spread_pct, at)
+                if scan_forward(chains, trial_forwards, _INJECTION_COSTS):
+                    return False
+        return True
+
+    # Every timeline needs clean-at-quiet-steps regardless of variant (a
+    # quiet step's ground truth promises zero detections), so every timeline
+    # joins the clean-skew redraw - checked at every drifted spot, not only
+    # the base one.
+    clean_rng = random.Random(f"{config.seed}:timeline:{index}:clean-skew")
+    for _ in range(200):
+        if skew.shape != "localized_distortion" and _quiet_states_clean(skew):
+            break
+        skew = draw_skew(clean_rng)
+    else:  # pragma: no cover - safety valve, not expected to trigger
+        raise RuntimeError(
+            f"no skew renders clean across all {config.n_steps} steps for timeline index {index} "
+            f"(seed {config.seed}) - the skew generator has drifted"
+        )
+
+    steps = []
+    for k in range(config.n_steps):
+        at = _step_time(config, k)
+        step_config = replace(config, base_time=at)
+        step_rng = random.Random(f"{config.seed}:timeline:{index}:step:{k}")
+        underlying = _build_underlying_quote(step_rng, spots[k], config.spread_pct, at)
+        rows = _build_rows(step_rng, spots[k], r, q, skew, config.spread_pct, at,
+                           strikes_by_moneyness=strikes_by_moneyness)
+        forwards: tuple[ForwardQuote, ...] = ()
+        if forward_scheduled:
+            forwards = _build_forwards(step_rng, spots[k], r, q, config.spread_pct, at)
+
+        live = onset is not None and onset <= k < resolution
+        gt_fields = {
+            "affected_strike": None, "affected_expiry_days": None, "injected_deviation": None,
+            "expected_executable": False, "expected_direction": None,
+            "affected_strikes": None, "expected_family": None,
+        }
+        step_variant = VARIANT_FORWARD_NONE if forward_scheduled else VARIANT_NONE
+        if live:
+            inject_rng = random.Random(f"{config.seed}:timeline:{index}:inject")
+            rows, forwards, updates = _timeline_inject(
+                variant, inject_rng, rows, forwards, spots[k], r, q, underlying, borrow_fee, step_config,
+            )
+            gt_fields.update(updates)
+            step_variant = variant
+
+        events = []
+        if k > 0:
+            events.append(EVENT_MARKET_DRIFT)
+        if onset is not None and k == onset:
+            events.append(EVENT_OPPORTUNITY_ONSET)
+        if resolution is not None and k == resolution:
+            events.append(EVENT_OPPORTUNITY_RESOLUTION)
+
+        ground_truth = GroundTruth(
+            scenario_id=f"{scenario_id}-k{k}", entity_id=entity_id, symbol=symbol,
+            variant=step_variant, skew_shape=skew.shape, skew_params=skew.params,
+            r=r, q=q, borrow_fee_annual=borrow_fee, **gt_fields,
+        )
+        steps.append(TimelineStep(
+            step=k, observed_at=at, events=tuple(events), live=live,
+            world=ScenarioWorld(
+                scenario_id=f"{scenario_id}-k{k}", entity_id=entity_id, symbol=symbol,
+                spot=spots[k], underlying=underlying, r=r, q=q, borrow_fee_annual=borrow_fee,
+                rows=tuple(rows), ground_truth=ground_truth, chatter=(), forwards=forwards,
+            ),
+        ))
+
+    return ScenarioTimeline(
+        scenario_id=scenario_id, entity_id=entity_id, symbol=symbol, variant=variant,
+        onset_step=onset, resolution_step=resolution, steps=tuple(steps),
+    )
+
+
+def evaluate_timeline(timeline: ScenarioTimeline, config: MissionConfig) -> dict:
+    """Every step graded by the static world's own answer_key + evaluate() -
+    each step IS a ScenarioWorld with its own honest ground truth, so
+    'detected while live' and 'silent while quiet' are the same PASS the
+    static grader already defines, and a timeline passes only when every
+    one of its moments does."""
+    step_reports = []
+    for step in timeline.steps:
+        step_config = replace(config, base_time=step.observed_at)
+        report = evaluate(step.world, answer_key(step.world, step_config))
+        report["step"] = step.step
+        report["observed_at"] = step.observed_at
+        report["events"] = list(step.events)
+        report["live"] = step.live
+        step_reports.append(report)
+    return {
+        "scenario_id": timeline.scenario_id,
+        "symbol": timeline.symbol,
+        "variant": timeline.variant,
+        "onset_step": timeline.onset_step,
+        "resolution_step": timeline.resolution_step,
+        "steps": step_reports,
+        "outcome": "PASS" if all(r["outcome"] == "PASS" for r in step_reports) else "FAIL",
+    }
+
+
+def run_timeline_exercise(conn, config: MissionConfig, runs_dir: Path | None = None) -> dict:
+    """The timeline mission's offline entry point, run_parity_exercise's
+    sibling: reference gate, build every timeline, grade every step, write
+    the summary. Proves the stepped world and the existing graders agree
+    before any agent consumes a stored sequence."""
+    states = [NOT_STARTED]
+    focus_assets = _require_reference_ready(conn, config.mission_id)
+
+    states += [CONFIGURING, GENERATING_MARKET, GENERATING_OPTIONS, GENERATING_SKEW, INJECTING_OPPORTUNITIES]
+    timelines = [_build_timeline(config, focus_assets, i) for i in range(config.n_scenarios)]
+    states += [GENERATING_INFORMATION_NOISE, READY, EVALUATING]
+
+    reports = [evaluate_timeline(timeline, config) for timeline in timelines]
+
+    strategy_exercised = any(
+        report["variant"] != VARIANT_NONE and report["outcome"] == "PASS" for report in reports
+    )
+    final_state = COMPLETED if strategy_exercised else RETRY_REQUIRED
+    states.append(final_state)
+
+    live_steps = sum(1 for t in timelines for s in t.steps if s.live)
+    quiet_steps = sum(1 for t in timelines for s in t.steps if not s.live)
+    pass_count = sum(1 for r in reports if r["outcome"] == "PASS")
+    metrics = {
+        "assets_simulated": len({t.entity_id for t in timelines}),
+        "timelines": len(timelines),
+        "steps_total": live_steps + quiet_steps,
+        "live_steps": live_steps,
+        "quiet_steps": quiet_steps,
+        "pass_rate": pass_count / len(reports) if reports else None,
+        "strategy_exercised": strategy_exercised,
+    }
+
+    report = {
+        "mission_id": config.mission_id,
+        "config": asdict(config),
+        "states": states,
+        "timelines": reports,
+        "metrics": metrics,
+    }
+    report["summary_path"] = _write_summary(config.mission_id, report, runs_dir)
+    return report
+
+
+def store_timeline(conn, config: MissionConfig, runs_dir: Path | None = None) -> dict:
+    """store_world's stepped sibling: one option_chain Observation per step
+    per timeline into the Data Store, so the real agents watch a market that
+    MOVES - Explorer's latest_chain returns the newest state, and what it
+    saw (and when) can later be joined against the schedule this function
+    records. The consumer that grades detection latency against
+    onset/resolution is named here as the natural next increment, not
+    presumed built.
+
+    Same distinct-asset constraint as store_world, same reason: the store's
+    idempotency key would collapse two same-entity scenarios' same-step
+    observations into one."""
+    focus_assets = _require_reference_ready(conn, config.mission_id)
+    if config.n_scenarios > len(focus_assets):
+        raise ValueError(
+            f"store_timeline needs one distinct focus asset per scenario: {config.n_scenarios} "
+            f"scenario(s) over {len(focus_assets)} focus asset(s). Lower n_scenarios or widen the focus."
+        )
+    assignment = random.Random(f"{config.seed}:assignment").sample(focus_assets, k=config.n_scenarios)
+    timelines = [
+        _build_timeline(config, focus_assets, i, forced_asset=assignment[i])
+        for i in range(config.n_scenarios)
+    ]
+
+    all_observations = []
+    for timeline in timelines:
+        for step in timeline.steps:
+            step_config = replace(config, base_time=step.observed_at)
+            all_observations.append(build_option_chain_observation(step.world, step_config))
+    store_report = observation_store.store_many(conn, all_observations)
+
+    summary = {
+        "mission_id": config.mission_id,
+        "config": asdict(config),
+        "timelines": [
+            {
+                "scenario_id": t.scenario_id, "variant": t.variant,
+                "onset_step": t.onset_step, "resolution_step": t.resolution_step,
+                "steps": [
+                    {"step": s.step, "observed_at": s.observed_at, "events": list(s.events),
+                     "live": s.live, "ground_truth": asdict(s.world.ground_truth)}
+                    for s in t.steps
+                ],
+            }
+            for t in timelines
+        ],
+    }
+    summary_path = _write_summary(config.mission_id, summary, runs_dir)
+    return {"stored": store_report, "timelines": len(timelines), "summary_path": summary_path}
