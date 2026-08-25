@@ -7569,3 +7569,133 @@ Gateway with one shared client password is not a client Gateway — and are queu
 as TQ-43 rather than papered over here.
 
 Suite: **2156 passing**.
+
+---
+
+## §97 — The portfolio subsystem, specified (2026-08-26)
+
+Addendum 44 assimilated verbatim: the architecture behind the data model TQ-42
+built four hours earlier. It arrives at a useful moment — §96 answered "where do
+a client's holdings come from" and left the surrounding subsystem unbuilt, which
+is exactly what this specifies.
+
+### What §96 already satisfies, and it is more than expected
+
+Read against the acceptance criteria in §21, five of the fifteen are already met
+and a sixth is met in the only form currently possible:
+
+- **§2.1 "ownership before capability"** — the specification's central principle,
+  and it is already the system's. §95 added `scope` to every skill precisely
+  because a capability answers "may this role invoke it" and cannot answer "whose
+  data does it read"; §96 keyed holdings by subject. The specification words it
+  better than §95 did, and the words are worth adopting.
+- **§2.2 no shared portfolio state** — every holding carries `client_id`.
+- **§2.3 default deny** — a blank owner raises rather than resolving to anybody
+  (`HoldingRefused`), which is the specification's "never fall back to the first
+  available portfolio" already in force.
+- **§6.2 simulation labelling** — `simulated` flags every demo row, seeding
+  refuses outside PRE_ALPHA/ALPHA, and `outstanding()` reports what remains.
+- **§9.2 never trust caller-supplied ownership** — the holdings tools take their
+  client id from the session and never from an argument, and a test asserts no
+  client-reachable tool schema exposes a `client_id` property.
+- **§19 out of scope** — no trading, no order placement, no cross-client
+  aggregation. None of it exists and none is queued.
+
+### Where it resolves a blocker rather than contradicting one
+
+§96 refused market value, gain and loss outright: *"every price this organization
+can produce is simulated (addendum 25), and applying it to a client's real
+positions would present synthetic output as real."* Addendum 44's `Holding`
+carries `market_price` and `market_value`, and §4.4 wants unrealized gain/loss on
+the Superuser tab.
+
+**This is not a conflict, and reading it as one would be the mistake.** §96's
+refusal was conditioned on the *source*, never on the field. A brokerage provider
+returns real prices with real provenance; the simulation engine does not. The
+specification supplies exactly the missing piece — `data_mode` — and its own §6.2
+draws the same line from the other side ("do not allow simulated data to appear
+as live brokerage data").
+
+So the disposition is a rule rather than a reversal:
+
+> `market_price` and anything derived from it may be populated only where
+> `data_mode = LIVE`. While `data_mode = SIMULATED` or `MANUAL`, valuation stays
+> refused and says why.
+
+`portfolio_valuation` — declared-and-unbuilt in §95, with "this system has no
+real market prices" as its stated reason — becomes buildable the day a live
+provider exists, and its blocked_reason is already the correct one until then.
+
+`MANUAL` is also what §96's client-stated holdings are: the specification's
+`provider_type` vocabulary already has a slot for them, so the two models compose
+rather than compete.
+
+### The genuinely new work, and one risk it introduces
+
+**A Superuser portfolio as a separate ownership domain** (§4) does not exist. The
+operator's portfolio today is `data/portfolio.xlsx`, reached through
+`app/tools/portfolio.py` by the local assistant, with its own two-layer consent
+model. §16 calls that the legacy single-portfolio design and says to migrate it,
+which is right.
+
+Two things about it need care and are recorded here so they are not discovered
+during implementation:
+
+**First, the vocabulary collides three ways.** This system already has a Server
+Superuser (`app/server_auth.py`, who starts the workforce), a Gateway Super User
+(`gateway/auth.py`), and `ROLE_OPERATOR` (§92). Addendum 44's "Superuser" is the
+second and third — the person at the Gateway — and not the first. The
+implementation should use `owner_type = SUPERUSER` as the specification names it
+and say plainly in one place that it means the operator role, rather than letting
+three near-synonyms drift.
+
+**Second, `portfolio_id` creates an attack surface the current model does not
+have.** §5.2 lists "Client A requesting Client B portfolio by ID" and "a Gateway
+request that supplies a mismatched client_id and portfolio_id" — neither is
+possible today, because holdings are keyed by client and there is no id to guess.
+Introducing a `Portfolio` entity introduces the guessable handle. That is not an
+argument against it; the specification needs one-client-many-portfolios (§5.1).
+It is an argument for the ownership guard landing in the *same* increment as the
+entity, never a later one, which is why TQ-44 carries both.
+
+**§15.5 asks for the earlier isolation concern as a permanent regression test.**
+That concern is §93's — a client's socket opening onto the operator's transcript
+— and its conversation half is already permanent
+(`test_two_subjects_do_not_share_a_conversation`). The portfolio half does not
+exist yet because portfolios do not, and it is written into TQ-44's scope rather
+than left to be remembered.
+
+### What is deliberately not queued
+
+**Live trading, order placement, money movement** (§19). Absent, unqueued, and
+the specification and this record agree.
+
+**Cross-client aggregation** (§19, §5.2). The specification permits it only under
+"an explicitly authorized internal aggregate workflow"; no such workflow exists,
+and building the permission for one before there is a use would be an
+authorization surface with no consumer.
+
+**Schwab live integration** is queued but blocked on owner action — the
+specification says explicitly not to wait for it (§8.1), so the provider boundary
+and configuration placeholders are separated from the live connection and only
+the latter is blocked.
+
+### The queue this generates
+
+Seven entries, following addendum 44's own Phase order in §20 with one
+adjustment: its Phase 3 (Gateway access) is folded into TQ-44, because the
+ownership guard and the entity that needs guarding must not ship apart.
+
+TQ-44 (portfolios as owned entities, plus the guard and the isolation regression
+tests), TQ-45 (the `PortfolioProvider` abstraction and the conformance suite),
+TQ-46 (the Superuser ownership domain, and retiring the ownerless global
+retrieval), TQ-47 (the Superuser Portfolio tab), TQ-48 (snapshots, provenance and
+audit logging), TQ-49 (the Schwab boundary, live disabled), TQ-50 (Schwab live
+read-only, blocked on API access).
+
+**TQ-43 (per-client Gateway credentials) is a precondition for most of them** and
+was queued yesterday from §96. Addendum 44 assumes multiple clients logging in
+throughout; today they share one credential and therefore one subject. The
+isolation this specification asks for is real and tested at the data layer, but
+the doorway that would let two clients actually be two people does not exist, and
+several of these entries are worth less than they look until it does.
