@@ -6977,3 +6977,48 @@ the right place; a full page reload still offered it, with the topic in the
 tooltip, without starting to talk.
 
 Suite: **2040 passing**.
+
+---
+
+## §91 — A heartbeat becomes one event (2026-08-25, found by CI)
+
+Not a queue item: a pre-existing bug that the pull request for §86–§90 exposed,
+on the leg of CI this repository added precisely so that something other than
+one Windows machine would look.
+
+`fi_db.record_heartbeat` writes to two tables — `agent_registry.last_heartbeat_at`
+for *when* an agent reported, and `health_metrics` for *that it did*, which is
+what `performance_card.heartbeat_count` counts. Each `Database.execute` commits
+on its own, so the two writes landed as two commits.
+
+A reader on another connection can arrive between them. It then sees an agent
+that has heartbeated, with a heartbeat count of zero: the two halves of one
+event disagreeing about whether it happened.
+
+`tests/test_controller.py::test_real_dummy_agent_spawn_and_graceful_retire`
+spawns a genuine agent subprocess and does exactly that — it waits for
+`last_heartbeat_at` to appear and then reads the card. It failed on
+windows-latest with `assert 0 >= 1` while passing on ubuntu-latest and on every
+local run. The window is a fraction of a millisecond on fast hardware, which is
+what kept it hidden; a slow shared runner found it immediately.
+
+Fixed with the transaction added one commit earlier for the migration pipeline
+(§89). A heartbeat is now committed once, so it is readable as one thing or not
+at all. Asserted by forcing the second write to fail and checking the first did
+not survive, and by the converse — atomicity must not have been bought by
+writing less.
+
+Two things worth keeping from this:
+
+**The Linux/Windows matrix earned itself the other way round.** §67/§68 added
+ubuntu-latest expecting it to catch Windows-only assumptions. What it actually
+did here was provide the contrast that identified a *timing* bug as real rather
+than as a flake: identical code, one platform green, one red, on a race whose
+width is hardware-dependent.
+
+**"Run it and look" has a CI-shaped edition.** Every defect in §86–§90 came from
+running the thing on this machine. This one could not have: it needs hardware
+slow enough to lose the race. A second machine is a second pair of eyes, and
+that is the argument for the matrix that §68 could only make in principle.
+
+Suite: **2042 passing**.
