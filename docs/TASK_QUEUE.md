@@ -637,8 +637,12 @@ only today, with real skills to come. Both recorded in §92.
 
 ### TQ-44 — Portfolios as owned entities, with the guard that makes them safe
 
-**NEED (GREEN) · QUEUED · addendum 44 §3, §5, §9, §12, §15.1, §15.5, §20 Phase 1+3 ·
-`SPEC_RECONCILIATION.md` §97**
+**NEED (GREEN) · PLANNED — not implemented · addendum 44 §3, §5, §9, §12, §15.1, §15.5,
+§20 Phase 1+3 · `SPEC_RECONCILIATION.md` §97 · plan: `docs/plans/TQ-44_portfolios_as_owned_entities.md`**
+
+The full implementation plan is written and is detailed enough to build from without further
+design work — objective, design decisions, files, dependencies, security implications, required
+tests, acceptance criteria, and three genuinely open questions worth deciding first.
 
 Phase 1 and Phase 3 together, and they are one entry on purpose. Today holdings are keyed
 directly by client, so there is no portfolio id to guess; introducing a `Portfolio` entity
