@@ -5895,3 +5895,67 @@ Addendum 38's seventeen-step Definition of Done is met apart from what needs a
 human at the keyboard. Still open, honestly: no `panel/`-style *control* lives
 in the console (it observes; `panel/app.py` remains the surface that files
 directives), and the COO cannot act by design.
+
+---
+
+## §79 — What a real database taught the console (2026-08-25)
+
+The console was built and verified against fixtures and a fresh world, and it
+worked. Pointed at the *real* 146MB database with a live workforce, it wedged
+solid — no HTTP request served at all, not even `/health`. Three genuine
+defects came out of that, none of which any test had caught, and all three are
+the same lesson: **verification against small clean data proves the logic, not
+the system.**
+
+### 1. Blocking database work on the event loop
+
+The console's routes are `async def` because sqlite3 connections belong to the
+thread that opened them and the lifespan connection belongs to the loop's
+thread (§76). But that put blocking reads *on* the loop, and SQLite admits one
+writer at a time: with agents writing continuously, a read that queued behind
+them froze the entire server — HTTP, the controller poll loop, everything.
+
+`gateway/main.py`'s `gateway_db_path` dependency had already written down the
+answer: hand a worker thread a **path**, because "handing that thread a path is
+the only safe thing to hand it". `_console_read` now does exactly that — the
+worker opens its own connection, uses it, closes it. Thread affinity satisfied,
+loop never blocked, and a slow read costs one worker rather than the server.
+Measured after: steady ~90ms under the load that had wedged it.
+
+The test fixture had to change with it, and became more honest for it: an
+in-memory database cannot be reopened by another thread, so the console tests
+now use a file-backed one and exercise the real worker-thread path rather than
+a shortcut around it.
+
+### 2. `remediation.corrective_items` takes 196 seconds
+
+The actual wedge. Every other console read on that database is milliseconds;
+this one took **195.9 seconds to return two rows**, and the overview polled it
+every six seconds. Removed from the polled path, with the Alerts desk saying
+so plainly rather than showing an empty section. Recorded as TQ-29 — it is a
+defect in `remediation`, which was presumably only ever run against the small
+datasets it was built with. Nothing had pointed it at real history.
+
+### 3. A ticker that pegged the renderer
+
+`animateTape` read `scrollWidth` every frame — a synchronous layout 60 times a
+second, while four pollers rewrote the DOM around it. Enough to hang the
+browser tab completely, including navigation away from it. The width is now
+measured once, when the tape is rebuilt.
+
+### And one plain layout bug
+
+`.tab.on{display:flex}` made every desk a flex *row*, so the Finance desk laid
+its sections out side by side — the SIMULATED banner rendered as a narrow
+vertical column. The Newsroom genuinely is a row (feed beside sidebar); the
+other desks are pages and now declare `display:block`.
+
+### Why this section exists
+
+Not to record four fixes, but the pattern: the suite was green at 1868 tests
+through all of it. Fixtures are small, fresh and single-threaded, and every one
+of these defects needed size, contention or a real browser to appear. §72's
+"found by reading the output rather than by a test" was the small version of
+this; this is the large one. The console's own verification standard —
+**run it against the real thing and look** — is what caught them, and is worth
+keeping as the standard for anything that touches the live system.

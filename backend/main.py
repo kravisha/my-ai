@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy
+from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, status_events, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -279,6 +279,9 @@ async def lifespan(app: FastAPI):
     # `_operational_startup` is the whole sequence; this branch only answers
     # who is allowed to trigger it.
     app.state.controller = controller
+    # The console reads through this rather than through controller.conn -
+    # see _console_read for why a path, not a connection (§78).
+    app.state.db_path = controller.db_path
     app.state.startup_report = None
     if autostart_requested():
         # Automation: the simulation harness starts a real backend with no
@@ -482,6 +485,43 @@ def console_page():
     return FileResponse(CONSOLE_DIR / "index.html", media_type="text/html")
 
 
+async def _console_read(work, fallback):
+    """Run a console read **off the event loop, on its own connection**.
+
+    This is the fix for a server that wedged solid under a live workforce
+    (SPEC_RECONCILIATION §78). The console's routes are `async def` - they had
+    to be, because sqlite3 connections belong to the thread that opened them
+    and the lifespan connection belongs to the loop's thread. But that put
+    blocking database work *on* the loop, and SQLite admits one writer at a
+    time: with agents writing continuously, every console read queued behind
+    them for up to the busy timeout and froze the whole server, HTTP and
+    controller poll loop alike.
+
+    `gateway/main.py`'s `gateway_db_path` dependency already states the
+    answer: hand a worker thread a *path*, because "handing that thread a
+    path is the only safe thing to hand it". The thread opens its own
+    connection, uses it, and closes it - thread affinity satisfied, loop never
+    blocked, and a slow read costs one worker rather than the server.
+    """
+    db_path = getattr(app.state, "db_path", None)
+    if db_path is None:
+        return fallback
+
+    def run():
+        conn = fi_db.get_connection(db_path)
+        try:
+            return work(conn)
+        finally:
+            conn.close()
+
+    try:
+        return await asyncio.to_thread(run)
+    except Exception as exc:  # noqa: BLE001 - one desk must not blank the console
+        return {**fallback, "error": f"{exc.__class__.__name__}: {exc}"} \
+            if isinstance(fallback, dict) else fallback
+
+
+
 @app.get("/console/feed")
 async def console_feed(
     limit: int = 200,
@@ -510,26 +550,27 @@ async def console_feed(
     console. If the backend is ever exposed, this moves behind the operator
     session in the same change that opens the port - noted here so the
     coupling is not discovered later."""
-    controller = getattr(app.state, "controller", None)
-    if controller is None:
-        return {"events": [], "sources": [], "standing": [], "awaiting_login": True}
-
     severities = status_events.ATTENTION_SEVERITIES if attention_only else None
-    events = status_events.recent(
-        controller.conn, limit=min(limit, 500), source=source, severities=severities,
-    )
-    if since_id is not None:
-        events = [event for event in events if event["event_id"] > since_id]
-    return {
-        "events": events,
-        # Derived, never enumerated (38 §4.4): a new department appears in the
-        # filter control because it published, not because the page was edited.
-        "sources": status_events.sources(controller.conn),
-        # "Where does everything stand", which a scrolling feed cannot answer
-        # without the reader doing the work by eye (§4.5).
-        "standing": status_events.current_status(controller.conn),
-        "awaiting_login": getattr(app.state, "startup_report", None) is None,
-    }
+    capped = min(limit, 500)
+
+    def work(conn):
+        events = status_events.recent(conn, limit=capped, source=source, severities=severities)
+        if since_id is not None:
+            events = [event for event in events if event["event_id"] > since_id]
+        return {
+            "events": events,
+            # Derived, never enumerated (38 §4.4): a new department appears in
+            # the filter control because it published, not because the page
+            # was edited.
+            "sources": status_events.sources(conn),
+            # "Where does everything stand", which a scrolling feed cannot
+            # answer without the reader doing the work by eye (§4.5).
+            "standing": status_events.current_status(conn),
+            "awaiting_login": getattr(app.state, "startup_report", None) is None,
+        }
+
+    return await _console_read(
+        work, {"events": [], "sources": [], "standing": [], "awaiting_login": True})
 
 
 @app.get("/console/overview")
@@ -546,11 +587,14 @@ async def console_overview():
     table that reads as "nothing happening" - a newspaper whose parliament
     page is blank has failed to report that parliament never convened. Async
     for the thread reason console_feed's docstring gives."""
-    controller = getattr(app.state, "controller", None)
-    if controller is None:
-        return {"available": False, "reason": "Server is still starting."}
-    conn = controller.conn
+    def build(conn):
+        return _overview(conn)
 
+    return await _console_read(build, {"available": False, "reason": "Server is still starting."})
+
+
+def _overview(conn) -> dict:
+    """Gathered on a worker thread (see _console_read)."""
     def _safe(section, fn):
         """One broken section must not blank the whole console - 38 §12's
         'a failed component must not silently disappear', applied to the
@@ -601,15 +645,21 @@ async def console_overview():
         }
 
     def _alerts():
+        """Warnings and failures, which are cheap.
+
+        `remediation.corrective_items` is deliberately NOT called here.
+        Measured on a real 146MB database it takes **196 seconds** (§79), and
+        this endpoint is polled every six seconds - the calls piled up,
+        exhausted the worker pool and wedged the whole console. A desk that
+        cannot be drawn quickly does not belong on a polling path; the
+        recommendations return when TQ-29 makes them affordable."""
         return {
             "recent": status_events.recent(
                 conn, limit=40, severities=status_events.ATTENTION_SEVERITIES),
-            "corrective": [
-                {"rule": item.rule, "classification": item.classification,
-                 "findings": item.findings, "remedy": getattr(item, "remedy", None)}
-                for item in remediation.corrective_items(conn, limit=20)
-            ],
-            "summary": remediation.summarise(conn),
+            "corrective": [],
+            "summary": "Corrective recommendations are not computed here: on a real-sized "
+                       "database the analysis takes minutes (TASK_QUEUE TQ-29). Warnings and "
+                       "failures above are live.",
         }
 
     def _parliament():
@@ -655,17 +705,11 @@ async def console_finance():
     generated by this system's own simulation engine and flagged as such -
     see backend/finance_desk.py for why that flag is the design constraint
     rather than a footnote. Async for the thread reason console_feed gives."""
-    controller = getattr(app.state, "controller", None)
-    if controller is None:
-        return {"simulated": True, "available": False,
-                "reason": "Server is still starting.", "notice": finance_desk.SIMULATED_NOTICE,
-                "tickers": [], "movers": {"gainers": [], "losers": []}, "headlines": []}
-    try:
-        return finance_desk.front_page(controller.conn)
-    except Exception as exc:  # noqa: BLE001 - one desk must not blank the console
-        return {"simulated": True, "available": False, "notice": finance_desk.SIMULATED_NOTICE,
-                "reason": f"Finance desk unavailable: {exc.__class__.__name__}: {exc}",
-                "tickers": [], "movers": {"gainers": [], "losers": []}, "headlines": []}
+    return await _console_read(
+        finance_desk.front_page,
+        {"simulated": True, "available": False, "notice": finance_desk.SIMULATED_NOTICE,
+         "reason": "Server is still starting.",
+         "tickers": [], "movers": {"gainers": [], "losers": []}, "headlines": []})
 
 
 @app.get("/console/chatterbox")
@@ -674,15 +718,10 @@ async def console_chatterbox():
     holding, colour-coded by state, plus the measured collaboration health of
     the desks holding them. See backend/chatterbox.py for why silence gets its
     own state rather than being folded into 'not completed'."""
-    controller = getattr(app.state, "controller", None)
-    if controller is None:
-        return {"conversations": [], "counts": {}, "edges": [], "health": [],
-                "quiet": True, "quiet_note": "Server is still starting."}
-    try:
-        return chatterbox.living_map(controller.conn)
-    except Exception as exc:  # noqa: BLE001 - one desk must not blank the console
-        return {"conversations": [], "counts": {}, "edges": [], "health": [], "quiet": True,
-                "quiet_note": f"Chatterbox unavailable: {exc.__class__.__name__}: {exc}"}
+    return await _console_read(
+        chatterbox.living_map,
+        {"conversations": [], "counts": {}, "edges": [], "health": [], "quiet": True,
+         "quiet_note": "Server is still starting."})
 
 
 @app.post("/console/chat")
@@ -706,22 +745,24 @@ async def console_chat(request: CooChatRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Ask something.")
 
-    # Read the world on this thread, before any worker exists.
-    system, messages = coo_chat.prepare(
-        controller.conn, request.question,
-        language=request.language, history=request.history,
-    )
+    # Read the world on a worker thread with its own connection (§78), not
+    # on the loop - the digest is several queries and the loop must stay free.
+    prepared = await _console_read(
+        lambda conn: coo_chat.prepare(conn, request.question,
+                                      language=request.language, history=request.history),
+        None)
+    if prepared is None:
+        raise HTTPException(status_code=503, detail="Server is still starting.")
+    system, messages = prepared
     # The operator's question is itself part of the organization's record:
     # what was asked, and when, is legitimate narration. The answer is not
     # published - it is derived, and republishing it would double the feed.
-    try:
-        status_events.publish(
-            controller.conn, "operator_question",
+    await _console_read(
+        lambda conn: status_events.publish(
+            conn, "operator_question",
             f"Operator asked the COO: {request.question[:180]}",
-            department="coo", status=status_events.STATUS_RUNNING,
-        )
-    except Exception:  # noqa: BLE001 - a chat must not fail because narration did
-        pass
+            department="coo", status=status_events.STATUS_RUNNING),
+        None)
 
     async def events():
         from gateway.streaming import iterate_in_thread

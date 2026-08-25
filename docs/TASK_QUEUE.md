@@ -380,6 +380,46 @@ voice picker honest that the accent depends on OS-installed voices; `backend/fin
 flagged as placeholders until newspaper agents exist); and `backend/chatterbox.py` (the living
 collaboration map, where `silent` — a question that timed out — is its own state because
 folding it into "not completed" would bury the actual failure).
+### TQ-28 — The database-isolation guard trips after a real backend has run
+
+**NEED (YELLOW) · QUEUED · found 2026-08-25 while verifying the console**
+
+`tests/test_db_isolation.py::test_the_guard_reports_nothing_when_the_database_is_untouched`
+fails on a full-suite run once the real `financial_intelligence.db` has a populated WAL — which
+is what running an actual backend leaves behind. Established while investigating:
+
+- It reproduces on the **committed** state (`b8b9067`), so it is not caused by the console work.
+- It passes on small subsets and fails on both halves of the suite, so it is not one test file.
+- With the real database made **read-only** the suite still reports a change and **no write
+  error occurs** — so nothing is writing. Something merely *opens* the file, and SQLite updates
+  or checkpoints the WAL on connect/close.
+- The WAL is stable at rest with nothing running, so it is not an external process.
+
+That last point is the useful one: the guard's docstring says it exists to catch "a leaked
+write", but a leaked *open* produces the same signature. Scope: find the connection (it is
+almost certainly a default-path `get_connection()` somewhere in a fixture or import), and
+decide whether the guard should distinguish an open from a write — a guard that fires on reads
+will eventually be disbelieved, which is the failure mode its own docstring warns about.
+
+Worth doing before it gets normalised as "that test that always fails after you run the stack".
+
+### TQ-29 — `remediation.corrective_items` takes minutes on a real database
+
+**NEED (YELLOW) · QUEUED · measured 2026-08-25, `SPEC_RECONCILIATION.md` §79**
+
+Measured against a real 146MB `financial_intelligence.db`: **195.9 seconds** to return two
+rows. Every other console read on the same database is milliseconds. It was wedging the whole
+console — polled every six seconds, the calls piled up, exhausted the worker pool and blocked
+every other request — so it has been removed from the polled overview and the Alerts desk now
+says the recommendations are not computed there.
+
+This is a defect in `remediation`, not in the console: the analysis is presumably fine on the
+small datasets it was built and tested against, and nothing had ever run it against real
+history. Scope: find the quadratic (it aggregates findings against opportunities and rules out
+prior work — the `_ruled_out` scan is the first place to look), bound or index it, and give the
+recommendations a home the console can afford to draw. Until then the corrective analysis is
+reachable only by calling it directly.
+
 ---
 
 ## Blocked
