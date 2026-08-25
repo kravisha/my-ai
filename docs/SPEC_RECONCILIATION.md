@@ -5528,3 +5528,113 @@ Nothing else publishes yet either: the COO, Reference Data Engine and the
 training pipeline become publishers as Milestone 1 proceeds, and each is
 a small edit rather than a new mechanism, which was the point of building
 the spine first.
+
+---
+
+## §74 — The workforce waits for a person (2026-08-25)
+
+TQ-25, which carried the conflict §70 disposition 4 refused to resolve
+silently. Two halves: a Server Superuser credential kept separate from
+everything else, and the login gate addendum 38 §3.3 puts in front of the
+organization.
+
+### Three doors, on purpose
+
+`app/server_auth.py` stands beside `gateway/auth.py` and
+`app/admin_auth.py` rather than extending either. Addendum 39 §3 requires
+it — "Server authentication and Gateway authentication must not be
+accidentally conflated" — and the reason is concrete: the Gateway is a
+phone-facing surface that can eventually authorize changes to
+specifications and repositories (17 §14), while this credential starts and
+observes the workforce. One credential for both means a phone-session
+compromise starts agents, and an operator-console compromise publishes
+specifications. It is also deliberately not `/auth/login`'s ordinary
+application account: a portfolio user must not be able to wake the
+organization.
+
+All three share one rule, restated in each: unset means nobody logs in.
+
+### The plaintext question, and the lifecycle stage's first real consumer
+
+Addendum 39 §3 names `SERVER_SUPERUSER_PASSWORD`, which reads as plaintext.
+This repository already refuses plaintext credentials in the environment for
+the Gateway, with the reason stated there: a plaintext variable is visible in
+the process listing and in every shell history that started the service. That
+reasoning does not stop being true because a different document uses a
+different variable name — but neither is the spec wrong that a Pre-Alpha
+developer wants something quick.
+
+**Resolution, rather than picking one document over the other:**
+`SERVER_SUPERUSER_PASSWORD_HASH` (bcrypt) always works;
+`SERVER_SUPERUSER_PASSWORD` (the spec's literal name) is honoured **only
+while the boot configuration says PRE_ALPHA**, warns on every use, and is
+refused outright at ALPHA and beyond. The convenience cannot outlive the
+stage that justified it, and the code — not a comment — is what enforces
+that.
+
+This gives the lifecycle stage from §71 its first behavioral consumer.
+Addendum 38 §2 wanted a persisted stage precisely so components could "alter
+behavior based on the current stage"; until now nothing read it, and a stage
+nothing reads is a value nobody can trust. An unreadable boot configuration
+returns *False* here, because a broken config must narrow what is accepted,
+never widen it.
+
+### The conflict §70 left open, resolved
+
+38 §3.3 says the COO must not start before login; `backend/main.py` started
+it unconditionally, and addendum 18's lifecycle-managed initialization plus
+§40's reference gate both assumed that. The resolution is the one §70
+proposed: **the server starts, the workforce stays dormant.**
+
+The mechanism is an extraction rather than a rewrite. `_operational_startup`
+is 38 §5's sequence — metadata → reference data → workforce, each gated on
+the one before — lifted out of lifespan intact, so that *when* it runs
+became a separate question from *what* it does. Neither a login nor
+automation can alter the sequence; they can only trigger it. It is
+idempotent at the level that matters (`run_reference_engine` re-certifies
+rather than rebuilding; the Controller refuses a second COO under one
+identity), so a second login re-reports rather than re-creating.
+
+`POST /server/login` triggers it and returns the startup report, including
+the case where the workforce did *not* start — 38 §12 requires that be
+visible rather than reported as success. `GET /server/status` is
+unauthenticated and says only whether a login is available and whether the
+workforce is awake, because a login screen that cannot tell whether to offer
+a login cannot render itself.
+
+### Automation gets an honest door, not a silent bypass
+
+`simulation/harness.py` launches a real backend and expects a workforce —
+that is how §57's live mission ran. Gating unconditionally would have broken
+it, and the fix must not be a flag that quietly disables a control.
+
+`SERVER_AUTOSTART_WORKFORCE` is scoped as exactly what it is: it grants no
+access to anything, the backend is loopback-only, and it answers only "may
+the workforce start with nobody watching". Every unattended start is
+**published to the status stream as unattended**, so "who started this
+workforce" always has an answer — `automation` is a different answer from an
+operator's name, not a missing one. The harness sets it in `build_env`
+rather than leaving it to scenario config, because every harness run is
+unattended by definition and a scenario that forgot the flag would come up
+dormant and look like a mission that found nothing.
+
+### A test that got sharper by breaking
+
+§72's source assertion pinned the metadata-before-reference ordering by
+string positions in lifespan, and moving the code into `_operational_startup`
+broke it. Rather than just re-pointing it, it now also asserts the reference
+engine sits *inside the gate's else-branch* — "later in the source" was never
+the same claim as "only when ready", and the original test would have passed
+on code that ran reference data unconditionally after the check.
+
+### Verified
+
+Twenty-four new tests (1830 passing): unset refusing everything; an id
+without a password not counting as configured; the hash path verifying,
+case-insensitive on username, refusing a malformed hash rather than raising;
+plaintext working and warning at PRE_ALPHA and refused at ALPHA, BETA and
+PRODUCTION; a hash still working past PRE_ALPHA; an unreadable boot config
+denying rather than permitting; the server and Gateway credentials proven
+mutually non-authenticating with distinct variable names; autostart off by
+default with its flag parsing pinned; the harness declaring its unattended
+start; and the sequence proven extracted rather than inlined.

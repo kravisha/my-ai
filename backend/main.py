@@ -14,6 +14,7 @@ for the consent prompt - see the docstring on chat() below.
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from app import admin_auth
+from app import server_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
 from app import model_budget
@@ -32,7 +34,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import continuity, fi_db, metadata_engine, missions, reference_data, strategy
+from backend import continuity, fi_db, metadata_engine, missions, reference_data, status_events, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -120,6 +122,120 @@ def _reference_allows_bootstrap(readiness: dict) -> bool:
     return readiness.get("status") == "READY"
 
 
+# Automation's way past the login gate. Not a security bypass - it grants no
+# access to anything and the backend is loopback-only; it answers "may the
+# workforce start with nobody watching", which is what simulation/harness.py
+# needs when it launches a real backend for a live mission (§57). Every
+# unattended start is published as such, so "who started this workforce"
+# always has an answer.
+AUTOSTART_ENV = "SERVER_AUTOSTART_WORKFORCE"
+
+
+def autostart_requested() -> bool:
+    """Read at call time, the convention every other switch here follows."""
+    return os.environ.get(AUTOSTART_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _operational_startup(controller: Controller, operator: str | None) -> dict:
+    """Addendum 38 §5's startup sequence: metadata, then reference data, then
+    the workforce - each gated on the one before it.
+
+    Extracted from lifespan so that *when* it runs is a separate question from
+    *what* it does: 38 §3.3 wants an operator login to trigger it, automation
+    wants it unattended, and neither should be able to change the sequence.
+
+    Idempotent at the level that matters: `run_reference_engine` re-certifies
+    rather than rebuilding, and the Controller will not start a second COO
+    under one identity, so a second login re-reports rather than re-creating.
+
+    Returns a report and publishes the same facts to the status stream (§73),
+    so the operator who triggered it can watch and one who logs in later can
+    read what happened before they arrived."""
+    conn = controller.conn
+    started_by = operator or "automation"
+    status_events.publish(
+        conn, "startup_sequence_started", f"Operational startup begun by {started_by}",
+        status=status_events.STATUS_STARTING, department="server",
+    )
+
+    # The Metadata Engine, before reference data and gating it (addendum 39
+    # §14, TQ-23/§72): the one strict ordering constraint that specification
+    # has. Everything downstream of METADATA_READY may overlap and use
+    # readiness thresholds instead (39 §14's own closing paragraph); this edge
+    # is the exception.
+    metadata = metadata_engine.run(conn)
+    for line in metadata_engine.format_events(metadata["events"]):
+        print(f"[metadata] {line}")
+
+    if not metadata["ready"]:
+        # 38 §12: a failed component must be visible and its dependents must
+        # not falsely report success.
+        print(
+            "\n" + "!" * 78 + "\n"
+            "! METADATA ENGINE FAILED - REFERENCE DATA AND THE WORKFORCE WERE NOT STARTED.\n"
+            "! Fix the boot configuration (boot_config.json) and log in again.\n"
+            + "!" * 78 + "\n"
+        )
+        readiness = {"status": "BLOCKED_ON_METADATA", "focus_asset_count": 0, "checks": []}
+    else:
+        # Day Zero rule (addendum 26 §3): reference data precedes waking any
+        # operational agent. Runs on every startup, not just the first - it is
+        # idempotent and an existing database still deserves a fresh
+        # certification rather than a trusted stale one.
+        reference_readiness = reference_data.run_reference_engine(conn)
+        readiness = reference_readiness["readiness"]
+        print(f"[reference_data] readiness: {readiness['status']} "
+              f"({readiness['focus_asset_count']} focus assets)")
+        ready = readiness["status"] == "READY"
+        status_events.publish(
+            conn, "reference_data_readiness",
+            f"Reference data {readiness['status']} ({readiness['focus_asset_count']} focus assets)",
+            severity=status_events.SEVERITY_INFO if ready else status_events.SEVERITY_ERROR,
+            status=status_events.STATUS_READY if ready else status_events.STATUS_FAILED,
+            engine="reference_data_engine",
+        )
+
+    # §40's disposition made real: FAILED certification blocks waking the
+    # operational workforce, because Explorer's parity path consumes focus
+    # assets (_reference_allows_bootstrap's docstring). The Controller and the
+    # poll loop still run regardless - directives and the admin/dashboard
+    # routes must stay reachable to show the failure (addendum 24 §21); it is
+    # only the COO, and everything COO would spawn, that waits.
+    workforce_started = _reference_allows_bootstrap(readiness)
+    if workforce_started:
+        controller.bootstrap_coo()
+        status_events.publish(
+            conn, "workforce_started",
+            f"COO bootstrapped; workforce awake (started by {started_by})",
+            status=status_events.STATUS_RUNNING, department="server",
+        )
+    else:
+        failed = ", ".join(c["check"] for c in readiness["checks"] if not c["ok"]) or "unknown"
+        print(
+            "\n" + "!" * 78 + "\n"
+            "! REFERENCE DATA NOT READY - COO AND THE OPERATIONAL WORKFORCE WERE NOT STARTED.\n"
+            f"! Failed check(s): {failed}\n"
+            "! The Controller and admin routes are still up so the dashboard can show this\n"
+            "! failure (addendum 24 §21). Fix reference data and log in again.\n"
+            + "!" * 78 + "\n"
+        )
+        status_events.publish(
+            conn, "workforce_blocked",
+            f"Workforce not started: reference data {readiness['status']} ({failed})",
+            severity=status_events.SEVERITY_ERROR, status=status_events.STATUS_FAILED,
+            department="server",
+        )
+
+    return {
+        "started_by": started_by,
+        "metadata_ready": metadata["ready"],
+        "metadata_counts": metadata.get("counts", {}),
+        "lifecycle_stage": metadata.get("lifecycle_stage"),
+        "reference_status": readiness["status"],
+        "workforce_started": workforce_started,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Owns the Controller for exactly as long as the server is serving.
@@ -154,54 +270,32 @@ async def lifespan(app: FastAPI):
     # second one under the same permanent identity.
     reconciliation = controller.reconcile_on_start()
     print(f"[controller] reconciled on start: {reconciliation}")
-    # The Metadata Engine, before reference data and gating it (addendum 39
-    # §14, TQ-23/§72): the one strict ordering constraint that specification
-    # has. Everything downstream of METADATA_READY is allowed to overlap and
-    # use readiness thresholds instead (39 §14's own closing paragraph), but
-    # this edge is hard.
-    metadata = metadata_engine.run(controller.conn)
-    for line in metadata_engine.format_events(metadata["events"]):
-        print(f"[metadata] {line}")
-    if not metadata["ready"]:
-        # 38 §12: a failed component must be visible and its dependents must
-        # not falsely report success. Reference data is not started, and the
-        # workforce is not woken - the same shape the reference gate below
-        # already uses for its own failure.
-        print(
-            "\n" + "!" * 78 + "\n"
-            "! METADATA ENGINE FAILED - REFERENCE DATA AND THE WORKFORCE WERE NOT STARTED.\n"
-            "! Fix the boot configuration (boot_config.json) and restart the server.\n"
-            + "!" * 78 + "\n"
+    # The operational startup sequence no longer runs here unconditionally -
+    # addendum 38 §3.3 requires it to follow an operator login (TQ-25/§74).
+    # `_operational_startup` is the whole sequence; this branch only answers
+    # who is allowed to trigger it.
+    app.state.controller = controller
+    app.state.startup_report = None
+    if autostart_requested():
+        # Automation: the simulation harness starts a real backend with no
+        # human to log in (simulation/harness.py). Recorded in the event
+        # stream as an unattended start rather than passed off as a login,
+        # so "who started this workforce" always has an answer.
+        print(f"[startup] {AUTOSTART_ENV} set - starting the workforce unattended")
+        app.state.startup_report = _operational_startup(controller, operator=None)
+    else:
+        status_events.publish(
+            controller.conn, "awaiting_login",
+            "Server ready; workforce dormant until an operator authenticates",
+            status=status_events.STATUS_WAITING, department="server",
         )
-        readiness = {"status": "BLOCKED_ON_METADATA", "focus_asset_count": 0, "checks": []}
-    else:
-        # Day Zero rule (addendum 26 §3): reference data precedes waking any
-        # operational agent. Runs on every startup, not just the first - it is
-        # idempotent (backend/reference_data.py's run_reference_engine) and an
-        # existing database still deserves a fresh certification rather than a
-        # trusted stale one.
-        reference_readiness = reference_data.run_reference_engine(controller.conn)
-        readiness = reference_readiness["readiness"]
-        print(f"[reference_data] readiness: {readiness['status']} "
-              f"({readiness['focus_asset_count']} focus assets)")
-    # §40's disposition made real: FAILED certification now blocks waking the
-    # operational workforce, because Explorer's parity path finally consumes
-    # focus assets (_reference_allows_bootstrap's docstring). The Controller
-    # and the poll loop below still start regardless - directives and the
-    # admin/dashboard routes must stay reachable to show the failure
-    # (addendum 24 §21), it is only the COO (and everything COO would spawn)
-    # that waits.
-    if _reference_allows_bootstrap(readiness):
-        controller.bootstrap_coo()
-    else:
-        failed_checks = ", ".join(c["check"] for c in readiness["checks"] if not c["ok"]) or "unknown"
         print(
-            "\n" + "!" * 78 + "\n"
-            "! REFERENCE DATA NOT READY - COO AND THE OPERATIONAL WORKFORCE WERE NOT STARTED.\n"
-            f"! Failed check(s): {failed_checks}\n"
-            "! The Controller and admin routes are still up so the dashboard can show this\n"
-            "! failure (addendum 24 §21). Fix reference data and restart the server.\n"
-            + "!" * 78 + "\n"
+            "\n" + "=" * 78 + "\n"
+            "= SERVER UP, WORKFORCE DORMANT. The COO and every agent wait for an operator\n"
+            "= login (addendum 38 §3.3). POST /server/login with the Server Superuser\n"
+            f"= credentials to begin the startup sequence, or set {AUTOSTART_ENV}=1 for\n"
+            "= unattended automation.\n"
+            + "=" * 78 + "\n"
         )
     poll_task = asyncio.create_task(_controller_poll_loop(controller))
     # Automated backup (addendum 29 §45, SPEC_RECONCILIATION §59). Interval 0
@@ -322,6 +416,71 @@ def login(request: LoginRequest):
     if not users.authenticate(request.username, request.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     return AuthResponse(token=sessions.create(normalize_username(request.username)))
+
+
+@app.post("/server/login")
+def server_login(request: LoginRequest):
+    """The operator login addendum 38 §3.1/§3.3 puts in front of everything.
+
+    A successful login starts the organization: metadata, reference data, then
+    the workforce (`_operational_startup`). Deliberately **not** the same
+    credential as `/auth/login`, which authenticates an ordinary application
+    user against `users.json` - 39 §3 requires server authentication to stay
+    separate from the Gateway's, and by the same reasoning it stays separate
+    from the application's own accounts. An ordinary user must not be able to
+    wake the workforce.
+
+    Idempotent: logging in twice re-runs a sequence built to be re-run and
+    re-reports, rather than starting a second COO.
+
+    Returns the startup report so the caller sees what its login caused -
+    including the case where the workforce did *not* start, which 38 §12
+    requires be visible rather than reported as success."""
+    problem = server_auth.configuration_problem()
+    if problem is not None:
+        # 503 rather than 401: nothing the caller typed is wrong, the server
+        # is not set up to accept a login at all, and the message says what to
+        # set. A 401 here would send an operator hunting for a typo.
+        raise HTTPException(status_code=503, detail=problem)
+
+    controller = getattr(app.state, "controller", None)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="Server is still starting; try again shortly.")
+
+    if not server_auth.verify(request.username, request.password):
+        status_events.publish(
+            controller.conn, "login_failed",
+            f"Rejected server login for {request.username!r}",
+            severity=status_events.SEVERITY_WARNING, status=status_events.STATUS_FAILED,
+            department="server",
+        )
+        raise HTTPException(status_code=401, detail="Invalid Server Superuser credentials")
+
+    operator = request.username.strip()
+    status_events.publish(
+        controller.conn, "login_succeeded", f"Server Superuser {operator!r} authenticated",
+        status=status_events.STATUS_COMPLETED, department="server",
+    )
+    report = _operational_startup(controller, operator=operator)
+    app.state.startup_report = report
+    return report
+
+
+@app.get("/server/status")
+def server_status():
+    """Whether the workforce is awake, and what the last startup did.
+
+    Unauthenticated on purpose, and carrying no state beyond that: a login
+    screen needs to know whether to offer a login, and refusing to say would
+    make the console unable to render itself. It reports no counts, no
+    identities, and no configuration."""
+    report = getattr(app.state, "startup_report", None)
+    return {
+        "workforce_started": bool(report and report.get("workforce_started")),
+        "awaiting_login": report is None,
+        "login_available": server_auth.is_configured(),
+        "lifecycle_stage": (report or {}).get("lifecycle_stage"),
+    }
 
 
 @app.post("/auth/logout")

@@ -343,7 +343,7 @@ silently disappear, and dependents must not falsely report success) and must not
 
 ### TQ-25 — Server Superuser, and the login-gated COO start
 
-**NEED (GREEN) · QUEUED · carries a recorded conflict · `SPEC_RECONCILIATION.md` §70 disposition 4**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §74** (which resolves §70 disposition 4's conflict)
 
 Source: addendum 39 §3; addendum 38 §3. Two parts. The easy one: `SERVER_SUPERUSER_ID`/
 `SERVER_SUPERUSER_PASSWORD` behind an auth abstraction, deliberately *not* conflated with the

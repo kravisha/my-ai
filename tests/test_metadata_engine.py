@@ -231,9 +231,15 @@ def test_startup_gates_reference_data_on_metadata_readiness():
     )
     metadata_at = source.index("metadata = metadata_engine.run(")
     gate_at = source.index('if not metadata["ready"]:')
-    reference_at = source.index("reference_data.run_reference_engine(controller.conn)")
+    reference_at = source.index("reference_data.run_reference_engine(")
     assert metadata_at < gate_at < reference_at, (
         "reference data must start only after METADATA_READY (addendum 39 §14)"
+    )
+    # The reference engine must sit in the else-branch of that gate, not merely
+    # after it in the file - "later in the source" is not "only when ready".
+    gated_region = source[gate_at:reference_at]
+    assert "\n    else:" in gated_region, (
+        "run_reference_engine must be inside the not-ready gate's else branch"
     )
 
 

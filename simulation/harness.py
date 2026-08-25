@@ -272,6 +272,13 @@ class SimulationRun:
         env = {**os.environ, **self.scenario.config}
         env["FI_DB_PATH"] = str(self.db_path)
         env["PYTHONUNBUFFERED"] = "1"
+        # Since TQ-25/§74 the workforce waits for an operator login (addendum
+        # 38 §3.3), and a harness run has no operator. Declared here rather
+        # than left to the scenario config: every harness run is by definition
+        # unattended, and a scenario that forgot the flag would come up with a
+        # dormant organization and look like a mission that found nothing.
+        # The backend records the unattended start in its status stream.
+        env["SERVER_AUTOSTART_WORKFORCE"] = "1"
         return env
 
     # -- manifest ------------------------------------------------------------
