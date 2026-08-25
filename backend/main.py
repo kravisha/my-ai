@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
+from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -972,6 +972,21 @@ async def console_languages():
     return {"languages": [{"code": code, "label": label}
                           for code, label in coo_chat.LANGUAGE_LABELS.items()],
             "default": coo_chat.DEFAULT_LANGUAGE}
+
+
+@app.get("/console/briefing")
+async def console_briefing(since: str | None = None):
+    """What the COO has to say right now (addendum 41 §8, §90).
+
+    `since` defaults to the operator's last workspace checkpoint, which is the
+    only honest source for "while you were away" - see backend/briefing.py.
+    Passing it explicitly asks the same question about a different window."""
+    def work(conn):
+        return briefing.compile(conn, since=since)
+
+    return await _console_read(
+        work, {"items": [], "quiet": True, "since": None, "away": None,
+               "note": "The runtime is still starting, so I have nothing to report yet."})
 
 
 @app.get("/console/identity")

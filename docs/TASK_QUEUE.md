@@ -34,7 +34,10 @@ holds the queue, not the record.
 >
 > **TQ-36** (the migration pipeline and the escape hatches, §89) is done too.
 >
-> Next: **TQ-37** (the presenter frame and the briefing rhythm), then TQ-34 (role-based Gateway).
+> **TQ-37** (the briefing and its choreography, §90) is done, which closes every entry the
+> 41–43 assimilation generated except the deferred animated figure.
+>
+> Next: **TQ-34** (role-based Gateway).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -586,8 +589,8 @@ anybody is stuck in it.
 
 ### TQ-37 — The presenter frame and the briefing rhythm
 
-**WANT · QUEUED · depends on TQ-33 · addenda 41 §8, §9, §16, §21, §22 ·
-`SPEC_RECONCILIATION.md` §85 disposition 4**
+**WANT · DONE 2026-08-25 · addenda 41 §8, §9, §16, §21, §22 ·
+`SPEC_RECONCILIATION.md` §90**
 
 The presenter's *behaviour* without its body: a briefing that narrates what completed, what is
 underway, what is blocked and what needs attention (41 §8), with the display tracking the narration;
