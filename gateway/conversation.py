@@ -42,7 +42,7 @@ from typing import Iterator
 
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import store, tools
+from gateway import roles, skills, store, tools
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -148,6 +148,40 @@ MAX_REPLY_TOKENS = 2048
 # failure rather than an unbounded bill.
 MAX_TOOL_ROUNDS = 8
 
+# The client's agent is a different person doing a different job, so it gets a
+# different prompt (TQ-40, §95).
+#
+# Until now every session was handed SYSTEM_PROMPT above - which opens "You are
+# the analysis and specification assistant for Project Jarvis, speaking with the
+# project's Super User". A client who met Nadim was therefore talking to an
+# architecture assistant that believed they owned the project. The persona the
+# socket introduced and the instructions the model received disagreed, and the
+# model followed the instructions.
+#
+# The capability paragraph is generated from gateway/skills.py rather than
+# written here, so what the agent claims about itself and what the Gateway will
+# permit cannot drift apart.
+CLIENT_SYSTEM_PROMPT = """You are {name}, a personal representative of this organization, speaking with a client through its Gateway.
+
+You are the same {name} they spoke with before. That continuity is real - it is recorded - and it is the reason to be straightforward rather than effusive: a familiar contact does not introduce themselves twice or perform enthusiasm.
+
+{capabilities}
+
+How to answer:
+
+- Say what you know and say plainly when you do not know. Never invent a number, a holding, a price, or a fact about this organization.
+- You cannot see the organization's internal operations, and that is by design rather than an oversight. If asked about them, say you do not have access rather than guessing at what is there.
+- Be brief. This interface is often voice, and a client waiting through a preamble is worse served than one given the answer.
+- Nothing you say is financial advice, and you must not present anything as such."""
+
+
+def client_prompt(agent_name: str, role: str) -> str:
+    """The client agent's instructions, assembled from who it is and what it may
+    actually do."""
+    return CLIENT_SYSTEM_PROMPT.format(
+        name=agent_name, capabilities=skills.capability_paragraph(role))
+
+
 
 def model_messages(history: list[dict]) -> list[dict]:
     """The stored transcript as the model's message list.
@@ -170,7 +204,7 @@ def record_assistant_message(conn: Database, conversation_id: int, text: str) ->
 
 def run_turn(
     db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS,
-    *, role: str,
+    *, role: str, agent_name: str | None = None,
 ) -> Iterator[dict]:
     """One turn, tools and all, as a stream of events:
 
@@ -189,6 +223,11 @@ def run_turn(
     and this is the path a client reaches, so it is the one that matters most.
     """
     offered = tools.for_role(role)
+    # A client talks to their representative; everyone else talks to the
+    # project's assistant. One prompt for both was how a client ended up being
+    # briefed on Jarvis architecture (§95).
+    system = (client_prompt(agent_name or "your representative", role)
+              if role == roles.ROLE_CLIENT else SYSTEM_PROMPT)
     messages = model_messages(history)
     said: list[str] = []
     conn = store.get_connection(db_path)
@@ -196,7 +235,7 @@ def run_turn(
     try:
         for _ in range(MAX_TOOL_ROUNDS):
             final = None
-            for event in provider.stream(SYSTEM_PROMPT, messages, offered, max_tokens):
+            for event in provider.stream(system, messages, offered, max_tokens):
                 if event["type"] == "text":
                     said.append(event["text"])
                     yield event
