@@ -37,22 +37,33 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, conversation, exposure, jarvis, scoreboard, store, technology
+from gateway import auth, conversation, exposure, jarvis, roles, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# The desktop console's own page, served unchanged to an operator who comes in
+# through the Gateway (TQ-34, §92). Referenced, never copied: two files would be
+# two consoles, which is the duplication addendum 40 §13.1 forbids.
+CONSOLE_HTML = Path(__file__).resolve().parent.parent / "backend" / "console" / "index.html"
+
 # Request validation (addendum 16 §12). A conversational turn has no legitimate
 # reason to be book-length, and the limit is what stops an unbounded body from
 # becoming an unbounded model call.
 MAX_MESSAGE_CHARS = 20_000
+
+# A ceiling on what the studio may push through the Gateway. The workspace has
+# its own 256KB limit on the backend; this is the doorway's own refusal, because
+# a boundary that relies on the thing behind it to enforce a limit is not a
+# boundary.
+MAX_STUDIO_BODY_BYTES = 512 * 1024
 
 # WebSocket close codes. 4401 rather than 1008 so the client can distinguish
 # "your session is over, log in again" from any other protocol failure; the 44xx
@@ -190,6 +201,10 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     expires_at: str
+    # Returned so a client can render what it actually has rather than
+    # discovering its limits one 403 at a time (TQ-34, §92).
+    role: str
+    capabilities: list[str]
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -205,6 +220,46 @@ async def require_session(
     if not store.session_is_valid(conn, token):
         raise HTTPException(status_code=401, detail="Session expired or invalid")
     return token
+
+
+def require(capability: str):
+    """A dependency that admits only roles holding `capability` (TQ-34, §92).
+
+    Addendum 40 §14: "The presentation layer must never bypass backend
+    authorization just because information exists on the server." So the check
+    is here, on the route, and holds whether or not any interface ever offered
+    the caller a way to ask.
+
+    401 and 403 are kept apart deliberately. "Log in again" and "your role does
+    not include this" send an operator down entirely different paths, and
+    collapsing them to be coy about which is true would cost more in confusion
+    than it buys in secrecy - the caller already authenticated, so they learn
+    nothing about the credential from being told about the grant.
+
+    The capability is validated at import, not per request: a mistyped
+    requirement must fail the suite rather than quietly refuse everybody."""
+    if capability not in roles.CAPABILITIES:
+        raise roles.UnknownCapability(
+            f"route declares unknown capability {capability!r}; "
+            f"declared capabilities are {list(roles.CAPABILITIES)}")
+
+    async def dependency(
+        authorization: str | None = Header(default=None), conn=Depends(gateway_db)
+    ) -> str:
+        token = _bearer_token(authorization)
+        role = store.session_role(conn, token)
+        if role is None:
+            raise HTTPException(status_code=401, detail="Session expired or invalid")
+        if not roles.allows(role, capability):
+            logger.warning("role %r refused %r", role, capability)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Your role ({role}) does not include the ability to "
+                       f"{roles.DESCRIPTIONS[capability]}.",
+            )
+        return token
+
+    return dependency
 
 
 @app.get("/health")
@@ -244,7 +299,8 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
         logger.warning("login attempt against an unconfigured Gateway from %s", caller)
         raise HTTPException(status_code=503, detail=auth.NOT_CONFIGURED_MESSAGE)
 
-    if not auth.verify(request.username, request.password):
+    role = auth.identify(request.username, request.password)
+    if role is None:
         # Counted, and logged with the address, because on a service reachable
         # from the internet "somebody guessed wrong" and "somebody is guessing"
         # are different events and only the count tells them apart.
@@ -258,13 +314,14 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     login_limiter.record_success(caller)
-    token, expires_at = store.create_session(conn, auth.session_ttl_seconds())
-    logger.info("Super User logged in from %s, session expires %s", caller, expires_at)
-    return {"token": token, "expires_at": expires_at}
+    token, expires_at = store.create_session(conn, auth.session_ttl_seconds(), role)
+    logger.info("%s logged in from %s, session expires %s", role, caller, expires_at)
+    return {"token": token, "expires_at": expires_at, "role": role,
+            "capabilities": sorted(roles.capabilities(role))}
 
 
 @app.post("/auth/logout")
-async def logout(token: str = Depends(require_session), conn=Depends(gateway_db)):
+async def logout(token: str = Depends(require(roles.CAP_SESSION)), conn=Depends(gateway_db)):
     store.delete_session(conn, token)
     return {"status": "logged out"}
 
@@ -292,7 +349,7 @@ async def list_scoreboard(
     status: str | None = None,
     importance: str | None = None,
     limit: int = 50,
-    _: str = Depends(require_session),
+    _: str = Depends(require(roles.CAP_SCOREBOARD_READ)),
     conn=Depends(gateway_db),
 ):
     try:
@@ -304,7 +361,7 @@ async def list_scoreboard(
 
 @app.post("/scoreboard", status_code=201)
 async def file_scoreboard_item(
-    request: ItemRequest, _: str = Depends(require_session), conn=Depends(gateway_db)
+    request: ItemRequest, _: str = Depends(require(roles.CAP_SCOREBOARD_WRITE)), conn=Depends(gateway_db)
 ):
     """The programmatic way in, for producers that are not the conversation.
 
@@ -330,7 +387,7 @@ async def file_scoreboard_item(
 
 @app.get("/scoreboard/{item_id}")
 async def get_scoreboard_item(
-    item_id: int, _: str = Depends(require_session), conn=Depends(gateway_db)
+    item_id: int, _: str = Depends(require(roles.CAP_SCOREBOARD_READ)), conn=Depends(gateway_db)
 ):
     item = scoreboard.get_item(conn, item_id)
     if item is None:
@@ -342,7 +399,7 @@ async def get_scoreboard_item(
 async def add_scoreboard_note(
     item_id: int,
     request: NoteRequest,
-    _: str = Depends(require_session),
+    _: str = Depends(require(roles.CAP_SCOREBOARD_WRITE)),
     conn=Depends(gateway_db),
 ):
     try:
@@ -356,7 +413,7 @@ async def add_scoreboard_note(
 async def resolve_scoreboard_item(
     item_id: int,
     request: ResolveRequest,
-    _: str = Depends(require_session),
+    _: str = Depends(require(roles.CAP_SCOREBOARD_WRITE)),
     conn=Depends(gateway_db),
 ):
     try:
@@ -366,7 +423,7 @@ async def resolve_scoreboard_item(
 
 
 @app.get("/status")
-async def jarvis_status(_: str = Depends(require_session)):
+async def jarvis_status(_: str = Depends(require(roles.CAP_SYSTEM_STATUS))):
     """Project-wide status visibility (addendum 17 §4), and the §23 promise in
     one route: when the backend is down this answers 200 with available=false and
     a reason, never 5xx. The Gateway's own liveness is not contingent on the
@@ -377,7 +434,7 @@ async def jarvis_status(_: str = Depends(require_session)):
 @app.get("/technology")
 async def technology_review(
     file_findings: bool = False,
-    _: str = Depends(require_session),
+    _: str = Depends(require(roles.CAP_TECHNOLOGY_READ)),
     conn=Depends(gateway_db),
 ):
     """The Technology and Architecture review on demand (addendum 17 §7-§9).
@@ -388,6 +445,108 @@ async def technology_review(
     if file_findings:
         report["filed"] = technology.file_findings(conn, report)
     return report
+
+
+# The studio's read endpoints, as an allowlist rather than a wildcard.
+#
+# A proxy that forwarded whatever path a browser asked for would be a tunnel
+# straight through the boundary addendum 16 §7 draws - the backend is
+# loopback-only precisely so that nothing external can reach its admin surface,
+# and "the Gateway forwards /console/*" is one path-traversal away from "the
+# Gateway forwards anything". Named paths cost a line each and cannot be
+# talked into forwarding something else.
+STUDIO_READS = frozenset({
+    "feed", "overview", "finance", "chatterbox", "languages", "identity",
+    "briefing", "workspace",
+})
+
+
+@app.get("/studio")
+async def studio():
+    """The same studio the desktop console shows (addendum 40 §13.1, §92).
+
+    Literally the same file - `backend/console/index.html`, not a copy - so the
+    Gateway cannot drift into being a second, subtly different command centre.
+    Addendum 41 §23's "COO / operator: Full studio", and 40 §13.1's "must never
+    create a duplicate COO, duplicate organization, or independent source of
+    truth", both satisfied by serving one page from one place.
+
+    **Unauthenticated, and deliberately - this is the empty shell, not the
+    view.** The first version required `studio` here and was unreachable: a
+    top-level browser navigation cannot carry an `Authorization` header, so
+    clicking through to the studio produced a 401 and a blank page. The
+    alternatives are a token in the query string, which this codebase already
+    rejected for the WebSocket because it writes credentials into server logs
+    and browser history, or a session cookie, which is a larger change to the
+    auth model than one page warrants.
+
+    So the page is served the way `/` already is: it contains no organizational
+    data at all - every byte of that arrives through `/console/*`, which *is*
+    gated on `studio`. An anonymous visitor gets markup and a redirect to the
+    login page, which is what they would have got from `/` anyway.
+
+    That is the §14 line drawn where it belongs. The rule is that the
+    presentation layer must never bypass backend authorization; it is not that
+    markup must be secret."""
+    return FileResponse(CONSOLE_HTML, media_type="text/html; charset=utf-8")
+
+
+@app.get("/console/{surface}")
+async def studio_read(surface: str, _: str = Depends(require(roles.CAP_STUDIO))):
+    """One of the studio's reads, forwarded to the backend that owns it.
+
+    The page fetches these paths whether it is served by the backend or by the
+    Gateway, so the same file works behind both doors without knowing which one
+    it came through."""
+    if surface not in STUDIO_READS:
+        raise HTTPException(status_code=404, detail="No such studio surface")
+    status, body = jarvis.JarvisClient().console(f"/console/{surface}")
+    if status != 200:
+        # Reported rather than raised: the console renders an unreachable
+        # backend as a state it knows about, and a 502 here would blank a page
+        # that is perfectly capable of saying "backend unreachable — retrying".
+        return {"available": False, "unavailable": True,
+                "reason": f"The backend answered {status} for /console/{surface}."}
+    return body
+
+
+@app.put("/console/workspace")
+async def studio_workspace_save(request: Request, _: str = Depends(require(roles.CAP_STUDIO))):
+    """The studio's checkpoint, forwarded (addendum 40 §5.1).
+
+    Needed rather than optional: the page checkpoints continuously, so a Gateway
+    that served the studio but refused its writes would drop a half-typed
+    question every time - §5.3's one unambiguous requirement, broken by the
+    door rather than by the feature."""
+    body = await request.body()
+    if len(body) > MAX_STUDIO_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Workspace payload too large")
+    status, payload = jarvis.JarvisClient().console_write("/console/workspace", body, method="PUT")
+    if status != 200:
+        raise HTTPException(status_code=502, detail=f"The backend answered {status}.")
+    return payload
+
+
+@app.post("/console/chat")
+async def studio_chat(request: Request, _: str = Depends(require(roles.CAP_STUDIO))):
+    """Kumbhakarnan, through the Gateway's door instead of the desktop's.
+
+    Streamed straight through rather than buffered, because the whole point of
+    the console's chat is that it can be interrupted mid-sentence (addendum 41
+    §9) - and a proxy that collected the answer before forwarding it would turn
+    a conversation into a wait.
+
+    `iterate_in_thread` exists for exactly this shape: a blocking generator
+    feeding an async socket without occupying the event loop."""
+    body = await request.body()
+    if len(body) > MAX_STUDIO_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Question too large")
+    client = jarvis.JarvisClient()
+    return StreamingResponse(
+        iterate_in_thread(lambda: client.console_stream("/console/chat", body)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.websocket("/ws")
@@ -433,7 +592,8 @@ async def conversation_socket(
         return
 
     token = payload.get("token") if payload.get("type") == "auth" else None
-    if not token or not store.session_is_valid(conn, token):
+    role = store.session_role(conn, token) if token else None
+    if not token or role is None or not roles.allows(role, roles.CAP_CONVERSE):
         # The same counter as the login route. A socket that accepted unlimited
         # token guesses would be an oracle sitting beside a rate-limited door.
         failures = login_limiter.record_failure(caller)
@@ -449,12 +609,22 @@ async def conversation_socket(
     login_limiter.record_success(caller)
 
     conversation_id = store.current_conversation_id(conn)
-    await websocket.send_json({
+    ready = {
         "type": "ready",
         "conversation_id": conversation_id,
         "messages": store.history(conn, conversation_id),
-        "open_counts": scoreboard.open_counts(conn),
-    })
+        # What this session may actually do, sent once so the client can render
+        # itself honestly rather than offering controls that will 403.
+        "role": role,
+        "capabilities": sorted(roles.capabilities(role)),
+    }
+    # The open counts are a scoreboard read, so they travel only to a role that
+    # holds one. A client meeting their agent has no business receiving a
+    # summary of the operator's decision board in the handshake - which is
+    # exactly the "information exists on the server" reasoning §14 forbids.
+    if roles.allows(role, roles.CAP_SCOREBOARD_READ):
+        ready["open_counts"] = scoreboard.open_counts(conn)
+    await websocket.send_json(ready)
 
     provider = default_provider()
 
@@ -498,7 +668,7 @@ async def conversation_socket(
         reply = None
         try:
             async for event in iterate_in_thread(
-                lambda: conversation.run_turn(db_path, history, provider)
+                lambda: conversation.run_turn(db_path, history, provider, role=role)
             ):
                 if event["type"] == "text":
                     said.append(event["text"])

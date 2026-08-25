@@ -7022,3 +7022,128 @@ slow enough to lose the race. A second machine is a second pair of eyes, and
 that is the argument for the matrix that §68 could only make in principle.
 
 Suite: **2042 passing**.
+
+---
+
+## §92 — The Gateway gets roles, and the operator gets the same studio (2026-08-25, TQ-34)
+
+Addendum 40 §13/§14, addendum 41 §23, addendum 43 §15/§16 built. Two owner
+clarifications during the work shaped it more than the queue entry did, and both
+are recorded here because they resolve things addendum 40 §13.2 left as a
+heading with no body:
+
+> "If the user logs in as superuser then the user should see the same interface
+> theoretically as the COO interface."
+
+> "If the user logs in as regular user then the user should see an agent who
+> will provide them with all services that they seek. Initially, this will be
+> limited to giving info and later this agent will have many abilities such as
+> portfolio analysis and trade ideas."
+
+### One organization, one console, two doors
+
+The operator's studio through the Gateway is not a second console. `/studio`
+serves **`backend/console/index.html` itself** — the same file the desktop
+serves, referenced and never copied — and `/console/*` proxies to the same
+backend endpoints. Addendum 40 §13.1's "must never create a duplicate COO,
+duplicate organization, or independent source of truth" and 43 §17's "one
+organization, many windows", satisfied by there being literally one page.
+
+The page learned one thing: an `api()` helper that attaches the Gateway's
+session token when there is one and changes nothing when there is not, so the
+same file works behind both doors without knowing which it came through.
+
+### What was actually wrong before
+
+Not that the Gateway was insecure. It authenticates, hashes session tokens,
+rate-limits logins, and refuses everything when unconfigured. What it could not
+do was *say* what any route required: `Depends(require_session)` means "any
+valid session", which with one credential is indistinguishable from "the Super
+User" — and the difference only becomes visible on the day a second credential
+exists, at which point it is visible as a breach.
+
+Every route now declares a capability, and a tripwire walks the whole
+application asserting none is reachable without one.
+
+### The half that would have been the breach
+
+Route checks are theatre if the conversational agent will fetch things on the
+caller's behalf — and it would have. The Gateway's assistant holds tools that
+read repository files, publish documents, and read the scoreboard. A client
+whose only capability is "talk to the agent" would simply have *asked the
+agent* to read a file.
+
+So `TOOL_CAPABILITY` maps every tool to what it requires, enforced twice:
+`for_role` filters what the model is *offered* (presentation, and it stops the
+model attempting refusals), and `execute` checks again (the boundary, because a
+model can name a tool nobody offered it). §14's rule applies with more force to
+a tool list than to a dashboard.
+
+**A client is offered no tools at all.** That is the correct shape of the
+personal agent today and it matches the owner's "initially limited to giving
+info": it answers from what it knows and has no reach into the organization.
+When it gains portfolio analysis and trade ideas, each arrives as its own
+capability and its own entry, rather than by widening what `converse` means.
+
+### Fail closed, including on upgrade
+
+`sessions.role` is added with **no default**. A session predating roles gets
+NULL and NULL is refused — defaulting it to the operator would silently promote
+every session that existed before the boundary did, which is the one upgrade
+outcome a security column must not have. The cost is that everyone logs in once.
+
+`run_turn`, `tools.execute` and `store.create_session` all take the role as a
+*required* argument. A default would mean a caller that forgot got the most
+permissive behaviour, on the path a client reaches.
+
+### Found by running it
+
+**A browser navigation cannot carry an `Authorization` header.** `/studio` was
+gated on `studio` and was therefore unreachable — clicking through produced a
+401 and a blank page. The alternatives were a token in the query string, which
+this codebase already rejected for the WebSocket because it writes credentials
+into logs and browser history, or a session cookie, a larger change to the auth
+model than one page warrants.
+
+`/studio` is now served like `/`: it is the empty shell, and every byte of
+organizational data arrives through gated endpoints. Widening the allowlist came
+with a test proving the shell is safe to widen it for — if anyone ever inlines
+state into that page it stops being a shell and the test fails.
+
+Also found: an unauthenticated read behind the Gateway made the console poll
+forever and blame the backend for a refusal that came from the door. It now
+returns to the login page.
+
+### Verified against three live roles
+
+A real backend and a real Gateway, one credential per role:
+
+| surface | operator | internal | client | anonymous |
+|---|---|---|---|---|
+| `/studio` | 200 | 403 | 403 | 200 (shell only) |
+| `/console/overview` | 200 | 403 | 403 | 401 |
+| `/status` | 200 | 200 | 403 | 401 |
+| `/scoreboard` | 200 | 200 | 403 | 401 |
+| `/technology` | 200 | 200 | 403 | 401 |
+
+A path-traversal attempt at the proxy (`/console/../admin/agents`) returns 404;
+the allowlist names its surfaces rather than forwarding a pattern.
+
+And the studio itself rendered through the Gateway on the real data: SYN10 at
+301.70, six agents, the simulated banner, the ticker — the same page, from the
+same organization, through a different door.
+
+### Deferred, with reasons
+
+- **The scoped studio for internal users** (41 §23: "Internal user: Scoped
+  studio"). Nothing scopes the desks yet, and shipping the full command centre
+  under a narrower name would be the §14 violation this entry is about. Internal
+  holds status, scoreboard and technology and is refused the studio.
+- **The client agent's identity** (43 §16: name, face, voice, relationship
+  continuity). The capability boundary exists; the agent behind it is still the
+  Gateway's generic assistant. TQ-39.
+- **The client agent's skills** — portfolio analysis, trade ideas. Queued as
+  TQ-40 with the owner's framing, and the mechanism is already decided: each
+  skill is its own capability, never a widening of `converse`.
+
+Suite: **2072 passing**.

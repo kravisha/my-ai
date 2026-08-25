@@ -37,7 +37,12 @@ holds the queue, not the record.
 > **TQ-37** (the briefing and its choreography, §90) is done, which closes every entry the
 > 41–43 assimilation generated except the deferred animated figure.
 >
-> Next: **TQ-34** (role-based Gateway).
+> **TQ-34** (the role-based Gateway, §92) is done, and with it every entry the 40–43 lineage
+> generated except the deferred animated figure.
+>
+> Next: **TQ-39** (the client agent's identity), then TQ-40 (its skills, when there is a real
+> producer behind one). Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
+> TQ-28 (the isolation guard).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -603,7 +608,41 @@ critical business state", so a presenter that dies takes nothing with it.
 
 ### TQ-34 — Role-based Gateway
 
-**WANT · QUEUED · addendum 40 §13, §14 · `SPEC_RECONCILIATION.md` §81**
+**WANT · DONE 2026-08-25 · addendum 40 §13/§14, 41 §23, 43 §15/§16 ·
+`SPEC_RECONCILIATION.md` §92**
+
+Two owner clarifications during the work settled what addendum 40 §13.2 left as a heading with
+no body: an operator logging into the Gateway sees **the same studio** the desktop console shows
+(the same file, proxied, never a second console), and a regular user meets **an agent** — info
+only today, with real skills to come. Both recorded in §92.
+
+### TQ-39 — The client agent gets an identity
+
+**WANT · QUEUED · addendum 43 §16, 41 §24 · depends on TQ-34**
+
+43 §16 gives the personal client agent a name, a face, a voice, scoped memory and relationship
+continuity. TQ-34 built the boundary it sits behind; the agent behind it is still the Gateway's
+generic assistant. The mechanism already exists — `coo_identity` (§88) is the same shape, one
+organization-scoped identity with its own versioning — so this is that pattern applied per client
+rather than new machinery.
+
+### TQ-40 — The client agent's skills
+
+**WANT · QUEUED · owner direction 2026-08-25 · depends on TQ-39**
+
+The owner's framing: "initially this will be limited to giving info and later this agent will
+have many abilities such as portfolio analysis and trade ideas and many other skills yet to be
+decided."
+
+The mechanism is decided even though the skills are not: **each skill is its own capability and
+its own entry in `TOOL_CAPABILITY`**, never a widening of what `converse` means. That is what
+keeps a client agent that gained portfolio analysis from silently having gained the ability to
+read the repository — the failure §92 exists to prevent, arriving later by a different route.
+
+Nothing here is buildable until there is a skill with a real producer behind it: portfolio
+analysis needs a portfolio, and trade ideas need something this system is willing to stand
+behind. Both are gated on the exposure preconditions §50 records, and neither may present
+simulated output as real (addendum 25's rule, and the finance desk's).
 
 Phase D. The Gateway already exists as an authenticated boundary with one Super User; what 40 §13
 adds is *roles* — internal authorized, client/external meeting a named personal agent, and a

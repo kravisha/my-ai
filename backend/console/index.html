@@ -367,6 +367,33 @@ const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,tab:
          // the desks re-render underneath it.
          spotView:null, spotFocus:null};
 
+// One door or two (TQ-34, §92). This page is served both by the backend, where
+// its reads need no credential because the backend is loopback-only, and by the
+// Gateway, where they do. `api` adds the Gateway's session token when there is
+// one and changes nothing when there is not, so the same file works behind both
+// doors without knowing which one it came through.
+const GATEWAY_TOKEN_KEY = "jarvis-gateway-token";
+// Whether this page came through the Gateway rather than off the backend
+// directly. The backend serves the studio at /console and is loopback-only; the
+// Gateway serves it at /studio and needs a credential on every read.
+const VIA_GATEWAY = location.pathname.startsWith("/studio");
+
+async function api(path, options){
+  const token = (() => { try { return sessionStorage.getItem(GATEWAY_TOKEN_KEY); }
+                         catch { return null; } })();
+  const opts = {...(options||{})};
+  if(token) opts.headers = {...(opts.headers||{}), Authorization: "Bearer " + token};
+  const response = await fetch(path, opts);
+  // Behind the Gateway, an unauthenticated read means the session is gone or
+  // this role was never allowed in. Sending the operator back to the login page
+  // beats a console that polls forever and blames the backend for a refusal
+  // that came from the door.
+  if(VIA_GATEWAY && (response.status === 401 || response.status === 403)){
+    location.href = "/";
+  }
+  return response;
+}
+
 const $=(id)=>document.getElementById(id);
 const esc=(s)=>String(s??"").replace(/[&<>]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const clock=(ts)=>(ts||"").slice(11,19)||"--:--:--";
@@ -523,7 +550,7 @@ function playBriefing(from){
 async function brief(from){
   interrupt();                              // a new briefing supersedes anything running
   try{
-    const data=await (await fetch("/console/briefing")).json();
+    const data=await (await api("/console/briefing")).json();
     S.briefItems=data.items||[];
     if(!S.briefItems.length){
       say(S.cooName, data.note || "Nothing to report.", "coo");
@@ -824,12 +851,30 @@ async function saveWorkspace(reason){
   if (fingerprint === lastSaved && reason !== "flush") return;
   lastSaved = fingerprint;
   try{
-    if (reason === "flush" && navigator.sendBeacon){
-      // A normal fetch is cancelled when the page goes away; a beacon is not.
-      navigator.sendBeacon("/console/workspace", new Blob([body], {type:"application/json"}));
-      return;
+    if (reason === "flush"){
+      // A normal fetch is cancelled when the page goes away; these two are not.
+      //
+      // sendBeacon cannot carry an Authorization header, so behind the Gateway
+      // it would post the final checkpoint unauthenticated and lose it to a 401
+      // - silently, on the one save that matters most (§5.3's half-typed
+      // sentence). `keepalive` survives the same unload *and* takes headers, so
+      // the token path uses it and the beacon stays for the door that needs no
+      // credential.
+      let token = null;
+      try { token = sessionStorage.getItem(GATEWAY_TOKEN_KEY); } catch {}
+      if (token){
+        await api("/console/workspace", {
+          method: "PUT", headers: {"Content-Type": "application/json"},
+          body, keepalive: true,
+        });
+        return;
+      }
+      if (navigator.sendBeacon){
+        navigator.sendBeacon("/console/workspace", new Blob([body], {type:"application/json"}));
+        return;
+      }
     }
-    await fetch("/console/workspace", {method:"PUT", headers:{"Content-Type":"application/json"}, body});
+    await api("/console/workspace", {method:"PUT", headers:{"Content-Type":"application/json"}, body});
   }catch{ /* the next checkpoint will carry it; a failed save must not interrupt typing */ }
 }
 
@@ -840,7 +885,7 @@ function scheduleSave(){
 
 async function restoreWorkspace(){
   let data;
-  try{ data = await (await fetch("/console/workspace")).json(); }
+  try{ data = await (await api("/console/workspace")).json(); }
   catch{ return; }
   if (!data.restored){
     // Not an error worth shouting about, but §15 wants resumed work
@@ -945,7 +990,7 @@ function renderChatterbox(c){
 
 /* ---------------- polling ---------------- */
 async function pollChatterbox(){
-  try{renderChatterbox(await (await fetch("/console/chatterbox")).json());}catch{}
+  try{renderChatterbox(await (await api("/console/chatterbox")).json());}catch{}
 }
 
 async function pollFeed(){
@@ -954,7 +999,7 @@ async function pollFeed(){
     if(S.source)p.set("source",S.source);
     if(S.attention)p.set("attention_only","true");
     if(S.seen)p.set("since_id",String(S.seen));
-    const r=await fetch(`/console/feed?${p}`); if(!r.ok)throw new Error("HTTP "+r.status);
+    const r=await api(`/console/feed?${p}`); if(!r.ok)throw new Error("HTTP "+r.status);
     const d=await r.json();
     if(d.events.length)S.seen=Math.max(S.seen,d.events[0].event_id);
     renderLead(d); renderFeed(d.events); renderSources(d.sources||[]); renderStanding(d.standing||[]);
@@ -980,7 +1025,7 @@ async function pollFeed(){
 }
 async function pollDesks(){
   try{
-    const d=await (await fetch("/console/overview")).json();
+    const d=await (await api("/console/overview")).json();
     if(!d.available)return;
     if(d.lifecycle_stage)$("stage").textContent=d.lifecycle_stage;
     renderOrganization(d.organization||{}); renderStrategy(d.strategy||{});
@@ -993,7 +1038,7 @@ async function pollDesks(){
   }catch{/* the footer already reports unreachability */}
 }
 async function pollFinance(){
-  try{const f=await (await fetch("/console/finance")).json(); renderFinance(f); renderTape(f);}catch{}
+  try{const f=await (await api("/console/finance")).json(); renderFinance(f); renderTape(f);}catch{}
 }
 
 /* ---------------- the COO conversation ---------------- */
@@ -1067,7 +1112,7 @@ async function ask(question){
   S.abort=new AbortController();
   let full="",spokenTo=0;
   try{
-    const res=await fetch("/console/chat",{
+    const res=await api("/console/chat",{
       method:"POST",headers:{"Content-Type":"application/json"},signal:S.abort.signal,
       body:JSON.stringify({question,language:$("lang").value,history:S.history.slice(-8)}),
     });
@@ -1148,7 +1193,7 @@ if(SR){
 /* ---------------- boot ---------------- */
 (async function boot(){
   try{
-    const who=await (await fetch("/console/identity")).json();
+    const who=await (await api("/console/identity")).json();
     if(who.exists&&who.name){
       S.cooName=who.name;
       $("coo-name").textContent=who.name;
@@ -1163,7 +1208,7 @@ Identity version ${who.identity_version}, carried through `+
   }catch{/* the markup's default stands; a console that cannot ask who the COO
             is still has to open */}
   try{
-    const l=await (await fetch("/console/languages")).json();
+    const l=await (await api("/console/languages")).json();
     $("lang").innerHTML=l.languages.map(x=>`<option value="${esc(x.code)}">${esc(x.label)}</option>`).join("");
     // The owner's stated preference, offered first: Tamil-accented English.
     $("lang").value=l.languages.some(x=>x.code==="en-IN")?"en-IN":l.default;

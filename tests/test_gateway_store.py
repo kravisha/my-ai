@@ -3,14 +3,21 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from gateway import store
+from gateway import roles, store
+
+
+def create_session(conn, ttl_seconds, role=roles.ROLE_OPERATOR):
+    """Sessions carry a role since TQ-34; these tests are about expiry and
+    hashing, so they take the operator's and say nothing about roles. Role
+    behaviour is asserted in tests/test_gateway_roles.py."""
+    return store.create_session(conn, ttl_seconds, role)
 
 
 def test_a_session_token_is_never_stored_in_the_clear(gateway_conn):
     """Addendum 17 §14 calls this a high-security boundary, and the practical
     consequence is this row: a stolen gateway.db must not hand over a live
     session."""
-    token, _ = store.create_session(gateway_conn, ttl_seconds=60)
+    token, _ = create_session(gateway_conn, ttl_seconds=60)
 
     rows = gateway_conn.fetchall("SELECT token_hash FROM sessions")
     assert len(rows) == 1
@@ -19,7 +26,7 @@ def test_a_session_token_is_never_stored_in_the_clear(gateway_conn):
 
 
 def test_a_fresh_session_validates_and_an_unknown_token_does_not(gateway_conn):
-    token, _ = store.create_session(gateway_conn, ttl_seconds=60)
+    token, _ = create_session(gateway_conn, ttl_seconds=60)
 
     assert store.session_is_valid(gateway_conn, token) is True
     assert store.session_is_valid(gateway_conn, "not-a-real-token") is False
@@ -28,21 +35,21 @@ def test_a_fresh_session_validates_and_an_unknown_token_does_not(gateway_conn):
 def test_an_expired_session_is_refused_even_though_the_row_survives(gateway_conn):
     """Expiry is enforced on read. The row is deliberately still there - this
     asserts the check does the refusing, not a sweep that may not have run."""
-    token, _ = store.create_session(gateway_conn, ttl_seconds=-1)
+    token, _ = create_session(gateway_conn, ttl_seconds=-1)
 
     assert store.session_is_valid(gateway_conn, token) is False
     assert gateway_conn.fetchall("SELECT 1 FROM sessions") != []
 
 
 def test_logout_removes_the_session(gateway_conn):
-    token, _ = store.create_session(gateway_conn, ttl_seconds=60)
+    token, _ = create_session(gateway_conn, ttl_seconds=60)
     store.delete_session(gateway_conn, token)
 
     assert store.session_is_valid(gateway_conn, token) is False
 
 
 def test_validation_records_last_seen(gateway_conn):
-    token, _ = store.create_session(gateway_conn, ttl_seconds=60)
+    token, _ = create_session(gateway_conn, ttl_seconds=60)
     gateway_conn.execute("UPDATE sessions SET last_seen_at = NULL")
 
     store.session_is_valid(gateway_conn, token)
@@ -51,15 +58,15 @@ def test_validation_records_last_seen(gateway_conn):
 
 
 def test_purging_removes_only_expired_sessions(gateway_conn):
-    live, _ = store.create_session(gateway_conn, ttl_seconds=60)
-    store.create_session(gateway_conn, ttl_seconds=-1)
+    live, _ = create_session(gateway_conn, ttl_seconds=60)
+    create_session(gateway_conn, ttl_seconds=-1)
 
     assert store.purge_expired_sessions(gateway_conn) == 1
     assert store.session_is_valid(gateway_conn, live) is True
 
 
 def test_the_expiry_it_reports_is_the_expiry_it_stores(gateway_conn):
-    _, expires_at = store.create_session(gateway_conn, ttl_seconds=3600)
+    _, expires_at = create_session(gateway_conn, ttl_seconds=3600)
 
     expected = datetime.now(timezone.utc) + timedelta(seconds=3600)
     assert abs(datetime.fromisoformat(expires_at) - expected) < timedelta(seconds=5)
