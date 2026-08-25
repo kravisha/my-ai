@@ -28,6 +28,27 @@ Design decisions, and why:
   deployment and small against a runaway loop; both are raised deliberately
   through the environment, and an unparseable limit is an error, not a
   silent fallback — a typo must not become an unlimited budget.
+
+## Per-caller attribution (TQ-18, SPEC_RECONCILIATION §66)
+
+§52 deferred "who spent it" until something needed the answer; addendum 37
+§3.1's "measure organizational resource use" is that consumer, so every
+call is now also counted against a **caller label** in a second table.
+Three things this deliberately is not:
+
+- **Not a second budget.** The limit stays organization-wide. A per-caller
+  cap is a policy change nobody has asked for, and it would break §52's
+  damage bound (the population collectively spending N caps). This
+  increment measures; it does not ration.
+- **Not inferred.** A process declares itself through `set_caller` (agents
+  do it in `agents/base.py`'s run loop, the two chat surfaces at startup).
+  A process that never declares is counted as `unattributed` rather than
+  guessed at from a stack walk — an honest bucket beats a clever wrong
+  label, and a growing `unattributed` row is itself the finding that
+  someone forgot to declare.
+- **Not retroactive.** Ledger rows written before this existed carry no
+  caller, and the per-caller table simply starts empty; the totals in
+  `spend` remain the authority on what was spent.
 """
 
 import os
@@ -44,6 +65,32 @@ DEFAULT_DAILY_CALLS = 2_000
 TOKENS_ENV = "MODEL_BUDGET_DAILY_TOKENS"
 CALLS_ENV = "MODEL_BUDGET_DAILY_CALLS"
 PATH_ENV = "MODEL_BUDGET_DB_PATH"
+CALLER_ENV = "MODEL_BUDGET_CALLER"
+
+# The label spend is attributed to when nobody declared one. A real bucket,
+# not a null: a growing 'unattributed' row is the finding that some spending
+# path never called set_caller.
+UNATTRIBUTED = "unattributed"
+
+# Process-wide, like the provider singleton it accounts for: one process is
+# one caller. Set once at startup (agents/base.py's run loop, the chat
+# surfaces' own entry points) rather than threaded through every call site -
+# the alternative is a parameter on an interface (ModelProvider.complete)
+# that exists precisely so callers do not know what is behind it.
+_caller: str | None = None
+
+
+def set_caller(label: str) -> None:
+    """Declare who this process's model spend belongs to."""
+    global _caller
+    _caller = label
+
+
+def current_caller() -> str:
+    """Environment second, `unattributed` last - so a spawned process that
+    inherits MODEL_BUDGET_CALLER is labelled even before it declares, and a
+    process that does neither is honestly bucketed rather than guessed."""
+    return _caller or os.environ.get(CALLER_ENV) or UNATTRIBUTED
 
 
 class BudgetExceededError(RuntimeError):
@@ -88,6 +135,21 @@ def _connect() -> sqlite3.Connection:
         "  refusals INTEGER NOT NULL DEFAULT 0"
         ")"
     )
+    # Additive (TQ-18): an existing ledger gains this table on first open and
+    # keeps every total it already held. Same columns as `spend`, keyed by
+    # (day, caller) - so the per-caller rows sum to the day's totals for
+    # everything recorded since attribution existed, and no earlier.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS spend_by_caller ("
+        "  day TEXT NOT NULL,"
+        "  caller TEXT NOT NULL,"
+        "  calls INTEGER NOT NULL DEFAULT 0,"
+        "  input_tokens INTEGER NOT NULL DEFAULT 0,"
+        "  output_tokens INTEGER NOT NULL DEFAULT 0,"
+        "  refusals INTEGER NOT NULL DEFAULT 0,"
+        "  PRIMARY KEY (day, caller)"
+        ")"
+    )
     return conn
 
 
@@ -109,6 +171,33 @@ def todays_spend() -> dict:
     }
 
 
+def spend_by_caller(day: str | None = None) -> list[dict]:
+    """One row per caller for `day` (today by default), heaviest spender
+    first - the read side addendum 37 §3.1's "measure organizational
+    resource use" asks for, so an optimization finding like §58's is a
+    query rather than a manual trace.
+
+    Ordered by tokens rather than calls: a thousand stance reads cost less
+    than forty deep-analysis passes, and ranking by call count would point
+    optimization at the wrong caller."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT caller, calls, input_tokens, output_tokens, refusals FROM spend_by_caller "
+            "WHERE day = ? ORDER BY (input_tokens + output_tokens) DESC, caller",
+            (day or _today(),),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "caller": row[0], "calls": row[1], "input_tokens": row[2],
+            "output_tokens": row[3], "tokens": row[2] + row[3], "refusals": row[4],
+        }
+        for row in rows
+    ]
+
+
 def record_usage(input_tokens: int | None, output_tokens: int | None) -> None:
     """One completed call: count it, and add what the provider reported.
     None means the response did not say - recorded as zero, never estimated."""
@@ -120,6 +209,17 @@ def record_usage(input_tokens: int | None, output_tokens: int | None) -> None:
             "input_tokens = input_tokens + excluded.input_tokens, "
             "output_tokens = output_tokens + excluded.output_tokens",
             (_today(), input_tokens or 0, output_tokens or 0),
+        )
+        # Same transaction as the total it belongs to: the two tables commit
+        # together or not at all, so attribution can never disagree with the
+        # spend it attributes.
+        conn.execute(
+            "INSERT INTO spend_by_caller (day, caller, calls, input_tokens, output_tokens) "
+            "VALUES (?, ?, 1, ?, ?) "
+            "ON CONFLICT(day, caller) DO UPDATE SET calls = calls + 1, "
+            "input_tokens = input_tokens + excluded.input_tokens, "
+            "output_tokens = output_tokens + excluded.output_tokens",
+            (_today(), current_caller(), input_tokens or 0, output_tokens or 0),
         )
         conn.commit()
     finally:
@@ -145,6 +245,14 @@ def check_budget() -> None:
             "INSERT INTO spend (day, refusals) VALUES (?, 1) "
             "ON CONFLICT(day) DO UPDATE SET refusals = refusals + 1",
             (_today(),),
+        )
+        # Who got refused is the more useful half of a refusal: a breaker
+        # that fired 400 times says less than one that fired 400 times at
+        # one runaway caller (addendum 37 §3.3, identifying waste).
+        conn.execute(
+            "INSERT INTO spend_by_caller (day, caller, refusals) VALUES (?, ?, 1) "
+            "ON CONFLICT(day, caller) DO UPDATE SET refusals = refusals + 1",
+            (_today(), current_caller()),
         )
         conn.commit()
     finally:

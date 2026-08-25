@@ -25,9 +25,10 @@ holds the queue, not the record.
 
 > **Owner-directed head of the queue** (2026-08-25, `SPEC_RECONCILIATION.md` §60): **both head
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
-> (market-implied validation §62). The queue's remaining QUEUED work: TQ-07 (consumer-gated)
-> and TQ-18 (per-caller spend attribution). Entries above them in file order are DONE
-> records, not higher-priority work.
+> (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
+> DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
+> QUEUED entry is TQ-07, which is consumer-gated by its own terms. New work comes from the
+> next need, the next supplied specification, or the deferred list below.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -226,12 +227,15 @@ Feeds the leadership gate (§60 disposition 5) whenever promotion machinery exis
 
 ### TQ-18 — Optimization measurement baseline: per-caller spend attribution
 
-**WANT · QUEUED**
+**WANT · DONE — `SPEC_RECONCILIATION.md` §66**
 
 Source: addendum 37 §3–§4 ("measure organizational resource use"), closing §52's recorded
-deferral now that its consumer exists. Scope: attribute model spend per caller/agent in the
-existing ledger so optimization findings like §58's can be routine reads instead of manual
-tracing. Currency-denominated limits remain deferred within §52.
+deferral now that its consumer exists. A `spend_by_caller` table beside the existing totals,
+written in the same transaction; agents declare their identity in `agents/base.py`'s shared
+run loop and the two chat surfaces in their lifespans, with undeclared spend bucketed as
+`unattributed` rather than guessed. Refusals carry the caller too. Deliberately not a second
+budget — the limit stays organization-wide, because a per-caller cap would break §52's damage
+bound. Currency-denominated limits and per-caller *limits* remain deferred with reasons.
 
 ---
 

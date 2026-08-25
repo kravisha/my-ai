@@ -4824,3 +4824,79 @@ excluded, duty-before-transfer staying with the desk that held it (with
 the successor's own single sample correctly unstated), the evidence
 gatherer's shape, and `profile()` tolerating evidence dicts predating the
 new keys.
+
+---
+
+## §66 — The ledger learns who spent it (2026-08-25)
+
+TQ-18, closing §52's recorded deferral now that it has a consumer: addendum
+37 §3.1 asks Optimization to "measure organizational resource use", and
+§58's origination-cooldown work — the one optimization act this repository
+has actually performed end to end — was traced by hand because the ledger
+could say *how much* but never *who*. It can now.
+
+### A second table, not a second budget
+
+`spend_by_caller (day, caller, ...)` beside the existing `spend` totals,
+written in the same transaction so attribution can never disagree with the
+spend it attributes. Three deliberate non-features, each stated in the
+module's own docstring so a later reader does not mistake them for
+oversights:
+
+- **Not a second budget.** The limit stays organization-wide. A per-caller
+  cap is a policy change nobody asked for, and it would break §52's damage
+  bound outright — N callers with their own caps collectively spend N times
+  the budget, which is the exact failure the shared ledger exists to
+  prevent. This increment measures; it does not ration, and a test pins
+  that a caller who has spent nothing is still refused once the
+  organization's day is exhausted.
+- **Not inferred.** A process declares itself with `set_caller`; nothing
+  walks a stack or guesses from a module name. Undeclared spend lands in an
+  honest `unattributed` bucket, and a growing `unattributed` row is itself
+  the finding that some path forgot to declare — a clever wrong label would
+  hide exactly that.
+- **Not retroactive.** A ledger written before this existed keeps every
+  total it held, gains the new table on first open (additive
+  `CREATE TABLE IF NOT EXISTS`, the house migration style), and starts its
+  per-caller history at zero rather than pretending to know the past.
+
+### Where the label comes from
+
+Declared once per process, like the provider singleton it accounts for —
+one process is one caller. Agents declare in `agents/base.py`'s shared run
+loop (so a future agent is attributed without remembering to ask, the same
+reasoning that put the work_fn exception guard there), and the two chat
+surfaces declare in their lifespans, never at import, so importing a module
+still changes nothing. `MODEL_BUDGET_CALLER` is read as a fallback so a
+spawned process is labelled before it runs a line of its own; an explicit
+declaration wins over it.
+
+### Refusals carry the caller too
+
+The more useful half of a refusal is who got refused: a breaker that fired
+400 times says far less than one that fired 400 times at a single runaway
+caller (37 §3.3, identifying waste). `spend_by_caller()` ranks by tokens
+rather than call count, because a thousand stance reads cost less than
+forty deep-analysis passes and ranking by calls would point optimization at
+the wrong caller.
+
+### Verified
+
+Eleven new tests (1758 passing): the unattributed bucket, explicit
+declaration, environment fallback and explicit-beats-environment,
+per-caller rows summing exactly to the day's totals across three calls
+including one with unreported usage, token-ranking over call-ranking, the
+empty day, refusals attributed to the refused caller while the spender's
+row stays clean, the organization-wide limit unchanged by attribution,
+attribution through the `BudgetedProvider` wrapper on both `complete` and
+`stream`, and a pre-existing ledger keeping its totals while attribution
+starts empty. The existing breaker suite gained a caller reset in its
+isolation fixture — a process-wide label leaks between tests exactly the
+way the ledger path would.
+
+### What stays deferred
+
+Currency-denominated limits (§52's other deferral) still wait on a real
+price list; the ledger meters tokens and calls because those are what the
+provider reports. Per-caller *limits* wait on someone wanting to ration
+rather than measure.

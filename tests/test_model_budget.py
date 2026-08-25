@@ -17,6 +17,10 @@ def _isolated_ledger(tmp_path, monkeypatch):
     monkeypatch.setenv(model_budget.PATH_ENV, str(tmp_path / "spend.db"))
     monkeypatch.delenv(model_budget.TOKENS_ENV, raising=False)
     monkeypatch.delenv(model_budget.CALLS_ENV, raising=False)
+    # The caller label is process-wide (TQ-18), so it leaks between tests
+    # unless reset here - the same isolation this fixture gives the ledger.
+    monkeypatch.delenv(model_budget.CALLER_ENV, raising=False)
+    monkeypatch.setattr(model_budget, "_caller", None)
 
 
 class FakeInner:

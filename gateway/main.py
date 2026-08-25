@@ -40,6 +40,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket,
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app import model_budget
 from app.model_gateway import default_provider
 from gateway import auth, conversation, exposure, jarvis, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
@@ -67,6 +68,10 @@ async def lifespan(app: FastAPI):
     Schema creation and the expired-session sweep happen here, not at import, so
     that importing this module - for a test, a doc build, a `--help` - creates
     nothing on disk."""
+    # This process's model spend is the Gateway's (TQ-18, §66) - declared in
+    # lifespan rather than at import, so importing this module still creates
+    # and changes nothing.
+    model_budget.set_caller("gateway")
     conn = store.get_connection()
     store.init_schema(conn)
     purged = store.purge_expired_sessions(conn)
