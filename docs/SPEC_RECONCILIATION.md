@@ -4083,6 +4083,63 @@ then the deliberate raise.
 
 ---
 
+## §58 — The origination cooldown: attention priced, not throttled by sleep (2026-08-25)
+
+Owner-directed: §57's measured fact (~500k tokens/hour of idle operation)
+was too much. Tracing where it went: the synthetic social stream clears
+Speculator's confidence bar nearly every cycle, and the moment a
+security's paid chain (cross-check → stance read → report → Analysis)
+completes, the next cycle re-originates it — the in-flight guards
+(`has_open_cross_check`, pending report, open case) only ever spaced the
+chains at pipeline latency. Explorer's IV path had the same shape behind
+its judgment gate, and the parity path's 300s window let a *completed*
+mission's lingering static world re-buy two analyses every five minutes
+indefinitely.
+
+### The mechanism
+
+`ORIGINATION_COOLDOWN_SECONDS` (`FI_ORIGINATION_COOLDOWN_SECONDS`,
+default 3600, agents/discovery_config.py): minimum spacing, per security,
+between paid analysis chains that routine observation may originate.
+Deliberately a separate constant from the 300s
+ANALYSIS_RECENCY_WINDOW_SECONDS (which stays for Analysis's own
+novelty/diagnosis reads): that one deduplicates; this one bounds
+*attention*. Applied at all three origination points — Speculator's social
+loop, Explorer's IV loop (checked before the judgment gate, so the gate's
+own call is not re-bought either), and Explorer's parity loop (widened
+from 300s: a static chain deserves one paid analysis per security per
+cooldown — grading needs exactly one, and re-analyzing an unchanged world
+never changes the answer). Observation stays free everywhere: evidence
+recording, case enrichment, and detector events are deliberately not
+gated; cross-check *answering* is never gated (it only runs when someone
+bounded already asked). Missions are unaffected in what they need — one
+analysis per scenario — and the mission-path Speculator loop never
+originated anyway.
+
+### Verified, including a false start worth keeping
+
+Three new tests (1662 passing): Speculator suppressed under a recent
+analysis with evidence still recorded, the cooldown-zero override behaving
+as documented (the §-first-commit strict comparison making a zero window
+match nothing), and Explorer skipping the judgment gate entirely while
+still logging the detector event. Then the live verification produced a
+lesson: the first measurement showed originations slipping through
+milliseconds after analyses landed — not a code defect but a **stale
+pre-edit agent generation** the restart's process-matching had missed
+(some processes hide their command line from WMI; the kill filter now
+also matches those). A direct probe settled it: one real Speculator cycle
+against the live database, guard on — zero originations; same cycle,
+cooldown zeroed — eight. Clean restart, measured again: the first window
+drained the small backlog (6 calls), and the steady-state window read
+**zero calls, zero tokens over four minutes**, against §57's ~33
+calls/hour before.
+
+The ceiling this sets: at most one paid chain per security per hour —
+about an order of magnitude under the measured idle burn, tunable in
+either direction through the environment variable without touching code.
+
+---
+
 ## §55 — Phase 2 opens with the two members that have data: ARB-015/016 as Diagnostics (2026-08-25)
 
 TQ-06, scoped honestly before it was built. Addendum 27 §11's Phase 2 list

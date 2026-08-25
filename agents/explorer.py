@@ -350,11 +350,15 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
         # answers scan_chain identically every cycle, so without this guard
         # a security Analysis has already judged would re-open a cross-check
         # (and trigger a fresh, paid Analysis pass) every single remaining
-        # cycle of the mission's life. The IV path needs no equivalent
-        # guard: its synthetic surface only repeats when a caller
-        # deliberately forces an anomaly, where a stored parity world always
-        # does.
-        if fi_db.list_recent_analysis_results(conn, security, config.ANALYSIS_RECENCY_WINDOW_SECONDS):
+        # cycle of the mission's life. Originally the 300s
+        # ANALYSIS_RECENCY_WINDOW; widened to the origination cooldown (§58)
+        # when the spend ledger showed a *completed* mission's lingering
+        # world re-buying two analyses every five minutes indefinitely. A
+        # static chain deserves one paid analysis per security per cooldown
+        # - grading needs exactly one, and re-analyses of an unchanged world
+        # never change the answer. (The IV path carries the same guard at
+        # its own origination point, for its own reasons - see below.)
+        if fi_db.list_recent_analysis_results(conn, security, config.ORIGINATION_COOLDOWN_SECONDS):
             continue
 
         # No LLM judgment gate here, unlike the IV path's _judgment_gate.
@@ -512,6 +516,15 @@ def _explorer_work(conn, identity: str, spawned_at: str, provider) -> None:
             # *before* the judgment gate, not after: a static forced-anomaly
             # surface re-triggers every cycle, so guarding after the call would
             # burn an LLM call per cycle for a lead already in flight.
+            continue
+        if fi_db.list_recent_analysis_results(conn, security, config.ORIGINATION_COOLDOWN_SECONDS):
+            # The origination cooldown (SPEC_RECONCILIATION §58), checked
+            # before the judgment gate for the same burn-avoidance reason as
+            # the guard above: a persisting dislocation whose chain completed
+            # recently re-triggers every cycle, and re-buying the gate call
+            # plus the whole analysis chain each time is the idle spend the
+            # ledger measured. The detector event above is still recorded -
+            # observation is free - only the paid chain waits.
             continue
 
         # A fresh heartbeat immediately before *each* judgment-gate call,

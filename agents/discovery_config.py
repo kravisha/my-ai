@@ -143,6 +143,22 @@ ANOMALY_SPEC = {
 # securities in the same cycle, see agents/explorer.py's classification).
 ANALYSIS_RECENCY_WINDOW_SECONDS = float(os.environ.get("FI_ANALYSIS_RECENCY_WINDOW_SECONDS", "300"))
 
+# Minimum spacing, per security, between the paid analysis chains that
+# ROUTINE observation may originate (Speculator's social loop, Explorer's IV
+# surface loop) - docs/SPEC_RECONCILIATION.md §58. Deliberately a separate,
+# much longer window than ANALYSIS_RECENCY_WINDOW_SECONDS above: that one
+# deduplicates re-reads of a static mission world (a chain that never
+# changes deserves one analysis, checked at mission cadence); this one
+# bounds *attention* on live synthetic streams that never stop producing.
+# Without it, each security's loop re-originates the moment its previous
+# chain completes, and the spend ledger measured what that costs: ~500k
+# tokens across 106 calls in about an hour of idle operation (§57) -
+# ~$1.50/hour of judgment re-purchased on statistically similar evidence. At
+# this default the routine ceiling is one chain per security per hour. A
+# convention to be recalibrated, not a measurement of the right attention
+# rate - disclosed per TIMING_CONSTANTS.md discipline.
+ORIGINATION_COOLDOWN_SECONDS = float(os.environ.get("FI_ORIGINATION_COOLDOWN_SECONDS", "3600"))
+
 # Per-security social narratives the synthetic stream generates under - ground
 # truth the system is never told, exactly like MARKET_REGIME above. Set as
 # comma-separated security:narrative pairs, e.g.

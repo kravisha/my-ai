@@ -288,6 +288,16 @@ def _speculator_work(
 
         if fi_db.has_open_cross_check(conn, identity, security):
             continue
+        # The origination cooldown (SPEC_RECONCILIATION §58): a security whose
+        # analysis chain completed recently is not re-originated on routinely
+        # similar evidence - the synthetic stream clears the confidence bar
+        # nearly every cycle, so without this the loop re-purchases the whole
+        # cross-check -> stance-read -> report -> Analysis chain the moment
+        # the previous one finishes. Evidence recording and case enrichment
+        # above are deliberately NOT gated: observing is free and cases stay
+        # current; it is the paid judgment chain that waits its turn.
+        if fi_db.list_recent_analysis_results(conn, security, config.ORIGINATION_COOLDOWN_SECONDS):
+            continue
 
         # Speculator originates too (§14: "Speculator may originate a lead from
         # contextual evidence and ask Explorer for quantitative corroboration").

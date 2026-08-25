@@ -124,6 +124,15 @@ that changes requirements, and on picking the project back up). Its first run fo
 known vulnerabilities in the venv's own pip (25.0.1 → 26.2.1); the environment now scans clean.
 Upgrades to CI enforcement when CI exists.
 
+### TQ-11 — Origination cooldown on the idle loops
+
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §58 · owner-directed 2026-08-25**
+
+The idle organization spent ~500k tokens/hour re-purchasing judgment chains the moment each one
+completed (§57's measured fact). `ORIGINATION_COOLDOWN_SECONDS` (default one hour per security,
+env-tunable) now gates all three origination points; observation and answering stay free. Measured
+after: zero steady-state spend, ceiling ~one chain per security per hour.
+
 ### TQ-10 — Cost circuit breaker on the model provider
 
 **NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §52**

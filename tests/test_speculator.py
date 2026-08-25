@@ -86,6 +86,43 @@ def test_speculator_work_files_report_when_confidence_clears_threshold(conn):
     assert json.loads(report["evidence_ids"]) == [1]
 
 
+def _record_recent_analysis(conn, security):
+    """A completed analysis on this security, moments ago - what the
+    origination cooldown (SPEC_RECONCILIATION §58) reads."""
+    report_id = fi_db.enqueue_report(conn, "explorer-1", "T0", "explorer", security)
+    fi_db.record_analysis_result(
+        conn, "analysis-1", "T0", report_id, security,
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+
+
+def test_speculator_origination_waits_out_the_cooldown(conn):
+    """§58: a security whose paid analysis chain completed recently is not
+    re-originated on routinely similar evidence, however loudly the stream
+    clears the confidence bar - but observation stays free: the evidence is
+    still recorded."""
+    _record_recent_analysis(conn, "SYN1")
+    provider = FakeProvider({"SYN1": [[post("large block trade just printed", 0.9)]]})
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {})
+
+    assert len(fi_db.list_evidence_items(conn, [1])) == 1  # observed, recorded
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []  # not re-bought
+
+
+def test_speculator_cooldown_zero_disables_the_guard(conn, monkeypatch):
+    """FI_ORIGINATION_COOLDOWN_SECONDS=0 means no cooldown at all - the
+    strict recency comparison (a zero-second window matches nothing) makes
+    the override behave as documented rather than suppressing forever."""
+    monkeypatch.setattr("agents.discovery_config.ORIGINATION_COOLDOWN_SECONDS", 0.0)
+    _record_recent_analysis(conn, "SYN1")
+    provider = FakeProvider({"SYN1": [[post("large block trade just printed", 0.9)]]})
+
+    _speculator_work(conn, "speculator-1", "T0", provider, {})
+
+    assert len(conn.fetchall("SELECT * FROM cross_check_requests")) == 1
+
+
 def test_speculator_work_no_posts_is_a_noop(conn):
     provider = FakeProvider({"SYN1": [[]]})
     _speculator_work(conn, "speculator-1", "2026-01-01T00:00:00+00:00", provider, {})

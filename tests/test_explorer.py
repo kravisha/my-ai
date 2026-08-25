@@ -147,6 +147,29 @@ def test_explorer_work_skips_judgment_call_while_report_pending(conn, monkeypatc
     assert fi_db.get_detector_event(conn, 2) is not None
 
 
+def test_explorer_work_origination_cooldown_skips_the_gate_entirely(conn, monkeypatch):
+    """§58: a persisting dislocation on a security whose analysis chain
+    completed recently does not re-buy the judgment gate, let alone the
+    chain behind it - checked before the gate for the same reason the
+    pending-report guard is. The detector event is still recorded:
+    observation is free, only the paid chain waits."""
+    monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
+    call_model = MagicMock(return_value=judgment_response(True))
+    monkeypatch.setattr("agents.explorer.call_reasoning_model", call_model)
+    report_id = fi_db.enqueue_report(conn, "someone-else", "T0", "explorer", "SYN1")
+    fi_db.record_analysis_result(
+        conn, "analysis-1", "T0", report_id, "SYN1",
+        thesis="t", evidence_summary="e", confidence=0.5, uncertainty="u",
+    )
+    provider = SyntheticMarketDataProvider(seed=42, anomalies={"SYN1": {}})
+
+    _explorer_work(conn, "explorer-1", "2026-01-01T00:00:00+00:00", provider)
+
+    assert call_model.call_count == 0
+    assert conn.fetchall("SELECT * FROM cross_check_requests") == []
+    assert fi_db.get_detector_event(conn, 1) is not None
+
+
 def test_explorer_work_malformed_judgment_response_fails_closed(conn, monkeypatch):
     monkeypatch.setattr("agents.discovery_config.PEER_GROUP_SECURITIES", ["SYN1"])
     monkeypatch.setattr("agents.explorer.call_reasoning_model", MagicMock(return_value=FakeResponse([FakeBlock("text", text="not json")])))
