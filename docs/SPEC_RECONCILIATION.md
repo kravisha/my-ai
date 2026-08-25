@@ -6295,3 +6295,78 @@ not report them back), and §5.2's voice-interaction state — an interrupted
 question's context. Both are honest gaps rather than oversights; the second
 belongs with TQ-32's voice work, where the state it would restore actually
 exists.
+
+---
+
+## §84 — Language that steers, not only answers (2026-08-25)
+
+TQ-32, addendum 40 Phase B. §10 states both the requirement and the
+principle: the COO "interprets the request, queries the same underlying
+organizational data, **changes the visual focus**, and answers
+conversationally... Natural language is not a separate reporting system. It is
+another control surface over the same source of truth."
+
+The answering half shipped in §77. This is the steering half.
+
+### Deterministic first, model second — and not mainly for cost
+
+§11's own control examples are the kind a model should never be asked to
+handle: "show that tab" has exactly one meaning. `backend/view_intents.py`
+matches those directly and returns a directive; anything it does not
+recognise *with certainty* falls through to the model untouched.
+
+Latency and tokens are the obvious argument, and the weaker one. The real
+argument is that a matcher is **testable**: every phrase that can move the
+operator's screen is a list somebody can read, and thirty tests pin exactly
+which phrases act and which do not. A prompt cannot be audited that way.
+
+Measured end to end: `show me the chatterbox` returns a directive and a
+confirmation with no model call at all.
+
+### Certainty is the bar, because this moves the screen
+
+`interpret` returns None whenever it is not sure, and None is the safe
+direction. Two desks named at once ("show me finance and alerts") falls
+through. A sentence *about* a desk ("the chatterbox showed a silent
+conversation earlier") is not a jump to it — the bare-name shortcut is bounded
+to short utterances for exactly that reason.
+
+The asymmetry is deliberate: swallowing a question replaces an answer with a
+tab change, which is the worst possible trade, while falling through merely
+costs a model call.
+
+### Two strengths, because §10 asks for both halves
+
+`interpret` is strict and *suppresses* the model. `followed_by_view` is looser
+and never does — it only focuses the display while the prose arrives, so
+"what is happening in the chatterbox?" opens the desk *and* gets answered. A
+wrong hint costs a tab change during an answer that still comes; a wrong
+`interpret` would lose the question.
+
+### Nothing here writes
+
+Every directive changes what the operator is looking at and nothing else — no
+lifecycle, no spending, no external effect. That is why none of them ask for
+confirmation: §11's confirmation rule is for consequential actions, and
+looking at a tab is not one. §11's "issue tasks in outcome language" and §12's
+intent model stay deferred, because they need an authorization story that does
+not exist (§81).
+
+A test asserts every tab the console renders is steerable, so a desk cannot be
+added that the COO has no way to open — which would quietly reintroduce the
+mouse §11 says should never be required.
+
+### Verified against the running app
+
+Spoken through the same endpoint voice uses: `show me the chatterbox` →
+Chatterbox; `open finance` → Finance; `go back` → Chatterbox again; `pause the
+feed` → following off. Thirty new tests (1927 passing).
+
+### What Phase B still owes
+
+"Zoom in", "compare these", and spotlighting a detail are presentation
+choreography rather than navigation, and belong with TQ-33 where the pointer
+and panel machinery lives. §5.2's voice-interaction state — an interrupted
+question's context, restored on wake — is now buildable and was correctly
+deferred out of TQ-31, since the state it would restore only exists once voice
+does something worth resuming.

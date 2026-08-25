@@ -464,7 +464,10 @@ persist declarative state, reconstruct transient resources from it.
 
 ### TQ-32 — Voice and natural language as control surfaces over the views
 
-**NEED (GREEN) · QUEUED · depends on TQ-30 · addendum 40 §10, §11 · `SPEC_RECONCILIATION.md` §81**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §84.** View commands are matched
+deterministically and act with no model call (`backend/view_intents.py`); anything not recognised
+with certainty falls through to the COO untouched, because swallowing a question would replace an
+answer with a tab change. Questions plainly about one desk focus it *and* get answered.
 
 Phase B. Much of this exists: the COO chat answers from real state (§77), and barge-in already
 stops stream, voice and microphone together. What is missing is the *control* half — 40 §11's

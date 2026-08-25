@@ -241,7 +241,9 @@ const clock=(ts)=>(ts||"").slice(11,19)||"--:--:--";
 const who=(e)=>e.source_agent||e.source_engine||e.source_department||"system";
 const empty=(t)=>`<div class="empty">${esc(t)}</div>`;
 
+let previousTab = null;
 function selectTab(name){
+  if (S.tab && S.tab !== name) previousTab = S.tab;
   // One path for restoring a tab and for clicking one, so a resumed workspace
   // cannot reach a state a click could never produce.
   S.tab = name;
@@ -403,6 +405,39 @@ function renderParliament(d){
     `${d.filed_entries} entr${d.filed_entries===1?"y":"ies"} filed to date — see Strategy.</div>`);
 }
 
+
+
+/* ---- view directives (addendum 40 §10/§11) --------------------------------
+   The COO steering the display. Every directive here changes what the
+   operator is looking at and nothing else - no writes, no lifecycle, no
+   spending - which is why none of them ask for confirmation. */
+function resetFeed(){ S.seen=0; S.printed=0; $("feed").innerHTML=""; pollFeed(); }
+
+function applyDirective(d){
+  if (!d || !d.action) return;
+  switch (d.action){
+    case "show_view":
+      if (d.view) selectTab(d.view);
+      break;
+    case "back":
+      if (previousTab) selectTab(previousTab);
+      break;
+    case "filter_attention":
+      if (!S.attention){ $("attention").click(); }
+      break;
+    case "clear_filters":
+      if (S.attention){ $("attention").click(); }
+      if (S.source){ $("source").value = ""; S.source = ""; resetFeed(); }
+      break;
+    case "pause":
+      if (S.follow){ $("follow").click(); }
+      break;
+    case "follow":
+      if (!S.follow){ $("follow").click(); }
+      break;
+  }
+  scheduleSave();
+}
 
 /* ---------------- the living workspace (addendum 40 §5) ------------------
    Continuous checkpointing, never a Save button (§5.1). A crash gets no
@@ -672,7 +707,9 @@ async function ask(question){
       for(const part of parts){
         const line=part.replace(/^data: /,"").trim(); if(!line)continue;
         let ev; try{ev=JSON.parse(line);}catch{continue;}
-        if(ev.type==="text"){
+        if(ev.type==="directive"){
+          applyDirective(ev.directive);
+        }else if(ev.type==="text"){
           full+=ev.text; body.textContent=full;
           $("transcript").scrollTop=$("transcript").scrollHeight;
           // Speak sentence by sentence as it arrives, so the voice keeps pace
@@ -743,10 +780,9 @@ if(SR){
   loadVoices();
   $("lang").addEventListener("change",loadVoices);
 
-  const reset=()=>{S.seen=0;S.printed=0;$("feed").innerHTML="";pollFeed();};
-  $("source").addEventListener("change",(e)=>{S.source=e.target.value;reset();scheduleSave();});
+  $("source").addEventListener("change",(e)=>{S.source=e.target.value;resetFeed();scheduleSave();});
   $("attention").addEventListener("click",()=>{S.attention=!S.attention;
-    $("attention").classList.toggle("on",S.attention);reset();scheduleSave();});
+    $("attention").classList.toggle("on",S.attention);resetFeed();scheduleSave();});
   $("follow").addEventListener("click",()=>{S.follow=!S.follow;
     $("follow").classList.toggle("on",S.follow);$("follow").textContent=S.follow?"Following":"Paused";
     scheduleSave();});

@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, workspace
+from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -779,6 +779,28 @@ async def console_chat(request: CooChatRequest):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Ask something.")
 
+    # A view command is answered here, deterministically, without the model
+    # (§84). "show me the chatterbox" has one meaning; spending a model call
+    # and a second of latency on it would be worse in every dimension, and a
+    # matcher is testable in a way a prompt is not. Anything not recognised
+    # with certainty falls through to the model untouched.
+    directive = view_intents.interpret(request.question)
+    if directive is not None:
+        await _console_read(
+            lambda conn: status_events.publish(
+                conn, "operator_command",
+                f"Operator directed the view: {request.question[:180]}",
+                department="coo", status=status_events.STATUS_COMPLETED),
+            None)
+
+        async def command_events():
+            yield _sse({"type": "directive", "directive": directive})
+            yield _sse({"type": "text", "text": directive["say"]})
+            yield _sse({"type": "done"})
+
+        return StreamingResponse(command_events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     # Read the world on a worker thread with its own connection (§78), not
     # on the loop - the digest is several queries and the loop must stay free.
     prepared = await _console_read(
@@ -798,8 +820,18 @@ async def console_chat(request: CooChatRequest):
             department="coo", status=status_events.STATUS_RUNNING),
         None)
 
+    # §10 asks for both halves - "changes the visual focus, and answers
+    # conversationally". A question plainly about one desk focuses it while
+    # the prose arrives; a wrong guess costs a tab change during an answer
+    # that still comes, which is why this may be looser than `interpret`.
+    focus = view_intents.followed_by_view(request.question)
+
     async def events():
         from gateway.streaming import iterate_in_thread
+
+        if focus:
+            yield _sse({"type": "directive",
+                        "directive": {"action": view_intents.ACTION_SHOW_VIEW, "view": focus}})
 
         try:
             async for chunk in iterate_in_thread(
