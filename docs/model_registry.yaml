@@ -1,0 +1,161 @@
+# Machine-readable Model Registry and Model Requirement Profiles, as IMPLEMENTED.
+#
+# Addendum 35 §3-§5 under addendum 30 §12's metadata-before-code doctrine
+# (TASK_QUEUE TQ-16, SPEC_RECONCILIATION §64). This file describes the model
+# reality that exists and runs - one configured engine behind one provider
+# interface - not the multi-model target addendum 35 describes. Like
+# docs/organization.yaml, it is an assertion, not a wish list:
+# tests/test_model_registry.py checks every claim here against the code, and a
+# model consumer added to the code without a profile here fails the suite
+# until somebody declares it on purpose.
+#
+# Two disciplines this file lives under:
+#
+# - Addendum 35 §2: every mapping is a PROVISIONAL starting hypothesis. No
+#   provider or model earns permanent status because it was the first default;
+#   `provisional: true` is required on every model and every profile until a
+#   benchmark says otherwise, and the test enforces it.
+# - Empirical or absent (35 §3: "registry values should be empirical whenever
+#   possible"): fields nobody has measured are listed under `unmeasured` with
+#   no number at all, never filled from a vendor spec sheet - a spec-sheet
+#   figure would be somebody else's claim wearing this file's authority. The
+#   `observed` block carries only what this system has actually measured, each
+#   entry naming where the measurement is recorded.
+#
+# `routing: none_single_model` is a pinned decision, not an omission: a
+# routing engine with one route is machinery without a decision to make (§60
+# disposition 2). The test asserts exactly one configured model WHILE that
+# marker stands - registering a second model fails the suite until routing is
+# revisited on purpose, which turns "we should think about routing someday"
+# into a recorded decision with a tripwire.
+
+version: 1
+routing: none_single_model
+
+models:
+  - id: claude-sonnet-5
+    provider: anthropic
+    status: configured
+    provisional: true
+    # The one place the vendor is constructed: app/model_provider.py's
+    # AnthropicProvider, wrapped in the cost breaker at
+    # app/model_gateway.default_provider. AGENT != MODEL holds structurally -
+    # callers walk plain dictionaries, never SDK types (addendum 16 §24).
+    interface: app/model_provider.py::AnthropicProvider
+    deployment: cloud
+    tool_support: true
+    streaming: true
+    # The budget the breaker enforces per UTC day (app/model_budget.py) -
+    # the only cost facts this deployment has, since spend is metered in
+    # tokens and calls, not currency (§52's recorded deferral).
+    budget:
+      daily_tokens: 500000
+      daily_calls: 2000
+    observed:
+      - fact: idle organization burned ~500k tokens/hour before the origination cooldown
+        recorded_in: SPEC_RECONCILIATION.md §57 (measured 2026-08-25)
+      - fact: zero steady-state idle spend after the cooldown; ceiling one paid chain per security per hour
+        recorded_in: SPEC_RECONCILIATION.md §58
+      - fact: Analysis deep-reasoning pass takes ~2 minutes per call under the 3-pass budget
+        recorded_in: SPEC_RECONCILIATION.md §42
+      - fact: UQI answer latency through this model, analysis role, 5.8/19.4/24.0s over three samples
+        recorded_in: docs/TIMING_CONSTANTS.md
+    unmeasured:
+      - context_window
+      - coding_score
+      - reasoning_score
+      - language_score
+      - structured_output_reliability
+      - hallucination_rate
+      - rate_limits
+      - availability_history
+    benchmark_date: null
+
+# One profile per code location that reaches the model. `code_ref` is the
+# consuming module (the test scans for undeclared consumers); `role` is the
+# fi_db.ROLE_CHARTERS identity where the consumer is an organizational agent,
+# null where it is a surface or a shared capability. `call_shape` binds each
+# declared call to the constant in the code that sizes it, so a resized call
+# fails here until the profile is updated - the same drift guard
+# TIMING_CONSTANTS.md applies to rates.
+profiles:
+  - agent_class: analysis
+    role: analysis
+    code_ref: agents/analysis.py
+    task_type: deep multi-source reasoning, thesis challenge, report grading
+    criticality: high
+    latency_tolerance: minutes (measured ~2min/call, §42)
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape:
+      - purpose: deep analysis pass
+        max_tokens: 4096
+        source: ANALYSIS_MAX_TOKENS
+      - purpose: challenge pass
+        max_tokens: 1024
+        source: CHALLENGE_MAX_TOKENS
+
+  - agent_class: explorer
+    role: explorer
+    code_ref: agents/explorer.py
+    task_type: lightweight coherence gate over a deterministic detector's candidate
+    criticality: low
+    latency_tolerance: seconds
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape:
+      - purpose: judgment gate
+        max_tokens: 300
+        source: JUDGMENT_MAX_TOKENS
+
+  - agent_class: speculator
+    role: speculator
+    code_ref: agents/speculator.py
+    task_type: stance reading over social chatter
+    criticality: low
+    latency_tolerance: seconds
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape:
+      - purpose: stance read
+        max_tokens: 300
+        source: STANCE_MAX_TOKENS
+
+  - agent_class: introspection
+    role: null   # a capability every agent process carries (UQI answers), not a role of its own
+    code_ref: agents/introspection.py
+    task_type: agent self-awareness answers to Universal Query Interface questions
+    criticality: medium
+    latency_tolerance: seconds (UQI_TIMEOUT_SECONDS is 60s; worst observed 24s)
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape:
+      - purpose: UQI answer
+        max_tokens: 500
+        source: UQI_MAX_TOKENS
+
+  - agent_class: backend_chat
+    role: null   # the /chat surface, not an agent
+    code_ref: backend/main.py
+    task_type: operator conversation with tool dispatch and consent pauses
+    criticality: high
+    latency_tolerance: interactive
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape: []   # sized per call at the surface, no module constant to bind
+
+  - agent_class: gateway_chat
+    role: null   # the Gateway's streaming Jarvis surface, not an agent
+    code_ref: gateway/main.py
+    task_type: streaming super-user conversation
+    criticality: high
+    latency_tolerance: interactive (streaming; addendum 16 §9)
+    preferred_model: claude-sonnet-5
+    fallback_models: []
+    provisional: true
+    call_shape: []   # sized per call at the surface, no module constant to bind

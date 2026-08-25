@@ -1,6 +1,6 @@
 # Design Documents
 
-Everything governing this system's design, in one place. Forty-four files here, accumulated across
+Everything governing this system's design, in one place. Forty-five files here, accumulated across
 several design sessions, and five more held privately; this index says what each one is, which govern
 which, and what order to read them in.
 
@@ -58,6 +58,7 @@ A distinction worth knowing before editing anything.
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Where conflicts *between* specifications are resolved, and where owner decisions are recorded. Also lists what was declined, and why. |
 | [`TIMING_CONSTANTS.md`](TIMING_CONSTANTS.md) | Every constant whose correctness depends on a rate, what that rate is, and whether it has been *measured*. Three real defects were found this way. |
 | [`organization.yaml`](organization.yaml) | The organization as *implemented*, machine-readable. `tests/test_organization_model.py` asserts every claim in it against the code, so a role named here but not built — or built but not named — fails the suite. |
+| [`model_registry.yaml`](model_registry.yaml) | Addendum 35's Model Registry and Requirement Profiles as *implemented*: the one configured engine, its measured facts (unmeasured fields carry no numbers), and a profile per model consumer. `tests/test_model_registry.py` asserts every claim against the code, and the pinned single-model routing decision trips the suite the day a second model is registered. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | The Strategic Priority Register in paper form — the prioritized queue of work derived from the specifications, with Need/Want classification and status. Realizes addendum 31 §3 and addendum 32 §12 until a machine-readable register exists. |
 | [`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) | What to actually do, in order, on suspected compromise: preserve evidence, stop the organization, revoke credentials, assess, restore, review. Written for this deployment's real shape, with its limits stated. |
 | [`GOVERNANCE.md`](GOVERNANCE.md) | Which governing documents are held privately, why that is a split rather than an omission, and what remains public. |

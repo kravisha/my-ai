@@ -4686,3 +4686,64 @@ Addendum 34 §6's fuller trial vocabulary — provider outages, delayed and
 missing data, agent unavailability, deceptive information, collaboration
 events — and its stages 3–9. Each is its own increment with its own
 consumer; the state-transition shape they all need now exists.
+
+---
+
+## §64 — The Model Registry arrives as metadata, with a tripwire instead of a router (2026-08-25)
+
+TQ-16, built exactly at the altitude §60's disposition 2 prescribed:
+addendum 35's Model Registry and Model Requirement Profiles as *data* —
+`docs/model_registry.yaml`, under `organization.yaml`'s discipline — with
+no routing engine, because a routing engine with one route is machinery
+without a decision to make.
+
+### One honest row
+
+The registry holds the model reality that runs: `claude-sonnet-5` behind
+`AnthropicProvider`, cloud, tools, streaming, the §52 breaker's daily
+budget as its only cost facts, and an `observed` block carrying exactly
+what this system has measured (§57's idle burn, §58's post-cooldown zero,
+§42's ~2min deep call, TIMING_CONSTANTS' UQI latencies), each entry
+naming where the measurement lives. Everything unmeasured — context
+window, capability scores, hallucination rate, rate limits — is *listed
+as unmeasured and carries no number*, and a test enforces that: a
+spec-sheet figure would be the vendor's claim wearing this file's
+authority, which is exactly the empirical discipline 35 §3 asks for read
+strictly.
+
+### Six profiles, one per real consumer
+
+Not per agent class in the abstract — per code location that actually
+reaches the model: analysis (deep reasoning + challenge), explorer (the
+judgment gate), speculator (stance reads), introspection (UQI answers —
+a capability, not a role), and the two chat surfaces. Each carries task
+type, criticality, latency tolerance, the preferred model, an honestly
+empty fallback list, and a `call_shape` that binds every declared call to
+the constant that sizes it (`ANALYSIS_MAX_TOKENS` = 4096, and so on) —
+the TIMING_CONSTANTS drift guard applied to call sizing.
+
+### The two teeth
+
+What makes this a registry rather than a document: **the consumer scan**
+— the test greps every source file for calls into the model interface
+and requires the consumer set to equal the declared profile set, so a
+new model consumer fails the suite until somebody writes down what it
+needs from a model (organization.yaml's known_gap discipline, applied to
+model consumption); and **the routing tripwire** — `routing:
+none_single_model` is pinned, the test asserts exactly one configured
+model while it stands, and registering a second model therefore FAILS
+the suite with a message pointing here. 35 §7's router, fallback chains,
+and the §10 migration lifecycle activate through that deliberate
+revisit, never by drift. 35 §2 is likewise enforced rather than stated:
+every model and profile is `provisional: true`, and the flag comes off
+only when a `benchmark_date` and evidence go on.
+
+### Verified
+
+Eight new tests (1735 passing): parse and shape, the single-model
+reality matching `DEFAULT_MODEL`/`MODEL`/the provider class, budget
+facts matching the breaker's constants, universal provisional flags,
+unmeasured-means-no-number, profiles referencing registered models and
+real ROLE_CHARTERS roles with empty fallbacks, call shapes matching
+their sizing constants by import, and the consumer scan closing over
+agents/, backend/, app/, and gateway/.
