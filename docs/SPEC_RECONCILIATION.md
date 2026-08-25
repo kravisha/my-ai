@@ -5413,3 +5413,118 @@ correction announced; the two declarations pinned equal; an unloadable
 boot configuration failing visibly without raising and without claiming
 any dataset verified; an exhausted name pool warning rather than passing
 quietly; and the §14 gate asserted against the startup source.
+
+---
+
+## §73 — The status event stream: what the system did, on the record (2026-08-25)
+
+TQ-24, the observability spine of Pre-Alpha Milestone 1 and the thing §70
+identified as its real gap — addendum 38's Definition of Done is mostly
+observability, while the persistence it also demands is largely satisfied
+already. `backend/status_events.py`: a durable, filterable, queryable
+record of what the system did, which the COO's live feed renders (38 §4.2),
+its filters slice (§4.4), and its chat will answer from (§4.5).
+
+### The discipline that shapes the whole module: what must NOT be published
+
+Addendum 38 §13 is blunt — "Avoid excessive high-frequency logging. The
+objective is useful observability, not log flooding." So the rule is stated
+once, in the module docstring, and everything follows from it:
+
+**State transitions and narration belong here. Heartbeats do not.**
+
+Agents already heartbeat every second into `agent_registry`, and health
+samples land in `health_metrics`. Copying either into this table would add
+~86,400 rows per agent per day, drown every real event, and duplicate two
+working mechanisms — the two-models error with flooding on top. A component
+that is *still* healthy has nothing to narrate; one that *becomes*
+unhealthy has an event. Getting this wrong is how observability projects
+produce a table nobody can read.
+
+### Filters are derived, never enumerated
+
+38 §4.4 lists the filters Milestone 1 needs and then states the
+requirement that actually matters: "Architecture should allow new
+departments to appear without rewriting the UI." A hardcoded filter list
+fails that on the day a department is added. So `sources()` returns what
+the stream *actually contains* — with per-source event and attention counts
+— and a new department appears in the UI because it published, not because
+someone edited a list. Pinned by a test that publishes from a department
+nobody enumerated and finds it in the filter list.
+
+The source filter matches any of the three source columns, because §4.4's
+list mixes departments, engines and agents in one control and an operator
+picking "Explorer" does not care which column it lives in.
+
+### Two different questions on the same data
+
+`recent()` answers "what happened" — the scrolling narration §4.2
+describes. `current_status()` answers "where does everything stand" by
+taking the latest event per source, which is what §4.5's "which departments
+are idle?" and "what is waiting for work?" actually ask. A feed cannot
+answer the second question without the reader doing the work by eye, and an
+operator asking the COO should not have to.
+
+`failures()` answers "what failed during startup?" directly, ERROR and
+CRITICAL only: a WARNING is worth seeing but is not a failure, and
+conflating them makes the question useless.
+
+### Fail-closed vocabulary, and no events from nowhere
+
+Unknown severity or status raises rather than storing — a stream containing
+severities nobody defined cannot be filtered by severity, which is most of
+what a stream is for. `publish_many` refuses unknown *field names* too: a
+typo'd `sevrity` silently becoming INFO would be a stream that lies
+quietly.
+
+And every event must name at least one source. An unattributed event would
+sit in the table and be invisible in every filtered view — 38 §12's
+"failed component silently disappearing", wearing a different hat.
+
+Fields a publisher cannot honestly fill stay NULL rather than padded: an
+engine is not an agent, startup is not a task. `event_id` is the row id,
+because a generated uuid would be a second identity for a row that already
+has one.
+
+### The Metadata Engine becomes its first publisher
+
+§72's engine now publishes its whole startup narration under **one
+correlation id per pass**, so a startup is traceable as a unit rather than
+as nine unrelated lines. Recording is deliberately best-effort and happens
+last: a stream that was down must not take metadata startup with it, the
+failure is printed, and the engine returns its events either way so the
+printed feed is unaffected. Losing the story is bad; losing the startup
+because the story could not be filed is worse.
+
+### Bounded, because durable is not the same as forever
+
+§4.6 asks for enough history for recent queries, debugging, restart
+continuity and post-mortem, and explicitly says a full enterprise event
+store is not required. So: a SQLite table with a retention cap
+(`STATUS_EVENT_RETENTION`, default 20,000 — a disclosed convention, not a
+measurement), pruned oldest-first in the shape `continuity.prune_backups`
+already established, with the same fail-loud parsing every tunable here
+uses.
+
+### Verified
+
+Seventeen new tests (1806 passing): all twelve §4.3 fields round-tripped;
+unfilled fields staying NULL; fail-closed severity, status and field names;
+events from nowhere refused; newest-first limited feed; the source filter
+matching any column; the Errors/Warnings filter; **the filter list derived
+from the stream, including a department nobody enumerated**; `failures()`
+excluding warnings; `current_status()` returning the latest per source;
+correlation tracing one pass; history surviving a new connection (§4.6's
+restart continuity); pruning oldest-first and bounded; retention failing
+loud; and the Metadata Engine's narration landing in the stream under one
+correlation id, with a *failed* metadata pass queryable by exactly the
+question an operator would ask.
+
+### What TQ-24 deliberately leaves
+
+Nothing renders this yet — that is TQ-26's interface, still blocked on the
+owner's decision about having two operator front doors (§70 disposition 4).
+Nothing else publishes yet either: the COO, Reference Data Engine and the
+training pipeline become publishers as Milestone 1 proceeds, and each is
+a small edit rather than a new mechanism, which was the point of building
+the spine first.

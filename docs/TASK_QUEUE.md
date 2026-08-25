@@ -330,7 +330,7 @@ is not an asset class exists.
 
 ### TQ-24 — The status event stream (the observability spine)
 
-**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §70**
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §73**
 
 Source: addendum 38 §4.3, §4.6, §7, §12, §13. The largest genuinely new thing these specs ask
 for, and what every other Milestone-1 item displays: structured operational events carrying

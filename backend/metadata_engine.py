@@ -46,12 +46,12 @@ state that can drift.
 ## Events
 
 39 §12 requires this engine to *publish* — starting, per-dataset verification,
-a summary, and `METADATA_READY`. The durable, filterable status stream those
-events belong in is TQ-24 and does not exist yet, so `run()` returns them as
-structured data and the caller prints them (the same thing
-`run_reference_engine`'s caller already does with its readiness line). The
-event shape here is deliberately a subset of addendum 38 §4.3's schema so
-TQ-24 adopts these events rather than replacing them.
+a summary, and `METADATA_READY`. It does both things a publisher should: the
+events go to the durable stream (`backend/status_events.py`, TQ-24/§73) under
+one correlation id per startup pass, and they are also *returned*, so the
+caller can print the feed without a second query and so a stream failure
+cannot cost the engine its narration. See `_publish` for why recording is
+best-effort while metadata startup is not.
 """
 
 from __future__ import annotations
@@ -117,6 +117,38 @@ def _event(event_type: str, message: str, *, severity: str = SEVERITY_INFO,
     if dataset is not None:
         event["dataset"] = dataset
     return event
+
+
+def _publish(conn: Database, events: list[dict]) -> None:
+    """Hand this run's narration to the durable stream (TQ-24/§73).
+
+    Deliberately last, not per-event: the engine's job is metadata, and a
+    stream that was down must not take metadata startup with it. A failure to
+    record the narration is reported and swallowed - losing the story is bad,
+    losing the startup because the story could not be filed is worse, and 38
+    §12 asks that a failure be visible rather than fatal.
+
+    The engine keeps returning its events either way, so the caller's printed
+    feed is unaffected by whether the store accepted them."""
+    from backend import status_events
+
+    try:
+        status_events.publish_many(conn, [
+            {
+                "event_type": event["event_type"],
+                "message": event["message"],
+                "severity": event["severity"],
+                "status": event["status"],
+                "lifecycle_stage": event.get("lifecycle_stage"),
+                "engine": event["source_engine"],
+                "timestamp": event["timestamp"],
+                "correlation_id": events[0]["timestamp"],  # one startup pass, one trace
+            }
+            for event in events
+        ])
+    except Exception as exc:  # noqa: BLE001 - narration must not break the engine
+        print(f"[metadata] status stream unavailable, events not recorded: "
+              f"{exc.__class__.__name__}: {exc}")
 
 
 def _verify_agent_names(conn: Database, events: list[dict]) -> int:
@@ -253,6 +285,7 @@ def run(conn: Database, config: BootConfig | None = None) -> dict:
                 STATE_FAILED, f"Boot configuration could not be loaded: {exc}",
                 severity=SEVERITY_ERROR, status=STATUS_FAILED,
             ))
+            _publish(conn, events)
             return {"ready": False, "state": STATE_FAILED, "counts": {}, "events": events}
 
     events.append(_event(
@@ -279,6 +312,7 @@ def run(conn: Database, config: BootConfig | None = None) -> dict:
                          lifecycle_stage=config.lifecycle_stage))
     events.append(_event(STATE_IDLE, "Metadata Engine idle", status=STATUS_IDLE))
 
+    _publish(conn, events)
     return {"ready": True, "state": STATE_IDLE, "counts": counts, "events": events,
             "lifecycle_stage": config.lifecycle_stage}
 

@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, strategy, triage
+from backend import competency, compliance, identifiers, iteration, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage
 from backend import db as db_module
 from backend.db import Database
 
@@ -1356,6 +1356,11 @@ def init_schema(conn: Database) -> None:
     # §54) owns strategic_register the same way - the organization's proposals,
     # distinct from the development queue in docs/TASK_QUEUE.md.
     register.init_schema(conn)
+    # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
+    # the durable narration the COO's live feed renders and its chat answers
+    # from. Created here for the same reason as every module above - this
+    # module must not import fi_db back.
+    conn.executescript(status_events.SCHEMA)
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1476,11 +1481,12 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     strategies did; reference_data.SCHEMA joined it the day the Reference
     Data Engine's tables did; missions.SCHEMA joined it the day mission
     control's backend registry did; register.SCHEMA joined it the day the
-    Strategic Priority Register did."""
+    Strategic Priority Register did; status_events.SCHEMA joined it the day
+    the status event stream did."""
     applied = _reconcile_triggers(conn)
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
-         reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA)
+         reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
