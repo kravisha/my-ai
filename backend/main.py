@@ -482,7 +482,10 @@ def console_page():
     runs in its own process on its own port so it can outlive the
     organization's absence (16 §22/§23); a console whose entire subject is the
     organization has no reason to live over there."""
-    return FileResponse(CONSOLE_DIR / "index.html", media_type="text/html")
+    # The charset is declared rather than left to be guessed: the page carries
+    # Tamil script in its language picker, and a header that does not say so
+    # leaves the encoding to whatever the client falls back to.
+    return FileResponse(CONSOLE_DIR / "index.html", media_type="text/html; charset=utf-8")
 
 
 async def _console_read(work, fallback):

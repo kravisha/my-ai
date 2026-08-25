@@ -73,7 +73,10 @@ def test_console_page_is_served():
     response = TestClient(backend_main.app).get("/console")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "Server Console" in response.text
+    # Declared, not guessed - the page carries Tamil script (addendum 41's
+    # studio is the same document that holds the language picker).
+    assert "charset=utf-8" in response.headers["content-type"].lower()
+    assert "Kumbhakarnan" in response.text
 
 
 def test_page_is_self_contained():
