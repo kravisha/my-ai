@@ -638,8 +638,10 @@ async def conversation_socket(
     # Addendum 43 §16: a client meets a named representative rather than a
     # search box with manners. The greeting is recorded state, not a phrase -
     # a returning client is greeted as one because `meetings` says so.
+    agent_name = None
     if role == roles.ROLE_CLIENT:
         agent = client_agent.greet(conn, subject)
+        agent_name = agent["name"]
         ready["agent"] = {
             "name": agent["name"],
             "since": agent["created_at"],
@@ -694,7 +696,8 @@ async def conversation_socket(
         reply = None
         try:
             async for event in iterate_in_thread(
-                lambda: conversation.run_turn(db_path, history, provider, role=role)
+                lambda: conversation.run_turn(db_path, history, provider, role=role,
+                                          agent_name=agent_name)
             ):
                 if event["type"] == "text":
                     said.append(event["text"])

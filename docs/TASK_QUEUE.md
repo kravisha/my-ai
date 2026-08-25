@@ -45,7 +45,13 @@ holds the queue, not the record.
 > **TQ-41** (the clock-comparison sweep, §94) is done — one more bug found, and the rule
 > that came out of it is not the one three fixes in a row suggested.
 >
-> Next: **TQ-40** (the client agent's skills, when there is a real producer behind one). Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
+> **TQ-40** (the client agent's skills, §95) is done — the mechanism, the scope field the
+> mechanism was missing, and two skills declared-and-unbuilt with reasons the agent gives
+> aloud. Both remain genuinely blocked on data, not on effort.
+>
+> Next: nothing is queued at the head. Open: **TQ-07** (consumer-gated), **TQ-20** and
+> **TQ-21** (owner actions), **TQ-28** (the isolation guard), and the deferred animated
+> presenter. Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
 > TQ-28 (the isolation guard).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
@@ -647,7 +653,7 @@ crashed agent crashed.
 
 ### TQ-40 — The client agent's skills
 
-**WANT · QUEUED · owner direction 2026-08-25 · depends on TQ-39**
+**WANT · DONE 2026-08-26 · owner direction 2026-08-25 · `SPEC_RECONCILIATION.md` §95**
 
 The owner's framing: "initially this will be limited to giving info and later this agent will
 have many abilities such as portfolio analysis and trade ideas and many other skills yet to be
@@ -658,10 +664,22 @@ its own entry in `TOOL_CAPABILITY`**, never a widening of what `converse` means.
 keeps a client agent that gained portfolio analysis from silently having gained the ability to
 read the repository — the failure §92 exists to prevent, arriving later by a different route.
 
-Nothing here is buildable until there is a skill with a real producer behind it: portfolio
-analysis needs a portfolio, and trade ideas need something this system is willing to stand
-behind. Both are gated on the exposure preconditions §50 records, and neither may present
-simulated output as real (addendum 25's rule, and the finance desk's).
+**This entry's own premise was wrong and §95 corrects it.** "Portfolio analysis needs a
+portfolio" implied there is none; `app/tools/portfolio.py` has read `data/portfolio.xlsx`
+through a two-layer consent model since long before this was written. The real blocker is that
+there is exactly one such file and it belongs to the *operator* — wiring it to a Gateway client
+would hand an external person somebody else's positions.
+
+That finding added the field §92's mechanism was missing: a capability answers "may this role
+invoke it", not "whose data does it read". Skills now carry a **scope**, and no skill a client
+can invoke may read organization data — checked at import, because a registry mistake is a
+permissions mistake.
+
+Both named skills ship **declared and unbuilt, with specific reasons**, so the agent answers the
+question truthfully instead of improvising. Still genuinely blocked: portfolio analysis needs
+client-owned holdings (a data model, not a wire-up), and trade ideas need output this system is
+willing to stand behind — everything it generates is simulated (addendum 25), and a trade
+suggestion is the most dangerous place to blur that.
 
 Phase D. The Gateway already exists as an authenticated boundary with one Super User; what 40 §13
 adds is *roles* — internal authorized, client/external meeting a named personal agent, and a

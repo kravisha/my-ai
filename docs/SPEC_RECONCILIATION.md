@@ -7354,3 +7354,103 @@ Two, both cheap:
    was misread twice, once by me.
 
 Suite: **2102 passing**, twice.
+
+---
+
+## §95 — The client agent's skills, and the one that turned out not to be blocked for the reason I gave (2026-08-26, TQ-40)
+
+Owner direction, 2026-08-25: *"initially this will be limited to giving info and
+later this agent will have many abilities such as portfolio analysis and trade
+ideas and many other skills yet to be decided."*
+
+### A correction first
+
+TQ-40's queue entry said "portfolio analysis needs a portfolio", implying this
+system has none. **That was wrong.** `app/tools/portfolio.py` reads
+`data/portfolio.xlsx` through a two-layer consent model — permission to touch the
+file, then a separate disposition on forwarding the shareable fields to a model,
+with `account_id` stripped unconditionally as LOCAL_ONLY. A real producer, built
+some time ago, that I did not look for before declaring it absent.
+
+The actual blocker is worse and more interesting: there is exactly **one**
+portfolio file and it belongs to the **operator**. There is no per-client
+holdings concept anywhere. Wiring that producer to a Gateway client would hand an
+external person somebody else's positions — §93's leak arriving by a different
+route, wearing a feature's clothes and with a plausible ticket behind it.
+
+### What that changed about the design
+
+§92 decided the mechanism — each skill is its own capability, never a widening of
+`converse`. The portfolio finding showed §92's model was missing a field.
+
+A capability answers "may this role invoke this?". It cannot answer "**whose
+data does this read?**", and that second question is the one that would have been
+got wrong. So `gateway/skills.py` gives every skill a **scope**, and the
+invariant is checked at import rather than at request time, because a registry
+mistake is a permissions mistake:
+
+> No skill a client can invoke may read organization data.
+
+That is the whole reason the file exists. Everything else in it is bookkeeping.
+
+### Declared-but-unbuilt as a real state
+
+Both named skills are registered with `STATUS_UNBUILT` and a **specific** reason —
+the validator refuses an unbuilt skill whose reason is empty, because "not
+implemented" tells a client nothing they can act on.
+
+This is not a placeholder. It is the same distinction this codebase draws
+everywhere else between "nothing is happening" and "this does not exist yet",
+applied to a conversation. Asked "can you analyse my portfolio?", an agent
+without a registry produces something plausible. With one, it produces the truth.
+
+### The mismatch found on the way
+
+Every Gateway session was handed one `SYSTEM_PROMPT`, and it opens:
+
+> "You are the analysis and specification assistant for Project Jarvis, speaking
+> with the project's Super User."
+
+So a client who met Nadim (§93) was talking to an architecture assistant that
+believed they owned the project. The socket's introduction and the model's
+instructions disagreed, and the model followed the instructions. That has been
+true since the client role existed (§92) and was invisible because nothing had
+held a client conversation yet.
+
+Clients now get their own prompt, and its capability paragraph is **generated
+from the registry** rather than written. A hand-maintained list of abilities is a
+second source of truth about permissions and would have been wrong within one
+increment.
+
+### Verified by asking it
+
+A real client session, real model call. Asked to analyse a portfolio and suggest
+trades:
+
+> "Two things I can't do here, and why: 1. Portfolio analysis — the system
+> doesn't have client-owned holdings yet. There's a portfolio in here, but it's
+> the operator's, not yours. I'd be looking at the wrong data. 2. Trade
+> suggestions — everything this system currently generates in terms of prices and
+> signals is simulated training data… I can't pull it up myself or give you a
+> buy/sell call."
+
+And asked adversarially for the organization's internals:
+
+> "I don't have access to that… I'm not going to guess at names or statuses to
+> fill the gap."
+
+Both are the specified behaviour rather than a hopeful reading of it.
+
+### What remains genuinely blocked
+
+- **Portfolio analysis** needs client-owned holdings — a data model, not a
+  wire-up. The producer exists; the scope does not.
+- **Trade ideas** need output this system is willing to stand behind. Everything
+  it currently generates is simulated (addendum 25), and a trade suggestion is
+  the single most dangerous place to blur that. Also gated on §50's exposure
+  preconditions.
+
+Neither is deferred for want of effort, and both now say so to the client's face
+rather than only in this document.
+
+Suite: **2120 passing**.
