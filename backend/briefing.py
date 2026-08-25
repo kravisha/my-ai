@@ -131,7 +131,7 @@ def _describe_absence(seconds: float | None) -> str | None:
 def _attention(conn: Database, since: str | None) -> list[dict]:
     """What failed. ERROR and CRITICAL only - a WARNING is worth seeing, not
     worth leading with."""
-    failures = status_events.failures(conn, limit=MAX_ITEMS, since=since)
+    failures = status_events.failures(conn, limit=MAX_ITEMS, after=since)
     if not failures:
         return []
     by_source: dict[str, list[dict]] = {}
@@ -160,16 +160,13 @@ def _completed(conn: Database, since: str | None, absence: str | None) -> list[d
     news relative to the last time somebody looked."""
     if since is None:
         return []
-    # Strictly after, not at-or-after. `status_events.recent(since=...)` is
-    # inclusive, which is right for a feed and wrong for this question: an event
-    # bearing exactly the checkpoint's timestamp happened while the operator was
-    # still here, and reporting it would re-announce the same item on every
-    # visit. Windows' clock granularity makes that collision real rather than
-    # theoretical - two calls in the same ~16ms tick get identical timestamps.
-    # Erring toward omitting a borderline item beats erring toward repeating it.
-    done = [event for event in status_events.recent(conn, limit=200, since=since)
-            if event["status"] == status_events.STATUS_COMPLETED
-            and event["timestamp"] > since]
+    # `after` is exclusive, so the boundary is handled at the source rather than
+    # compensated for here (TQ-41, §94). This used to filter `> since` in Python
+    # while the sibling call in `_attention` did not, which meant a failure
+    # stamped exactly at the checkpoint was re-announced on every visit and a
+    # completion was not. One meaning, one place.
+    done = [event for event in status_events.recent(conn, limit=200, after=since)
+            if event["status"] == status_events.STATUS_COMPLETED]
     if not done:
         return []
 

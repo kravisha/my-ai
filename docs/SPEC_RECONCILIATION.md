@@ -7252,3 +7252,105 @@ decided in §92: each skill is its own capability, never a widening of
 `converse`.
 
 Suite: **2098 passing**, twice.
+
+---
+
+## §94 — Every comparison against a clock, audited (2026-08-26, TQ-41)
+
+Three bugs in three days shared a shape (§90's briefing window, §91's heartbeat,
+§93's zero-width spawn window), so the owner asked for a sweep of the rest.
+
+Sixty-three comparisons against a clock or a duration were examined. **One more
+bug, one near-miss avoided, and a rule that is not the one I expected to write.**
+
+### The rule is not "always use strict"
+
+The obvious conclusion from three fixes in a row is that `>=` against a clock is
+wrong. It is not. These comparisons ask two opposite questions, and equality has
+to resolve to whatever a **zero-width window** demands:
+
+| question | shape | zero means | correct at equality |
+|---|---|---|---|
+| did this happen *within* the last N? | `timestamp > now - N` | nothing is recent | **exclusive** |
+| is this *older* than N? | `age >= N` | everything is stale | **inclusive** |
+
+`fi_db.list_stale_active_agents` is the second kind, and its tests pass
+`stale_seconds=0` precisely to mean "treat everything as stale". A blanket
+strictness rule applied across this sweep would have broken it — and broken it
+in the direction of never marking a crashed agent crashed.
+
+So the rule is: **equality must give the answer a zero-width window demands**,
+and which answer that is depends on which side of the comparison the window sits.
+
+### The one more bug
+
+`status_events.recent(since=…)` was inclusive. §90 compensated for that in
+`briefing._completed` by filtering `> since` in Python — and **left the sibling
+call in `_attention` uncompensated**. So a failure bearing exactly the
+checkpoint's timestamp was re-announced on every visit while a completion was
+not: two sections asking the same question of the same clock and answering it
+differently.
+
+Fixed by moving the semantics into the parameter and its name: `since` becomes
+**`after`**, exclusive in SQL. "Since" reads as inclusive by convention and
+behaved as the dangerous thing; "after" cannot be misread at a call site. Both
+briefing call sites are now correct without either having to remember, and the
+Python-side compensation is deleted.
+
+Found only because the sweep asked who else called it.
+
+### The inventory
+
+**Fixed — equality gave the wrong answer:**
+
+- `status_events.recent` / `failures` — `since` to `after`, now exclusive.
+- `fi_db.recent_completed_spawns` — §93, fixed the day before.
+
+**Safe by design, now recorded rather than assumed:**
+
+- `gateway/store.py` session expiry, three sites — `expires_at <= now` means a
+  session expiring at this instant is refused. Fails closed.
+- `fi_db` claim reclamation — `claimed_at < cutoff`, already strict, so a claim
+  made at the instant of the cutoff is not stolen from a live worker.
+- `fi_db.count_incidents_since` — `>=` over-counts at the boundary, which makes
+  the crash-loop guard escalate to a human sooner. Errs toward stopping.
+- `fi_db.list_stale_active_agents`, `spawns_awaiting_observation`,
+  `chatterbox._age_state`, `triage` starvation — "older than N" comparisons,
+  where inclusive is correct (see the table).
+- `simulation/clock.is_knowable`, `canonical`, `observations`, `history`,
+  `orchestrator` — `knowable_at <= moment`, the lookahead-bias guard. Inclusive
+  is **required**: a datum with zero publication lag is knowable at the moment it
+  describes, and strictness would make zero-lag data permanently invisible. Both
+  sides are simulated times, so the wall-clock artifact cannot reach them.
+
+**Noted, not fixed:** `FI_TRIAGE_STARVATION_SECONDS=0` would make every item
+starved and collapse triage ordering to oldest-first. Operator-set, degenerate by
+choice, harmless to data — recorded so it is a known consequence rather than a
+surprise.
+
+### Why this family exists here at all
+
+Measured on this machine: two consecutive `datetime.now(timezone.utc)` calls
+return the **identical** value 19,997 times out of 20,000. The Windows clock
+granularity is about 16ms and Python does not interpolate. So "the timestamp I
+just wrote" and "now" are usually the same value, and every comparison between
+them is a boundary comparison whether or not it was written as one.
+
+The Linux CI leg does not reproduce it — its clock resolves finer — which is why
+§91's heartbeat failed on windows-latest and passed on ubuntu-latest. The matrix
+earns its keep again, and in the same direction as last time: one platform alone
+cannot tell a timing bug from a flake.
+
+### The habits this leaves
+
+Two, both cheap:
+
+1. **Never let a test race the clock.** State the window explicitly. The first
+   draft of `test_after_is_exclusive_and_named_for_it` published two events and
+   expected the second to be newer; both landed in the same tick and it failed —
+   the artifact demonstrating itself inside the test written to pin it. Three
+   briefing tests had the same fault and were fixed after §90.
+2. **Name the boundary in the parameter.** "After" cannot be misread; "since"
+   was misread twice, once by me.
+
+Suite: **2102 passing**, twice.

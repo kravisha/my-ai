@@ -252,3 +252,36 @@ def test_a_failed_metadata_pass_is_visible_in_the_stream(conn, tmp_path, monkeyp
     failures = status_events.failures(conn)
     assert failures and "Boot configuration could not be loaded" in failures[0]["message"]
     assert failures[0]["status"] == STATUS_FAILED
+
+
+def test_after_is_exclusive_and_named_for_it(conn):
+    """`since` read as inclusive and behaved as the dangerous thing (§94).
+
+    An event bearing exactly the boundary timestamp came back as new — and on
+    Windows that is the ordinary case rather than an edge, because two
+    consecutive `datetime.now()` calls return the identical value about 19,997
+    times in 20,000. A caller asking "what has happened since I last looked" was
+    re-served the same event every time they looked."""
+    _publish(conn, message="at the boundary")
+    boundary = status_events.recent(conn, limit=1)[0]["timestamp"]
+
+    assert status_events.recent(conn, limit=10, after=boundary) == []
+
+    # Stamped explicitly rather than raced. The first attempt at this test
+    # published a second event and expected it to be newer; both landed in the
+    # same clock tick and it failed - the artifact demonstrating itself inside
+    # the test written to pin it.
+    _publish(conn, message="strictly after")
+    conn.execute("UPDATE status_events SET timestamp = ? WHERE message = ?",
+                 ("2099-01-01T00:00:00+00:00", "strictly after"))
+    later = status_events.recent(conn, limit=10, after=boundary)
+    assert [event["message"] for event in later] == ["strictly after"]
+
+
+def test_failures_carries_the_same_boundary(conn):
+    """`failures` delegates to `recent`, so the two cannot disagree — which is
+    exactly what they did while the caller compensated for one and not the
+    other."""
+    _publish(conn, message="broke at the boundary", severity=SEVERITY_ERROR)
+    boundary = status_events.recent(conn, limit=1)[0]["timestamp"]
+    assert status_events.failures(conn, after=boundary) == []
