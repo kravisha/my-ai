@@ -32,11 +32,14 @@ from __future__ import annotations
 
 # Every dimension computable from evidence the organization already records.
 #
-# Deliberately five rather than the fourteen an ideal competency matrix would
-# carry. Communication, handoff quality, learning velocity and the rest need
-# mechanisms that do not exist, and declaring a dimension that is never
-# populated is the "table nothing writes to" error at column granularity - it
-# reads as a capability.
+# Deliberately seven rather than the fourteen an ideal competency matrix would
+# carry. The two collaboration dimensions arrived (TQ-17, §65) exactly when
+# their mechanisms did - the cross-check and UQI records with terminal
+# statuses. Handoff completeness, learning velocity and the rest still need
+# mechanisms that do not exist (a report does not name the cross-check it
+# grew from, so requester-side follow-through has no queryable linkage), and
+# declaring a dimension that is never populated is the "table nothing writes
+# to" error at column granularity - it reads as a capability.
 #
 # min_samples is the evidence floor below which the dimension is not stated at
 # all. These are starting values to be replaced by measurement: the false-
@@ -65,6 +68,25 @@ DIMENSIONS = {
         "source": "sessions that ended cleanly rather than in a crash",
         "min_samples": 3,
     },
+    # The collaboration baseline (addenda 34 §17 / 36 §8 / 37 §8; TQ-17,
+    # SPEC_RECONCILIATION §65): scored from records the organization already
+    # writes, per the measure-first discipline - the fourteen-dimension
+    # collaboration matrix the addenda describe waits for the mechanisms
+    # that would observe it. Responsiveness folds latency in: the timeout
+    # machinery marks a slow answer 'unanswered', so answered-at-all IS
+    # answered-in-time, and 'no_evidence' counts as an answer (looking and
+    # finding nothing is collaboration; silence is the failure).
+    "collaboration_responsiveness": {
+        "source": "cross-checks addressed to this desk that were answered before the timeout",
+        "min_samples": 5,
+    },
+    "uqi_responsiveness": {
+        # Rarer traffic than cross-checks (questions arrive from operators
+        # and health checks, not from every peer cycle), so the floor sits
+        # at operational_reliability's rather than the grade dimensions'.
+        "source": "UQI questions to this identity answered before the timeout",
+        "min_samples": 3,
+    },
 }
 
 UNSTATED_REASON = "not enough evidence yet"
@@ -74,11 +96,15 @@ def profile(evidence: dict) -> dict:
     """The competency profile: one entry per dimension, stated or not.
 
     `evidence` is what `fi_db.competency_evidence` gathered:
-        grades       - list of dicts with the four grade scores
-        calibration  - list of (stated_confidence, was_correct) pairs
-        sessions     - how many times this agent has been spawned
-        crashes      - how many of those ended without a clean exit
-        window_days  - the recency window the evidence was drawn from, or None
+        grades                - list of dicts with the four grade scores
+        calibration           - list of (stated_confidence, was_correct) pairs
+        sessions              - how many times this agent has been spawned
+        crashes               - how many of those ended without a clean exit
+        cross_check_responses - terminal cross-checks this desk was on duty
+                                for, normalized to {'answered': bool}
+        uqi_responses         - terminal UQI questions to this identity,
+                                same normalized shape
+        window_days           - the recency window the evidence was drawn from, or None
 
     Every entry carries its sample count as well as its score, because a 0.62
     from twelve observations and a 0.62 from four hundred are different claims
@@ -92,6 +118,8 @@ def profile(evidence: dict) -> dict:
         "novelty_contribution": _mean_of(grades, "novelty_score"),
         "uncertainty_calibration": _calibration(calibration),
         "operational_reliability": _reliability(evidence.get("sessions"), evidence.get("crashes")),
+        "collaboration_responsiveness": _answer_rate(evidence.get("cross_check_responses")),
+        "uqi_responsiveness": _answer_rate(evidence.get("uqi_responses")),
     }
 
     return {
@@ -111,6 +139,17 @@ def profile(evidence: dict) -> dict:
 def _mean_of(rows: list[dict], key: str) -> tuple[float | None, int, float | None]:
     values = [row[key] for row in rows if row.get(key) is not None]
     return _summarise(values)
+
+
+def _answer_rate(responses: list[dict] | None) -> tuple[float | None, int, float | None]:
+    """Fraction of terminal requests that got an answer, through _summarise
+    on 0/1 outcomes so the spread carries the same meaning it does
+    everywhere else: a desk that answers everything and one that answers
+    half the time are different claims even at the same sample count. The
+    answered/unanswered judgment was already made where the status
+    vocabulary lives (fi_db.competency_evidence) - this function only
+    counts."""
+    return _summarise([1.0 if r["answered"] else 0.0 for r in (responses or [])])
 
 
 def _summarise(values: list[float]) -> tuple[float | None, int, float | None]:

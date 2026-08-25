@@ -25,9 +25,9 @@ holds the queue, not the record.
 
 > **Owner-directed head of the queue** (2026-08-25, `SPEC_RECONCILIATION.md` §60): **both head
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
-> (market-implied validation §62). The queue's remaining QUEUED work: TQ-07 (consumer-gated),
-> TQ-17 (collaboration scoring baseline), TQ-18 (per-caller spend attribution). Entries above
-> them in file order are DONE records, not higher-priority work.
+> (market-implied validation §62). The queue's remaining QUEUED work: TQ-07 (consumer-gated)
+> and TQ-18 (per-caller spend attribution). Entries above them in file order are DONE
+> records, not higher-priority work.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -212,14 +212,17 @@ suite until routing is revisited deliberately.
 
 ### TQ-17 — Collaboration scoring baseline, from records the system already writes
 
-**WANT · QUEUED**
+**WANT · DONE — `SPEC_RECONCILIATION.md` §65**
 
-Source: addendum 34 §16–§17, addendum 36 §8 (collaboration as top-priority competency),
-addendum 37 §8 (a non-negotiable optimization constraint). The organization already produces
-cross-check questions, answers, and UQI latencies; nothing scores them. Scope: measurement
-first — score the collaboration that already happens (response usefulness, responsiveness,
-handoff completeness where observable) before building drills for what doesn't. Feeds the
-leadership gate (§60 disposition 5) whenever promotion machinery exists.
+Source: addendum 34 §16–§17, addendum 36 §8, addendum 37 §8. Two dimensions added to
+`backend/competency.py` — `collaboration_responsiveness` (cross-checks answered, by the
+span's role) and `uqi_responsiveness` (UQI questions answered, by the span's identity) —
+computed from records the organization already writes, under the module's existing four
+rules: absent is not zero, earned not assigned, no universal score, attribution by tenure.
+`no_evidence` counts as an answer and latency folds into the rate (the timeout machinery
+already marks slow answers `unanswered`). Handoff completeness stays unbuilt with its
+blocker named: no queryable linkage from a report back to the cross-check it grew from.
+Feeds the leadership gate (§60 disposition 5) whenever promotion machinery exists.
 
 ### TQ-18 — Optimization measurement baseline: per-caller spend attribution
 

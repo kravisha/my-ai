@@ -2489,10 +2489,44 @@ def competency_evidence(conn: Database, name: str, window_days: float | None = N
     grades: list[dict] = []
     sessions = 0
     crashes = 0
+    cross_check_responses: list[dict] = []
+    uqi_responses: list[dict] = []
 
     for span in spans:
         start = max(span["started_at"], cutoff) if cutoff else span["started_at"]
         end = span["ended_at"]
+        # Collaboration evidence (TQ-17, SPEC_RECONCILIATION §65): the
+        # requests this desk was on duty for. Cross-checks are addressed to a
+        # ROLE, so attribution is by the span's role and the request's
+        # created_at falling inside the span - the same half-open tenure rule
+        # attributed_work uses; a request created during this tenure but
+        # answered after a transfer still belongs to this desk's record,
+        # because the duty was assigned while it sat here. Only terminal
+        # rows count: an in-flight request is not yet evidence of anything.
+        # Normalized to {'answered': bool} here rather than in
+        # backend/competency.py, because the status vocabulary is this
+        # module's to own - 'no_evidence' IS an answer (the constant block's
+        # own words: a responder that looked and found nothing has said
+        # something informative); 'unanswered' means nobody ever replied
+        # before the timeout, which folds responsiveness-in-time into the
+        # rate without a separate latency score.
+        cross_check_responses.extend(
+            {"answered": row["outcome"] in (CROSS_CHECK_EVIDENCE, CROSS_CHECK_NO_EVIDENCE)}
+            for row in conn.fetchall(
+                "SELECT outcome FROM cross_check_requests WHERE responder_role = ? "
+                "AND outcome IS NOT NULL AND created_at >= ? AND (? IS NULL OR created_at < ?)",
+                (span["role"], start, end, end),
+            )
+        )
+        # UQI questions name an identity directly, so no role indirection.
+        uqi_responses.extend(
+            {"answered": row["status"] == UQI_ANSWERED}
+            for row in conn.fetchall(
+                "SELECT status FROM uqi_requests WHERE target_identity = ? AND status != ? "
+                "AND created_at >= ? AND (? IS NULL OR created_at < ?)",
+                (span["identity"], UQI_PENDING, start, end, end),
+            )
+        )
         grades.extend(
             dict(row)
             for row in conn.fetchall(
@@ -2525,6 +2559,8 @@ def competency_evidence(conn: Database, name: str, window_days: float | None = N
         "calibration": [],
         "sessions": sessions,
         "crashes": crashes,
+        "cross_check_responses": cross_check_responses,
+        "uqi_responses": uqi_responses,
         "window_days": window_days,
     }
 
