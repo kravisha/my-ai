@@ -266,3 +266,27 @@ def test_coo_and_the_controller_agree_on_what_is_in_flight(db):
 
     assert _spawns_in_flight(db, "analysis") == 1
     assert fi_db.allocate_slot(db, "analysis") == "analysis-2"
+
+
+def test_a_zero_width_window_contains_nothing(db):
+    """The boundary, pinned because it was an intermittent failure rather than
+    a theory.
+
+    `recent_completed_spawns` compared `>=` against the cutoff, so a spawn whose
+    `completed_at` equalled it counted as still in flight - and equality is the
+    normal case on Windows, where two consecutive `datetime.now()` calls return
+    the identical value about 19,997 times in 20,000, and where the archive
+    trigger truncates `completed_at` to the second. A zero-width window has to
+    be empty by definition; asking whether anything happened in no time at all
+    has one correct answer."""
+    complete_spawn(db, "analysis", "analysis-1")
+    for _ in range(50):
+        assert fi_db.recent_completed_spawns(db, "analysis", 0) == []
+        assert fi_db.slots_awaiting_registration(db, "analysis", within_seconds=0) == set()
+
+
+def test_a_real_window_still_catches_a_spawn_in_flight(db):
+    """The other half: the guard exists because two agents once came up under
+    one identity, and narrowing the comparison must not have widened that hole."""
+    complete_spawn(db, "analysis", "analysis-1")
+    assert fi_db.slots_awaiting_registration(db, "analysis", within_seconds=600) == {"analysis-1"}
