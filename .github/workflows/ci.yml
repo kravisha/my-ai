@@ -8,14 +8,18 @@
 #
 # Two deliberate choices, stated here rather than left to be rediscovered:
 #
-# - **Tests run on Windows.** Not a preference - it is the platform the suite
-#   is actually verified on (Windows 11, Python 3.12). The default run is very
-#   likely portable (the only platform-specific code, in simulation/harness.py
-#   and simulation/faults.py, handles both branches and belongs to the
-#   `simulation`-marked tests this run excludes), but "very likely" is not
-#   "measured", and a red pipeline nobody trusts is worse than none. Adding
-#   `ubuntu-latest` to the matrix below is a deliberate step: do it, watch it,
-#   and keep it only once it is green.
+# - **Tests run on both Windows and Linux.** Windows because it is the platform
+#   the suite is actually verified on and the only one anything runs on today.
+#   Linux because the codebase turned out to be written portable already - no
+#   Windows-only dependency, no hardcoded drive letters, every path through
+#   pathlib, and every `sys.platform` branch (simulation/harness.py,
+#   simulation/faults.py) carrying its non-Windows side - so verifying that
+#   property costs one runner rather than a porting project. What it buys is
+#   optionality on a NEED the doctrine already names: addendum 29 §1.3's "no
+#   single point of irrecoverable failure" is deferred today for want of a
+#   second failure domain, and the cheapest one available is a Linux host that
+#   §59's encrypted secondary backup could actually be restored onto.
+#   `fail-fast: false` keeps both platforms' results visible.
 # - **The audit runs on Linux.** pip-audit compares pinned versions against a
 #   vulnerability database, which is platform-independent, so it runs on the
 #   cheaper runner.
@@ -45,8 +49,15 @@ permissions:
 
 jobs:
   test:
-    name: Test suite
-    runs-on: windows-latest
+    name: Test suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both results, always. fail-fast would cancel one platform the moment
+      # the other failed, which is precisely the information this matrix
+      # exists to collect.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
