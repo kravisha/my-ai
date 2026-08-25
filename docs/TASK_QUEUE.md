@@ -49,10 +49,12 @@ holds the queue, not the record.
 > mechanism was missing, and two skills declared-and-unbuilt with reasons the agent gives
 > aloud. Both remain genuinely blocked on data, not on effort.
 >
-> Next: nothing is queued at the head. Open: **TQ-07** (consumer-gated), **TQ-20** and
-> **TQ-21** (owner actions), **TQ-28** (the isolation guard), and the deferred animated
-> presenter. Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
-> TQ-28 (the isolation guard).
+> **TQ-42** (client-owned holdings, §96) is done, which built the first real client skill.
+>
+> Next: **TQ-43** (per-client Gateway credentials) — exposed by TQ-42 and the reason its demo
+> ships three clients but only one that can log in. Also open: **TQ-07** (consumer-gated),
+> **TQ-20** and **TQ-21** (owner actions), **TQ-28** (the isolation guard), and the deferred
+> animated presenter.
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -625,6 +627,40 @@ Two owner clarifications during the work settled what addendum 40 §13.2 left as
 no body: an operator logging into the Gateway sees **the same studio** the desktop console shows
 (the same file, proxied, never a second console), and a regular user meets **an agent** — info
 only today, with real skills to come. Both recorded in §92.
+
+### TQ-42 — Client-owned holdings
+
+**NEED (GREEN) · DONE 2026-08-26 · owner direction 2026-08-26 ·
+`SPEC_RECONCILIATION.md` §96**
+
+The data model §95 named as the real blocker: a client's holdings, owned by the
+client, so `portfolio_analysis` can exist without handing anybody the operator's book.
+
+Holdings come from the client telling their representative — the only honest producer available,
+and the relationship addendum 43 §16 describes rather than a mechanism beside it. No account
+column at all (stronger than stripping one on egress), arithmetic computed rather than narrated,
+and nothing ever valued because every price here is simulated. That last constraint produced a
+more precise successor skill: `portfolio_valuation`, newly declared and unbuilt.
+
+Ships with simulated clients (`python -m gateway.demo_clients`) per owner direction, built so
+that removing them before live is a command: flagged rows, seeding refused outside PRE_ALPHA and
+ALPHA, and an `outstanding()` check so a pre-launch step can know rather than hope.
+
+### TQ-43 — Per-client Gateway credentials
+
+**NEED (YELLOW) · QUEUED · exposed by TQ-42 · addendum 43 §15/§16**
+
+The Gateway has one credential per *role*, so every client shares one password and therefore one
+subject. Everything downstream is already per-client — conversations (§93), the representative's
+identity (§93), holdings (§96) — and all of it keys off a subject that only one person can
+currently be.
+
+This is why TQ-42's demo ships three clients but only one that can log in. The isolation is real
+and tested; the doorway is what does not exist yet.
+
+Flagged YELLOW rather than GREEN because it is a precondition for exposure rather than for
+correctness: nothing today is reachable beyond loopback (§50), and a client Gateway with one
+shared client password must not be the thing that changes that.
 
 ### TQ-39 — The client agent gets an identity
 

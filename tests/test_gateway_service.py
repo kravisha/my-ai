@@ -389,6 +389,13 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "jarvis_status",
         "jarvis_agent",
         "technology_review",
+        # TQ-41: the operator holds every capability, so the holdings tools are
+        # offered here too. They read the caller's own stated holdings and
+        # cannot name anybody else's - see tests/test_gateway_holdings.py.
+        "record_holding",
+        "list_holdings",
+        "forget_holding",
+        "analyse_holdings",
     }, "the assistant must not be handed a tool for something that is not built"
 
     assert not any(

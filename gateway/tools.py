@@ -36,7 +36,7 @@ truthful value.
 
 from backend.db import Database
 from gateway import roles
-from gateway import jarvis, repositories, scoreboard, technology
+from gateway import holdings, jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -269,6 +269,67 @@ TECHNOLOGY_TOOLS = [
 
 TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS
 
+
+# The client's own holdings (TQ-42, §96). Subject-scoped by construction: every
+# function behind these takes the client id from the session, never from an
+# argument the model could supply - so there is no shape of tool call that
+# reaches another client's positions.
+HOLDINGS_TOOLS = [
+    {
+        "name": "record_holding",
+        "description": (
+            "Record what the client says they hold. Use this when they tell you about a "
+            "position. Recording the same ticker again replaces the earlier statement, "
+            "because that is a correction rather than a second position. Never invent a "
+            "holding, and never record one they have not stated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "The symbol, as they said it."},
+                "shares": {"type": "number", "description": "How many shares."},
+                "cost_basis": {
+                    "type": "number",
+                    "description": "Price paid per share, if they said. Omit if they did not - "
+                                   "do not guess, and do not use a market price.",
+                },
+                "acquired_on": {"type": "string", "description": "When acquired, if stated."},
+                "note": {"type": "string", "description": "Anything they added about it."},
+            },
+            "required": ["ticker", "shares"],
+        },
+    },
+    {
+        "name": "list_holdings",
+        "description": "Everything this client has told you they hold.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "forget_holding",
+        "description": (
+            "Remove one holding, because the client asked you to. It is their data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "analyse_holdings",
+        "description": (
+            "Weights and concentration across what the client has told you they hold, "
+            "computed from their stated cost basis. Use this rather than working "
+            "percentages out yourself. It reports no market value, gain or loss, because "
+            "this system has no real prices - say so if asked, rather than estimating."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+TOOLS = TOOLS + HOLDINGS_TOOLS
+
+
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
 
@@ -297,6 +358,10 @@ TOOL_CAPABILITY = {
     "jarvis_status": roles.CAP_SYSTEM_STATUS,
     "jarvis_agent": roles.CAP_SYSTEM_STATUS,
     "technology_review": roles.CAP_TECHNOLOGY_READ,
+    "record_holding": roles.CAP_HOLDINGS,
+    "list_holdings": roles.CAP_HOLDINGS,
+    "forget_holding": roles.CAP_HOLDINGS,
+    "analyse_holdings": roles.CAP_HOLDINGS,
 }
 
 
@@ -327,13 +392,20 @@ def permitted(role: str, name: str) -> bool:
     return roles.allows(role, required)
 
 
-def execute(conn: Database, name: str, arguments: dict, *, role: str) -> dict:
+def execute(conn: Database, name: str, arguments: dict, *, role: str,
+            subject: str | None = None) -> dict:
     """Runs one tool call. Returns `{"error": ...}` rather than raising, for every
     failure the model could plausibly cause.
 
     The role is required, not optional. A default would mean a caller that forgot
     to pass one silently got the most permissive behaviour, which is the failure
-    mode an authorization check least survives."""
+    mode an authorization check least survives.
+
+    `subject` is who the caller is, and it is where the holdings tools get their
+    client id (TQ-42, §96). It comes from the session and never from an argument
+    the model supplied, so there is no shape of tool call that reads another
+    client's positions - the model cannot name a client because it is never
+    asked to."""
     if not permitted(role, name):
         # Refused as data, like every other tool failure, so the model can tell
         # the user plainly instead of the turn collapsing.
@@ -415,6 +487,31 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str) -> dict:
 
         if name == "jarvis_agent":
             return jarvis.JarvisClient().agent(str(arguments["identity"]))
+
+        if name in ("record_holding", "list_holdings", "forget_holding",
+                    "analyse_holdings"):
+            if not (subject or "").strip():
+                # Refused rather than defaulted. A holdings tool without a
+                # subject has no owner for the data, and picking one would be
+                # the whole bug this feature exists downstream of.
+                return {"error": "I cannot reach holdings without knowing whose they are."}
+            try:
+                if name == "record_holding":
+                    return {"recorded": holdings.record(
+                        conn, subject,
+                        ticker=arguments["ticker"], shares=arguments["shares"],
+                        cost_basis=arguments.get("cost_basis"),
+                        acquired_on=arguments.get("acquired_on"),
+                        note=arguments.get("note"))}
+                if name == "list_holdings":
+                    return {"holdings": holdings.listing(conn, subject)}
+                if name == "forget_holding":
+                    removed = holdings.forget(conn, subject, str(arguments["ticker"]))
+                    return {"forgotten": removed,
+                            "note": None if removed else "You had not told me about that one."}
+                return {"analysis": holdings.concentration(conn, subject)}
+            except holdings.HoldingRefused as refusal:
+                return {"error": str(refusal)}
 
         if name == "technology_review":
             report = technology.review()

@@ -697,7 +697,7 @@ async def conversation_socket(
         try:
             async for event in iterate_in_thread(
                 lambda: conversation.run_turn(db_path, history, provider, role=role,
-                                          agent_name=agent_name)
+                                          subject=subject, agent_name=agent_name)
             ):
                 if event["type"] == "text":
                     said.append(event["text"])
