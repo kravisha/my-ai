@@ -28,10 +28,9 @@ holds the queue, not the record.
 > (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
 > QUEUED entries are TQ-07 (consumer-gated by its own terms) and two owner actions from the
-> continuity work: **TQ-19** (off-machine copy of `backup.key` — free, and the thing that
-> makes the already-running encrypted secondary actually recoverable) and **TQ-20**
-> (provision the Linux host, deferred by the owner 2026-08-25). Neither is engineering
-> work; both need the owner's hands.
+> continuity work: **TQ-21** (verify the off-machine key copy actually decrypts — TQ-19
+> established that a copy exists, not that it works) and **TQ-20** (provision the Linux host,
+> deferred by the owner 2026-08-25). Neither is engineering work; both need the owner's hands.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -250,9 +249,8 @@ bound. Currency-denominated limits and per-caller *limits* remain deferred with 
 recovery credential in a repository tells a reader where to go looking for it; the fact of
 custody is what this queue needs, and the location belongs to the owner
 (`docs/PUBLIC_PRIVATE_BOUNDARY.md`'s rule applied to a credential rather than a document).
-Still open and worth doing: **verify the copy actually decrypts a backup** — text moved through
-any transport can gain a trailing space or lose a character, and an unverified key is §1.4's
-untested-recovery-asset problem wearing a different hat.
+Verifying that the copy actually works is its own entry, **TQ-21** — custody and correctness are
+different claims, and this one only established the first.
 
 Source: addendum 29 §10.3. The encrypted secondary now writes to a Dropbox-synced folder, and
 `backup.key` is deliberately **not** there — key beside ciphertext is the same as no encryption.
@@ -280,6 +278,27 @@ Scope when taken up: `docs/SECOND_FAILURE_DOMAIN.md` steps 1–6, whose load-bea
 the restore rehearsal on the host (§1.4 — an untested restore is a hypothesis, not a recovery
 asset), followed by recording the result. Failover orchestration, live replication and geographic
 separation stay out of scope and remain in the deferred list below.
+
+### TQ-21 — Verify the off-machine key copy actually decrypts a backup
+
+**NEED (YELLOW) · QUICK_WIN · QUEUED · needs the owner to produce the copy; the test itself is
+two minutes · `SPEC_RECONCILIATION.md` §69, `docs/SECOND_FAILURE_DOMAIN.md`**
+
+Source: addendum 29 §1.4 ("a backup that has never been restored is not a recovery asset"),
+applied to the key rather than to the backup. TQ-19 established that a copy exists off this
+machine; it did not establish that the copy is *correct*. Text moved through any transport —
+a chat app, a clipboard, a retyped note — can gain a trailing space, lose a character, or pick
+up a line break, and a Fernet key that is one byte wrong fails exactly as completely as a key
+that was never saved.
+
+The failure mode this closes is the worst-shaped one available: the disk dies, the encrypted
+Dropbox copies are all present and intact, the saved key is produced — and it does not work.
+Everything looks recoverable right up to the moment it isn't.
+
+Scope: save the off-machine copy to a scratch file, decrypt a real backup set from the secondary
+destination using that file via `CONTINUITY_KEY_PATH` (never overwriting the live `backup.key`),
+confirm the restore verifies, then delete the scratch file. Same flag as TQ-19 for the same
+reason — it decides whether a capability that is already built and running can actually deliver.
 
 ---
 
