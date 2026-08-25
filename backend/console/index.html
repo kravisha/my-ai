@@ -1,20 +1,17 @@
 <!DOCTYPE html>
 <!--
-  The server console (addendum 38 §4; owner decision docs/SPEC_RECONCILIATION.md §75).
+  The server console (addendum 38 §4; owner decisions in SPEC_RECONCILIATION §75/§77).
 
-  A live newspaper covering the whole organization. Not the Gateway, which is a
-  door *into* the system; this is a window onto its internal life. Not
-  panel/app.py either, which controls and reports state - this reports
-  narration, and gives each aspect of the nation its own page.
+  A live newspaper covering the whole organization: desks across the top two
+  thirds, the COO in conversation across the bottom third. Not the Gateway,
+  which is a door *into* the system - this is a window onto its internal life.
 
-  Sections, in the newspaper's own logic: the Newsroom is the front page
-  (continuous narration), and the rest are the desks - Organization, Strategy,
-  Simulation, Alerts, Parliament. A desk with nothing to report says so and
-  says why, because a blank parliament page fails to report that parliament
-  never convened.
+  Everything on the Finance desk is SIMULATED and says so, in the banner and in
+  the payload. A finance page is the one place in this system where blurring
+  synthetic and real would be genuinely dangerous.
 
   One file, no build step, no dependencies: the backend is loopback-only and
-  the whole surface is three read endpoints.
+  the surface is five read endpoints plus one stream.
 -->
 <html lang="en">
 <head>
@@ -22,85 +19,152 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My AI — Server Console</title>
 <style>
-  :root {
-    --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#c9d1d9; --dim:#8b949e;
-    --accent:#58a6ff; --info:#3fb950; --warning:#d29922; --error:#f85149;
+  :root{
+    --bg:#080b11; --panel:#0f141c; --panel2:#131a24; --line:#232c3a;
+    --text:#d5dde8; --dim:#7d8aa0; --accent:#4da3ff; --gold:#e8b339;
+    --up:#26d07c; --down:#ff5c5c; --warn:#e8b339; --err:#ff5c5c;
   }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); height:100vh;
-         display:flex; flex-direction:column;
-         font:14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  header { padding:10px 16px; border-bottom:1px solid var(--line);
-           display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
-  h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.02em; }
-  .dim { color:var(--dim); } .accent { color:var(--accent); }
-  #banner { display:none; padding:8px 16px; background:#21262d;
-            border-bottom:1px solid var(--line); color:var(--warning); }
-  nav { display:flex; gap:2px; padding:0 10px; border-bottom:1px solid var(--line);
-        background:var(--panel); overflow-x:auto; }
-  nav button { background:none; border:none; border-bottom:2px solid transparent;
-               color:var(--dim); font:inherit; padding:9px 14px; cursor:pointer; white-space:nowrap; }
-  nav button:hover { color:var(--text); }
-  nav button.on { color:var(--accent); border-bottom-color:var(--accent); }
-  nav .count { font-size:11px; color:var(--dim); }
-  main { flex:1; min-height:0; display:flex; }
-  .tab { display:none; flex:1; min-height:0; }
-  .tab.on { display:flex; }
-  /* Newsroom */
-  #feed-wrap { flex:3; min-width:0; display:flex; flex-direction:column; }
-  #controls { padding:8px 16px; border-bottom:1px solid var(--line);
-              display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  select, .btn { background:var(--panel); color:var(--text); border:1px solid var(--line);
-                 border-radius:5px; padding:4px 9px; font:inherit; cursor:pointer; }
-  .btn.on { border-color:var(--accent); color:var(--accent); }
-  #feed { flex:1; overflow-y:auto; padding:6px 16px 16px; }
-  .row { display:flex; gap:10px; padding:2px 0; white-space:pre-wrap; word-break:break-word; }
-  .row .t { color:var(--dim); flex:none; } .row .s { color:var(--accent); flex:none; }
-  .lvl { flex:none; width:60px; }
-  .INFO .lvl { color:var(--info); } .WARNING .lvl { color:var(--warning); }
-  .ERROR .lvl, .CRITICAL .lvl { color:var(--error); }
-  .WARNING { background:rgba(210,153,34,.07); }
-  .ERROR, .CRITICAL { background:rgba(248,81,73,.09); }
-  aside { flex:1; min-width:230px; max-width:360px; border-left:1px solid var(--line);
-          overflow-y:auto; padding:10px 14px; }
-  /* Desks */
-  .desk { flex:1; overflow-y:auto; padding:16px 20px; }
-  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim);
-       margin:18px 0 8px; font-weight:600; }
-  h2:first-child { margin-top:0; }
-  table { border-collapse:collapse; width:100%; margin-bottom:6px; }
-  th, td { text-align:left; padding:5px 10px 5px 0; border-bottom:1px solid #21262d;
-           vertical-align:top; font-size:13px; }
-  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase;
-       letter-spacing:.05em; }
-  .badge { display:inline-block; padding:0 6px; border-radius:9px; font-size:11px;
-           border:1px solid var(--line); color:var(--dim); }
-  .badge.ok { color:var(--info); border-color:var(--info); }
-  .badge.attn { color:var(--warning); border-color:var(--warning); }
-  .badge.bad { color:var(--error); border-color:var(--error); }
-  .note { background:var(--panel); border-left:3px solid var(--line); padding:10px 14px;
-          color:var(--dim); margin:10px 0; max-width:70ch; }
-  .note.absent { border-left-color:var(--warning); }
-  .stand { padding:4px 0; border-bottom:1px solid #21262d; }
-  .stand .what { color:var(--dim); font-size:12px; }
-  .empty { color:var(--dim); font-style:italic; }
-  footer { padding:6px 16px; border-top:1px solid var(--line); color:var(--dim); font-size:12px; }
+  *{box-sizing:border-box;}
+  body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
+       background:var(--bg);color:var(--text);
+       font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  .dim{color:var(--dim);} .accent{color:var(--accent);}
+  .up{color:var(--up);} .down{color:var(--down);}
+
+  /* ---- masthead + ticker ---- */
+  header{display:flex;align-items:center;gap:14px;padding:7px 14px;
+         border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap;}
+  h1{margin:0;font-size:14px;font-weight:700;letter-spacing:.14em;color:var(--gold);}
+  .pill{border:1px solid var(--line);border-radius:10px;padding:1px 9px;font-size:11px;color:var(--dim);}
+  .pill.live{color:var(--up);border-color:var(--up);}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--up);
+       margin-right:5px;animation:pulse 1.8s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.75);}}
+  #clock{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums;}
+
+  #tape{border-bottom:1px solid var(--line);background:#0b1017;overflow:hidden;height:26px;position:relative;}
+  #tape-track{display:inline-flex;gap:26px;white-space:nowrap;position:absolute;
+              will-change:transform;padding-top:4px;}
+  #tape .sym{color:var(--gold);font-weight:700;}
+  #tape .item{font-size:12px;}
+
+  /* ---- tabs ---- */
+  nav{display:flex;gap:1px;padding:0 8px;background:var(--panel2);
+      border-bottom:1px solid var(--line);overflow-x:auto;flex:none;}
+  nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);
+             font:inherit;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+             padding:8px 13px;cursor:pointer;white-space:nowrap;transition:color .15s;}
+  nav button:hover{color:var(--text);}
+  nav button.on{color:var(--gold);border-bottom-color:var(--gold);}
+  nav .badge{font-size:10px;color:var(--dim);}
+  nav .badge.attn{color:var(--warn);}
+
+  /* ---- layout: desks two thirds, COO one third ---- */
+  main{flex:2;min-height:0;display:flex;}
+  .tab{display:none;flex:1;min-height:0;}
+  .tab.on{display:flex;}
+  .desk{flex:1;overflow-y:auto;padding:12px 16px;}
+
+  /* newsroom */
+  #feed-wrap{flex:3;min-width:0;display:flex;flex-direction:column;}
+  #controls{padding:6px 14px;border-bottom:1px solid var(--line);display:flex;gap:7px;
+            align-items:center;flex-wrap:wrap;background:var(--panel);}
+  select,.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+              border-radius:4px;padding:3px 8px;font:inherit;font-size:12px;cursor:pointer;}
+  .btn.on{border-color:var(--accent);color:var(--accent);}
+  #feed{flex:1;overflow-y:auto;padding:4px 14px 12px;}
+  .row{display:flex;gap:9px;padding:1px 0;white-space:pre-wrap;word-break:break-word;}
+  .row.fresh{animation:flash 1.1s ease-out;}
+  @keyframes flash{from{background:rgba(77,163,255,.22);}to{background:transparent;}}
+  .row .t{color:#5b6982;flex:none;} .row .s{color:var(--accent);flex:none;}
+  .lvl{flex:none;width:56px;font-size:11px;}
+  .INFO .lvl{color:var(--up);} .WARNING .lvl{color:var(--warn);}
+  .ERROR .lvl,.CRITICAL .lvl{color:var(--err);}
+  .WARNING{background:rgba(232,179,57,.06);} .ERROR,.CRITICAL{background:rgba(255,92,92,.09);}
+  aside{flex:1;min-width:215px;max-width:330px;border-left:1px solid var(--line);
+        overflow-y:auto;padding:9px 12px;background:var(--panel);}
+
+  h2{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);
+     margin:14px 0 6px;font-weight:700;}
+  h2:first-child{margin-top:0;}
+  table{border-collapse:collapse;width:100%;}
+  th,td{text-align:left;padding:4px 9px 4px 0;border-bottom:1px solid #1a222e;font-size:12px;vertical-align:top;}
+  th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.07em;}
+  tbody tr:hover{background:rgba(77,163,255,.05);}
+  .tag{display:inline-block;padding:0 6px;border-radius:8px;font-size:10px;
+       border:1px solid var(--line);color:var(--dim);}
+  .tag.ok{color:var(--up);border-color:var(--up);} .tag.attn{color:var(--warn);border-color:var(--warn);}
+  .tag.bad{color:var(--err);border-color:var(--err);}
+  .note{background:var(--panel);border-left:3px solid var(--line);padding:8px 12px;
+        color:var(--dim);margin:8px 0;max-width:78ch;font-size:12px;}
+  .note.absent{border-left-color:var(--warn);} .note.sim{border-left-color:var(--gold);color:var(--gold);}
+  .stand{padding:3px 0;border-bottom:1px solid #1a222e;}
+  .empty{color:var(--dim);font-style:italic;}
+  /* Chatterbox: four states, because collapsing them hides the one that matters. */
+  .conv{display:grid;grid-template-columns:64px 1fr auto;gap:10px;align-items:start;
+        padding:6px 0;border-bottom:1px solid #1a222e;}
+  .conv .st{font-size:10px;letter-spacing:.09em;text-transform:uppercase;padding:1px 6px;
+            border-radius:8px;border:1px solid;text-align:center;}
+  .st-active{color:var(--up);border-color:var(--up);animation:pulse 2s infinite;}
+  .st-waiting{color:var(--warn);border-color:var(--warn);}
+  .st-completed{color:var(--dim);border-color:var(--line);}
+  .st-silent{color:var(--err);border-color:var(--err);}
+  .conv .pair{color:var(--accent);}
+  .conv .q{color:var(--text);font-size:12px;}
+  .edge{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid #1a222e;font-size:12px;}
+  .bar{display:inline-flex;height:7px;border-radius:4px;overflow:hidden;min-width:110px;background:#1a222e;}
+  .bar i{display:block;height:100%;}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px;margin-bottom:6px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;}
+  .card .sym{color:var(--gold);font-weight:700;font-size:13px;}
+  .card .px{font-size:17px;font-variant-numeric:tabular-nums;margin:2px 0;}
+  .card .chg{font-size:12px;font-variant-numeric:tabular-nums;}
+  .hl{padding:7px 0;border-bottom:1px solid #1a222e;}
+  .hl .sec{color:var(--gold);font-size:10px;text-transform:uppercase;letter-spacing:.1em;}
+
+  /* ---- COO conversation: the bottom third ---- */
+  #coo{flex:1;min-height:0;display:flex;flex-direction:column;
+       border-top:2px solid var(--gold);background:var(--panel);}
+  #coo-bar{display:flex;align-items:center;gap:8px;padding:5px 14px;
+           border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  #coo-bar .who{color:var(--gold);font-weight:700;letter-spacing:.1em;font-size:11px;}
+  #transcript{flex:1;overflow-y:auto;padding:9px 14px;}
+  .msg{margin-bottom:9px;max-width:92ch;}
+  .msg .from{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);}
+  .msg.me .from{color:var(--accent);} .msg.coo .from{color:var(--gold);}
+  .msg .body{white-space:pre-wrap;word-break:break-word;}
+  .msg.err .body{color:var(--err);}
+  #compose{display:flex;gap:7px;padding:8px 14px;border-top:1px solid var(--line);}
+  #q{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:5px;
+     color:var(--text);font:inherit;padding:7px 10px;}
+  #q:focus{outline:none;border-color:var(--accent);}
+  .mic.listening{border-color:var(--up);color:var(--up);animation:pulse 1.2s infinite;}
+  .thinking::after{content:'▍';animation:blink .9s steps(2) infinite;color:var(--gold);}
+  @keyframes blink{50%{opacity:0;}}
+  footer{padding:4px 14px;border-top:1px solid var(--line);color:var(--dim);font-size:11px;flex:none;}
 </style>
 </head>
 <body>
+
 <header>
-  <h1>My AI — Server Console</h1>
-  <span class="dim">stage <span class="accent" id="stage">—</span></span>
-  <span class="dim" id="headline"></span>
+  <h1>MY&nbsp;AI</h1>
+  <span class="pill live" id="live"><span class="dot"></span>LIVE</span>
+  <span class="pill">STAGE <b id="stage">—</b></span>
+  <span class="pill" id="agents-pill">— AGENTS</span>
+  <span class="pill" id="attn-pill">ALL QUIET</span>
+  <span id="clock"></span>
 </header>
-<div id="banner"></div>
+
+<div id="tape"><div id="tape-track"><span class="item dim">loading simulated market…</span></div></div>
 
 <nav id="tabs">
   <button data-tab="newsroom" class="on">Newsroom</button>
-  <button data-tab="organization">Organization <span class="count" id="c-org"></span></button>
-  <button data-tab="strategy">Strategy <span class="count" id="c-strategy"></span></button>
-  <button data-tab="simulation">Simulation <span class="count" id="c-sim"></span></button>
-  <button data-tab="alerts">Alerts <span class="count" id="c-alerts"></span></button>
+  <button data-tab="finance">Finance</button>
+  <button data-tab="chatterbox">Chatterbox <span class="badge" id="b-chat"></span></button>
+  <button data-tab="organization">Organization <span class="badge" id="b-org"></span></button>
+  <button data-tab="strategy">Strategy <span class="badge" id="b-str"></span></button>
+  <button data-tab="simulation">Simulation <span class="badge" id="b-sim"></span></button>
+  <button data-tab="alerts">Alerts <span class="badge" id="b-alr"></span></button>
   <button data-tab="parliament">Parliament</button>
 </nav>
 
@@ -108,7 +172,7 @@
   <section class="tab on" id="tab-newsroom">
     <div id="feed-wrap">
       <div id="controls">
-        <label class="dim" for="source">source</label>
+        <label class="dim" for="source">SOURCE</label>
         <select id="source"><option value="">All</option></select>
         <button class="btn" id="attention">Errors / Warnings</button>
         <button class="btn on" id="follow">Following</button>
@@ -123,6 +187,8 @@
     </aside>
   </section>
 
+  <section class="tab desk" id="tab-finance"></section>
+  <section class="tab desk" id="tab-chatterbox"></section>
   <section class="tab desk" id="tab-organization"></section>
   <section class="tab desk" id="tab-strategy"></section>
   <section class="tab desk" id="tab-simulation"></section>
@@ -130,223 +196,442 @@
   <section class="tab desk" id="tab-parliament"></section>
 </main>
 
+<section id="coo">
+  <div id="coo-bar">
+    <span class="who">◆ COO</span>
+    <span class="dim" id="coo-state">ready</span>
+    <select id="lang" title="Answer language"></select>
+    <button class="btn mic" id="mic" title="Speak your question">🎤 Voice</button>
+    <button class="btn" id="speak" title="Read answers aloud">🔊 Speak</button>
+    <select id="voice" title="Voice used for spoken answers"></select>
+    <button class="btn" id="stop" title="Interrupt">■ Stop</button>
+    <button class="btn" id="clear">Clear</button>
+  </div>
+  <div id="transcript">
+    <div class="msg coo"><div class="from">COO</div><div class="body">Console up. Ask me about any desk — what stage we are in, who is running, what failed, what the simulated market is doing. I answer from the system's own state, and I will say so plainly when I do not have something.</div></div>
+  </div>
+  <form id="compose">
+    <input id="q" autocomplete="off" placeholder="Ask the COO…  (Enter to send · Esc to interrupt)">
+    <button class="btn" id="send" type="submit">Send</button>
+  </form>
+</section>
+
 <footer id="footer">connecting…</footer>
 
 <script>
-// Poll, don't push - the reason panel/app.py already gives: the whole system
-// is built on polling a database, and a console demanding websockets would be
-// the only component asking for a different mechanism.
-const FEED_MS = 2000, DESK_MS = 6000;   // desks change far more slowly than narration
-const state = { seen:0, source:"", attention:false, follow:true, printed:0, tab:"newsroom" };
+// Poll, don't push - panel/app.py's reason: the whole system is built on
+// polling a database, and a console demanding websockets would be the only
+// component asking for a different mechanism. The chat is the exception, and
+// it streams because interruptibility requires it.
+const FEED_MS=2000, DESK_MS=6000, FIN_MS=8000;
+const S={seen:0,source:"",attention:false,follow:true,printed:0,
+         speak:false,listening:false,history:[],abort:null,tape:0};
 
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const clock = (ts) => (ts || "").slice(11,19) || "--:--:--";
+const $=(id)=>document.getElementById(id);
+const esc=(s)=>String(s??"").replace(/[&<>]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const clock=(ts)=>(ts||"").slice(11,19)||"--:--:--";
 // Whichever source the publisher could honestly fill; status_events leaves the
-// others null rather than padding them.
-const who = (e) => e.source_agent || e.source_engine || e.source_department || "system";
-const empty = (what) => `<div class="empty">${esc(what)}</div>`;
+// rest null rather than padding them.
+const who=(e)=>e.source_agent||e.source_engine||e.source_department||"system";
+const empty=(t)=>`<div class="empty">${esc(t)}</div>`;
+const num=(n,d=2)=>Number(n).toFixed(d);
+const signed=(n)=>(n>0?"+":"")+num(n);
+function table(cols,rows,fn){return rows.length?`<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(fn).join("")}</tbody></table>`:"";}
 
-function table(columns, rows, render) {
-  if (!rows.length) return "";
-  return `<table><thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>` +
-         `<tbody>${rows.map(render).join("")}</tbody></table>`;
-}
+setInterval(()=>{$("clock").textContent=new Date().toTimeString().slice(0,8);},1000);
 
-// --- Newsroom -------------------------------------------------------------
-function renderFeed(events) {
-  if (!events.length) return;
-  const feed = $("feed");
-  for (const e of events.slice().reverse()) {   // API is newest-first; a page reads down
-    const row = document.createElement("div");
-    row.className = "row " + e.severity;
-    row.innerHTML = `<span class="t">[${clock(e.timestamp)}]</span>` +
-                    `<span class="lvl">${esc(e.severity)}</span>` +
-                    `<span class="s">${esc(who(e))}</span><span>${esc(e.message)}</span>`;
-    feed.appendChild(row);
-    state.printed++;
+/* ---------------- ticker tape ---------------- */
+function renderTape(fin){
+  const track=$("tape-track");
+  const priced=(fin.tickers||[]).filter(t=>t.priced);
+  if(!priced.length){
+    track.innerHTML=`<span class="item dim">${esc(fin.reason||fin.unpriced_note||"no simulated market generated yet — run a mission")}</span>`;
+    return;
   }
-  while (feed.childElementCount > 1000) feed.removeChild(feed.firstChild);
-  if (state.follow) feed.scrollTop = feed.scrollHeight;
+  // Duplicated once so the scroll can loop without a visible seam.
+  const cells=priced.map(t=>
+    `<span class="item"><span class="sym">${esc(t.symbol)}</span> ${num(t.display_price)} `+
+    `<span class="${t.direction==="up"?"up":"down"}">${signed(t.change_pct)}%</span></span>`).join("");
+  track.innerHTML=cells+cells+`<span class="item dim">SIMULATED</span>`;
 }
-
-function renderSources(sources) {
-  const select = $("source");
-  const wanted = ["", ...sources.map((s) => s.name)].join("|");
-  if (wanted !== [...select.options].map((o) => o.value).join("|")) {
-    const chosen = select.value;      // never steal the operator's selection mid-poll
-    select.innerHTML = '<option value="">All</option>';
-    for (const s of sources) {
-      const o = document.createElement("option");
-      o.value = s.name; o.textContent = `${s.name} (${s.kind})`;
-      select.appendChild(o);
-    }
-    select.value = chosen;
+function animateTape(){
+  const track=$("tape-track");
+  if(track.scrollWidth>0){
+    S.tape-=0.55;
+    if(Math.abs(S.tape)>track.scrollWidth/2) S.tape=0;
+    track.style.transform=`translateX(${S.tape}px)`;
   }
-  $("sources").innerHTML = sources.length ? sources.map((s) =>
-    `<div class="stand"><span class="accent">${esc(s.name)}</span> ` +
-    `<span class="badge${s.attention ? " attn" : ""}">${s.events} event${s.events === 1 ? "" : "s"}` +
-    `${s.attention ? ` · ${s.attention} to review` : ""}</span></div>`).join("") : empty("none yet");
+  requestAnimationFrame(animateTape);
+}
+requestAnimationFrame(animateTape);
+
+/* ---------------- newsroom ---------------- */
+function renderFeed(events){
+  if(!events.length)return;
+  const feed=$("feed");
+  for(const e of events.slice().reverse()){   // API is newest-first; a page reads down
+    const row=document.createElement("div");
+    row.className="row fresh "+e.severity;
+    row.innerHTML=`<span class="t">${clock(e.timestamp)}</span><span class="lvl">${esc(e.severity)}</span>`+
+                  `<span class="s">${esc(who(e))}</span><span>${esc(e.message)}</span>`;
+    feed.appendChild(row); S.printed++;
+  }
+  while(feed.childElementCount>1000)feed.removeChild(feed.firstChild);
+  if(S.follow)feed.scrollTop=feed.scrollHeight;
+}
+function renderSources(sources){
+  const sel=$("source");
+  const want=["",...sources.map(s=>s.name)].join("|");
+  if(want!==[...sel.options].map(o=>o.value).join("|")){
+    const chosen=sel.value;                      // never steal a selection mid-poll
+    sel.innerHTML='<option value="">All</option>';
+    for(const s of sources){const o=document.createElement("option");
+      o.value=s.name;o.textContent=`${s.name} (${s.kind})`;sel.appendChild(o);}
+    sel.value=chosen;
+  }
+  $("sources").innerHTML=sources.length?sources.map(s=>
+    `<div class="stand"><span class="accent">${esc(s.name)}</span> `+
+    `<span class="tag${s.attention?" attn":""}">${s.events}${s.attention?` · ${s.attention}!`:""}</span></div>`
+  ).join(""):empty("none yet");
+}
+function renderStanding(st){
+  $("standing").innerHTML=st.length?st.map(e=>
+    `<div class="stand"><span class="accent">${esc(who(e))}</span> <span class="tag">${esc(e.status)}</span>`+
+    `<div class="dim" style="font-size:11px">${esc(e.message)}</div></div>`).join(""):empty("nothing yet");
 }
 
-function renderStanding(standing) {
-  $("standing").innerHTML = standing.length ? standing.map((e) =>
-    `<div class="stand"><span class="accent">${esc(who(e))}</span> ` +
-    `<span class="badge">${esc(e.status)}</span>` +
-    `<div class="what">${esc(e.message)}</div></div>`).join("") : empty("nothing has reported yet");
+/* ---------------- desks ---------------- */
+const section=(d,body)=>(d&&d.error)?`<div class="note absent">${esc(d.error)}</div>`:body();
+
+function renderFinance(f){
+  const banner=`<div class="note sim">◆ ${esc(f.notice||"SIMULATED")}</div>`;
+  if(!f.available){$("tab-finance").innerHTML=banner+empty(f.reason||"no market yet");return;}
+  const g=(f.movers&&f.movers.gainers)||[], l=(f.movers&&f.movers.losers)||[];
+  const card=(t)=>`<div class="card"><div class="sym">${esc(t.symbol)}</div>`+
+    `<div class="px">${num(t.display_price)}</div>`+
+    `<div class="chg ${t.direction==="up"?"up":"down"}">${signed(t.change)} (${signed(t.change_pct)}%)</div></div>`;
+  $("tab-finance").innerHTML=banner+
+    (f.unpriced_note?`<div class="note">${esc(f.unpriced_note)}</div>`:"")+
+    `<h2>Session movers — gainers</h2><div class="cards">${g.map(card).join("")||empty("none priced yet")}</div>`+
+    `<h2>Session movers — losers</h2><div class="cards">${l.map(card).join("")||""}</div>`+
+    `<h2>Focus universe (${f.priced_count}/${f.universe_size} priced)</h2>`+
+    table(["Symbol","Display px","Bid","Ask","Spread","Change","As of"],f.tickers,(t)=>
+      t.priced?`<tr><td class="accent">${esc(t.symbol)}</td><td>${num(t.display_price)}</td>`+
+        `<td class="dim">${num(t.bid)}</td><td class="dim">${num(t.ask)}</td>`+
+        `<td class="dim">${num(t.spread,4)}</td>`+
+        `<td class="${t.direction==="up"?"up":"down"}">${signed(t.change_pct)}%</td>`+
+        `<td class="dim">${clock(t.as_of)}</td></tr>`
+      :`<tr><td class="accent">${esc(t.symbol)}</td><td colspan="6" class="empty">${esc(t.note)}</td></tr>`)+
+    `<div class="note">Display px is a mid, shown for reading only. Every detector in this system refuses to trade on a mid (addendum 27's opening rule).</div>`+
+    `<h2>Front page</h2>${(f.headlines||[]).map(h=>
+      `<div class="hl"><div class="sec">${esc(h.section)} · placeholder</div><div>${esc(h.headline)}</div></div>`).join("")}`+
+    `<div class="note">${esc(f.headlines_note||"")}</div>`;
 }
 
-// --- Desks ----------------------------------------------------------------
-function section(data, body) {
-  if (data && data.error) return `<div class="note absent">${esc(data.error)}</div>`;
-  return body();
+function renderOrganization(d){
+  $("tab-organization").innerHTML=section(d,()=>{
+    const a=d.agents||[]; $("b-org").textContent=a.length?a.length:"";
+    return `<h2>Agents</h2>`+(a.length?table(["Name","Role","Identity","Lifecycle","Process","Heartbeat"],a,(x)=>
+      `<tr><td class="accent">${esc(x.name||"—")}</td><td>${esc(x.role)}</td>`+
+      `<td class="dim">${esc(x.identity)}</td>`+
+      `<td><span class="tag ${x.lifecycle_state==="active"?"ok":""}">${esc(x.lifecycle_state)}</span></td>`+
+      `<td><span class="tag ${x.process_state==="running"?"ok":"attn"}">${esc(x.process_state)}</span></td>`+
+      `<td class="dim">${clock(x.last_heartbeat_at)}</td></tr>`)
+      :empty("No agent registered. The workforce starts after an operator logs in."))+
+      `<div class="note">${d.names_available} name(s) available. A name is the durable agent; the identity is the desk it sits at.</div>`;});
+}
+function renderStrategy(d){
+  $("tab-strategy").innerHTML=section(d,()=>{
+    const r=d.register||[]; $("b-str").textContent=d.total||"";
+    return `<h2>Strategic Priority Register</h2>`+(r.length?table(["Title","Kind","Need/Want","Flag","Status"],r,(x)=>
+      `<tr><td>${esc(x.title)}</td><td class="dim">${esc(x.entry_type||"—")}</td><td>${esc(x.need_or_want||"—")}</td>`+
+      `<td>${esc(x.flag||"—")}</td><td><span class="tag">${esc(x.status)}</span></td></tr>`)
+      :empty("Empty — nothing filed by the organization yet."))+`<div class="note">${esc(d.note||"")}</div>`;});
+}
+function renderSimulation(d){
+  $("tab-simulation").innerHTML=section(d,()=>{
+    const m=d.missions||[]; $("b-sim").textContent=d.total||"";
+    return `<h2>Missions</h2>`+(m.length?table(["Mission","Strategy","Mode","Status"],m,(x)=>
+      `<tr><td class="accent">${esc(x.mission_id)}</td><td>${esc(x.strategy)}</td><td class="dim">${esc(x.run_mode)}</td>`+
+      `<td><span class="tag ${x.status==="COMPLETED"?"ok":(x.status==="FAILED"?"bad":"")}">${esc(x.status)}</span></td></tr>`)
+      :empty("No mission run yet. The Simulation Engine builds training worlds on request."));});
+}
+function renderAlerts(d){
+  $("tab-alerts").innerHTML=section(d,()=>{
+    const r=d.recent||[],c=d.corrective||[];
+    $("b-alr").textContent=r.length||""; $("b-alr").className="badge"+(r.length?" attn":"");
+    return `<h2>Needing attention</h2>`+(r.length?table(["Time","Severity","Source","Message"],r,(e)=>
+      `<tr class="${esc(e.severity)}"><td class="dim">${clock(e.timestamp)}</td><td class="lvl">${esc(e.severity)}</td>`+
+      `<td class="accent">${esc(who(e))}</td><td>${esc(e.message)}</td></tr>`)
+      :empty("Nothing has warned or failed. The quiet districts get reported too."))+
+      `<h2>Recommendations</h2>`+(c.length?table(["Cause","Classification","Findings"],c,(x)=>
+      `<tr><td>${esc(x.rule)}</td><td><span class="tag attn">${esc(x.classification)}</span></td><td class="dim">${esc(x.findings)}</td></tr>`)
+      :`<div class="note">${esc(d.summary||"no corrective work outstanding")}</div>`);});
+}
+function renderParliament(d){
+  $("tab-parliament").innerHTML=section(d,()=>d.convened?empty("Sessions would appear here."):
+    `<h2>Not convened</h2><div class="note absent">${esc(d.reason)}</div>`+
+    `<h2>What stands in its place</h2><div class="note">${esc(d.standing_in)}<br><br>`+
+    `${d.filed_entries} entr${d.filed_entries===1?"y":"ies"} filed to date — see Strategy.</div>`);
 }
 
-function renderOrganization(d) {
-  $("tab-organization").innerHTML = section(d, () => {
-    const agents = d.agents || [];
-    $("c-org").textContent = agents.length ? `(${agents.length})` : "";
-    return `<h2>Agents</h2>` + (agents.length ? table(
-      ["Name", "Role", "Identity", "Lifecycle", "Process", "Behavior", "Last heartbeat"], agents, (a) =>
-      `<tr><td class="accent">${esc(a.name || "—")}</td><td>${esc(a.role)}</td>` +
-      `<td class="dim">${esc(a.identity)}</td>` +
-      `<td><span class="badge ${a.lifecycle_state === "active" ? "ok" : ""}">${esc(a.lifecycle_state)}</span></td>` +
-      `<td><span class="badge ${a.process_state === "running" ? "ok" : "attn"}">${esc(a.process_state)}</span></td>` +
-      `<td class="dim">${esc(a.behavior_version || "—")}</td>` +
-      `<td class="dim">${esc(clock(a.last_heartbeat_at))}</td></tr>`)
-      : empty("No agent has been registered. The workforce starts after an operator logs in.")) +
-      `<h2>Naming</h2><div class="note">${d.names_available} name(s) available in the pool. ` +
-      `A name is the durable agent; the identity is the desk it sits at, and the two can come apart.</div>`;
-  });
+/* ---------------- polling ---------------- */
+
+function renderChatterbox(c){
+  const counts=c.counts||{};
+  const live=(counts.active||0)+(counts.waiting||0);
+  const b=$("b-chat"); b.textContent=live?live:""; b.className="badge"+(counts.silent?" attn":"");
+  const seg=(n,cls)=>n?`<i class="${cls}" style="width:${n}px;background:currentColor" ></i>`:"";
+  const legend=`<div class="cards" style="grid-template-columns:repeat(4,1fr)">`+
+    [["active","st-active","being answered now"],["waiting","st-waiting","aging toward timeout"],
+     ["completed","st-completed","answered"],["silent","st-silent","timed out — no reply"]]
+    .map(([k,cls,what])=>`<div class="card"><div class="st ${cls}" style="display:inline-block">${k}</div>`+
+      `<div class="px">${counts[k]||0}</div><div class="dim" style="font-size:11px">${what}</div></div>`).join("")+`</div>`;
+
+  if(c.quiet){
+    $("tab-chatterbox").innerHTML=legend+`<div class="note absent">${esc(c.quiet_note||"")}</div>`+
+      `<div class="note">${esc(c.note||"")}</div>`;
+    return;
+  }
+  const convs=(c.conversations||[]).map(x=>
+    `<div class="conv"><div class="st st-${esc(x.state)}">${esc(x.state)}</div>`+
+    `<div><div class="pair">${esc(x.from)} → ${esc(x.to)}${x.about?` <span class="dim">· ${esc(x.about)}</span>`:""}</div>`+
+    `<div class="q">${esc(x.question)}</div></div>`+
+    `<div class="dim" style="font-size:11px;text-align:right">${esc(x.kind)}<br>${clock(x.asked_at)}`+
+    `${x.outcome?`<br><span class="tag">${esc(x.outcome)}</span>`:""}</div></div>`).join("");
+
+  const edges=(c.edges||[]).map(e=>{
+    const w=(n)=>Math.round((n/e.total)*110);
+    return `<div class="edge"><span class="pair" style="min-width:230px">${esc(e.from)} → ${esc(e.to)}</span>`+
+      `<span class="bar">`+
+      `<i style="width:${w(e.completed)}px;background:#7d8aa0"></i>`+
+      `<i style="width:${w(e.active)}px;background:#26d07c"></i>`+
+      `<i style="width:${w(e.waiting)}px;background:#e8b339"></i>`+
+      `<i style="width:${w(e.silent)}px;background:#ff5c5c"></i></span>`+
+      `<span class="dim">${e.total} exchange${e.total===1?"":"s"}</span></div>`;}).join("");
+
+  const health=(c.health||[]).map(h=>{
+    const cell=(d)=>d.stated?`<span class="${d.score>=0.8?"up":(d.score>=0.5?"":"down")}">${(d.score*100).toFixed(0)}%</span> `+
+      `<span class="dim">(${d.samples})</span>`:`<span class="dim">not stated yet</span>`;
+    return `<tr><td class="accent">${esc(h.name)}</td>`+
+      `<td>${cell(h.collaboration_responsiveness)}</td><td>${cell(h.uqi_responsiveness)}</td></tr>`;}).join("");
+
+  $("tab-chatterbox").innerHTML=legend+
+    `<h2>Conversations</h2>${convs}`+
+    `<h2>Who talks to whom</h2>${edges||empty("no edges yet")}`+
+    `<h2>Collaboration health</h2>`+
+    (health?`<table><thead><tr><th>Desk</th><th>Cross-check responsiveness</th><th>Question responsiveness</th></tr></thead><tbody>${health}</tbody></table>`
+      :empty("no desks measured yet"))+
+    `<div class="note">Absent is not zero: a desk nobody has asked anything is <em>unstated</em>, never scored badly.</div>`+
+    `<div class="note">${esc(c.note||"")}</div>`;
 }
 
-function renderStrategy(d) {
-  $("tab-strategy").innerHTML = section(d, () => {
-    const rows = d.register || [];
-    $("c-strategy").textContent = d.total ? `(${d.total})` : "";
-    return `<h2>Strategic Priority Register</h2>` + (rows.length ? table(
-      ["Title", "Kind", "Need/Want", "Flag", "Status"], rows, (r) =>
-      `<tr><td>${esc(r.title)}</td><td class="dim">${esc(r.entry_type || "—")}</td>` +
-      `<td>${esc(r.need_or_want || "—")}</td><td>${esc(r.flag || "—")}</td>` +
-      `<td><span class="badge">${esc(r.status)}</span></td></tr>`)
-      : empty("The register is empty. Nothing has been filed by the organization yet.")) +
-      `<div class="note">${esc(d.note || "")}</div>`;
-  });
+async function pollChatterbox(){
+  try{renderChatterbox(await (await fetch("/console/chatterbox")).json());}catch{}
 }
 
-function renderSimulation(d) {
-  $("tab-simulation").innerHTML = section(d, () => {
-    const rows = d.missions || [];
-    $("c-sim").textContent = d.total ? `(${d.total})` : "";
-    return `<h2>Missions</h2>` + (rows.length ? table(
-      ["Mission", "Strategy", "Mode", "Status", "Note"], rows, (m) =>
-      `<tr><td class="accent">${esc(m.mission_id)}</td><td>${esc(m.strategy)}</td>` +
-      `<td class="dim">${esc(m.run_mode)}</td>` +
-      `<td><span class="badge ${m.status === "COMPLETED" ? "ok" : (m.status === "FAILED" ? "bad" : "")}">` +
-      `${esc(m.status)}</span></td><td class="dim">${esc(m.note || "")}</td></tr>`)
-      : empty("No mission has been run. The Simulation Engine generates training worlds on request."));
-  });
-}
-
-function renderAlerts(d) {
-  $("tab-alerts").innerHTML = section(d, () => {
-    const recent = d.recent || [], corrective = d.corrective || [];
-    $("c-alerts").textContent = recent.length ? `(${recent.length})` : "";
-    return `<h2>Needing attention</h2>` + (recent.length ? table(
-      ["Time", "Severity", "Source", "Message"], recent, (e) =>
-      `<tr class="${esc(e.severity)}"><td class="dim">${esc(clock(e.timestamp))}</td>` +
-      `<td class="lvl">${esc(e.severity)}</td><td class="accent">${esc(who(e))}</td>` +
-      `<td>${esc(e.message)}</td></tr>`)
-      : empty("Nothing has warned or failed. The quiet districts get reported too.")) +
-      `<h2>Recommendations</h2>` + (corrective.length ? table(
-      ["Cause", "Classification", "Findings"], corrective, (c) =>
-      `<tr><td>${esc(c.rule)}</td><td><span class="badge attn">${esc(c.classification)}</span></td>` +
-      `<td class="dim">${esc(c.findings)}</td></tr>`)
-      : `<div class="note">${esc(d.summary || "no corrective work outstanding")}</div>`);
-  });
-}
-
-function renderParliament(d) {
-  $("tab-parliament").innerHTML = section(d, () => d.convened
-    ? empty("Sessions would be listed here.")
-    : `<h2>Not convened</h2><div class="note absent">${esc(d.reason)}</div>` +
-      `<h2>What stands in its place</h2><div class="note">${esc(d.standing_in)}<br><br>` +
-      `${d.filed_entries} entr${d.filed_entries === 1 ? "y" : "ies"} filed to date — see the Strategy desk.</div>`);
-}
-
-// --- polling --------------------------------------------------------------
-async function pollFeed() {
-  try {
-    const p = new URLSearchParams();
-    if (state.source) p.set("source", state.source);
-    if (state.attention) p.set("attention_only", "true");
-    if (state.seen) p.set("since_id", String(state.seen));
-    const res = await fetch(`/console/feed?${p}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-
-    if (data.events.length) state.seen = Math.max(state.seen, data.events[0].event_id);
-    renderFeed(data.events);
-    renderSources(data.sources || []);
-    renderStanding(data.standing || []);
-
-    const banner = $("banner");
-    if (data.awaiting_login) {
-      banner.style.display = "block";
-      banner.textContent = "Workforce dormant — waiting for an operator login (POST /server/login). " +
-                           "The feed below is the record of what happened before that.";
-    } else { banner.style.display = "none"; }
-    $("footer").textContent = `${state.printed} line(s) printed · feed every ${FEED_MS/1000}s · desks every ${DESK_MS/1000}s`;
-  } catch (err) {
+async function pollFeed(){
+  try{
+    const p=new URLSearchParams();
+    if(S.source)p.set("source",S.source);
+    if(S.attention)p.set("attention_only","true");
+    if(S.seen)p.set("since_id",String(S.seen));
+    const r=await fetch(`/console/feed?${p}`); if(!r.ok)throw new Error("HTTP "+r.status);
+    const d=await r.json();
+    if(d.events.length)S.seen=Math.max(S.seen,d.events[0].event_id);
+    renderFeed(d.events); renderSources(d.sources||[]); renderStanding(d.standing||[]);
+    $("live").className="pill live";
+    $("footer").textContent=`${S.printed} line(s) · feed ${FEED_MS/1000}s · desks ${DESK_MS/1000}s`
+      +(d.awaiting_login?" · WORKFORCE DORMANT, awaiting operator login":"");
+  }catch(err){
     // A console that blanks when the server restarts is worse than one that
     // says so and keeps its history on screen.
-    $("footer").textContent = `backend unreachable (${err.message}) — retrying`;
+    $("live").className="pill"; $("live").textContent="OFFLINE";
+    $("footer").textContent=`backend unreachable (${err.message}) — retrying`;
+  }
+}
+async function pollDesks(){
+  try{
+    const d=await (await fetch("/console/overview")).json();
+    if(!d.available)return;
+    if(d.lifecycle_stage)$("stage").textContent=d.lifecycle_stage;
+    renderOrganization(d.organization||{}); renderStrategy(d.strategy||{});
+    renderSimulation(d.simulation||{}); renderAlerts(d.alerts||{}); renderParliament(d.parliament||{});
+    const n=((d.organization||{}).agents||[]).length;
+    const attn=(((d.alerts||{}).recent)||[]).length;
+    $("agents-pill").textContent=`${n} AGENT${n===1?"":"S"}`;
+    $("attn-pill").textContent=attn?`${attn} NEED ATTENTION`:"ALL QUIET";
+    $("attn-pill").className="pill"+(attn?" ":"");
+    $("attn-pill").style.color=attn?"var(--warn)":"";
+  }catch{/* the footer already reports unreachability */}
+}
+async function pollFinance(){
+  try{const f=await (await fetch("/console/finance")).json(); renderFinance(f); renderTape(f);}catch{}
+}
+
+/* ---------------- the COO conversation ---------------- */
+function say(from,text,cls){
+  const d=document.createElement("div");
+  d.className="msg "+(cls||"");
+  d.innerHTML=`<div class="from">${esc(from)}</div><div class="body">${esc(text)}</div>`;
+  $("transcript").appendChild(d); $("transcript").scrollTop=$("transcript").scrollHeight;
+  return d.querySelector(".body");
+}
+
+// Speech synthesis. Which voices exist is the *browser's* answer, not ours -
+// a Tamil or Indian-English voice appears here only if the operating system
+// has one installed, and the picker says so rather than promising it.
+function loadVoices(){
+  const sel=$("voice"); const voices=speechSynthesis.getVoices();
+  if(!voices.length){sel.innerHTML='<option>no voices installed</option>';return;}
+  const want=$("lang").value;
+  const rank=(v)=>{
+    const l=(v.lang||"").toLowerCase();
+    if(want==="ta")return l.startsWith("ta")?0:(l.startsWith("en-in")?1:3);
+    if(want==="en-IN")return l.startsWith("en-in")?0:(l.startsWith("ta")?1:(l.startsWith("en")?2:3));
+    return l.startsWith(want.slice(0,2).toLowerCase())?0:(l.startsWith("en")?2:3);
+  };
+  const sorted=[...voices].sort((a,b)=>rank(a)-rank(b)||a.name.localeCompare(b.name));
+  sel.innerHTML=sorted.map(v=>`<option value="${esc(v.name)}">${esc(v.name)} — ${esc(v.lang)}</option>`).join("");
+  const best=sorted[0];
+  if(best&&rank(best)>1){
+    sel.title=`No voice installed for ${want}. Falling back to ${best.name} (${best.lang}). `+
+              `Install a Tamil (ta-IN) or Indian English (en-IN) voice in your OS for the accent you want.`;
+  }else{sel.title="Voice used for spoken answers";}
+}
+speechSynthesis.onvoiceschanged=loadVoices;
+
+function speak(text){
+  if(!S.speak||!text.trim())return;
+  const u=new SpeechSynthesisUtterance(text);
+  const chosen=speechSynthesis.getVoices().find(v=>v.name===$("voice").value);
+  if(chosen){u.voice=chosen;u.lang=chosen.lang;}
+  else{u.lang=$("lang").value;}
+  u.rate=1.02;
+  speechSynthesis.speak(u);
+}
+
+// Interrupting means all of it: stop the stream, stop the voice, stop
+// listening. Barge-in that only silenced one of the three would leave the
+// console still talking over the operator.
+function interrupt(){
+  if(S.abort){S.abort.abort();S.abort=null;}
+  speechSynthesis.cancel();
+  if(S.recog&&S.listening){try{S.recog.stop();}catch{}}
+  $("coo-state").textContent="interrupted";
+}
+$("stop").addEventListener("click",interrupt);
+document.addEventListener("keydown",(e)=>{if(e.key==="Escape")interrupt();});
+
+async function ask(question){
+  if(!question.trim())return;
+  interrupt();
+  say("Operator",question,"me");
+  S.history.push({role:"user",content:question});
+  const body=say("COO","","coo"); body.parentElement.classList.add("thinking");
+  $("coo-state").textContent="thinking…";
+
+  S.abort=new AbortController();
+  let full="",spokenTo=0;
+  try{
+    const res=await fetch("/console/chat",{
+      method:"POST",headers:{"Content-Type":"application/json"},signal:S.abort.signal,
+      body:JSON.stringify({question,language:$("lang").value,history:S.history.slice(-8)}),
+    });
+    if(!res.ok){throw new Error((await res.json().catch(()=>({}))).detail||("HTTP "+res.status));}
+    const reader=res.body.getReader(),dec=new TextDecoder();let buf="";
+    $("coo-state").textContent="answering";
+    while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const parts=buf.split("\n\n"); buf=parts.pop();
+      for(const part of parts){
+        const line=part.replace(/^data: /,"").trim(); if(!line)continue;
+        let ev; try{ev=JSON.parse(line);}catch{continue;}
+        if(ev.type==="text"){
+          full+=ev.text; body.textContent=full;
+          $("transcript").scrollTop=$("transcript").scrollHeight;
+          // Speak sentence by sentence as it arrives, so the voice keeps pace
+          // with the text instead of waiting for the whole answer.
+          const upto=full.lastIndexOf(". ");
+          if(S.speak&&upto>spokenTo){speak(full.slice(spokenTo,upto+1));spokenTo=upto+1;}
+        }else if(ev.type==="error"){
+          body.parentElement.classList.add("err");
+          body.textContent=`The model is unavailable, so I have no answer to give: ${ev.error}`;
+        }
+      }
+    }
+    if(S.speak&&full.length>spokenTo)speak(full.slice(spokenTo));
+    if(full)S.history.push({role:"assistant",content:full});
+    $("coo-state").textContent="ready";
+  }catch(err){
+    if(err.name==="AbortError"){body.textContent=full+" …[interrupted]";$("coo-state").textContent="interrupted";}
+    else{body.parentElement.classList.add("err");
+         body.textContent=`Could not reach the COO: ${err.message}`;$("coo-state").textContent="error";}
+  }finally{
+    body.parentElement.classList.remove("thinking");
+    S.abort=null;
   }
 }
 
-async function pollDesks() {
-  try {
-    const res = await fetch("/console/overview");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const d = await res.json();
-    if (!d.available) { $("headline").textContent = d.reason || ""; return; }
-    if (d.lifecycle_stage) $("stage").textContent = d.lifecycle_stage;
-    renderOrganization(d.organization || {});
-    renderStrategy(d.strategy || {});
-    renderSimulation(d.simulation || {});
-    renderAlerts(d.alerts || {});
-    renderParliament(d.parliament || {});
-    const agents = (d.organization && d.organization.agents) || [];
-    const attention = ((d.alerts && d.alerts.recent) || []).length;
-    $("headline").textContent =
-      `${agents.length} agent(s)` + (attention ? ` · ${attention} needing attention` : " · all quiet");
-  } catch { /* the feed's footer already reports unreachability */ }
+$("compose").addEventListener("submit",(e)=>{e.preventDefault();const q=$("q").value;$("q").value="";ask(q);});
+$("clear").addEventListener("click",()=>{S.history=[];$("transcript").innerHTML="";say("COO","Cleared.","coo");});
+$("speak").addEventListener("click",()=>{
+  S.speak=!S.speak; $("speak").classList.toggle("on",S.speak);
+  if(!S.speak)speechSynthesis.cancel();
+});
+
+// Speech recognition, where the browser has it. Chrome and Edge do; others
+// may not, and the button says so rather than failing silently when pressed.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(SR){
+  S.recog=new SR(); S.recog.interimResults=true; S.recog.continuous=false;
+  S.recog.onresult=(e)=>{
+    const t=[...e.results].map(r=>r[0].transcript).join("");
+    $("q").value=t;
+    if(e.results[e.results.length-1].isFinal){$("q").value="";ask(t);}
+  };
+  S.recog.onend=()=>{S.listening=false;$("mic").classList.remove("listening");};
+  S.recog.onerror=()=>{S.listening=false;$("mic").classList.remove("listening");
+    $("coo-state").textContent="microphone unavailable";};
+  $("mic").addEventListener("click",()=>{
+    if(S.listening){S.recog.stop();return;}
+    interrupt();                                  // speaking to it interrupts it
+    S.recog.lang=$("lang").value==="ta"?"ta-IN":($("lang").value==="en-IN"?"en-IN":$("lang").value);
+    try{S.recog.start();S.listening=true;$("mic").classList.add("listening");
+        $("coo-state").textContent="listening…";}catch{}
+  });
+}else{
+  $("mic").disabled=true;
+  $("mic").title="This browser has no speech recognition. Chrome or Edge does; typing works everywhere.";
 }
 
-$("tabs").addEventListener("click", (e) => {
-  const button = e.target.closest("button[data-tab]");
-  if (!button) return;
-  state.tab = button.dataset.tab;
-  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b === button));
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.id === `tab-${state.tab}`));
-});
+/* ---------------- boot ---------------- */
+(async function boot(){
+  try{
+    const l=await (await fetch("/console/languages")).json();
+    $("lang").innerHTML=l.languages.map(x=>`<option value="${esc(x.code)}">${esc(x.label)}</option>`).join("");
+    // The owner's stated preference, offered first: Tamil-accented English.
+    $("lang").value=l.languages.some(x=>x.code==="en-IN")?"en-IN":l.default;
+  }catch{$("lang").innerHTML='<option value="en">English</option>';}
+  loadVoices();
+  $("lang").addEventListener("change",loadVoices);
 
-function resetFeed() { state.seen = 0; state.printed = 0; $("feed").innerHTML = ""; pollFeed(); }
-$("source").addEventListener("change", (e) => { state.source = e.target.value; resetFeed(); });
-$("attention").addEventListener("click", () => {
-  state.attention = !state.attention;
-  $("attention").classList.toggle("on", state.attention);
-  resetFeed();
-});
-$("follow").addEventListener("click", () => {
-  state.follow = !state.follow;
-  $("follow").classList.toggle("on", state.follow);
-  $("follow").textContent = state.follow ? "Following" : "Paused";
-});
+  document.getElementById("tabs").addEventListener("click",(e)=>{
+    const b=e.target.closest("button[data-tab]"); if(!b)return;
+    document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
+    document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.id===`tab-${b.dataset.tab}`));
+  });
+  const reset=()=>{S.seen=0;S.printed=0;$("feed").innerHTML="";pollFeed();};
+  $("source").addEventListener("change",(e)=>{S.source=e.target.value;reset();});
+  $("attention").addEventListener("click",()=>{S.attention=!S.attention;
+    $("attention").classList.toggle("on",S.attention);reset();});
+  $("follow").addEventListener("click",()=>{S.follow=!S.follow;
+    $("follow").classList.toggle("on",S.follow);$("follow").textContent=S.follow?"Following":"Paused";});
 
-pollFeed(); pollDesks();
-setInterval(pollFeed, FEED_MS);
-setInterval(pollDesks, DESK_MS);
+  pollFeed(); pollDesks(); pollFinance(); pollChatterbox();
+  setInterval(pollFeed,FEED_MS); setInterval(pollDesks,DESK_MS); setInterval(pollFinance,FIN_MS); setInterval(pollChatterbox,DESK_MS);
+})();
 </script>
 </body>
 </html>

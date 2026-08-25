@@ -5783,3 +5783,115 @@ an orphaned population would have kept writing to the database, which is
 TQ-27, the COO chat: the operator asking questions in natural language and
 getting answers grounded in this same data (38 §4.5/§11). The read API it
 needs is what the desks already render from.
+
+---
+
+## §77 — The COO speaks, and the console comes alive (2026-08-25)
+
+TQ-27, completing Pre-Alpha Milestone 1's Definition of Done, and carrying
+four owner requests made during the work: a natural-language COO that speaks
+many languages (Tamil and Tamil-accented English named as preferences), a
+conversation that is interruptible and switchable between typing and voice,
+a Bloomberg/newspaper feel with a Finance desk, and a Chatterbox showing the
+organization's collaboration as a living map.
+
+### Grounding is structural, not a request
+
+Addendum 38 §4.5 requires the COO to answer "using actual system state/status
+data rather than inventing an answer". A prompt that merely *asks* a model to
+be truthful is a hope, so `backend/coo_chat.py` gathers the state first — the
+same material the desks render — and hands it over as the only thing the model
+may speak from. The prompt's rules are ordered: answer only from the snapshot;
+you report and cannot act (§11); distinguish "nothing is happening" from "this
+does not exist yet"; anything SIMULATED is never real-world fact or advice.
+
+That third rule needs material, because absence looks identical to quiet from
+inside a snapshot. So the digest carries an explicit `not_built_yet` section —
+parliament, the Education department, the Finance desk's headlines, the COO's
+own inability to act. Without it a model asked "what is parliament doing?"
+would reasonably answer "nothing", which is false in the way that matters.
+
+An unavailable model produces a **reported error, never a fabricated reply**.
+A console that invents an answer when the model is down is worse than one that
+says the model is down.
+
+### Interruptible means the stream, the voice, and the microphone
+
+Streaming was not decoration: a console that must wait for a complete reply
+before it can be stopped is not interruptible, and barge-in was an explicit
+requirement. `/console/chat` is server-sent events; Escape or Stop aborts the
+fetch, cancels speech synthesis, and stops recognition — all three, because
+barge-in that silenced only one would leave the console talking over the
+operator.
+
+The thread split follows `gateway/streaming.py`'s stated rule exactly: the
+digest is read on the thread that owns the sqlite connection, and only plain
+strings cross into the worker thread that iterates the model. A worker
+touching the database would be reaching into a connection it does not own.
+
+### Language, and an honest limit on the accent
+
+The language is a pass-through label, so any language the model speaks works
+without a code change; the console offers ten and defaults to Indian/Tamil-
+accented English, the owner's stated preference. **What the voice can
+pronounce is a different question, and the browser answers it.** Speech
+synthesis can only use voices the operating system has installed, and the
+verification machine had only `en-US` voices — no `ta-IN`, no `en-IN`. The
+picker therefore ranks by language match and, when it must fall back, says so
+in its tooltip rather than pretending. Promising a Tamil accent the machine
+cannot produce would have been the easy lie.
+
+### The Finance desk: the one place blurring would be dangerous
+
+Built from this system's *own* simulated world — underlying quotes from stored
+option-chain observations — never from a real market. `SIMULATED` is on the
+payload, in a banner, and in the COO's prompt, and it survives every path
+including the failure branches. Headlines are flagged placeholders and are
+deliberately about the simulated world's own mechanics rather than plausible
+real-world events: a fabricated headline naming a real company is exactly what
+must never leave this file. Session moves are seeded from the symbol, so the
+board changes when the world does rather than dancing on every poll — lively
+and useless is still useless.
+
+With no mission ever run, the desk says every asset is unpriced and names what
+would produce prices. An empty table would read as a calm session in a market
+that does not exist.
+
+### The Chatterbox: collaboration as a map, with silence as its own colour
+
+The owner's framing — a living window into the health of the organization,
+with collaboration as the highest objective — matches what addenda 34 §16,
+36 §8 and 37 §8 already demand. It renders the conversations the organization
+*actually* holds: cross-checks (addendum 12 §14, where the requester records
+its own finding before asking, which is what makes them collaboration rather
+than delegation) and UQI questions.
+
+Four states, not three, and the fourth is the point. `active` is being
+answered; `waiting` is aging toward the timeout, so trouble is visible while
+it builds; `completed` includes `no_evidence`, because a responder that looked
+and found nothing has said something informative and scoring it as failure
+would teach agents to stay quiet; and **`silent` is a question that timed out**
+— the actual collaboration failure, given its own colour because folding it
+into "not completed" would bury the finding. Per-desk health comes from §65's
+measured dimensions, carrying their rule that absent is not zero.
+
+One behaviour discovered by testing and kept: an answered cross-check edges to
+the agent that answered, while a pending one edges to the *role*, because that
+is genuinely who it was addressed to. The map showing those as different edges
+is the truth rather than a rounding error.
+
+### Verified against a real organization
+
+Twenty-six new tests (1868 passing), and the console was read against a live
+backend with a real workforce: the Chatterbox showed ten genuine
+Speculator→Explorer cross-checks with their actual questions and outcomes; the
+Finance desk correctly reported ten certified assets with no generated market;
+the language picker defaulted to Indian-accented English and exposed the
+machine's real (US-only) voice list.
+
+### What Milestone 1 now has, and what it does not
+
+Addendum 38's seventeen-step Definition of Done is met apart from what needs a
+human at the keyboard. Still open, honestly: no `panel/`-style *control* lives
+in the console (it observes; `panel/app.py` remains the surface that files
+directives), and the COO cannot act by design.

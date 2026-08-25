@@ -195,6 +195,59 @@ def state_digest(conn: Database, boot=None) -> dict:
     return digest
 
 
+def prepare(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
+            history: list[dict] | None = None) -> tuple[str, list[dict]]:
+    """Everything the model call needs, gathered **on the thread that owns the
+    database** - the (system, messages) pair.
+
+    Split out from the call itself because of the constraint
+    `gateway/streaming.py` states in its own docstring: the worker thread that
+    iterates a streaming response must not touch the database, since sqlite3
+    connections belong to the thread that opened them. So the state digest is
+    read here, turned into plain text, and handed across as a value the worker
+    thread can use without reaching back."""
+    import json
+
+    digest = state_digest(conn)
+    system = SYSTEM_PROMPT.format(language=LANGUAGE_LABELS.get(language, language))
+    messages = list(history or [])[-8:]  # a short memory; the console is not a transcript store
+    messages.append({
+        "role": "user",
+        "content": f"SYSTEM STATE (the only source of truth):\n"
+                   f"{json.dumps(digest, indent=1, default=str)}\n\n"
+                   f"OPERATOR QUESTION: {question}",
+    })
+    return system, messages
+
+
+def stream_answer(system: str, messages: list[dict], provider=None):
+    """The model's reply as it arrives, for a console that must stay
+    interruptible (the owner's requirement; addendum 16 §9's barge-in applied
+    to the operator console).
+
+    A plain blocking generator of `{'type': 'text'|'final'|'error', ...}`, so
+    the caller can hand it to `gateway.streaming.iterate_in_thread` and keep
+    the event loop free to notice the operator stopping it. Touches no
+    database - see `prepare`.
+
+    An error becomes a yielded event rather than a raised exception, because
+    a stream that dies silently leaves the console waiting for a completion
+    that never arrives - the same reasoning gateway/streaming.py gives for
+    passing exceptions across its queue as values."""
+    try:
+        if provider is None:
+            from app.model_gateway import default_provider
+
+            provider = default_provider()
+        for event in provider.stream(system, messages, [], max_tokens=MAX_TOKENS):
+            if event.get("type") == "text":
+                yield {"type": "text", "text": event.get("text", "")}
+            elif event.get("type") == "final":
+                yield {"type": "final"}
+    except Exception as exc:  # noqa: BLE001 - the console must render the failure
+        yield {"type": "error", "error": f"{exc.__class__.__name__}: {exc}"}
+
+
 def answer(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
            history: list[dict] | None = None, provider=None) -> dict:
     """Answer one operator question from real state.

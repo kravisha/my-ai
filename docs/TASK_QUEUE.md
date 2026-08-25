@@ -365,40 +365,21 @@ the system), this is a window (the organization's whole internal life) — and h
 `panel/` (control and state) and `monitor/` (client conversations): this one reports narration.
 The COO chat that answers from real state is split out as TQ-27, being a different kind of work.
 
-### TQ-27 — The COO chat, answering from real system state
+### TQ-27 — The COO chat, and the console's living desks
 
-**NEED (GREEN) · IN_PROGRESS (paused 2026-08-25 at a clean boundary) · `SPEC_RECONCILIATION.md` §75**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §77**
 
-**Where this stands, for a quick restart.** `backend/coo_chat.py` is written and imports
-cleanly, but is **not wired to any route, not covered by tests, and not rendered by the
-console** — nothing calls it yet, so the shipped system is unchanged by its presence. It
-carries: a bounded `state_digest` over the same data the console desks render; a system prompt
-whose first rule is answer-only-from-the-snapshot (38 §4.5's requirement made structural rather
-than hoped for); an explicit report-don't-act rule (§11); a `not_built_yet` section so the COO
-can distinguish "idle" from "does not exist"; and a pass-through language label so any language
-works without a code change.
-
-**Remaining, in order:** (1) a `/console/chat` route — streaming, so the reply is genuinely
-interruptible; (2) tests, including that an unavailable model surfaces as a reported error and
-never as a fabricated answer; (3) the console layout rework the owner specified — tabs
-occupying roughly two thirds with the COO chat as a separate pane below them taking the last
-third, Bloomberg/newspaper styling, type-and-voice toggle with barge-in, and language selection
-(Tamil and Indian-accented English are the owner's stated preference; available voices depend
-on what the operator's browser has installed, which the UI must report honestly rather than
-promise); (4) a Finance tab in the shape of a Yahoo/Google Finance front page, drawn from this
-system's **own simulated world** and labelled SIMULATED throughout — the owner's note is that a
-group of newspaper agents will own it later, so the placeholder must not be mistakable for real
-market data or investment advice.
-
-Source: addendum 38 §4.5, §11. The operator asks the COO questions in natural language — "what
-stage are we in?", "which departments are idle?", "what failed during startup?" — and the COO
-answers **from the status stream and the registries**, not from invention (§4.5's explicit
-requirement). §11's other rule matters as much: an action that is not implemented must be
-declined explicitly rather than reported as done. Split from TQ-26 because a model answering
-over real state is a different kind of work from rendering a feed, and bolting it on would have
-made one entry that was half UI and half tool-use plumbing. The read API it needs already exists
-(`backend/status_events.py`'s `recent`, `current_status`, `failures`, `sources`).
-
+Source: addendum 38 §4.5, §11, plus four owner requests made during the work. Built:
+`backend/coo_chat.py` (grounded answering — the state is gathered first and handed over as the
+only source of truth, with an explicit `not_built_yet` section so the COO can tell "idle" from
+"does not exist", and an unavailable model reported rather than fabricated); a streaming
+`/console/chat` so the reply is genuinely interruptible, with Escape stopping the stream, the
+voice and the microphone together; ten languages defaulting to Tamil-accented English, with the
+voice picker honest that the accent depends on OS-installed voices; `backend/finance_desk.py`
+(a front page over this system's *own* simulated world, SIMULATED on every path, headlines
+flagged as placeholders until newspaper agents exist); and `backend/chatterbox.py` (the living
+collaboration map, where `silent` — a question that timed out — is its own state because
+folding it into "not completed" would bury the actual failure).
 ---
 
 ## Blocked
