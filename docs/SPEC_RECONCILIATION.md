@@ -5959,3 +5959,67 @@ of these defects needed size, contention or a real browser to appear. §72's
 this; this is the large one. The console's own verification standard —
 **run it against the real thing and look** — is what caught them, and is worth
 keeping as the standard for anything that touches the live system.
+
+---
+
+## §80 — Four indexes, 195.9 seconds to 0.01 (2026-08-25)
+
+TQ-29, the defect §79 found by pointing the console at a real database.
+`remediation.corrective_items` took **195.9 seconds to return two rows**.
+
+### The cause was never the logic
+
+`compliance.unevaluated` generates SQL that correlates a subquery per row of
+the work table. For the "cross-check answer" rule that meant, on a database
+with 5,673 cross-checks and 5,674 completed reports and **no index on any of
+the linking columns**:
+
+    SCAN w                          -- every cross_check_requests row
+    CORRELATED SCALAR SUBQUERY
+      SCAN c                        -- every discovery_reports_completed row
+      SEARCH e USING AUTOMATIC COVERING INDEX   -- SQLite rebuilding an index per query
+    USE TEMP B-TREE FOR ORDER BY    -- sorting every match before LIMIT
+
+Roughly 32 million row visits for a query whose answer is two rows. Nothing
+about the compliance logic is wrong; it had simply never been run against
+enough history for the missing indexes to matter. Fixtures are small.
+
+### The fix
+
+Four indexes, each on a column the check's own generated SQL names:
+`discovery_reports_completed.cross_check_id` (the correlated link),
+`grades.report_id` (its join — the one SQLite was building an automatic index
+for on every execution), `discovery_reports.cross_check_id` (the in-flight
+EXISTS), and `cross_check_requests.answered_at` (the ORDER BY that was falling
+into a temp B-tree).
+
+Declared in `fi_db.SCHEMA` rather than as a migration: `CREATE INDEX IF NOT
+EXISTS` is idempotent and `init_schema` executes the script on every start, so
+an existing database gains them on next boot. Measured on the same real
+database immediately after: **0.01s**, with every SCAN replaced by a SEARCH
+and the sort gone.
+
+### Pinned structurally, not by a stopwatch
+
+A timing assertion would be flaky on shared hardware and would fail for
+reasons that are not this defect. So `tests/test_compliance_indexes.py`
+asserts the *plan*: no `SCAN` on either table, no temp B-tree, at least three
+index searches. It also pins that the rule still names those exact columns —
+if the rule's linkage changes, the indexes stop being the right ones, and
+this is where that gets noticed rather than by rediscovering 196 seconds in
+production.
+
+### The console gets its recommendations back
+
+§79 stripped `corrective_items` out of the polled overview to unwedge the
+console. It is restored, and deliberately to the *polled* path rather than
+somewhere quieter: if this ever slows again, the console is where it will show
+first.
+
+### The pattern, again
+
+This is §79's lesson with a number attached. A green suite, small fixtures, and
+a query that was quadratic all along — visible only once the system had
+accumulated real history. Worth stating because the remedy generalises: when a
+query correlates per row, the linking column wants an index before the table
+grows, not after somebody waits three minutes for two rows.

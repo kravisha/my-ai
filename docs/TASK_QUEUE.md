@@ -405,7 +405,9 @@ Worth doing before it gets normalised as "that test that always fails after you 
 
 ### TQ-29 — `remediation.corrective_items` takes minutes on a real database
 
-**NEED (YELLOW) · QUEUED · measured 2026-08-25, `SPEC_RECONCILIATION.md` §79**
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §80.** Four missing indexes on the columns
+the compliance check correlates on: **195.9s → 0.01s** on the same real database, plan verified
+SCAN-free and pinned by test. The console's Alerts desk has its recommendations back.
 
 Measured against a real 146MB `financial_intelligence.db`: **195.9 seconds** to return two
 rows. Every other console read on the same database is milliseconds. It was wedging the whole

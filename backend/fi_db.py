@@ -935,6 +935,33 @@ CREATE TABLE IF NOT EXISTS grades (
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
+-- Indexes the compliance check depends on (TASK_QUEUE TQ-29,
+-- SPEC_RECONCILIATION §80).
+--
+-- Without these, `compliance.unevaluated` on the "cross-check answer" rule ran
+-- SCAN cross_check_requests x SCAN discovery_reports_completed - roughly 32
+-- million row visits on a real database - and took 196 seconds to return two
+-- rows. Every column here is one the check's own generated SQL correlates or
+-- orders on:
+--
+--   discovery_reports_completed.cross_check_id  the correlated subquery's link
+--   grades.report_id                            its join (SQLite was building
+--                                               an automatic index per query)
+--   discovery_reports.cross_check_id            the in-flight EXISTS
+--   cross_check_requests.answered_at            the ORDER BY, which was a
+--                                               temp B-tree over every row
+--
+-- Written here rather than in a migration because CREATE INDEX IF NOT EXISTS
+-- is idempotent and init_schema executes this script on every start, so an
+-- existing database gains them on next boot.
+CREATE INDEX IF NOT EXISTS discovery_reports_completed_by_cross_check
+    ON discovery_reports_completed (cross_check_id);
+CREATE INDEX IF NOT EXISTS grades_by_report ON grades (report_id);
+CREATE INDEX IF NOT EXISTS discovery_reports_by_cross_check
+    ON discovery_reports (cross_check_id);
+CREATE INDEX IF NOT EXISTS cross_check_requests_by_answered_at
+    ON cross_check_requests (answered_at);
+
 -- Pre-Alpha static metadata (Consolidated spec §10/§21).
 
 CREATE TABLE IF NOT EXISTS agent_names (

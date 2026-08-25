@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, status_events, strategy
+from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -645,21 +645,23 @@ def _overview(conn) -> dict:
         }
 
     def _alerts():
-        """Warnings and failures, which are cheap.
+        """Warnings and failures, plus the corrective recommendations.
 
-        `remediation.corrective_items` is deliberately NOT called here.
-        Measured on a real 146MB database it takes **196 seconds** (§79), and
-        this endpoint is polled every six seconds - the calls piled up,
-        exhausted the worker pool and wedged the whole console. A desk that
-        cannot be drawn quickly does not belong on a polling path; the
-        recommendations return when TQ-29 makes them affordable."""
+        The recommendations were removed from this polled path when they took
+        196 seconds on a real database and wedged the console (§79). TQ-29/§80
+        indexed the columns the compliance check correlates on and the same
+        call now returns in 0.01s, so they are back where they belong. If this
+        ever slows again the console is the place it will show first, which is
+        the argument for it being here rather than somewhere quieter."""
         return {
             "recent": status_events.recent(
                 conn, limit=40, severities=status_events.ATTENTION_SEVERITIES),
-            "corrective": [],
-            "summary": "Corrective recommendations are not computed here: on a real-sized "
-                       "database the analysis takes minutes (TASK_QUEUE TQ-29). Warnings and "
-                       "failures above are live.",
+            "corrective": [
+                {"rule": item.rule, "classification": item.classification,
+                 "findings": item.findings, "remedy": getattr(item, "remedy", None)}
+                for item in remediation.corrective_items(conn, limit=20)
+            ],
+            "summary": remediation.summarise(conn),
         }
 
     def _parliament():
