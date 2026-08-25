@@ -259,8 +259,7 @@ def test_no_approval_queue_is_invented(conn):
 def test_the_main_story_is_whatever_is_most_true(conn):
     """§16 wants a broadcast order, not a fixed report order. With something
     broken, the failure leads."""
-    workspace.save(conn, {"activeTab": "newsroom"})
-    since = briefing.last_seen(conn)
+    since = "2020-01-01T00:00:00+00:00"   # explicit, for the reason above
     _publish(conn, "a thing finished", status=status_events.STATUS_COMPLETED)
     _publish(conn, "scanning", status=status_events.STATUS_RUNNING,
              engine="simulation_engine")
@@ -272,8 +271,12 @@ def test_the_main_story_is_whatever_is_most_true(conn):
 
 def test_with_nothing_broken_the_news_leads_instead(conn):
     """A briefing that always opened with the same category would be a report."""
-    workspace.save(conn, {"activeTab": "newsroom"})
-    since = briefing.last_seen(conn)
+    # An explicit window, not the wall clock. Checkpointing and publishing in
+    # the same Windows clock tick makes the event land *at* `since` rather than
+    # after it, which the strict comparison correctly excludes - and this test
+    # then failed about one run in three for a reason that had nothing to do
+    # with what it was asserting.
+    since = "2020-01-01T00:00:00+00:00"
     _publish(conn, "scanning", status=status_events.STATUS_RUNNING)
     _publish(conn, "a thing finished", status=status_events.STATUS_COMPLETED,
              engine="simulation_engine")
@@ -299,8 +302,7 @@ def test_every_item_names_a_view_the_console_can_open(conn, monkeypatch):
     was while the COO talked about somewhere else."""
     from backend import view_intents
 
-    workspace.save(conn, {"activeTab": "newsroom"})
-    since = briefing.last_seen(conn)
+    since = "2020-01-01T00:00:00+00:00"   # explicit, for the reason above
     monkeypatch.setattr(chatterbox, "living_map", lambda c, **kw: {
         "conversations": [
             {"state": chatterbox.STATE_ACTIVE, "from": "A", "to": "B",
