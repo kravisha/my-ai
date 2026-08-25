@@ -27,9 +27,12 @@ holds the queue, not the record.
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
 > (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
-> **Current focus: the desktop runtime** (addendum 40, assimilated 2026-08-25, §81) — TQ-30 →
-> TQ-31 → TQ-32 in that order, since each is the next one's foundation. TQ-33 (presentation
-> choreography) and TQ-34 (role-based Gateway) follow. Pre-Alpha Milestone 1 is complete.
+> **Current focus: the live studio** (addenda 41–43, assimilated 2026-08-25, §85) — **TQ-33**,
+> the visual redesign, because addendum 41 makes the look a requirement and the console as built
+> is the terminal it forbids — **done 2026-08-25**. **TQ-38 (RED) jumps the queue**: the server
+> reports a dormant workforce while six agents run. Then TQ-35 (Kumbhakarnan's persisted identity), TQ-36 (migrations
+> and the developer escape hatch), TQ-37 (briefing rhythm), TQ-34 (role-based Gateway).
+> Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
 > TQ-22 → TQ-23 → TQ-24 in that order, since each is the next one's foundation; TQ-25 carries a
@@ -475,15 +478,115 @@ stops stream, voice and microphone together. What is missing is the *control* ha
 focus rather than only answering. 40 §10's rule governs the design: natural language is another
 control surface over one source of truth, not a second reporting system.
 
-### TQ-33 — Presentation direction: pointer, spotlight, and panel choreography
+### TQ-33 — The live studio: the look, and the choreography
 
-**WANT · QUEUED · addendum 40 §8.3–§8.5 · `SPEC_RECONCILIATION.md` §81 disposition 4**
+**NEED (GREEN) · QUEUED · addenda 41 §2/§5/§7/§14/§15/§19/§20, 40 §8.3–§8.5 ·
+`SPEC_RECONCILIATION.md` §85**
 
-The half of the presenter that is buildable now and carries most of the communicative value:
-bringing a referenced panel forward, pointing at the card or line under discussion, spotlighting a
-detail and restoring the broader view, clearing annotations when the topic moves on — all
-synchronized with the narration. **Deliberately without a human figure**, which is separable and
-expensive (see the deferred list). Two of 40 §19's acceptance criteria are satisfied by this alone.
+Promoted from WANT to NEED, and widened: addendum 41 makes the *look* a requirement rather than a
+preference, in the strongest terms the lineage has used. §18: "If an implementation looks like a
+Bloomberg Terminal, it has failed the visual requirement." The console as built is exactly that —
+dense, monospaced, terminal-flavoured — because an earlier owner instruction asked for it (§85
+disposition 1 records the reversal honestly).
+
+Scope: broadcast composition over terminal density — strong hierarchy, large surfaces, clean
+typography, adaptive density (41 §19: low on overview, higher on drill-down); status treatment that
+distinguishes active/waiting/completed/blocked/failed/needs-attention (§20); and the choreography —
+bring a panel forward, dim what is irrelevant, expand, spotlight, restore, with restrained
+camera-like transitions (§14, §15). Motion must be informative: 41 §7's "pointer behavior must
+always correspond to real information. No meaningless animation."
+
+**Deliberately without the human figure**, which stays deferred with its reason (§85 disposition 4).
+Most of 41 §27's acceptance criteria are satisfied by this entry alone.
+
+### TQ-38 — The server reports a dormant workforce while six agents are working
+
+**NEED (RED) · QUEUED · found 2026-08-25 while verifying TQ-33 · addendum 38 §3.3**
+
+The dormancy gate and the controller's start-up reconciliation disagree, and the
+console repeats the wrong one.
+
+Starting the backend with no operator login and no `SERVER_AUTOSTART_WORKFORCE`
+prints the intended banner:
+
+```
+= SERVER UP, WORKFORCE DORMANT. The COO and every agent wait for an operator
+= login (addendum 38 §3.3).
+```
+
+Four lines above it, in the same log:
+
+```
+[COO] 6 agents (6 active) | not running: analysis-1, explorer-1, speculator-1
+[speculator] enriched case #5673 (SYN1) with 3 new item(s)
+[controller] reconciled on start: {'coo': 'stale', 'heartbeat_age_seconds': 6254.7}
+```
+
+Six agent processes were spawned as children of the server at the moment it
+booted, and they did real work — the speculator enriched cases and the analysis
+desk pulled a report past its starvation guard. The login gate governs
+`_operational_startup`; reconciliation revives whatever the database still lists
+as active, independently and without consulting it.
+
+Two problems, and the second is the worse one:
+
+1. **The gate does not hold.** A server told to wait for an operator does not
+   wait. Whether reconciliation *should* be exempt is a real design question —
+   an agent orphaned by a crash arguably should be recovered — but it has to be
+   decided, not discovered.
+2. **The console reports the opposite of what is happening.** `/console/status`
+   derives `awaiting_login` from `startup_report is None`, so the briefing said
+   "workforce dormant, awaiting operator login" while six agents ran behind it.
+   A console whose entire purpose is to be a truthful window onto the
+   organization stated the reverse of the truth, and would have gone on doing so
+   indefinitely.
+
+Flagged RED because (2) is the failure this system is least able to tolerate:
+every other signal the operator has comes through that window.
+
+Found by reading the log of a server started to look at a stylesheet — not by
+the suite, which has no test that asserts a dormant server spawns no children.
+That test is part of the fix.
+
+### TQ-35 — Kumbhakarnan: the COO's identity as persisted state
+
+**NEED (GREEN) · QUEUED · addendum 42 §3, §19, §20 · `SPEC_RECONCILIATION.md` §85 disposition 2**
+
+The COO gets a name that outlives the code. 42 §19: "changing implementation versions must not
+silently replace the COO's identity." The principle already exists — `agent_names` makes a name the
+durable agent and `AGENT_NAME_POOL` already reserves one name for the CEO — but the COO's identity
+is not yet a first-class persisted object with its own id, creation timestamp, personality, voice
+identity and visual identity, versioned separately from the software (42 §4's three version types).
+
+### TQ-36 — The migration pipeline, and the developer's escape hatch
+
+**NEED (YELLOW) · QUEUED · depends on TQ-35 · addendum 42 §7–§10, §14, §22, §23 ·
+`SPEC_RECONCILIATION.md` §85 disposition 3**
+
+Sequential `migrate_5_to_6`-style steps rather than one giant converter (42 §9), each deterministic,
+logged and idempotent where practical; 42 §23's ordering (validate → backup → migrate → validate →
+activate) so a failed migration never leaves the active state broken; and 42 §22's rule that a
+snapshot failing validation is *preserved for diagnosis*, never destroyed.
+
+Flagged YELLOW for the half that is easy to postpone and shouldn't be: 42 §14's development-mode
+escape hatches — reset, load a specific snapshot, disable persistence, force migration, inspect raw
+state. "Persistence must help development, not trap developers inside stale state" becomes a live
+risk the moment identity is persistent, and the cheapest time to build the way out is before
+anybody is stuck in it.
+
+### TQ-37 — The presenter frame and the briefing rhythm
+
+**WANT · QUEUED · depends on TQ-33 · addenda 41 §8, §9, §16, §21, §22 ·
+`SPEC_RECONCILIATION.md` §85 disposition 4**
+
+The presenter's *behaviour* without its body: a briefing that narrates what completed, what is
+underway, what is blocked and what needs attention (41 §8), with the display tracking the narration;
+41 §16's broadcast rhythm (main story → supporting graphic → interruption → drill-down → return);
+and 41 §21's persisted presenter state — current topic, briefing position, pending interruption —
+which is also the voice-interaction state addendum 40 §5.2 named and TQ-31 correctly deferred.
+
+41 §22's failure isolation is the invariant to keep pinned throughout: the presenter "must never own
+critical business state", so a presenter that dies takes nothing with it.
 
 ### TQ-34 — Role-based Gateway
 
@@ -569,7 +672,17 @@ the §6 scenario engine — a substantially larger increment than any detector.
 - **Multi-viewpoint staged debate, including model-diversity debate** (addendum 34 §3, 35 §9)
   — the §47 parliamentary deferral, unchanged; the model-diversity detail is preserved in §60
   disposition 6 for the day a parliament exists.
-- **The animated human presenter** (addendum 40 §8.2) — a believable animated person with gaze,
+- **The animated human presenter** (addenda 40 §8.2, 41 §3–§6/§12/§13) — now with a name,
+  Kumbhakarnan, and a fuller brief: standing, turning, gesturing, facial expression and body
+  language. It remains a substantial project and the reasoning is unchanged, with one addition from
+  41 §3 that makes the shortcut worse rather than better: a *static portrait is explicitly ruled
+  out*, so a still image standing in for the presenter would fail the specification rather than
+  approximate it. The honest placeholder is a frame that says what it is waiting for (TQ-37).
+- **The animated human presenter, original-design constraint** (addendum 41 §4, 42 §20) — when it is
+  built, the character must be an original interpretation inspired by the Kumbhakarna tradition and
+  must not copy any specific film, television, comic, game or commercial depiction. Recorded here
+  because it is a constraint on *how* it is made, not a reason to defer it.
+- **The animated human presenter (original entry)** (addendum 40 §8.2) — a believable animated person with gaze,
   lip-sync, posture and gesture is real-time avatar rendering plus viseme-driven speech timing: a
   substantial project, and one where a poor result is worse than none, because an unconvincing
   figure damages trust in the intelligence behind it (§81 disposition 4). The *choreography* half

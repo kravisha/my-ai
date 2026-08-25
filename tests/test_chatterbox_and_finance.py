@@ -197,3 +197,37 @@ def test_headlines_are_flagged_placeholders(conn):
     assert page["headlines"]
     assert all(h["placeholder"] is True for h in page["headlines"])
     assert "newspaper agents" in page["headlines_note"]
+
+
+def test_a_gainer_has_to_have_gained(conn):
+    """The desk used to slice its ranking from both ends, which mislabels data
+    in two ways at once: with a small universe every asset appears in *both*
+    lists, and on a down session the "gainers" are the assets that fell least.
+
+    Found by looking at the page rather than by this suite - the terminal
+    layout showed the moves in cells small enough that a red number under a
+    "gainers" heading did not register, and the broadcast layout put it in
+    32-point type. The bug was months old.
+    """
+    reference_data.run_reference_engine(conn)
+    from simulation import parity_world as pw
+
+    pw.store_world(conn, pw.MissionConfig(
+        mission_id="m-movers", run_mode="simulation", strategy=pw.STRATEGY_PARITY,
+        seed=11, n_scenarios=2, scenario_mix={pw.VARIANT_NONE: 1.0}), runs_dir=None)
+
+    movers = finance_desk.front_page(conn)["movers"]
+
+    assert all(t["change_pct"] > 0 for t in movers["gainers"]), (
+        "a decliner is listed under gainers"
+    )
+    assert all(t["change_pct"] < 0 for t in movers["losers"]), (
+        "a riser is listed under losers"
+    )
+    # No symbol can be both, which the old both-ends slice allowed whenever the
+    # universe was smaller than ten.
+    assert not ({t["symbol"] for t in movers["gainers"]}
+                & {t["symbol"] for t in movers["losers"]})
+    # Empty is the honest answer when nothing moved that way; padding the row
+    # to a fixed length is what created the defect in the first place.
+    assert len(movers["gainers"]) <= 5 and len(movers["losers"]) <= 5

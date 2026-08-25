@@ -6370,3 +6370,195 @@ and panel machinery lives. §5.2's voice-interaction state — an interrupted
 question's context, restored on wake — is now buildable and was correctly
 deferred out of TQ-31, since the state it would restore only exists once voice
 does something worth resuming.
+
+---
+
+## §85 — Kumbhakarnan, and the look that replaces the terminal (2026-08-25)
+
+Three specifications supplied together, assimilated verbatim as addenda 41
+(Executive Presenter & Live Studio), 42 (COO Persistence Handling) and 43
+(Desktop Runtime v2).
+
+### 1. The conflict worth naming first: Bloomberg was the instruction, and is now wrong
+
+On 2026-08-25 the owner asked for tabs "similar to bloomberg tabs", and the
+console was built to that — dense, monospaced, terminal-flavoured. Addendum 41
+§2 and §18 now reverse it in the strongest language the lineage has used:
+"Avoid ... monospaced financial-terminal aesthetics ... If an implementation
+looks like a Bloomberg Terminal, it has failed the visual requirement."
+
+**Disposition: the newer specification governs, and the earlier instruction is
+recorded rather than quietly overwritten.** Both were the owner's, the second
+supersedes the first, and a reader finding the old console in git history
+should be able to see why it looked the way it did. §18 asks the requirement
+be re-checked throughout implementation, so it is restated in the console's
+own source rather than left in a document nobody opens while styling.
+
+### 2. The COO has a name, and it is persisted identity rather than a label
+
+Addendum 42 §3/§19: the COO is **Kumbhakarnan**, and "changing implementation
+versions must not silently replace the COO's identity." This system already
+holds the *principle* — `agent_names` makes a name the durable agent and an
+identity the desk it sits at (the 2026-08-17 owner decision), and §72 pins
+that a name survives restarts. What it does not yet hold is the COO's
+identity as a **first-class persisted object** with its own schema version,
+personality, voice and visual identity. That is TQ-35.
+
+Note the seed: `AGENT_NAME_POOL` already reserves "Bob" as the CEO name. The
+COO's name becoming a reserved identity is the same mechanism, one role over.
+
+### 3. Persistence: mostly principles this codebase already holds, one genuine gap
+
+42's core rule — "persist state, not executable runtime objects" — is how
+everything here already works. Its schema-versioning discipline exists in
+`workspace` (§83) and `fi_db`. Its snapshot categories are `continuity`'s
+backups (§59), which already distinguish periodic from clean-shutdown. Its
+"never fabricate" rule is the strongest existing habit in the repository:
+§64's registry refuses to invent unmeasured values, §77's COO refuses to
+invent state, and 42 §11 says the same thing about migrations.
+
+**The genuine gap is the migration pipeline** — sequential `migrate_5_to_6`
+steps, an audit trail, and 42 §23's upgrade ordering (validate → backup →
+migrate → validate → activate). Nothing today can load old state into newer
+code, because nothing has needed to yet. TQ-36.
+
+Also new and worth having early: 42 §14's **development-mode escape hatches**
+(reset, load a specific snapshot, disable persistence, force migration,
+inspect raw state). "Persistence must help development, not trap developers
+inside stale state" is a real risk the moment identity becomes persistent, and
+the cheapest time to build the escape hatch is before anybody is trapped.
+
+### 4. The presenter: what is buildable, and the honest line through it
+
+41 wants an animated Kumbhakarnan who stands, turns, gestures, points and
+listens. §81 already recorded the figure as expensive and separable, and that
+holds. What 41 adds is that the *studio* around the figure is specified in
+much more detail than 40 gave — panel focus, dimming, expansion, camera-like
+transitions, broadcast rhythm, adaptive density — and none of that needs a
+human figure.
+
+So the split stands and sharpens:
+
+- **Buildable now (TQ-33, expanded):** the studio look, panel choreography,
+  the pointer, spotlight and dim, the briefing rhythm, and status
+  visualisation. 41 §27's acceptance criteria are mostly *these* — "the
+  interface does not resemble a Bloomberg Terminal", "visuals track the topic
+  of conversation", "motion is purposeful", "the studio remains readable".
+- **Deferred (the figure):** a believable animated person. 41 §3 explicitly
+  rules out a static portrait, so a still image *pretending* to be the
+  presenter would fail the spec rather than approximate it. The honest
+  placeholder is a presenter frame that says what it is waiting for.
+
+41 §22's failure isolation is already true and should stay pinned: the
+presenter is a presentation layer and "must never own critical business
+state" — which the console's architecture already guarantees, since it holds
+none.
+
+### 5. Addendum 43 against 40
+
+43 is 40 restated more compactly. Where they overlap, they agree; where 43 is
+terser, 40 governs, because it says more. 43 adds four items to what must
+persist that 40 did not name — search state, expanded/collapsed panels,
+briefing position, presenter state — and those are folded into TQ-31's
+follow-on rather than reopening it.
+
+### The queue this generates
+
+TQ-33 is expanded from "pointer and choreography" to the full studio
+redesign, since 41 makes the look itself a requirement rather than a
+preference. TQ-35 (the COO's persisted identity, Kumbhakarnan), TQ-36 (the
+migration pipeline and development-mode escape hatches), and TQ-37 (the
+presenter frame and briefing rhythm) follow. The animated figure stays
+deferred with its reason restated.
+
+---
+
+## §86 — The console stops being a terminal (2026-08-25, TQ-33)
+
+Addendum 41 §2/§18 built. `backend/console/index.html` rewritten as a broadcast
+surface; every endpoint, every handler and the whole workspace-persistence path
+(§83) unchanged, because the requirement was about presentation and nothing
+else needed to move.
+
+### What changed
+
+**Typography and ground.** The body was set in `ui-monospace` — the single
+strongest cue that made it read as a terminal at a glance. It is now a system
+sans at 15px on a warm deep ground. Monospace survives in exactly one role:
+identifiers, prices and clock times, where digit alignment is the point. Test:
+`test_the_reading_surface_is_not_monospaced`.
+
+**Five tables became cards and rows.** §2 forbids "dense grids of tiny numbers"
+and "excessive table density"; the old console built one per desk. Pinned by
+`test_no_desk_renders_a_table`.
+
+**Every desk leads with a story** (§16's main story, §19's low overview
+density) — a kicker, one large headline, one standfirst — instead of opening on
+its own data. The briefing's lead is computed each poll, since it is the one
+desk whose main story changes.
+
+**Tabs became a rundown**, and the presenter got a rail: a crown mark, the
+nameplate **Kumbhakarnan**, and a live state that tracks listening / considering
+/ presenting (§12's "attention, communicated"). The rail says in the interface —
+not only in the task queue — that the animated presenter does not exist yet.
+§3 rules out a static avatar standing in for it, so a portrait would fail the
+specification rather than approximate it; a placeholder that admits what it is
+does not quietly become the deliverable.
+
+**Panel focus and dimming** (§14/§15) are in the stylesheet as `.card.focus`
+and `.dimmed`, with bounded transitions — `test_motion_is_bounded` refuses
+anything over 2.5s, because §7 forbids meaningless animation and this file has
+pegged a renderer once already.
+
+### What running it found that the suite could not
+
+Three defects, all invisible to 1937 passing tests and all obvious within a
+minute of looking at the page:
+
+1. **The briefing had no headline.** Seven desks led with one; the eighth — the
+   one that *is* the live briefing — opened straight into a card grid. Visible
+   only by loading the page and asking each surface what its headline was.
+
+2. **The running feed collapsed to its 120px floor** holding 621px of content:
+   an embedded terminal window, which is the exact shape §2 forbids, produced by
+   a layout that satisfied every rule in the stylesheet. Fixed by composing the
+   briefing as main-story-beside-sidebar rather than stacked, which is also what
+   §16 describes.
+
+3. **The finance desk called decliners gainers.** `movers` sliced its ranking
+   from both ends — `ranked[:5]` and `ranked[-5:]` — so with a small universe
+   every asset appeared in *both* lists, and on a down session the "gainers"
+   were whatever fell least. Reproduced exactly: SYN3 at **−3.0% listed as a
+   gainer**, SYN1 at **+0.54% listed as a loser**, both symbols in both lists.
+
+   The bug is months old. The terminal layout rendered those moves in cells
+   small enough that a red number under a "gainers" heading did not register;
+   the broadcast layout put it in 32-point type. That is an argument for the
+   redesign on its own terms — **hierarchy is not only easier to read, it is
+   easier to be wrong in front of** — and a reminder that a green suite measures
+   what it was told to measure. `test_a_gainer_has_to_have_gained` now pins it.
+
+Also fixed while there: `/console` declared no charset, leaving a page that
+carries Tamil script to whatever encoding the client guessed; and the masthead
+showed an em dash for a lifecycle stage that is genuinely unknown before the
+workforce starts, where "dormant" is the true answer.
+
+### What this does not claim
+
+41 §27's criteria about the *presenter* — appears as a live host, gestures,
+points — are untouched; that is TQ-37 and the deferred figure. What is claimed
+is the criterion §18 asks to be re-checked continuously: the interface no longer
+resembles a Bloomberg Terminal. That check now runs on every commit in
+`tests/test_live_studio.py` rather than living in a document.
+
+### The finding that came out of the same session
+
+Reading the log of the server started to look at a stylesheet turned up
+something worse than anything on the page: **the server reports a dormant
+workforce while six agents are working**. Queued as TQ-38 (RED) with its
+evidence. It is recorded rather than fixed here because it is not a presentation
+defect and deserves its own increment — but it is the more serious of the two
+things this session found, and the console repeating a falsehood about the
+organization is precisely the failure mode the console exists to prevent.
+
+Suite: **1939 passing**.

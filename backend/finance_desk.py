@@ -155,6 +155,19 @@ def front_page(conn: Database) -> dict:
     ranked = sorted(with_prices, key=lambda t: t["change_pct"], reverse=True)
     symbols = [t["symbol"] for t in tickers]
 
+    # A gainer has to have gained. Slicing the ranking from both ends is the
+    # obvious way to write this and it is wrong twice over: with a small
+    # universe every asset lands in *both* lists, and on a down session the
+    # "gainers" are simply the assets that fell least. Either way the desk
+    # labels a decliner a gainer, which is the one thing a page about money
+    # must never do - and it is a label the reader has no way to check without
+    # reading the sign underneath it.
+    #
+    # An empty list is the honest answer when nothing rose, and the console
+    # says so rather than padding the row.
+    gainers = [t for t in ranked if t["change_pct"] > 0][:5]
+    losers = [t for t in reversed(ranked) if t["change_pct"] < 0][:5]
+
     return {
         "simulated": True,
         "notice": SIMULATED_NOTICE,
@@ -167,7 +180,7 @@ def front_page(conn: Database) -> dict:
                  "market yet — run a mission (Simulation desk) to generate one."
         ),
         "tickers": tickers,
-        "movers": {"gainers": ranked[:5], "losers": ranked[-5:][::-1] if ranked else []},
+        "movers": {"gainers": gainers, "losers": losers},
         "headlines": headlines(conn, symbols),
         "headlines_note": "Placeholder headlines. A group of newspaper agents will write this "
                           "page later; until they exist, these are generated from the "
