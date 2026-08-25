@@ -51,10 +51,18 @@ holds the queue, not the record.
 >
 > **TQ-42** (client-owned holdings, §96) is done, which built the first real client skill.
 >
-> Next: **TQ-43** (per-client Gateway credentials) — exposed by TQ-42 and the reason its demo
-> ships three clients but only one that can log in. Also open: **TQ-07** (consumer-gated),
-> **TQ-20** and **TQ-21** (owner actions), **TQ-28** (the isolation guard), and the deferred
-> animated presenter.
+> **Current focus: the portfolio subsystem** (addendum 44, assimilated 2026-08-26, §97) —
+> **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart), then
+> TQ-45 (the provider abstraction), TQ-46 (the Superuser ownership domain), TQ-47 (its tab),
+> TQ-48 (snapshots, provenance, audit), TQ-49 (the Schwab boundary). TQ-50 is blocked on owner
+> action.
+>
+> **TQ-43** (per-client Gateway credentials) is a precondition for most of that: addendum 44
+> assumes multiple clients logging in, and today they share one credential and therefore one
+> subject. Worth doing first or accepting that several entries are worth less than they look.
+>
+> Also open: **TQ-07** (consumer-gated), **TQ-20** and **TQ-21** (owner actions), **TQ-28**
+> (the isolation guard), and the deferred animated presenter.
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
 > **Previously: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
@@ -627,6 +635,136 @@ Two owner clarifications during the work settled what addendum 40 §13.2 left as
 no body: an operator logging into the Gateway sees **the same studio** the desktop console shows
 (the same file, proxied, never a second console), and a regular user meets **an agent** — info
 only today, with real skills to come. Both recorded in §92.
+
+### TQ-44 — Portfolios as owned entities, with the guard that makes them safe
+
+**NEED (GREEN) · QUEUED · addendum 44 §3, §5, §9, §12, §15.1, §15.5, §20 Phase 1+3 ·
+`SPEC_RECONCILIATION.md` §97**
+
+Phase 1 and Phase 3 together, and they are one entry on purpose. Today holdings are keyed
+directly by client, so there is no portfolio id to guess; introducing a `Portfolio` entity
+introduces the guessable handle §5.2 spends four bullets on. The entity and the ownership guard
+must therefore land in the same increment — an entity shipped a week before its guard is a week
+of exactly the exposure this specification exists to prevent.
+
+Scope: `portfolios` (owner_type, owner_id, portfolio_type, provider_type, data_mode, status,
+timestamps), holdings re-keyed to `portfolio_id` and gaining `asset_class` (EQUITY/OPTION
+minimum, extensible), one client to many portfolios (§5.1), and every retrieval requiring an
+owner context resolved server-side (§9.1, §9.2). Errors reveal nothing about what exists (§9.3):
+"not authorized or resource unavailable" and no more.
+
+Carries §15.1's isolation tests and **§15.5's permanent regression test** — that a client-facing
+Gateway request can never receive the Superuser portfolio merely because it is the only one
+stored. The conversation half of that concern is already permanent from §93; this is its
+portfolio half.
+
+Migration: existing `client_holdings` rows become MANUAL-provider portfolios owned by their
+current client. Nothing is orphaned and nothing changes owner.
+
+### TQ-45 — The PortfolioProvider abstraction, and its conformance suite
+
+**NEED (GREEN) · QUEUED · depends on TQ-44 · addendum 44 §7, §6.3, §15.3, §15.4, §20 Phase 2**
+
+`PortfolioProvider` with `list_accounts` / `get_account` / `get_holdings` / `get_balances` /
+`get_positions` / `refresh` / `health_check`, returning canonical internal objects rather than
+broker shapes (§7). `SimulatedPortfolioProvider` first, implementing the same interface a
+brokerage provider will (§6.3), so the switch is an adapter rather than a rewrite.
+
+§15.4 asks for **one conformance suite every provider must satisfy**, which is the part worth
+building before there are two providers: a contract with a single implementation is a
+description, and the suite is what turns it into a contract. Written so `SchwabPortfolioProvider`
+inherits it unchanged.
+
+Also rebuilds the demo clients on the provider interface. §96's three clients (`customer`,
+`avery`, `morgan`) predate it and are seeded directly; addendum 44 §6.1 wants distinct
+portfolios per client with the diversity it names — large-cap plus a covered call, growth plus
+long calls or protective puts, diversified plus cash — which needs `asset_class` from TQ-44.
+
+### TQ-46 — The Superuser portfolio as its own ownership domain
+
+**NEED (YELLOW) · QUEUED · depends on TQ-44 · addendum 44 §4, §10, §16, §21.4, §21.6**
+
+The Superuser portfolio is not a client portfolio and must never be reachable through a client
+path (§1, §4.1, §4.2). Today the operator's portfolio is `data/portfolio.xlsx` behind
+`app/tools/portfolio.py`, which §16 correctly calls the legacy single-portfolio design.
+
+Scope: `owner_type = SUPERUSER` as a structurally separate domain that no client query can
+resolve to; explicit `PORTFOLIO_VIEW_SUPERUSER` / `PORTFOLIO_ANALYZE_SUPERUSER` capabilities
+(§10) rather than a superuser bypass — §5.3 is explicit that `if superuser: skip all ownership
+checks` is not the implementation; and §16's migration, ending at item 7: **remove the global
+ownerless retrieval**. `retrieve_portfolio` today takes permissions, preferences and an audit log
+but no owner, which is precisely the shape §16.7 names.
+
+Flagged YELLOW for one thing that must be got right rather than discovered: the operator already
+holds `CAP_HOLDINGS` through the client-facing Gateway path (§92, §96). That is harmless while
+those holdings are the operator's own Gateway-stated ones; it stops being harmless the moment a
+SUPERUSER-owned portfolio exists and the two paths can resolve to each other. §97 records the
+three-way vocabulary collision (Server Superuser, Gateway Super User, ROLE_OPERATOR) that makes
+this easy to get wrong.
+
+### TQ-47 — The Superuser Portfolio tab
+
+**WANT · QUEUED · depends on TQ-46 · addendum 44 §4.3, §11.2, §11.3, §11.4, §15.2, §20 Phase 4**
+
+A dedicated tab in the console (§11.2): Overview, Holdings, Options, Risk, Analysis, Broker
+Connection, Sync Status, History. Visible only to the Superuser, not discoverable through client
+navigation, not addressable by guessing a portfolio id — **and §4.3's last line is the one that
+matters**: backend authorization remains mandatory even when the UI hides the tab, which is
+addendum 40 §14's rule that §92 already enforces route by route.
+
+Carries §11.4's simulation banner in the form the finance desk already uses (§77's
+`SIMULATED_NOTICE`), and §11.3's connection states — including `Connected - stale`, which is the
+one that stops old data reading as current.
+
+### TQ-48 — Snapshots, provenance and portfolio audit logging
+
+**NEED (YELLOW) · QUEUED · depends on TQ-44, TQ-45 · addendum 44 §3.5, §12, §13, §14, §17,
+§20 Phase 5**
+
+Three things that belong together because each is unverifiable without the others.
+
+**Snapshots** (§3.5) so an analysis can be reproduced, with `payload_hash`. **Provenance** on
+every analysis artifact (§12): portfolio_id, owner_id, snapshot_id, as_of_timestamp, provider.
+**Audit logging** of portfolio access (§14) — PORTFOLIO_VIEW, PORTFOLIO_ANALYZE, PORTFOLIO_SYNC,
+BROKER_CONNECT/DISCONNECT, AUTHORIZATION_DENIED — recording the denials, because an audit trail
+of successes cannot answer the question anybody asks it after an incident (the same reasoning
+§89 applied to migrations).
+
+And §13's freshness: `last_synced_at`, `as_of_timestamp`, `provider_status`, with analysis able
+to **state** that data is stale rather than presenting it as current. §17's failure behaviour
+belongs here too — a stale snapshot retained and marked, never silently claimed as fresh.
+
+### TQ-49 — The Schwab boundary, with the live connection off
+
+**WANT · QUEUED · depends on TQ-45 · addendum 44 §8.1-§8.6, §18, §20 Phase 6**
+
+§8.1 is explicit that architecture work must not wait on API access, so this is everything
+except the connection: `SchwabPortfolioProvider` satisfying TQ-45's conformance suite against
+recorded fixtures, `BrokerageConnection` (§3.6) with `credential_reference` rather than
+credentials, normalization to canonical types (§8.6), account mapping one-external-to-one-owner
+(§8.5), and configuration placeholders (§8.4) — **placeholders only, never values**, with
+secrets absent from committed files, from logs, from the UI and from prompts (§8.3).
+
+The point of doing this before access exists is §18's: adding a provider later should require an
+adapter and a mapping, not a redesign of ownership. That is only true if the first adapter is
+written while the interface can still change.
+
+### TQ-50 — Schwab live, read-only
+
+**WANT · BLOCKED — owner action: Charles Schwab developer/API access · depends on TQ-49 ·
+addendum 44 §8, §20 Phase 7, §21.13**
+
+Blocked on something only the owner can do, and recorded as such rather than as a next step.
+When access arrives: OAuth authorization flow (§8.3), the authorized Superuser account mapped to
+the Superuser portfolio, read-only synchronization, conformance tests against the live provider,
+and the verification §20 Phase 7 ends on — that no client pathway can reach Superuser data.
+
+**Read-only. No order execution in this phase** (§2.4, §8.2, §19), and this entry is not the
+place that decision gets revisited.
+
+This is also the increment where `portfolio_valuation` — declared-and-unbuilt since §95 — becomes
+buildable, because it is the first time this system has a real price rather than a simulated one.
+Until then its blocked_reason stays true and stays said.
 
 ### TQ-42 — Client-owned holdings
 
