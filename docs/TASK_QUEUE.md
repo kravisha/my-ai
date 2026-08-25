@@ -24,9 +24,9 @@ holds the queue, not the record.
 ## Queue, in priority order
 
 > **Current head of the queue** (owner-directed 2026-08-25, `SPEC_RECONCILIATION.md` §60):
-> **TQ-14** (Simulation Engine world capabilities), then **TQ-15** (Reference Data Engine
-> market-implied validation). Entries above them in file order are DONE records, not
-> higher-priority work.
+> **TQ-14's remaining scope** — event-stepped scenario shape per addendum 34 §6 (its forward-leg
+> scope item and TQ-15's market-implied validation are both DONE, §61/§62). Entries above it in
+> file order are DONE records, not higher-priority work.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -186,15 +186,16 @@ increment.
 
 ### TQ-15 — Reference Data Engine: market-implied validation of declared dividends and borrow
 
-**NEED (YELLOW) · QUEUED · owner-directed second (2026-08-25, §60)**
+**NEED (YELLOW) · DONE — `SPEC_RECONCILIATION.md` §62 · owner-directed second (2026-08-25, §60)**
 
 Source: addendum 24 §6 (validation duty), §55's own closing sentence (the diagnostics' first
-consumer, named there as the natural next increment), addendum 34 §2 (need discovery from
-operational evidence). ARB-015/016 already compute the market-implied dividend and financing
-bands; the Reference Data Engine declares pv_div and borrow state and today validates them
-against nothing. Scope: a validation pass that cross-checks declared reference data against
-the diagnostics' executable-band findings, recording disagreement as a reference-data finding
-(fail-closed vocabulary, per the engine's existing readiness discipline) — not as a trade.
+consumer), addendum 34 §2. Built as §62 records: `market_implied` is a registered `derived`
+source ranked below every declaring one; certification cross-checks each focus asset's stored
+chains through `diagnose_chain` and records declarations outside the executable band as
+append-only `reference_conflicts` rows, one per (asset, field, expiry), deduplicated per
+distinct disagreement. A disagreement is data — it never blocks readiness, never flips
+validation_status, and a malformed observation is named in the check detail rather than
+allowed to take down startup.
 
 ### TQ-16 — Model Registry and Model Requirement Profiles, as metadata first
 
