@@ -27,8 +27,11 @@ holds the queue, not the record.
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
 > (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
-> QUEUED entry is TQ-07, which is consumer-gated by its own terms. New work comes from the
-> next need, the next supplied specification, or the deferred list below.
+> QUEUED entries are TQ-07 (consumer-gated by its own terms) and two owner actions from the
+> continuity work: **TQ-19** (off-machine copy of `backup.key` — free, and the thing that
+> makes the already-running encrypted secondary actually recoverable) and **TQ-20**
+> (provision the Linux host, deferred by the owner 2026-08-25). Neither is engineering
+> work; both need the owner's hands.
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -237,6 +240,38 @@ run loop and the two chat surfaces in their lifespans, with undeclared spend buc
 `unattributed` rather than guessed. Refusals carry the caller too. Deliberately not a second
 budget — the limit stays organization-wide, because a per-caller cap would break §52's damage
 bound. Currency-denominated limits and per-caller *limits* remain deferred with reasons.
+
+### TQ-19 — Off-machine copy of `backup.key`
+
+**NEED (YELLOW) · QUEUED · owner action, nothing in the repository can do it ·
+`SPEC_RECONCILIATION.md` §69, `docs/SECOND_FAILURE_DOMAIN.md`**
+
+Source: addendum 29 §10.3. The encrypted secondary now writes to a Dropbox-synced folder, and
+`backup.key` is deliberately **not** there — key beside ciphertext is the same as no encryption.
+The consequence is the open gap: the disaster that takes this disk takes the key with it, and
+every encrypted copy becomes noise. A perfectly encrypted backup with a lost key is not a backup.
+
+Scope, entirely manual: put a copy of `C:\Users\ADMIN\my-ai\backup.key` somewhere that is neither
+this machine nor this Dropbox account — a password-manager entry, a different cloud account, or
+paper in a drawer. Flagged YELLOW rather than GREEN because it undermines a capability that is
+*already built and running*: until it is done, the secondary destination is protecting against a
+disk failure it could not actually recover from.
+
+### TQ-20 — Provision the Linux host (the second failure domain's host half)
+
+**NEED (GREEN) · QUEUED · owner-deferred 2026-08-25 ("leave it locally for now") ·
+`SPEC_RECONCILIATION.md` §68/§69, runbook in `docs/SECOND_FAILURE_DOMAIN.md`**
+
+Source: addendum 29 §1.3, §18–§21. The *data* domain is done and rehearsed (§69) — state now
+survives this machine. What remains is the *host* domain: somewhere the organization could
+actually run, turning an RPO-only story into one with an RTO. Deferred by owner decision, not by
+a technical blocker: §68 proved the suite green on Linux, so this needs a machine rather than a
+port, and provisioning spends money and requires an account — an owner action by nature.
+
+Scope when taken up: `docs/SECOND_FAILURE_DOMAIN.md` steps 1–6, whose load-bearing step is step 5,
+the restore rehearsal on the host (§1.4 — an untested restore is a hypothesis, not a recovery
+asset), followed by recording the result. Failover orchestration, live replication and geographic
+separation stay out of scope and remain in the deferred list below.
 
 ---
 

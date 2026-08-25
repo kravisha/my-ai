@@ -5104,3 +5104,15 @@ RPO is the backup interval, six hours by default), not geographic
 separation (29 §14 stays deferred). The `TASK_QUEUE.md` deferral is
 updated rather than closed: the data half is real, the host half waits on
 provisioning.
+
+### The owner's decision, same day
+
+Asked where to take it, the owner chose to keep the second domain local
+for now — the Dropbox-synced secondary stays, no host is bought — and to
+track the rest as queue items rather than let them live in prose. Two
+entries, both owner actions rather than engineering: **TQ-19**, the
+off-machine copy of `backup.key` (free, and the thing that makes the
+already-running secondary genuinely recoverable), and **TQ-20**,
+provisioning the host itself. Recorded as a decision with its date, so
+the difference between "not done" and "decided against for now" survives
+the next time somebody reads this file.
