@@ -27,10 +27,12 @@ holds the queue, not the record.
 > items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
 > (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
 > DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
-> QUEUED entries are TQ-07 (consumer-gated by its own terms) and two owner actions from the
-> continuity work: **TQ-21** (verify the off-machine key copy actually decrypts — TQ-19
-> established that a copy exists, not that it works) and **TQ-20** (provision the Linux host,
-> deferred by the owner 2026-08-25). Neither is engineering work; both need the owner's hands.
+> **Current focus: Pre-Alpha Milestone 1** (addenda 38–39, assimilated 2026-08-25, §70) —
+> TQ-22 → TQ-23 → TQ-24 in that order, since each is the next one's foundation; TQ-25 carries a
+> recorded startup conflict and TQ-26 is blocked on an owner decision about having two operator
+> UIs. Also open: TQ-07 (consumer-gated), and two owner actions from the continuity work —
+> **TQ-21** (verify the off-machine key copy actually decrypts) and **TQ-20** (provision the
+> Linux host, deferred 2026-08-25).
 
 ### TQ-01 — Assimilate the Organizational Doctrine lineage (addenda 28–33)
 
@@ -299,6 +301,69 @@ Scope: save the off-machine copy to a scratch file, decrypt a real backup set fr
 destination using that file via `CONTINUITY_KEY_PATH` (never overwriting the live `backup.key`),
 confirm the restore verifies, then delete the scratch file. Same flag as TQ-19 for the same
 reason — it decides whether a capability that is already built and running can actually deliver.
+
+### TQ-22 — Boot configuration and a persisted lifecycle stage
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §71**
+
+Source: addendum 39 §2, §4, §17; addendum 38 §2. Two absences with one shape: no non-secret
+boot configuration exists (lifecycle scope lives in code constants), and `PRE_ALPHA` appears
+nowhere in the codebase, so nothing can read the stage or alter behavior by it. Scope: a
+`boot_config.json` carrying lifecycle stage, global/implemented asset classes, current focus and
+simulation focus **in the built vocabulary** (§70 disposition 2 — `stock`/`stock_option`, not a
+second naming scheme), loaded through one accessor rather than read from disk at call sites, and
+a persisted stage the COO can read at startup. Deliberately not a second configuration framework
+(39 §17's own warning).
+
+### TQ-23 — Metadata Engine as a named, observable startup phase
+
+**NEED (GREEN) · QUEUED · depends on TQ-22 · `SPEC_RECONCILIATION.md` §70**
+
+Source: addendum 39 §7, §12, §13, §14. The *work* already exists — schema init, seeding, the
+fail-closed reference gate — but no component announces itself, verifies the four datasets
+against boot configuration, reports counts, publishes `METADATA_READY`, and idles. Scope: that
+component, over the datasets that already exist (§70 disposition 1 — `agent_names` and
+`asset_classes`' three flags, never three new tables), strictly idempotent per 39 §13, with
+`METADATA_READY` as the hard gate before the Reference Data Engine begins (39 §14). The one
+genuine extension — a broader capability registry (39 §10) — stays out until a capability that
+is not an asset class exists.
+
+### TQ-24 — The status event stream (the observability spine)
+
+**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §70**
+
+Source: addendum 38 §4.3, §4.6, §7, §12, §13. The largest genuinely new thing these specs ask
+for, and what every other Milestone-1 item displays: structured operational events carrying
+timestamp, lifecycle stage, source department/engine/agent, event type, severity, status,
+message, and correlation id, durably stored (38 §4.6 explicitly does not require an enterprise
+event store) and queryable. Flagged YELLOW because 38's Definition of Done is mostly
+observability — §70's closing finding is that persistence is largely already satisfied and
+observability is the gap. Must carry failure honestly (38 §12: a failed component must not
+silently disappear, and dependents must not falsely report success) and must not flood (38 §13).
+
+### TQ-25 — Server Superuser, and the login-gated COO start
+
+**NEED (GREEN) · QUEUED · carries a recorded conflict · `SPEC_RECONCILIATION.md` §70 disposition 4**
+
+Source: addendum 39 §3; addendum 38 §3. Two parts. The easy one: `SERVER_SUPERUSER_ID`/
+`SERVER_SUPERUSER_PASSWORD` behind an auth abstraction, deliberately *not* conflated with the
+Gateway's own superuser (39 §3's explicit warning). The hard one: 38 §3.3 requires the COO not to
+start before login, and `backend/main.py`'s lifespan bootstraps it unconditionally today —
+addendum 18's lifecycle-managed initialization and §40's reference gate both assume that. The
+reconciliation §70 proposes (server starts, workforce stays dormant until an operator
+authenticates) is a real change to a startup path several increments touch, and is queued here
+rather than smuggled in elsewhere.
+
+### TQ-26 — The COO operator interface
+
+**NEED (GREEN) · BLOCKED on a decision, not on code · `SPEC_RECONCILIATION.md` §70 disposition 4**
+
+Source: addendum 38 §4, §11. Live status area, filters by department/component, and a chat that
+answers from real system state rather than inventing (38 §4.5's requirement, and §11's rule that
+an unimplemented action be declined explicitly rather than faked). **Blocked deliberately:** the
+Gateway (addenda 16–17) is already an authenticated operator surface with a streaming chat, and
+building a second one without deciding their relationship leaves the system with two front doors.
+That decision is the owner's and precedes the code.
 
 ---
 

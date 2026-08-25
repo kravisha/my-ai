@@ -5116,3 +5116,195 @@ already-running secondary genuinely recoverable), and **TQ-20**,
 provisioning the host itself. Recorded as a decision with its date, so
 the difference between "not done" and "decided against for now" survives
 the next time somebody reads this file.
+
+---
+
+## §70 — Pre-Alpha Milestone 1 arrives, and most of its metadata already exists (2026-08-25)
+
+Two documents supplied 2026-08-25, assimilated verbatim as **addenda 38 and
+39**. They are a different kind of document from everything since addendum
+28: not a description of the organization MyAI is to become, but a
+concrete near-term milestone with a Definition of Done — "the operator can
+start the system, log in, watch the COO bring the system to life,
+understand what every major component is doing, shut it down safely,
+restart it, and observe the same persistent system continue."
+
+That makes them the first supplied documents in a long while that are
+*mostly buildable now*. The dispositions below matter more than usual,
+because a naive reading would build four tables that already exist.
+
+### 1. Three of the four required metadata datasets already exist — as one table
+
+Addendum 39 §7 requires four global datasets. Against what is built:
+
+- **Agent Names (39 §8)** — exists as `agent_names` (`backend/fi_db.py`),
+  with the atomicity §8 demands already enforced by the database rather
+  than by a caller, and the durable-identity rule already stronger than
+  the spec asks: §9's "never reassign a persisted agent's name on restart"
+  is the 2026-08-17 owner decision that a name is the durable agent and an
+  identity is the desk it sits at.
+- **Global Asset Classes (39 §9)**, **Implemented List (39 §10)** and
+  **Focus List (39 §11)** — all three exist as
+  `asset_classes.in_universe` / `.in_capability` / `.in_focus`
+  (`backend/reference_data.py`), which is addendum 24 §4's Asset Universe
+  / Capability Set / Current Focus. That module's docstring already argues
+  the shape: they "are not three tables - they are three flags on one row
+  per asset class, because they are questions about the same eleven
+  classes, not different populations."
+
+**Disposition: the existing shape stands.** Creating three more datasets
+holding the same facts is precisely the two-models-preserved error the
+Conflict Rule forbids, and it would put an asset class's implemented
+status in two places free to disagree. What 39 adds and is adopted is the
+*vocabulary* (`METADATA_READY`, the summary counts) and one genuine
+extension recorded as future work: 39 §10's note that the Implemented List
+"should allow more than asset classes later if it becomes a broader
+capability registry" — the current table is asset-class-only, and widening
+it waits for a capability that is not an asset class.
+
+### 2. The asset-class naming difference is cosmetic, and the spec's own reason is already honored
+
+39 §4 asks for `EQUITIES` and `OPTIONS_ON_EQUITIES`, insisting on the
+latter over a generic `OPTIONS` "because future versions may support
+options on other underlyings." The built vocabulary is `stock`,
+`stock_option`, `etf_option`, `future_option`, `commodity_option` — which
+is the *same distinction*, drawn more finely, and already shipped.
+Renaming would churn every consumer to satisfy a requirement the existing
+scheme already meets. **Disposition: codes stay; the mapping is recorded
+here** (`EQUITIES` = `stock`, `OPTIONS_ON_EQUITIES` = `stock_option`), and
+boot configuration speaks the built vocabulary rather than introducing a
+second one.
+
+### 3. What is genuinely absent
+
+Named honestly, because this is the actual work:
+
+- **Boot configuration as a non-secret file** (39 §2, §4, §17) — nothing
+  like it exists; lifecycle scope lives in code constants today.
+- **A persisted lifecycle stage** (38 §2) — `PRE_ALPHA` appears nowhere in
+  the codebase. Addendum 21 mentions Pre-Alpha as a phase; nothing reads
+  or stores it, so no component can alter behavior by stage.
+- **A Metadata Engine as a named startup phase** (39 §12) — the *work*
+  exists (schema init, seeding, the fail-closed reference gate), but there
+  is no component that announces itself, reports counts, publishes
+  `METADATA_READY`, and idles.
+- **A status event stream** (38 §4.3) — the largest genuinely new thing.
+  Nothing publishes structured operational events with severity, status,
+  source department/engine/agent and correlation ids.
+- **Server Superuser credentials distinct from the Gateway's** (39 §3) —
+  `.env` carries `GATEWAY_SUPER_USER` only, and 39 §3 is explicit that the
+  two "must not be accidentally conflated."
+- **Login-gated COO start, and the COO operator interface** (38 §3, §4,
+  §11).
+
+### 4. The conflict worth stopping on: when does the COO start?
+
+38 §3.3 says "the COO process must NOT start before successful login."
+Today `backend/main.py`'s lifespan bootstraps the Controller and COO
+unconditionally at server start, deliberately — addendum 18's
+lifecycle-managed initialization, and §40's reference gate, both assume
+it. These cannot both be true.
+
+**Disposition: recorded, not silently resolved.** The two models are
+reconcilable — the server process can start and hold the workforce dormant
+until an operator authenticates, which is closer to what 38 wants than
+either extreme — but it is a real behavioral change to the startup path
+that §18, §40 and the reference-gate work all touch, and it is queued as
+its own entry rather than smuggled into a metadata increment.
+
+A second, quieter conflict: 38 §4 and §11 describe an operator UI with a
+live feed and a chat, and the Gateway (addenda 16–17) already *is* an
+authenticated operator surface with a streaming chat. Building a second
+one without deciding their relationship would leave two front doors.
+Recorded here; the queue entry names it as a decision to make before UI
+work, not after.
+
+### 5. What this milestone is measured by
+
+38 §14's seventeen-step Definition of Done is adopted as the milestone's
+acceptance test verbatim. Notably, steps 11–17 (create/restore named
+agents, shut down, confirm persistence, restart, confirm the *same*
+identities) are largely satisfiable by machinery that already exists —
+`agent_names`, `agent_assignments`, the Controller's
+`reconcile_on_start`, and §59's continuity backups. The gap is
+observability, not persistence.
+
+### The queue this generates
+
+TQ-22 (boot configuration and persisted lifecycle stage), TQ-23 (Metadata
+Engine as a named, observable startup phase), TQ-24 (the status event
+stream — the observability spine everything else in 38 displays), TQ-25
+(Server Superuser and login-gated COO start, carrying the §4 conflict),
+TQ-26 (the COO operator interface, gated on the §4 second conflict being
+decided first).
+
+---
+
+## §71 — The system learns to say what stage it is at (2026-08-25)
+
+TQ-22, the first buildable piece of Pre-Alpha Milestone 1 and the
+foundation the rest of it stands on: `boot_config.json` plus
+`backend/boot_config.py`.
+
+### Two absences with one shape
+
+Addendum 39 §2 wants non-secret scope out of `.env`; addendum 38 §2 wants a
+lifecycle stage that is persisted rather than in-memory. Before this, scope
+lived in code constants and `PRE_ALPHA` appeared nowhere in the codebase at
+all — nothing could read the stage, so nothing could alter behavior by it.
+One file answers both: committed to the repository (that is what non-secret
+*means*), which also makes a stage promotion a reviewable commit rather than
+an untraceable mutation.
+
+### It speaks the vocabulary the system already has
+
+The one decision worth arguing. Addendum 39 §4 writes `EQUITIES` and
+`OPTIONS_ON_EQUITIES`, insisting on the latter over a generic `OPTIONS`
+because options on other underlyings are coming. **That requirement was
+already met, more finely**: `stock_option`, `etf_option`, `future_option`
+and `commodity_option` have been separate codes since the Reference Data
+Engine was built. Adopting the spec's labels would create a second naming
+scheme for the same eleven classes — two models of one fact, which the
+Conflict Rule forbids — so the built codes stand and §70 disposition 2
+records the mapping.
+
+The consequence is enforced rather than trusted: **every asset class named
+in boot configuration is validated against `reference_data.ASSET_CLASSES`**,
+so the file cannot invent a class the engine does not know. A configuration
+free to disagree with the engine it configures is a document that is still
+believed after it stops being true. The error message for the most likely
+mistake — using the spec's own labels — points at the mapping rather than
+just saying "unknown".
+
+### Fail loud, no fallback
+
+A missing, malformed, or self-contradictory boot configuration raises
+`BootConfigError` naming the file and the specific value. There is
+deliberately no default path: the same contract `model_budget._limit` and
+`continuity._positive_setting` already state, applied to scope. It also
+enforces the registry's own containment rule one layer up — implemented
+must be a subset of globally known, mirroring
+`in_focus ⊆ in_capability ⊆ in_universe`.
+
+### What it deliberately does not do
+
+Stage *transitions* are not recorded here. Who promoted PRE_ALPHA to ALPHA
+and when is an event, and events belong to the status stream (TQ-24) once
+that exists; a `last_changed_by` field in a config file would be an audit
+trail with no auditor. Nothing consumes the configuration yet either —
+that is TQ-23's Metadata Engine, which is the next entry precisely because
+a config file nothing reads is the same empty machinery this repository
+refuses elsewhere. It is built first because TQ-23 cannot start without
+it, not as a standalone deliverable.
+
+### Verified
+
+Sixteen new tests (1775 passing): the shipped file loading at PRE_ALPHA,
+implementing exactly `stock` + `stock_option` and nothing falsely marked
+implemented (39 §10), naming only classes the engine knows, declaring the
+option-pricing simulation focus (39 §6); then the refusals — missing file,
+malformed JSON, missing field, unknown stage, invented asset class (with
+the vocabulary note), implemented-not-a-subset, wrong types, duplicates,
+empty, a JSON array instead of an object — plus environment-first path
+resolution at call time, frozenness, and the summary line the feed will
+carry.

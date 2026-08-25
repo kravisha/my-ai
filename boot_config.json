@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Non-secret boot configuration (addendum 39 §2/§4/§17, TASK_QUEUE TQ-22).",
+    "Committed on purpose: this is scope, not a secret. Secrets live in .env.",
+    "Asset classes use this system's own vocabulary - 'stock'/'stock_option' -",
+    "not addendum 39's EQUITIES/OPTIONS_ON_EQUITIES labels. The spec's reason for",
+    "insisting on OPTIONS_ON_EQUITIES over a generic OPTIONS (options on other",
+    "underlyings are coming) is already satisfied here, more finely: stock_option,",
+    "etf_option and future_option have always been separate codes. See",
+    "docs/SPEC_RECONCILIATION.md §70 disposition 2. Loaded and validated by",
+    "backend/boot_config.py, which refuses any class reference_data.py does not know."
+  ],
+  "lifecycle_stage": "PRE_ALPHA",
+  "global_asset_classes": [
+    "stock",
+    "stock_option",
+    "etf",
+    "etf_option",
+    "future",
+    "future_option",
+    "commodity",
+    "commodity_option",
+    "fx",
+    "fixed_income",
+    "digital_asset"
+  ],
+  "implemented_asset_classes": [
+    "stock",
+    "stock_option"
+  ],
+  "current_focus": [
+    "PRE_ALPHA_STARTUP_OBSERVABILITY",
+    "REFERENCE_DATA",
+    "OPTION_PRICE_SIMULATION",
+    "CURRICULUM_GENERATION",
+    "AGENT_TRAINING"
+  ],
+  "simulation_focus": [
+    "OPTIONS_ON_EQUITIES_PRICING"
+  ]
+}
