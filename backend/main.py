@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import chatterbox, continuity, coo_chat, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
+from backend import chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -972,6 +972,23 @@ async def console_languages():
     return {"languages": [{"code": code, "label": label}
                           for code, label in coo_chat.LANGUAGE_LABELS.items()],
             "default": coo_chat.DEFAULT_LANGUAGE}
+
+
+@app.get("/console/identity")
+async def console_identity():
+    """Who the operator is talking to (addendum 42 §3/§19, §88).
+
+    The console renders the name from here rather than holding it in markup,
+    and that is the point rather than tidiness: a name written into a template
+    is a name a redeploy can change without anybody noticing, which is exactly
+    what §19 forbids. Reading it from persisted state means the interface
+    cannot introduce a COO the database has not heard of."""
+    def work(conn):
+        return coo_identity.summary(conn)
+
+    return await _console_read(
+        work, {"exists": False, "name": None, "role": coo_identity.COO_ROLE,
+               "reason": "the database is not available yet"})
 
 
 @app.get("/server/status")
