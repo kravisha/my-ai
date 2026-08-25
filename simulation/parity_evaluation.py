@@ -73,6 +73,12 @@ REASON_FALSE_POSITIVE = "false_positive"
 # injector should not have produced.
 REASON_UNEXPECTED_PARITY_HIT = "unexpected_parity_hit"
 REASON_STRAY_DETECTION = "stray_detection"
+# §61's forward family: the shift never touches the chain, so ANY option-
+# relation detection (cross-strike, calendar - parity keeps its own named
+# reason above) is the world drifting from that invariance - distinct from a
+# stray forward package through the wrong expiry or direction, which stays
+# REASON_STRAY_DETECTION.
+REASON_UNEXPECTED_CHAIN_HIT = "unexpected_chain_hit"
 # §56, the calendar family's own world-integrity reason: the whole-ladder
 # lift preserves every same-expiry relation exactly, so a cross-strike or
 # parity-family detection on a calendar scenario is the world drifting from
@@ -156,7 +162,40 @@ def _grade_scenario(conn, mission_id: str, scenario_id: str, ground_truth: dict)
     variant = ground_truth["variant"]
     detected_direction = None
 
-    if ground_truth.get("expected_family") == "calendar":
+    if ground_truth.get("expected_family") == "forward":
+        # §61's family, graded on the live organization's own recorded
+        # detections the way the offline evaluate() grades the answer key:
+        # a matching detection is a forward package (ARB-013 in practice -
+        # agents/explorer.py records only strike-carrying packages, and
+        # ARB-014 rides beside 013 on any real forward mispricing) at the
+        # shifted expiry in a direction the shift sign explains; parity and
+        # option-relation hits are world-integrity failures under their own
+        # names; then the same escalation ladder every family walks.
+        affected_expiry = ground_truth.get("affected_expiry_days")
+        expected_directions = pw.FORWARD_EXPECTED_DIRECTIONS[variant]
+        arb001_hits = [d for d in detections if d["detector_id"] == "ARB-001"]
+        chain_hits = [d for d in detections
+                      if d["detector_id"] not in ("ARB-001", "ARB-013", "ARB-014")]
+        forward_hits = [d for d in detections if d["detector_id"] in ("ARB-013", "ARB-014")]
+        matching = [d for d in forward_hits if d["expiry_days"] == affected_expiry
+                    and d["direction"] in expected_directions]
+        stray = [d for d in forward_hits if d not in matching]
+
+        if arb001_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_UNEXPECTED_PARITY_HIT]
+        elif chain_hits:
+            outcome, reasons = OUTCOME_FAIL, [REASON_UNEXPECTED_CHAIN_HIT]
+        elif stray:
+            outcome, reasons = OUTCOME_FAIL, [REASON_STRAY_DETECTION]
+        elif not matching:
+            outcome, reasons = OUTCOME_FAIL, [REASON_MISSED]
+        elif analyses:
+            outcome, reasons = OUTCOME_PASS, []
+        elif reports:
+            outcome, reasons = OUTCOME_INCONCLUSIVE, [REASON_ANALYSIS_IN_FLIGHT]
+        else:
+            outcome, reasons = OUTCOME_PARTIAL, [REASON_DETECTED_NOT_ESCALATED]
+    elif ground_truth.get("expected_family") == "calendar":
         # §56's family, graded on the live organization's own recorded
         # detections the same way the offline evaluate() grades the answer
         # key: a matching detection is ARB-012 with its near leg at the

@@ -77,11 +77,13 @@ from pathlib import Path
 from agents.discovery_config import ANALYSIS_RECENCY_WINDOW_SECONDS
 from backend import fi_db
 from backend import observations as observation_store
-from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain
-from providers.stored_data import chain_snapshots
+from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain, scan_forward
+from providers.stored_data import chain_snapshots, forward_quotes
+from simulation.parity_world import FORWARD_EXPECTED_DIRECTIONS
 from simulation.parity_evaluation import (
     OUTCOME_FAIL, OUTCOME_INCONCLUSIVE, OUTCOME_PARTIAL, OUTCOME_PASS,
-    REASON_STRAY_DETECTION, REASON_UNEXPECTED_PARITY_HIT, REASON_UNEXPECTED_SAME_EXPIRY_HIT,
+    REASON_STRAY_DETECTION, REASON_UNEXPECTED_CHAIN_HIT, REASON_UNEXPECTED_PARITY_HIT,
+    REASON_UNEXPECTED_SAME_EXPIRY_HIT,
 )
 
 # How long a report may sit pending before this module calls it stalled
@@ -285,6 +287,9 @@ def _offline_differential(conn, entity_id: str, scenario_id: str) -> tuple[list,
     # over the same chains now, so a differential that skipped it would
     # misdiagnose every calendar miss as a world problem.
     offline_opportunities.extend(scan_calendar(chains, costs))
+    # And the forward-leg scan (ARB-013/014, §61), same reasoning - over
+    # whatever forwards the stored payload listed (none is a no-op).
+    offline_opportunities.extend(scan_forward(chains, forward_quotes(chain_observation), costs))
     return chain_rows, offline_opportunities
 
 
@@ -427,6 +432,7 @@ def _diagnose_scenario(conn, mission_id: str, entry: dict, ground_truth: dict) -
 
     if outcome == OUTCOME_FAIL and reason in (
         REASON_UNEXPECTED_PARITY_HIT, REASON_STRAY_DETECTION, REASON_UNEXPECTED_SAME_EXPIRY_HIT,
+        REASON_UNEXPECTED_CHAIN_HIT,
     ):
         # SS45's deferred item, extended by §56's calendar family. The
         # offline re-scan (every expiry plus every cross-expiry pair, same
@@ -445,6 +451,24 @@ def _diagnose_scenario(conn, mission_id: str, entry: dict, ground_truth: dict) -
         elif reason == REASON_UNEXPECTED_SAME_EXPIRY_HIT:
             offline_agrees = any(
                 o.detector_id not in ("ARB-001", "ARB-012") for o in offline_opportunities
+            )
+        elif reason == REASON_UNEXPECTED_CHAIN_HIT:
+            # §61's forward family: an option-relation package (anything but
+            # parity and the forward detectors) fired on a chain the shift
+            # never touched.
+            offline_agrees = any(
+                o.detector_id not in ("ARB-001", "ARB-013", "ARB-014")
+                for o in offline_opportunities
+            )
+        elif ground_truth.get("expected_family") == "forward":
+            # A forward stray: a forward package through the wrong expiry or
+            # in a direction the shift sign does not explain (§61).
+            expected_directions = FORWARD_EXPECTED_DIRECTIONS[ground_truth["variant"]]
+            offline_agrees = any(
+                o.detector_id in ("ARB-013", "ARB-014")
+                and (o.inputs.get("expiry_days") != affected_expiry
+                     or o.direction not in expected_directions)
+                for o in offline_opportunities
             )
         elif ground_truth.get("expected_family") == "calendar":
             # A calendar stray is an ARB-012 through the wrong expiry pair,

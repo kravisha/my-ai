@@ -4414,3 +4414,105 @@ Registry as metadata), TQ-17 (collaboration scoring baseline), TQ-18
 Education's departmental machinery, the professor layer, routing/
 migration machinery, the Optimization Agent, staged debate, and the
 leadership gate's enforcement point.
+
+---
+
+## §61 — The world grows its first new instrument, and Phase 1 closes (2026-08-25)
+
+TQ-14's first scope item, owner-directed to the head of the queue in §60:
+the training world now lists forwards, and the two detectors that price
+against them exist — ARB-013 (forward vs synthetic forward), the last
+unbuilt member of addendum 27 §11's Phase 1 list, and ARB-014
+(cash-and-carry) from Phase 2. TQ-B1 resolves: what blocked both detectors
+since §45 was never detector work, and the moment the world could price a
+forward, the detectors were an afternoon.
+
+### Instrument existence is a world fact, made per scenario
+
+The deep decision of this increment, found before any code was written: a
+fair forward CANNOT simply be added to every scenario. A forward completes
+the market — ARB-013's packages trade options against the forward with no
+stock leg at all — so beside a `borrow_cost` trap (a parity gap
+unprofitable only because the reversal needs stock borrow), a fair forward
+makes the trap's own signal genuinely arbitrageable, and the trap's "zero
+detections" promise becomes a lie. That is §46's lesson (injectors leak
+into whatever relations the answer key learns to check next) surfacing at
+the *design* stage instead of the verification stage, and the resolution
+is honest rather than clever: forwards exist only in the four forward
+variants' scenarios. Single-stock forwards being listed or not is a fact
+about a market, not a defect — and `test_mispriced_forward_leaves_the_
+option_scan_silent` pins the finance that forced the decision.
+
+### The four variants, and what each proves
+
+`forward_bump`/`forward_dip` shift one expiry's forward mid off fair (rich
+/ cheap) with the chain untouched — so parity, cross-strike and calendar
+relations are all *exactly* invariant (nothing they price moved; no
+algebra to defend, unlike the lift variants) and what moves is exactly
+what ARB-013 (per strike) and ARB-014 (vs the underlying) price. The
+injectors verify through the organization's own `scan_forward` that the
+shift fired at the target expiry in a direction its sign explains
+('sell_forward'/'carry' for rich, 'buy_forward'/'reverse_carry' for
+cheap) and nowhere else. `forward_spread_artifact` is the trap: the same
+shift, erased by widening the forward's own spread until scan_forward
+finds nothing — a mid off fair that the executable band swallows.
+`forward_none` is the clean control WITH the instrument: fair forward,
+clean chain, zero expected detections, verified at build time — the
+false-positive material plain 'none' cannot provide, because plain 'none'
+has no forward to be fooled by. Ground truth records the deviation
+*signed*: what was done, not just its size.
+
+### The detectors, under the discipline
+
+Executable sides only, verbatim from the spec: synthetic long = Cask −
+Pbid, short = Cbid − Pask, all edges in PV per share. ARB-013 is
+classification A in both directions — European, deterministic carry, no
+stock leg, no borrow — which is precisely the market-completion fact
+above. ARB-014's 'carry' is A (long stock needs no borrow); its
+'reverse_carry' is B with the borrow cost explicit (Sbid·fee·T, ARB-001's
+own convention) and 'missing_borrow' recorded when the fee is unknown —
+never priced at zero. `ForwardQuote` is a *forward*, deliberately: the
+variation-margin and convexity adjustments addendum 27 requires for
+futures are structurally zero here rather than silently omitted, and a
+futures adapter owes them before reusing these detectors. dated pv_div
+enters the carry directly ("not blindly S·exp((r−q)T)" — the spec's own
+warning, pinned by test).
+
+### Wired everywhere the calendar family is
+
+The answer key runs scan_forward when the scenario lists forwards; the
+observation payload carries them additively (key absent — not empty — for
+every pre-increment stored world); `providers/stored_data.py` grew
+`forward_quotes`; Explorer scans them behind the same min-edge lens; the
+evaluator (offline and stored-run both) grades the new family with its
+own named world-integrity failure ('unexpected_chain_hit': an
+option-relation package on a chain the shift never touched); and
+diagnosis routes it with the same offline-rescan differential. One
+deferral inside the wiring, recorded here: `parity_events.strike` is NOT
+NULL and ARB-014's package genuinely has no strike, so Explorer scans
+both detectors but escalates only strike-carrying packages — on any real
+forward mispricing ARB-013 fires beside ARB-014 at every strike whose
+synthetic disagrees, so no signal is lost; the schema change waits until
+an ARB-014-only signal can actually occur.
+
+### Verified
+
+Thirty new tests (1703 passing): hand-checkable arithmetic for
+all four directions at r=0, the fair-forward silences, borrow refusal and
+explicit borrow charging, the no-borrow classification-A pin, spread
+widening only shrinking edge, hard stops and coherence errors,
+scan_forward's pairing/no-op/caller-error contract, the
+per-variant instrument-existence rule, the clean-world guarantee across
+seeds, bump and dip detected by exactly the forward detectors in exactly
+the expected directions, the trap erasing with the mid genuinely off
+fair, seed reproducibility, payload roundtrip and additive-absence, every
+evaluator branch of the new family, and the strategy's default mix
+running end to end.
+
+### What TQ-14 still holds
+
+The forward leg was scope item one. Event-stepped scenario shape (34 §6:
+State(t) + Event(t) → State(t+1)) remains queued under TQ-14, and the
+American-style world (TQ-B3) remains a larger, separate increment.
+ARB-013/014 against *futures* (margin, convexity) waits for a futures
+instrument with a reason to exist.

@@ -28,9 +28,9 @@ from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
 from backend import fi_db, reference_data
-from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain
+from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain, scan_forward
 from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataProvider
-from providers.stored_data import StoredChainProvider, chain_snapshots
+from providers.stored_data import StoredChainProvider, chain_snapshots, forward_quotes
 
 ROLE = "explorer"
 DETECTOR_TYPE = "iv_surface_peak_ratio"
@@ -299,6 +299,18 @@ def _parity_work(conn, identity: str, spawned_at: str) -> None:
         # grades distinguish detector families (§46's own deferral).
         for result in scan_calendar(chains, costs):
             if result.net_edge_per_share >= min_net_edge:
+                candidates.append(result)
+        # The forward-leg scan (ARB-013/014, §61), same lens, over whatever
+        # forwards the stored world listed (none is a no-op by construction).
+        # Strike-less packages (ARB-014's cash-and-carry trades no option)
+        # are scanned but not escalated: parity_events.strike is NOT NULL,
+        # and on any real forward mispricing ARB-013 fires beside ARB-014 at
+        # every strike whose synthetic disagrees, so the signal still
+        # escalates under a strike-carrying package. The schema change waits
+        # until an ARB-014-only signal can actually occur (§61 records the
+        # deferral).
+        for result in scan_forward(chains, forward_quotes(observation), costs):
+            if result.net_edge_per_share >= min_net_edge and result.inputs.get("strike") is not None:
                 candidates.append(result)
         if not candidates:
             continue
