@@ -1813,12 +1813,29 @@ def is_retirement_requested(conn: Database, identity: str) -> bool:
 
 
 def record_heartbeat(conn: Database, identity: str, metric: str = "heartbeat", value: str | None = None) -> None:
+    """One heartbeat, recorded in two places, committed once.
+
+    The registry carries *when* an agent last reported; `health_metrics`
+    carries *that it did*, and `performance_card.heartbeat_count` reads the
+    second. Written as two independent commits, a reader on another connection
+    could land between them and see an agent that had heartbeated with a
+    heartbeat count of zero - the two halves of one event disagreeing.
+
+    Not theoretical: that is exactly how CI failed on a slow Windows runner
+    while passing on Linux and on every developer machine. The window is a
+    fraction of a millisecond on fast hardware, which is what kept it hidden.
+
+    The transaction was added for the migration pipeline (§89); this is the
+    first pre-existing bug it closes."""
     now = _now()
-    conn.execute("UPDATE agent_registry SET last_heartbeat_at = ? WHERE identity = ?", (now, identity))
-    conn.execute(
-        "INSERT INTO health_metrics (identity, timestamp, metric, value, schema_version) VALUES (?, ?, ?, ?, ?)",
-        (identity, now, metric, value, SCHEMA_VERSION),
-    )
+    with conn.transaction():
+        conn.execute("UPDATE agent_registry SET last_heartbeat_at = ? WHERE identity = ?",
+                     (now, identity))
+        conn.execute(
+            "INSERT INTO health_metrics (identity, timestamp, metric, value, schema_version) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (identity, now, metric, value, SCHEMA_VERSION),
+        )
 
 
 def mark_process_stopped(conn: Database, identity: str) -> None:

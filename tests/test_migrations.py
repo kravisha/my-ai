@@ -524,3 +524,54 @@ def test_a_created_but_empty_store_is_distinguishable_from_an_absent_one(conn):
     whichever one is actually true."""
     absent = next(e for e in migrations.status(conn) if e["store"] == "workspace")
     assert absent["created"] is True and absent["present"] is False
+
+
+def test_a_heartbeat_is_one_event_or_none_of_it(conn):
+    """A heartbeat is written to two tables and must be readable as one thing.
+
+    The registry says *when* an agent last reported; `health_metrics` says
+    *that it did*, and the performance card counts the second. Committed
+    separately, a reader on another connection can land between them and see an
+    agent that has heartbeated with a heartbeat count of zero.
+
+    That is not hypothetical - it is how CI failed on a slow Windows runner
+    while passing on Linux and on every developer machine, in the same pull
+    request that introduced the transaction which fixes it. Asserted here by
+    forcing the second write to fail and checking the first did not survive."""
+    from backend.db import Database
+
+    fi_db.register_agent(conn, "dummy-9", "dummy", pid=7)
+    before = conn.fetchone(
+        "SELECT last_heartbeat_at FROM agent_registry WHERE identity = 'dummy-9'"
+    )["last_heartbeat_at"]
+
+    real_execute = Database.execute
+
+    def fail_on_the_metric(self, sql, params=()):
+        if "health_metrics" in sql:
+            raise RuntimeError("the second write fails")
+        return real_execute(self, sql, params)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Database, "execute", fail_on_the_metric)
+        with pytest.raises(RuntimeError):
+            fi_db.record_heartbeat(conn, "dummy-9")
+
+    after = conn.fetchone(
+        "SELECT last_heartbeat_at FROM agent_registry WHERE identity = 'dummy-9'"
+    )["last_heartbeat_at"]
+    assert after == before, "the registry timestamp outlived the failed heartbeat"
+    assert conn.fetchone(
+        "SELECT COUNT(*) AS n FROM health_metrics WHERE identity = 'dummy-9'")["n"] == 0
+
+
+def test_a_successful_heartbeat_lands_in_both_places(conn):
+    """The other half: atomicity must not have been bought by writing less."""
+    fi_db.register_agent(conn, "dummy-10", "dummy", pid=8)
+    fi_db.record_heartbeat(conn, "dummy-10")
+
+    assert conn.fetchone(
+        "SELECT last_heartbeat_at FROM agent_registry WHERE identity = 'dummy-10'"
+    )["last_heartbeat_at"] is not None
+    card = {row["identity"]: row for row in fi_db.get_performance_card(conn)}
+    assert card["dummy-10"]["heartbeat_count"] == 1
