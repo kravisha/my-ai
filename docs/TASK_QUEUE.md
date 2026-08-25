@@ -40,8 +40,9 @@ holds the queue, not the record.
 > **TQ-34** (the role-based Gateway, §92) is done, and with it every entry the 40–43 lineage
 > generated except the deferred animated figure.
 >
-> Next: **TQ-39** (the client agent's identity), then TQ-40 (its skills, when there is a real
-> producer behind one). Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
+> **TQ-39** (the client agent, and the conversation leak it uncovered, §93) is done.
+>
+> Next: **TQ-40** (the client agent's skills, when there is a real producer behind one). Also open: TQ-07 (consumer-gated), TQ-20 and TQ-21 (owner actions),
 > TQ-28 (the isolation guard).
 > Desktop Phase A and B are done (TQ-30/31/32); Pre-Alpha Milestone 1 is complete.
 >
@@ -618,7 +619,11 @@ only today, with real skills to come. Both recorded in §92.
 
 ### TQ-39 — The client agent gets an identity
 
-**WANT · QUEUED · addendum 43 §16, 41 §24 · depends on TQ-34**
+**WANT · DONE 2026-08-25 · addendum 43 §16, 41 §24 · `SPEC_RECONCILIATION.md` §93**
+
+Turned out to contain a breach rather than only a feature: the Gateway had one conversation for
+the whole database, so a client's socket opened onto the operator's transcript. Reproduced, then
+closed — conversations now belong to the subject who logged in. §93 records it.
 
 43 §16 gives the personal client agent a name, a face, a voice, scoped memory and relationship
 continuity. TQ-34 built the boundary it sits behind; the agent behind it is still the Gateway's

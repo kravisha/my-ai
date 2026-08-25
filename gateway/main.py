@@ -42,7 +42,7 @@ from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, conversation, exposure, jarvis, roles, scoreboard, store, technology
+from gateway import auth, client_agent, conversation, exposure, jarvis, roles, scoreboard, store, technology
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -314,7 +314,8 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     login_limiter.record_success(caller)
-    token, expires_at = store.create_session(conn, auth.session_ttl_seconds(), role)
+    token, expires_at = store.create_session(
+        conn, auth.session_ttl_seconds(), role, subject=request.username.strip().lower())
     logger.info("%s logged in from %s, session expires %s", role, caller, expires_at)
     return {"token": token, "expires_at": expires_at, "role": role,
             "capabilities": sorted(roles.capabilities(role))}
@@ -608,7 +609,16 @@ async def conversation_socket(
 
     login_limiter.record_success(caller)
 
-    conversation_id = store.current_conversation_id(conn)
+    # Scoped to whoever logged in (TQ-39, §93). This used to be the newest
+    # conversation in the database regardless of who asked, which handed a
+    # client the operator's transcript in this very frame.
+    subject = store.session_subject(conn, token)
+    if subject is None:
+        await websocket.send_json({"type": "error", "error": "unauthorized"})
+        await websocket.close(code=WS_UNAUTHORIZED)
+        return
+
+    conversation_id = store.current_conversation_id(conn, subject)
     ready = {
         "type": "ready",
         "conversation_id": conversation_id,
@@ -624,6 +634,22 @@ async def conversation_socket(
     # exactly the "information exists on the server" reasoning §14 forbids.
     if roles.allows(role, roles.CAP_SCOREBOARD_READ):
         ready["open_counts"] = scoreboard.open_counts(conn)
+
+    # Addendum 43 §16: a client meets a named representative rather than a
+    # search box with manners. The greeting is recorded state, not a phrase -
+    # a returning client is greeted as one because `meetings` says so.
+    if role == roles.ROLE_CLIENT:
+        agent = client_agent.greet(conn, subject)
+        ready["agent"] = {
+            "name": agent["name"],
+            "since": agent["created_at"],
+            "returning": agent["returning"],
+            "meetings": agent["meetings"],
+            "voice": agent["voice"],
+            "visual": agent["visual"],
+        }
+        ready["introduction"] = client_agent.introduction(agent)
+
     await websocket.send_json(ready)
 
     provider = default_provider()
