@@ -43,12 +43,13 @@ Work that is specified and queued but not yet built.
 
 | Specification | Queue entry | Status |
 |---|---|---|
-| [`specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md) | TQ-45 | **45a BUILT** 2026-08-26, `SPEC_RECONCILIATION.md` §100 (the canonical holding shape). **45b SPECIFIED, next to build** — the broker-independent provider interface and the conformance suite that turns it from a description into a contract. |
+| [`specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md) | TQ-45 | **BUILT** 2026-08-26 — 45a the canonical holding shape (`SPEC_RECONCILIATION.md` §100), 45b the provider abstraction and its conformance suite (§101). Kept because its §3 and §11 record decisions the code depends on. |
 | [`specs/TQ-44_portfolio_ownership_and_isolation.md`](specs/TQ-44_portfolio_ownership_and_isolation.md) | TQ-44 | **BUILT** 2026-08-26, `SPEC_RECONCILIATION.md` §99. Kept because its §3 and §10 record decisions the code depends on and must not have re-litigated. |
 
-Addendum 44 also generates TQ-46 through TQ-50 (superuser ownership domain, its UI tab, snapshots
-and audit, the Schwab boundary, and Schwab live — the last blocked on the owner obtaining API
-access). Those are scoped in `TASK_QUEUE.md` and specified when they reach the head of the queue.
+**TQ-46 is next and has no specification yet.** Addendum 44 also generates TQ-47 through TQ-50
+(the Superuser Portfolio tab, snapshots and audit, the Schwab boundary, and Schwab live — the last
+blocked on the owner obtaining API access). Those are scoped in `TASK_QUEUE.md` and specified when
+they reach the head of the queue.
 
 ---
 

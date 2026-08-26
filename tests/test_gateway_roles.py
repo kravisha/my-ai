@@ -285,8 +285,12 @@ def test_a_client_is_offered_only_its_own_holdings(three_roles):
     assertion below holds and why it is written as a denylist of the dangerous
     tools rather than only as an allowlist of the safe ones."""
     offered = {tool["name"] for tool in tools.for_role(roles.ROLE_CLIENT)}
+    # TQ-45b adds `portfolio_balances` under the *same* capability, which is the
+    # pattern this test exists to protect: a new client-facing tool arrives as
+    # its own TOOL_CAPABILITY entry over the client's own data, never by
+    # widening what `converse` means.
     assert offered == {"record_holding", "list_holdings", "forget_holding",
-                       "analyse_holdings"}
+                       "analyse_holdings", "portfolio_balances"}
     for organizational in ("read_repository_file", "list_repository_files",
                            "publish_document", "jarvis_status", "jarvis_agent",
                            "technology_review", "list_scoreboard_items",

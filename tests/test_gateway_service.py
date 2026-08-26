@@ -396,6 +396,12 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "list_holdings",
         "forget_holding",
         "analyse_holdings",
+        # TQ-45b. Built, and built honestly: for a source that has no cash
+        # figure it refuses with a sentence the agent can repeat rather than
+        # reporting zero. That is what makes it a tool for something that *is*
+        # built - the answer "I cannot know that, and here is why" is an
+        # answer, where a fabricated zero would not be.
+        "portfolio_balances",
     }, "the assistant must not be handed a tool for something that is not built"
 
     assert not any(

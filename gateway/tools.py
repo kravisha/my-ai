@@ -36,7 +36,8 @@ truthful value.
 
 from backend.db import Database
 from gateway import roles
-from gateway import holdings, jarvis, portfolios, repositories, scoreboard, technology
+from gateway import (holdings, jarvis, portfolio_providers, portfolios, repositories,
+                     scoreboard, technology)
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -322,6 +323,16 @@ HOLDINGS_TOOLS = [
         },
     },
     {
+        "name": "portfolio_balances",
+        "description": (
+            "The cash balance on this portfolio, when its source has one. Many do not: "
+            "holdings a client told you about carry no cash figure, and this will say so "
+            "in words you can repeat. Never estimate a balance, and never report zero "
+            "because none was available."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "analyse_holdings",
         "description": (
             "Weights and concentration across what the client has told you they hold, "
@@ -368,6 +379,11 @@ TOOL_CAPABILITY = {
     "list_holdings": roles.CAP_HOLDINGS,
     "forget_holding": roles.CAP_HOLDINGS,
     "analyse_holdings": roles.CAP_HOLDINGS,
+    # Its own entry rather than a widening of anything (§95): a balance is the
+    # client's own portfolio data, so it sits under the same capability the other
+    # holdings tools do - but it is listed, because an unmapped tool is refused
+    # for everybody and that is the property worth keeping.
+    "portfolio_balances": roles.CAP_HOLDINGS,
 }
 
 
@@ -495,7 +511,7 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
             return jarvis.JarvisClient().agent(str(arguments["identity"]))
 
         if name in ("record_holding", "list_holdings", "forget_holding",
-                    "analyse_holdings"):
+                    "analyse_holdings", "portfolio_balances"):
             if not (subject or "").strip():
                 # Refused rather than defaulted. A holdings tool without a
                 # subject has no owner for the data, and picking one would be
@@ -509,6 +525,12 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                 # tool call that reaches somebody else's positions, because
                 # there is no argument here that names a portfolio.
                 portfolio = portfolios.primary_for(conn, portfolios.for_client(subject))
+                # Reads go through the provider (TQ-45b), so the agent works the
+                # same way whether these holdings were stated in conversation,
+                # invented for a demo, or one day fetched from a broker. Writes
+                # do not: `record_holding` is the client telling their
+                # representative something, which is not a provider's job.
+                provider = portfolio_providers.for_portfolio(portfolio)
                 if name == "record_holding":
                     return {"recorded": holdings.record(
                         conn, portfolio,
@@ -518,13 +540,24 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                         acquired_on=arguments.get("acquired_on"),
                         note=arguments.get("note"))}
                 if name == "list_holdings":
-                    return {"holdings": holdings.listing(conn, portfolio)}
+                    return {"holdings": [vars(h) for h
+                                         in provider.get_holdings(conn, portfolio)]}
                 if name == "forget_holding":
                     removed = holdings.forget(conn, portfolio, str(arguments["symbol"]))
                     return {"forgotten": removed,
                             "note": None if removed else "You had not told me about that one."}
-                return {"analysis": holdings.concentration(conn, portfolio)}
+                if name == "portfolio_balances":
+                    return {"balances": provider.get_balances(conn, portfolio)}
+                return {"analysis": holdings.concentration(
+                    provider.get_holdings(conn, portfolio))}
             except holdings.HoldingRefused as refusal:
+                return {"error": str(refusal)}
+            except portfolio_providers.ProviderCapabilityUnavailable as unavailable:
+                # A refusal with a reason, handed to the model as the reason
+                # (spec §3.4). An empty dict or a zero would be an answer; this
+                # is an explanation, and it is phrased to be repeated aloud.
+                return {"error": str(unavailable), "unavailable": True}
+            except portfolio_providers.ProviderRefused as refusal:
                 return {"error": str(refusal)}
             except portfolios.NotAuthorized:
                 # The one refusal, passed through with its own words rather than
