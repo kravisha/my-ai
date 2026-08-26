@@ -9,6 +9,22 @@
 # model consumer added to the code without a profile here fails the suite
 # until somebody declares it on purpose.
 #
+# What this file is NOT, since TQ-51 (§103): it is not the Model Performance
+# Registry addendum 45 §8 describes. The split is by **writer**, not by subject.
+# This file is hand-authored, committed, reviewed, and asserted against the code
+# by tests. The performance registry is machine-written after every task, at a
+# volume no committed file should carry - scores in git would dirty the working
+# tree on every inference and make these assertions race a moving target.
+#
+# The one genuine overlap is `preferred_model` below. Addendum 45 §16 is explicit
+# that an agent should NOT choose its own model - it classifies the task, and a
+# common routing layer chooses. So `preferred_model` is precisely what addendum
+# 45 supersedes. Until routing exists it stays, read at call time and honest
+# about being a hand-authored guess; from TQ-60 it becomes the **seed** the
+# leaderboard starts from (§12) and stops being read at call time. Recorded here
+# so that transition is a planned handover rather than a field that quietly
+# means two different things.
+#
 # Two disciplines this file lives under:
 #
 # - Addendum 35 §2: every mapping is a PROVISIONAL starting hypothesis. No
@@ -22,15 +38,53 @@
 #   `observed` block carries only what this system has actually measured, each
 #   entry naming where the measurement is recorded.
 #
-# `routing: none_single_model` is a pinned decision, not an omission: a
-# routing engine with one route is machinery without a decision to make (§60
-# disposition 2). The test asserts exactly one configured model WHILE that
-# marker stands - registering a second model fails the suite until routing is
-# revisited on purpose, which turns "we should think about routing someday"
-# into a recorded decision with a tripwire.
+# `routing` is a pinned decision, not an omission: a routing engine with one
+# route is machinery without a decision to make (§60 disposition 2). The test
+# asserts what THIS rung of `routing_stages` requires - so registering a second
+# model fails the suite until routing is revisited on purpose, which turns "we
+# should think about routing someday" into a recorded decision with a tripwire.
+#
+# TQ-51 (SPEC_RECONCILIATION §103) turned that boolean pin into a ladder,
+# because addendum 45 needs four to eight models and the tripwire fired on its
+# first real step - exactly as §64 intended. **The tripwire was re-aimed, not
+# removed.** A discipline deleted the first time it is inconvenient was never a
+# discipline; each rung below carries its own, and advancing to a rung whose
+# enforcement is not built yet fails loudly rather than passing silently.
+#
+# The value below is the rung this system is ON. Moving it is a deliberate act
+# with a queue entry behind it, never a tidy-up.
 
 version: 1
 routing: none_single_model
+
+# The ladder (addendum 45 §12, §13, §45 Phase C+F). Each rung names the queue
+# entry that earns it and what its tripwire demands. `enforced: false` means the
+# assertion is not built yet - the rung exists so the ladder is legible, and the
+# test refuses to stand on it rather than pretending it holds.
+routing_stages:
+  - stage: none_single_model
+    earned_by: TQ-16 (§64)
+    enforced: true
+    requires: >
+      Exactly one configured model, and it is the one the code constructs.
+      Profiles carry no fallbacks, because there is nowhere to fall back to.
+
+  - stage: seeded_leaderboard
+    earned_by: TQ-54
+    enforced: false
+    requires: >
+      Every configured model has a seeded entry on every task-category
+      leaderboard, and every seeded score is marked SEEDED/PROVISIONAL
+      (addendum 45 §12). A configured model no routing decision can reach is
+      the failure this rung exists to catch.
+
+  - stage: competitive
+    earned_by: TQ-63
+    enforced: false
+    requires: >
+      Measured outcomes dominate the seed (addendum 45 §12), rankings move on
+      evidence (§10), and a failure in one category does not demote a model
+      globally (§11).
 
 models:
   - id: claude-sonnet-5

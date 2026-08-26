@@ -6,8 +6,15 @@ registry is worse than none because a future router would believe it. These
 tests make it an assertion - the registered model must be the one the code
 constructs, every declared call size must match the constant that sizes it,
 every model consumer in the code must carry a profile, and the pinned
-`routing: none_single_model` decision trips the suite the day a second model
-is registered, so routing gets revisited on purpose rather than by accident.
+`routing` decision trips the suite the day a second model is registered, so
+routing gets revisited on purpose rather than by accident.
+
+TQ-51 (§103) turned that pin into a ladder, because addendum 45 needs four to
+eight models and the tripwire fired on its first real step - which is what §64
+built it for. **It was re-aimed, not removed.** Each rung of `routing_stages`
+carries its own assertion; a rung whose enforcement is not built yet refuses to
+be stood on, so advancing the marker early fails loudly instead of passing
+silently and leaving a second model reachable by nothing.
 
 Two disciplines enforced rather than merely stated: every model and profile
 is `provisional: true` (35 §2 - no first default earns permanent status
@@ -53,16 +60,60 @@ def test_registry_parses_and_has_both_sections(registry):
     assert registry["profiles"], "consumers exist, so profiles must"
 
 
+@pytest.fixture(scope="module")
+def stages(registry):
+    return {s["stage"]: s for s in registry["routing_stages"]}
+
+
+def test_the_routing_marker_names_a_rung_of_the_ladder(registry, stages):
+    """Fail closed on an unknown routing value, the house rule every other
+    closed vocabulary in this codebase works under. A marker nobody can
+    interpret is not one this suite may assert against."""
+    assert registry["routing"] in stages, (
+        f"routing {registry['routing']!r} is not a stage in routing_stages: "
+        f"{sorted(stages)}. Add the rung and its tripwire before standing on it."
+    )
+
+
+def test_an_unenforced_rung_refuses_to_be_stood_on(registry, stages):
+    """The half of the re-aim that keeps the discipline (§103).
+
+    Turning one pin into a ladder invites a quiet failure: somebody advances
+    `routing` to a rung whose assertion nobody has written, the suite goes
+    green, and a second configured model is now reachable by nothing. So a rung
+    must declare `enforced: true` before the marker may sit on it, and the
+    queue entry that earns it is named in the failure."""
+    stage = stages[registry["routing"]]
+    assert stage["enforced"] is True, (
+        f"routing is set to {stage['stage']!r}, whose tripwire is not built yet "
+        f"({stage['earned_by']} earns it). Build the assertion in that increment "
+        "before moving the marker - an unenforced rung is a silent pass."
+    )
+
+
+def test_each_rung_says_what_it_demands(stages):
+    """A ladder whose rungs carry no requirement is a comment. Every stage
+    names the queue entry that earns it and what its tripwire will check."""
+    for stage in stages.values():
+        assert stage["earned_by"].strip()
+        assert stage["requires"].strip()
+        assert isinstance(stage["enforced"], bool)
+
+
 def test_single_model_reality_matches_the_code(registry, models):
-    """Exactly one configured model, and it is the one the code constructs -
-    while `routing: none_single_model` stands, a second registered model is
-    a suite failure by design: it means routing must be revisited on
-    purpose (§60 disposition 2, §64), not acquired by drift."""
-    assert registry["routing"] == "none_single_model"
+    """Exactly one configured model, and it is the one the code constructs.
+
+    This is the `none_single_model` rung's own tripwire: while that marker
+    stands, a second registered model is a suite failure by design - routing
+    must be revisited on purpose (§60 disposition 2, §64), not acquired by
+    drift. Addendum 45 needs four to eight models, so the way past this is
+    TQ-54: seed the leaderboards, then advance the marker."""
+    if registry["routing"] != "none_single_model":
+        pytest.skip("a later rung governs; its own tripwire applies")
     configured = [m for m in models.values() if m["status"] == "configured"]
     assert len(configured) == 1, (
-        "a second configured model has arrived: revisit `routing: none_single_model` "
-        "deliberately (SPEC_RECONCILIATION §64) before registering it"
+        "a second configured model has arrived: advance `routing` to a rung that "
+        "can reach it (SPEC_RECONCILIATION §64, §103) before registering it"
     )
     model = configured[0]
     assert model["id"] == model_provider.DEFAULT_MODEL
@@ -98,14 +149,20 @@ def test_unmeasured_fields_carry_no_numbers(models):
         assert model["benchmark_date"] is None  # the day this is set, provisional flags may come off
 
 
-def test_profiles_reference_registered_models_and_real_roles(models, profiles):
+def test_profiles_reference_registered_models_and_real_roles(registry, models, profiles):
+    """`preferred_model` is a hand-authored guess, and from TQ-60 it becomes the
+    *seed* a leaderboard starts from rather than the answer read at call time -
+    addendum 45 §16 is explicit that an agent does not choose its own model.
+    Asserted as a real registered model either way, because a seed pointing at
+    nothing is worse than no seed."""
     for profile in profiles.values():
         assert profile["preferred_model"] in models
         assert models[profile["preferred_model"]]["status"] == "configured"
-        # No routing engine with one route: fallback is honestly empty, and
-        # populating it is part of the same deliberate routing revisit the
-        # single-model pin protects.
-        assert profile["fallback_models"] == []
+        # No routing engine with one route: fallback is honestly empty while
+        # `none_single_model` stands, and populating it is part of the same
+        # deliberate revisit that rung protects.
+        if registry["routing"] == "none_single_model":
+            assert profile["fallback_models"] == []
         if profile["role"] is not None:
             assert profile["role"] in fi_db.ROLE_CHARTERS, (
                 f"profile {profile['agent_class']} names role {profile['role']!r} "

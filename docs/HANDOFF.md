@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-45 complete; addendum 45 assimilated)
+# Handoff — checkpoint 2026-08-26 (TQ-51 complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2298 passed, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2301 passed, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -32,7 +32,7 @@ Then read, in order:
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2298 passing**. Nothing
+`master` plus this checkpoint, clean and pushed. Suite **2301 passing**. Nothing
 running; no orphaned processes.
 
 **Two processes, two databases.**
@@ -86,7 +86,8 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | — | TQ-45 specified; two collisions named before anybody hit them | #47 |
 | §100 | **TQ-45a** the canonical holding shape | #48 |
 | §101 | **TQ-45b** the provider abstraction + its conformance suite | #49 |
-| §102 | Addendum 45 assimilated; TQ-51…TQ-68 queued | this branch |
+| §102 | Addendum 45 assimilated; TQ-51…TQ-68 queued | #50 |
+| §103 | **TQ-51** the single-model pin becomes a ladder | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
@@ -102,8 +103,10 @@ and recorded in its §11. Nothing outstanding.
 **Addendum 45 is assimilated** (§102) — local intelligence and competitive model
 routing, owner-supplied, queued as TQ-51 … TQ-68. Nothing built.
 
-**There are now two independent lineages and the owner has not said which comes
-first**: TQ-46 … TQ-50 (the rest of addendum 44) or TQ-51 … TQ-68 (addendum 45).
+**TQ-51 is done** (§103) — the addendum 45 lineage has started. It changed no
+runtime behaviour: still one model, still `routing: none_single_model`.
+
+**The other lineage is still open**: TQ-46 … TQ-50 (the rest of addendum 44).
 Neither blocks the other. See §7.
 
 ---
@@ -157,7 +160,13 @@ Each cost something to learn. Reversing one silently would undo real work.
     `ProviderCapabilityUnavailable` carrying a sentence the client can hear.
     Never return `{}` or a zero: those are answers, and the true answer is an
     explanation.
-11. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+11. **The routing ladder is not a comment** (§103). `docs/model_registry.yaml`
+    carries `routing_stages`; each rung has its own tripwire and **a rung whose
+    assertion is not built refuses to be stood on**. Advancing `routing` is a
+    deliberate act with a queue entry behind it — TQ-54 earns `seeded_leaderboard`,
+    TQ-63 earns `competitive`. Re-aim it, never delete it: §64 planted it, and it
+    fired exactly when it was supposed to.
+12. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
     priced (spec §11 Q2). A cash balance is not a price — it is a quantity
     somebody holds, not a valuation — which is why `get_balances` may exist
     without widening the rule.
@@ -168,9 +177,11 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-46** — superuser ownership domain; retire the ownerless retrieval | **candidate next — needs a spec** |
-| **TQ-51** — unpin `routing: none_single_model` | **candidate next** — head of the addendum 45 lineage |
-| TQ-52 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
+| **TQ-52** — candidate survey: what can run on this machine | **next** — needs the Inkling answer |
+| **TQ-53** — task signature, the eight categories, complexity | **next** — independent of TQ-52, needs no hardware |
+| TQ-51 — the routing ladder | **DONE** §103 |
+| TQ-54 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
+| TQ-46 … TQ-50 — the rest of addendum 44 | queued, needs a spec |
 | TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
 | TQ-47 — Superuser Portfolio tab | queued |
 | TQ-48 — snapshots, provenance, audit logging | queued |
@@ -186,7 +197,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-None blocks TQ-46.
+Nothing blocks TQ-53. TQ-52 needs one owner answer — see §7.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -231,33 +242,27 @@ None blocks TQ-46.
 
 ## 7. Exactly what to do next
 
-**Ask the owner which lineage to work first.** Two are open and independent, and
-picking one unasked would be choosing for them:
+**TQ-53 — the task signature, the eight task categories, and the complexity
+vocabulary.** It is the only entry in this lineage that needs no hardware
+answers, no downloads and no owner input, and everything downstream keys off it.
+Queue entry has the detail; addendum 45 §20, §21, §42.
 
-- **TQ-46 … TQ-50** — the rest of addendum 44: the Superuser ownership domain,
-  its UI tab, snapshots and audit, the Schwab boundary. TQ-50 is already blocked
-  on owner action (Schwab API access).
-- **TQ-51 … TQ-68** — addendum 45, assimilated 2026-08-26 (§102): local
-  intelligence and competitive model routing.
+Build it the way the vocabularies in `gateway/portfolios.py` and
+`gateway/holdings.py` are built: **closed, fail-closed on read as well as
+write**. Exactly the eight categories §42 names and no more — "do not
+prematurely create dozens" is the same instruction §70 and §100 each enforced
+under a different name.
 
-Both start with a specification written the way TQ-44's and TQ-45's were —
-neither TQ-46 nor TQ-51 has one yet, and deciding their open questions before
-coding is the part that has now paid off three times.
+**TQ-52 is the other candidate and it is blocked on one owner answer**: what
+"Inkling" is. Addendum 45 §47 requires it as an initial local candidate, and it
+is not identifiable as an open-weight local model from here. It has deliberately
+**not** been substituted with something similarly named. The hardware side of
+TQ-52 is already measured and recorded in §102 — 8 GB VRAM, 16.5 GB RAM, 365 GB
+free disk — so the survey is mostly waiting on that one fact.
 
-**If it is TQ-46:** `SUPERUSER` is already a separate owner domain with a guard
-that refuses in both directions (§99). TQ-46 gives the operator portfolios of
-their *own*; it must not add a branch to `resolve`. It also owns removing
-`app/tools/portfolio.py`'s missing owner argument (addendum 44 §16.7).
-
-**If it is TQ-51:** it is small and deliberately first. `model_registry.yaml`
-carries `routing: none_single_model` as a pinned decision, and
-`tests/test_model_registry.py` fails the suite the day a second model is
-registered — the tripwire §64 planted for exactly this moment. **Re-aim it, do
-not delete it.** Two findings from assimilation shape the work and are in §102:
-the GPU is **8 GB** (a pool of six is feasible on disk, sequential in VRAM), and
-**"Inkling"** — named as a required initial candidate by addendum 45 §47 — is not
-identifiable as an open-weight local model. TQ-52 has to answer what it is, and
-it has deliberately **not** been substituted with something similar.
+**The other lineage is TQ-46 … TQ-50** (the rest of addendum 44: the Superuser
+ownership domain, its tab, snapshots and audit, the Schwab boundary). Independent
+of this one and still unspecified.
 
 Then: `git checkout -b <name>`, one increment, full suite green, a
 `SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.

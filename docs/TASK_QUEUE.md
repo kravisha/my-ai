@@ -63,7 +63,11 @@ holds the queue, not the record.
 > 2026-08-26, §102) — **TQ-51 … TQ-68**. Owner-supplied and explicitly superseding the earlier
 > local-model routing specification. It starts at **TQ-51**, which unpins
 > `routing: none_single_model` — the tripwire §64 planted for exactly this moment, firing on the
-> first real step of the lineage that needed it.
+> first real step of the lineage that needed it. **TQ-51 is done** (§103): the pin is now a
+> ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
+> status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
+> **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
+> hardware answers.
 >
 > Two findings from assimilation that shape the order, both in §102: the GPU is **8 GB**, which
 > makes a pool of six feasible on disk and sequential in VRAM; and **"Inkling"**, named as an
@@ -822,8 +826,8 @@ Until then its blocked_reason stays true and stays said.
 
 ### TQ-51 — Unpin `routing: none_single_model`, deliberately
 
-**NEED (GREEN) · QUEUED — first of the addendum 45 lineage · addendum 45 §1, §6, §45 Phase A ·
-`SPEC_RECONCILIATION.md` §64, §102**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §103) · addendum 45 §1, §6,
+§45 Phase A · `SPEC_RECONCILIATION.md` §64, §102**
 
 The precondition under everything else in this lineage, and it exists because §64 put it there on
 purpose: `docs/model_registry.yaml` carries `routing: none_single_model` as a **pinned decision,
@@ -842,6 +846,18 @@ performs well at what" — but two files that both rank models is the two-models
 §70 and §100 have each ruled on once. Decide before either is built.
 
 Small, and deliberately first.
+
+**Done** (§103), and it changed no runtime behaviour: still one model, still
+`routing: none_single_model`. Three decisions came out of it. The two registries are
+**separate, split by writer rather than by subject** — one is hand-authored, committed and
+asserted against the code; the other is machine-written after every task, and scores in git
+would dirty the tree on every inference. The real collision turned out sharper than "both rank
+models": it is `preferred_model`, a hand-authored answer to the question addendum 45 §16 says
+an agent must not answer, now carrying a **planned handover** to seed status at TQ-60 rather
+than a quiet drift. And the boolean pin became a **ladder** (`routing_stages`), where each rung
+carries its own tripwire and a rung whose assertion is not built **refuses to be stood on** — so
+advancing the marker early fails loudly instead of leaving a second model reachable by nothing.
+Mutation-tested five ways, five caught.
 
 ### TQ-52 — The candidate survey: what can actually run on this machine
 
@@ -909,6 +925,12 @@ seeded score and a measured score are distinguishable in the schema rather than 
 number nobody can interpret later.
 
 No model calls. The registry is real; the data in it is honestly labelled as a guess.
+
+**This entry also owns advancing the routing marker** (§103). `docs/model_registry.yaml`
+carries a `routing_stages` ladder, and `seeded_leaderboard` is the rung TQ-54 earns: build that
+rung's tripwire — every configured model has a seeded entry on every leaderboard — set
+`enforced: true` on it, and only then move `routing`. The suite refuses to stand on an
+unenforced rung, so doing it in the other order fails loudly and says so.
 
 ### TQ-55 — The Routing Decision Record
 
