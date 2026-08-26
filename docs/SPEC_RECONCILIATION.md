@@ -8794,3 +8794,115 @@ advancing to an unenforced rung.
 Suite: **2371 passing, 1 skipped** (2332 before, +39). The skip is
 `none_single_model`'s tripwire, correctly standing down now that a later rung
 governs.
+
+---
+
+## §106 — Every routing decision, and the violation it found (2026-08-26, TQ-55)
+
+Fourth increment of the addendum 45 lineage. `app/routing_decisions.py`: §26's
+record, written from the first decision rather than once there is traffic worth
+analysing — a log that starts late has a hole in it exactly where the early
+mistakes are.
+
+Still no model calls, and nothing routes anything. This records decisions; making
+them is TQ-59's and TQ-60's, asserted by a source scan rather than trusted.
+
+### One database, because the outcome is one fact
+
+The decision log lives in `model_performance.db` beside the leaderboards. §26's
+outcome fields — `quality_score`, `failure_type`, `validation_result` — are the
+*same facts* that feed `model_performance.record_outcome`. Two databases would
+have meant writing them twice, which is two sources of truth for one fact, or
+joining across files.
+
+So `complete()` is the single write path: it closes the log entry **and** scores
+the leaderboard. There is no way to score an outcome without logging the decision
+that produced it, and none to close a decision without scoring it. The log is
+written first and survives a scoring failure, because a tally can be rebuilt from
+a log and the reverse is not true.
+
+### §26 duplicates four fields the signature already holds
+
+`task_signature` is listed alongside `task_category`, `complexity`, `risk_level`
+and `privacy_level`. Storing them beside it would be four more places to
+disagree, so three are derived on read.
+
+`task_category` is the deliberate exception, denormalised into a column because
+TQ-66 groups by it and JSON is a poor index — but **the caller never supplies
+it**; it is extracted from the signature at write time, and a row where the two
+diverge raises rather than picking a winner.
+
+`risk_level` is the **third** name in this codebase for one fact: `criticality`
+in `model_registry.yaml`, `error_cost` on the signature, `risk_level` in §26.
+§104 tied the first two; this reads the third off the signature rather than
+adding a column, so there is still one vocabulary rather than three.
+
+### One field added beyond §26's list
+
+`execution_path` — deterministic, local or external (§2's hierarchy).
+
+§26 records what the decision *concluded* (`deterministic_possible`,
+`local_sufficient`) and what was *chosen* (`selected_model`), but not which of
+the three ways the work was actually done. §41's error types cannot be computed
+without it: `UNDER_ESCALATION`, `OVER_ESCALATION` and `UNNECESSARY_AI` are all
+statements about the path taken versus the path that should have been.
+
+### The violation the first run produced
+
+Running it end to end through §25's own example — portfolio analysis routed per
+step — the fourth step escalated to an external model while its signature said
+`PRIVACY_LOCAL_ONLY`.
+
+**Nothing said a word.** The log recorded it faithfully and no reader would ever
+have looked. It was a fault in the demo rather than in the code, which is exactly
+what makes it worth keeping: it is the shape a real §36 breach would have, and
+the log was perfectly happy.
+
+So `privacy_violation` is derived on read and counted in `summary()`, from two
+facts the row already held. §41 names it `PRIVACY_MISROUTING`; nothing in this
+lineage was going to notice it until TQ-66, and it cost three lines here.
+
+**Detection, never refusal.** Enforcement is TQ-60's. Once that exists, a
+violation can only reach this table through a bug or a bypass — and a log that
+refused to record those would hide precisely what it exists to reveal. A
+non-zero count is a defect, and `summary()` says so in those words rather than
+reporting it as a statistic.
+
+### What is deliberately unanswerable
+
+`was_escalation_worthwhile` is the field this whole lineage exists to be able to
+answer, and **nothing can answer it today**. It needs a counterfactual — what
+would have happened had the work stayed local — and the first thing that produces
+one is TQ-63's challenger mode.
+
+It is three-valued and defaults to `unknown`. A boolean defaulting to false would
+have quietly asserted that every escalation was wasted, which is a claim nobody
+has measured.
+
+### A judgement that differs from §105's, on purpose
+
+`estimated_cost`, `actual_cost` and `resource_usage` are nullable columns nothing
+fills yet. §105 left always-NULL *score* columns out entirely, and the difference
+is real rather than a lapse: a score participates in arithmetic that changes shape
+when a dimension arrives, whereas a log field is inert. And a log is the one
+artifact that must not need migrating later — migrating a log means rewriting
+history.
+
+`test_resource_usage_round_trips_when_something_supplies_it` proves the column
+works the day TQ-57 has something to put in it.
+
+### Verified by running it, and by attacking it
+
+**Run:** §25's portfolio-analysis example, five steps under one `task_id` —
+parse deterministically, calculate deterministically, interpret locally, resolve
+the hard part externally, summarize locally. All three execution paths in one
+task, the leaderboard picking up both model steps, and the privacy violation
+above surfacing from it.
+
+**Attack:** eight mutations, eight caught — a decision closable twice; the log
+no longer scoring the leaderboard; a privacy violation no longer flagged; the
+category column allowed to disagree with its signature; a deterministic path
+naming a model; a decision with no reason; escalation-worth defaulting to `no`;
+and a stored execution path no longer validated on read.
+
+Suite: **2403 passing, 1 skipped** (2371 before, +32).

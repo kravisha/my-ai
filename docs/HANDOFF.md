@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-54 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-55 complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2371 passed, 1 skipped, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2403 passed, 1 skipped, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -32,7 +32,7 @@ Then read, in order:
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2371 passing, 1
+`master` plus this checkpoint, clean and pushed. Suite **2403 passing, 1
 skipped**. The skip is deliberate: `none_single_model`'s tripwire stands down
 now that a later rung of the routing ladder governs. Nothing running; no
 orphaned processes.
@@ -91,7 +91,8 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | §102 | Addendum 45 assimilated; TQ-51…TQ-68 queued | #50 |
 | §103 | **TQ-51** the single-model pin becomes a ladder | #51 |
 | §104 | **TQ-53** the vocabulary routing decides on | #52 |
-| §105 | **TQ-54** the competition, as data | this branch |
+| §105 | **TQ-54** the competition, as data | #53 |
+| §106 | **TQ-55** every routing decision, and the violation it found | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
@@ -107,10 +108,11 @@ and recorded in its §11. Nothing outstanding.
 **Addendum 45 is assimilated** (§102) — local intelligence and competitive model
 routing, owner-supplied, queued as TQ-51 … TQ-68. Nothing built.
 
-**TQ-51, TQ-53 and TQ-54 are done** (§103, §104, §105). Still one model and no
-model calls anywhere in the lineage — but `routing` has advanced from
-`none_single_model` to **`seeded_leaderboard`**, and the eight leaderboards
-exist, seeded and provisional, in `model_performance.db`.
+**TQ-51, TQ-53, TQ-54 and TQ-55 are done** (§103–§106). Still one model and no
+model calls anywhere in the lineage. `routing` stands on **`seeded_leaderboard`**,
+the eight leaderboards exist seeded and provisional, and every routing decision
+is logged from the first one — including detection of §36 privacy misrouting,
+which TQ-55 found by running §25's own example.
 
 **The other lineage is still open**: TQ-46 … TQ-50 (the rest of addendum 44).
 Neither blocks the other. See §7.
@@ -188,7 +190,13 @@ Each cost something to learn. Reversing one silently would undo real work.
     once and never updated; the composite is derived on read. §12's "empirical
     should dominate the seed" is arithmetic, not a decision somebody makes, and
     blending them would make it impossible.
-15. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+15. **The routing log detects privacy misrouting; it does not prevent it**
+    (§106). `routing_decisions` flags a `LOCAL_ONLY` task that went external and
+    counts it in `summary()`. Enforcement is TQ-60's. **Never make the log
+    refuse a violation** — once prevention exists, a violation can only arrive
+    through a bug or a bypass, and a log that would not record those hides what
+    it exists to reveal.
+16. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
     priced (spec §11 Q2). A cash balance is not a price — it is a quantity
     somebody holds, not a valuation — which is why `get_balances` may exist
     without widening the rule.
@@ -199,10 +207,10 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-55** — the Routing Decision Record | **next** |
+| **TQ-56** — `LocalAIService` + its conformance suite, nothing behind it | **next** |
 | **TQ-52** — candidate survey: what can run on this machine | blocked — needs the Inkling answer |
-| TQ-51 / TQ-53 / TQ-54 — ladder, vocabulary, leaderboards | **DONE** §103, §104, §105 |
-| TQ-56 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
+| TQ-51 / TQ-53 / TQ-54 / TQ-55 — ladder, vocabulary, leaderboards, decision log | **DONE** §103–§106 |
+| TQ-57 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
 | TQ-46 … TQ-50 — the rest of addendum 44 | queued, needs a spec |
 | TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
 | TQ-47 — Superuser Portfolio tab | queued |
@@ -219,7 +227,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-Nothing blocks TQ-55. TQ-52 needs one owner answer — see §7.
+Nothing blocks TQ-56. TQ-52 needs one owner answer — see §7.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -264,18 +272,26 @@ Nothing blocks TQ-55. TQ-52 needs one owner answer — see §7.
 
 ## 7. Exactly what to do next
 
-**TQ-55 — the Routing Decision Record.** §26's fields, written from the first
-routing decision onward rather than added once there is traffic worth analysing:
-a log that starts late has a hole in it exactly where the early mistakes are.
+**TQ-56 — `LocalAIService`: the interface and its conformance suite, with
+nothing behind it.** §4's interface, built the way `PortfolioProvider` was built
+in §101 — because that increment proved the pattern *and* found a real hole in it
+by attacking it, and §105 and §106 have each repeated the mutation discipline
+since.
 
-It records the decision *and* its outcome — estimated versus actual cost and
-latency, validation result, quality score, and `was_escalation_worthwhile`, which
-is the field the whole lineage exists to be able to answer.
+Three things it owns:
 
-Two things it should reuse rather than reinvent: `app/task_signature.py`'s
-`TaskSignature.as_dict()` / `from_dict()` already round-trip a signature with
-fail-closed validation on read (§104), and `app/model_performance.py`'s storage
-pattern is the one to copy again if it needs its own database.
+1. **Write the conformance suite before the second implementation.** A contract
+   with one implementation is a description of that implementation. The guard,
+   applied to every contract test: *could a provider that must load a
+   multi-gigabyte model off disk satisfy this?* If it needs an in-process stub,
+   the test is wrong.
+2. **Ships with no model.** A stub that refuses honestly is the whole of it —
+   the shape `ManualPortfolioProvider` has in §101, and what makes the
+   capability declaration testable before any hardware is involved.
+3. **A source-scan tripwire that agents never call a local model directly**
+   (§4, §47), in the style of
+   `test_nothing_outside_portfolios_queries_the_portfolios_table`. The rule has
+   to survive review rather than depend on it.
 
 **TQ-52 is blocked on one owner answer**: what "Inkling" is. Addendum 45 §47
 requires it as an initial local candidate and it is not identifiable as an

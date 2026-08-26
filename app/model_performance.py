@@ -152,6 +152,17 @@ def _path() -> Path:
     return Path(os.environ.get(PATH_ENV) or (PROJECT_ROOT / "model_performance.db"))
 
 
+def database_path() -> Path:
+    """Where this subsystem's machine-written state lives.
+
+    Public because `app/routing_decisions.py` shares the file (TQ-55, §106): the
+    decision log and the leaderboards are two steps of one loop, and the outcome
+    fields they both hold are the same facts. Sharing the path through an
+    accessor makes that explicit rather than having a second module reach into a
+    private name or resolve the environment variable a second time."""
+    return _path()
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
