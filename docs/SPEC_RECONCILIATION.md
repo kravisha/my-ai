@@ -9788,3 +9788,101 @@ else's. There is no fourth party whose portfolio the system might have meant.
 **§111 stands.** Nothing about the portfolio is stored server-side, including the
 operator's. Consolidation happens in memory, for the life of a request, and the
 report is the only thing that leaves.
+
+---
+
+## §113 — Where each number comes from, and the store that cannot yet answer (2026-08-26)
+
+Owner direction, 2026-08-26, answering §112's open question:
+
+> *"Prices come from market data store. Positions come from broker dealers and
+> other external sources. Risk, sensitivity, greeks etc are calculated locally
+> during portfolio analysis."*
+
+Three sources, three different kinds of fact, and keeping them apart is the whole
+architecture:
+
+| fact | origin | stored here? |
+|---|---|---|
+| positions | broker dealers and other external sources | **never** (§111) |
+| prices | the market data store | yes — it is this organization's own store |
+| risk, sensitivity, greeks | computed locally, per analysis | never — they are outputs |
+
+### This overturns §112's proposal, and that is why it was a proposal
+
+§112 offered a resolution to the §96/§101 conflict: *prices arrive with the
+fetched portfolio, from the client's own broker*, so the system never produces a
+price and the existing rule holds untouched. **The owner's answer is the other
+one.** Prices come from *our* store, which means §96 and §101 have to be reopened
+deliberately — exactly as §112 said would be required if the answer went this
+way.
+
+Recording it that way round matters. The proposal was written to be refutable and
+was refuted in a day; had it been implemented as an assumption, the refutation
+would have arrived as a defect.
+
+### The store cannot price a real portfolio today, and not for the reason expected
+
+Checked rather than assumed:
+
+```
+observations:    20 rows, all origin='synthetic', source='parity_world(seed=4)'
+security_master: 10 securities, ids JE-000001…, no real tickers
+```
+
+**There is no real market data in this system at all.** The expected objection was
+philosophical — §96's *"applying a simulated price to a client's real positions
+would present synthetic output as real"*. The actual obstacle is mechanical and
+arrives first: **`JE-000001` is not `AAPL`.** The synthetic universe has no symbol
+overlap with a real portfolio, so every price lookup for a real holding misses.
+Not "shouldn't be priced" — *cannot be*, with no code written wrongly anywhere.
+
+That is a better failure than the philosophical one, because it cannot be
+overlooked. But it means **a real market data source is a prerequisite for
+valuation, and it is not queued anywhere.** TQ-49 and TQ-50 are Schwab
+*positions*; nothing in the queue obtains a price. Queued now as TQ-75.
+
+### How §96 and §101 get reopened, and the mechanism already exists
+
+The rule to reopen is `is_priced()`, which §101 kept to one line: a portfolio is
+priced only when its `data_mode` is `LIVE`.
+
+That rule asked the question of **the portfolio**, which was right while holdings
+and prices arrived together from one place. Under §113 they do not: positions come
+from a broker, prices come from the store, and a single portfolio can be perfectly
+real while the only price available for it is synthetic. `data_mode` cannot
+express that, because it describes where the *positions* came from.
+
+So the rule moves rather than relaxes: **from the portfolio's data mode to the
+price's provenance.** A real position may be valued only by a price whose origin
+is real; a synthetic price may value only a simulated position.
+
+The mechanism is already built and needs nothing new. `observations` carries
+`origin` and `source` on every row, with a unique index on
+`(entity_id, data_class, observed_at, origin, source)` — and its docstring already
+explains why two sources for one fact is *"convergence, not an error"*. The
+provenance this needs has been recorded on every observation since addendum 20 §4.
+
+**§96's rule survives intact and gets sharper.** It was never "no prices"; it was
+*never present this organization's synthetic output as somebody's real money*.
+Origin-tagging enforces exactly that, per price rather than per portfolio, which
+is stricter than the rule it replaces — a `LIVE` portfolio priced from
+`parity_world(seed=4)` passes `is_priced()` today and would be refused under the
+new one.
+
+### Greeks are computed here, and that is a claim about correctness
+
+*"Risk, sensitivity, greeks etc are calculated locally during portfolio
+analysis."* Two things follow, and both are this project's existing rules rather
+than new ones:
+
+- **Computed, never narrated.** §96 already refused to let a model do portfolio
+  arithmetic — *"a model asked to percentage-weight a portfolio produces something
+  shaped like arithmetic"* — and a delta or a vega is that argument several orders
+  of magnitude more so. `holdings.concentration` is the precedent and the shape.
+- **An input that is absent makes the output absent, not approximate.** Greeks
+  need a volatility, a rate and a time to expiry. Where one is missing the answer
+  is `null` with a reason, never a house default quietly standing in — the rule
+  §100 and §104 already state as *absent is `unknown`, never a plausible default*.
+  A greek computed from an assumed volatility is a number about an assumption
+  wearing the name of a number about somebody's position.

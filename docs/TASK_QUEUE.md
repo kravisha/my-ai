@@ -909,19 +909,63 @@ the one that quietly assumes single-source everywhere nobody is looking. Reconci
 rather than polish: the same security at two brokers is one position, and addendum 9 §3 asked for
 exactly that reconciliation long before addendum 44 was written.
 
-**The first question, and it must be answered before any valuation is computed** (§112): *"analysis
-based on current market conditions"* — where does a current price come from? §96 refused market
-value and §101 kept `is_priced()` LIVE-only, both because *every price this organization can
-produce is simulated*. The proposal on the record is that prices arrive **with the fetched
-portfolio, from the client's own broker** — the client's own data, not this organization's output,
-which is what `MODE_LIVE` was reserved for and needs no rule change. If instead the system is to
-source market data itself, §96 and §101 must be reopened deliberately, because that *is* this
-organization producing a price.
+**That question is answered** (§113), and the answer is the one that costs work. Owner: *"Prices
+come from market data store. Positions come from broker dealers and other external sources. Risk,
+sensitivity, greeks etc are calculated locally."* §112's proposal — that prices ride along with the
+fetched positions, so the organization never produces one — is **refuted**. Prices are ours, so §96
+and §101 are reopened deliberately.
+
+`is_priced()` moves rather than relaxes: **from the portfolio's `data_mode` to the price's
+provenance.** `data_mode` describes where the *positions* came from, and under §113 a portfolio can
+be entirely real while the only available price is synthetic — which `data_mode` cannot express.
+`observations` has carried `origin` and `source` on every row since addendum 20 §4, so the
+mechanism exists. The new rule is stricter than the one it replaces: a `LIVE` portfolio priced from
+`parity_world(seed=4)` passes today and must not.
+
+**Blocked on TQ-75 for anything valued at all** — the store holds no real prices, and not merely as
+a policy matter: `JE-000001` is not `AAPL`, so every lookup for a real holding misses.
 
 Blocked in practice on the same thing TQ-49/TQ-50 are — there is no external system to fetch from
 until the owner has broker API access — so the buildable half is the envelope, the request shape,
 the reconciliation across sources, and the analysis over supplied holdings, which
 `holdings.concentration` already does.
+
+### TQ-75 — A real market data source, because the store has none
+
+**NEED (ORANGE) · QUEUED · blocks TQ-73's valuation and TQ-74 · owner direction 2026-08-26 (§113) ·
+addendum 20 §4, `MARKET_DATA_TAXONOMY.md`**
+
+Owner direction: *"Prices come from market data store."* They do not yet, for real securities.
+Measured on the live database rather than assumed:
+
+```
+observations:    20 rows, all origin='synthetic', source='parity_world(seed=4)'
+security_master: 10 securities, ids JE-000001…, no real tickers
+```
+
+**The obstacle arrives as a miss, not as a wrong number**, which is the good version of this
+problem. `JE-000001` is not `AAPL`; the synthetic universe shares no symbol with a real portfolio,
+so a price lookup for a real holding finds nothing. Nothing has to be caught by a reviewer — it
+cannot silently produce a plausible figure, because it cannot produce a figure.
+
+This entry obtains prices for real securities. What it must settle:
+
+- **Which source, and its licence.** Market data redistribution is licensed, and the terms differ
+  between displaying a price to the person whose position it is and storing a history. Read the
+  terms before writing an ingester — this is the same discipline TQ-52 applies to model weights.
+- **Provenance on every row, which the schema already supports.** `observations.origin` and
+  `source` exist and are already unique-indexed together with the entity and timestamp. Real prices
+  arrive tagged as real; the synthetic world keeps writing alongside them, which addendum 20 §4's
+  docstring already calls *"convergence, not an error"*.
+- **Coverage is a fact to report, not to paper over.** A consolidated portfolio will contain
+  instruments the store cannot price. Those positions are reported as unpriced with a reason —
+  §100's rule that absent is `unknown` rather than a plausible default, applied where it matters
+  most.
+- **Staleness is not freshness.** A price from Friday shown on Monday without saying so is §17's
+  *"do not silently claim it is current"*, one domain over.
+
+Not a queued convenience: **no valuation, no risk figure and no scenario result can be computed for
+a real portfolio until this exists.** TQ-73 and TQ-74 both wait on it.
 
 ### TQ-74 — Scenario simulation over a consolidated external portfolio
 
