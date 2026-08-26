@@ -8299,3 +8299,141 @@ Stack stopped afterwards; no orphaned processes.
   back to the manual provider — serving a brokerage portfolio from stated
   holdings would show somebody the wrong thing under the right name.
 - **`app/tools/portfolio.py` still has no owner argument.** TQ-46's.
+
+---
+
+## §102 — Addendum 45 assimilated: local intelligence and competitive model routing (2026-08-26)
+
+Owner-supplied, 2026-08-26, as `local_intelligence_competitive_model_routing_spec_v2.txt`.
+Assimilated **verbatim and byte-identical** to
+[`docs/addenda/addendum_45_local_intelligence_competitive_model_routing.md`](addenda/addendum_45_local_intelligence_competitive_model_routing.md),
+1,161 lines. It states that it supersedes the previous local-model routing specification.
+
+Queued as **TQ-51 … TQ-68**. Nothing built; this record is the reconciliation and the queue is the
+plan.
+
+A second owner file arrived alongside it (`tq45a_local_intelligence_handoff.txt`) setting the
+sequencing: finish TQ-45a first, preserve its structures, then start the Local Intelligence
+Platform as a separate task. **That condition is already met** — TQ-45a (§100) and TQ-45b (§101)
+are both merged, and this lineage integrates with the vocabulary and provider patterns they
+established rather than replacing them.
+
+### What this asks for
+
+Every agent gets local intelligence by default and escalates when it must, and **no model is
+permanently the best**. Models compete per task category, on eight leaderboards, with rankings
+that move on measured outcomes. Two decisions are kept separate on purpose (§3): *can this be done
+without a model, or locally?* and *which model?*
+
+### Two findings from assimilation, neither of which belongs buried in a queue entry
+
+**1. The GPU is 8 GB, and that shapes the plan rather than merely constraining it.**
+
+Measured rather than assumed: NVIDIA RTX 3050, **8,192 MiB VRAM**, 16.5 GB system RAM, 365 GB free
+disk.
+
+A 7B–8B model at 4-bit quantization fits in VRAM. A 70B-class model does not, at any quantization,
+and no amount of routing cleverness changes that. Disk is ample for §43's pool of six; **VRAM is
+not ample for two resident at once**, which makes §15's challenger comparisons *sequential*.
+
+That is a latency cost rather than a blocker, and it has one consequence worth writing down before
+somebody measures the wrong thing: in a sequential leader-versus-challenger run, **a model that had
+to be loaded from disk did not take longer to think.** Load time and inference time have to be
+measured separately or the ranking learns a lesson about disk speed and records it as reasoning
+quality. TQ-61 carries that note.
+
+**2. "Inkling" cannot be identified, and is not being quietly substituted.**
+
+Addendum 45 §5, §43 and §47 name Inkling alongside Llama and DeepSeek as an initial local
+candidate — and §47 makes it a requirement: *"Initial local candidates must include Llama,
+Inkling, and DeepSeek."*
+
+It is not identifiable from this side as an open-weight local LLM. Llama, DeepSeek, Qwen, Mistral
+and Gemma are all well-known open-weight families; Inkling is not one this build can name a
+licence, a parameter count or a runtime for.
+
+The project's standing rule is that absent is `unknown`, never a plausible default — so no task
+depends on it until somebody confirms the actual artifact. **It has not been swapped for a
+similarly-named model**, which would have been the failure mode: the pool silently becoming
+Llama + DeepSeek + something-I-guessed-at, with §47's requirement recorded as satisfied.
+
+TQ-52 owns the question, and its honest outcomes are: it is a real local model and joins the pool;
+or it is something other than a local LLM and the requirement is renegotiated with the owner. Both
+are recorded findings. Neither is a substitution.
+
+### The tripwire §64 planted fires here, exactly as designed
+
+`docs/model_registry.yaml` carries `routing: none_single_model` as a **pinned decision, not an
+omission**, and `tests/test_model_registry.py` fails the suite the day a second configured model is
+registered — so that *"routing gets revisited on purpose rather than acquired by drift"*.
+
+Addendum 45 requires four to eight models. The tripwire therefore fires on the first real step of
+this lineage, which is the whole reason it exists. **TQ-51 is that revisit**, deliberately first
+and deliberately small.
+
+The instruction it carries: the tripwire is **re-aimed, not deleted**. "A second model is a
+failure" becomes "a second model without a leaderboard entry is a failure". A discipline that is
+removed the first time it is inconvenient was never a discipline.
+
+### Dispositions
+
+**Accepted as specified.** The eight leaderboards, exactly (§42) — the instruction not to
+fragment early is the same one §70 and §100 each enforced under a different name. The two-decision
+separation (§3). Seeded rankings marked provisional (§12), which `model_registry.yaml` already
+does with `provisional: true` on every row. Task-specific rather than global demotion (§11).
+Deterministic-first (§19). Privacy and hardware overriding the leaderboard outright (§35, §36).
+
+**Accepted with the project's existing shape.** §23's `ExternalAIProvider` is **partly built**:
+`app/model_provider.ModelProvider` is a Protocol with `AnthropicProvider` behind it, named for its
+vendor *"so that a second one can exist without either pretending to be generic."* TQ-65 extends
+it rather than introducing a parallel abstraction.
+
+§4's `LocalAIService` gets built the way `PortfolioProvider` was built one increment ago (§101):
+**interface and conformance suite before the second implementation**, because a contract with one
+implementation is a description of that implementation. TQ-56 carries the guard that made §101's
+suite real — could a provider that must load a multi-gigabyte model off disk satisfy this test? —
+and the mutation discipline that found the hole in it.
+
+**Ordering changed from the addendum's.** §45 puts the evaluator in Phase F alongside the
+simulation competition. It is queued *before* it (TQ-62 before TQ-63), because §38 is a
+precondition for scoring rather than a refinement of it: *validate before penalising*, and **"a
+model should not lose points solely because another model disagrees."** Scoring a competition with
+an unvalidated evaluator produces rankings that look empirical and are not.
+
+**One decision deferred to TQ-51 rather than settled here.** Whether the Model Performance
+Registry (§8) extends `model_registry.yaml` or sits beside it. They answer different questions —
+what is configured, versus what performs well at what — but two files that both rank models is the
+two-models-of-one-fact problem this project has now ruled on twice (§70, §100). It is a real
+decision with a real trade-off, and it belongs at the head of the lineage rather than in an
+assimilation note.
+
+**One precondition recorded as unclear.** §30 requires routing knowledge to join *"the linked,
+multi-entry knowledge architecture"*. Nothing in this repository matches that description as a
+built subsystem. TQ-67 is queued as `precondition unclear` rather than as ready work: before it
+starts, somebody has to say whether that architecture exists under another name, is a separate
+unqueued task, or is something TQ-67 creates. §31's knowledge lifecycle
+(`OBSERVED` → `PROVISIONAL` → `VALIDATED` → `STRONG` → `DEGRADED` → `RETIRED`) is independently
+valuable and could be built against the registry alone if the larger thing turns out not to exist.
+
+**One category flagged as probably unused.** `CREATIVE_GENERATION` (§42) has no consumer in a
+financial intelligence system. It is queued anyway because §42 says start with exactly these
+eight — but the expectation that it carries no traffic is recorded now, so that if it still has
+none when TQ-63 has evidence, merging it is the review §42 anticipates rather than a surprise.
+
+### What this lineage does not change
+
+**No exposure.** §50's preconditions stand. Local models running on this machine are less exposed
+than external calls, not more, but nothing here makes anything externally reachable.
+
+**No model binaries in git** (§44). TQ-57 owns the storage layout and the `.gitignore` entry, as
+part of the entry rather than as an afterthought.
+
+**Local execution is not free** (§37). GPU time, power, queue time, and blocking other agents while
+a 5 GB model holds the card. The half of the cost model that gets forgotten is the local half, and
+on one 8 GB card it is the half that will actually bind.
+
+### Owner decision wanted
+
+**Which lineage is worked first.** TQ-46 … TQ-50 (the rest of addendum 44 — the Superuser
+ownership domain, its tab, snapshots and audit, the Schwab boundary) and TQ-51 … TQ-68 (this one)
+are independent of each other. TQ-50 is already blocked on owner action; nothing else is.

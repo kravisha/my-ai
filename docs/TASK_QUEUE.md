@@ -55,9 +55,23 @@ holds the queue, not the record.
 > **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
 > **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
 > and the §15.5 regression is permanent. **TQ-45 is done** — 45a the canonical holding shape
-> (§100), 45b the provider abstraction and its conformance suite (§101). Next is **TQ-46** (the
-> Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots, provenance, audit), TQ-49
-> (the Schwab boundary). TQ-50 is blocked on owner action.
+> (§100), 45b the provider abstraction and its conformance suite (§101). Remaining in that
+> lineage: TQ-46 (the Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots,
+> provenance, audit), TQ-49 (the Schwab boundary). TQ-50 is blocked on owner action.
+>
+> **New lineage: local intelligence and competitive model routing** (addendum 45, assimilated
+> 2026-08-26, §102) — **TQ-51 … TQ-68**. Owner-supplied and explicitly superseding the earlier
+> local-model routing specification. It starts at **TQ-51**, which unpins
+> `routing: none_single_model` — the tripwire §64 planted for exactly this moment, firing on the
+> first real step of the lineage that needed it.
+>
+> Two findings from assimilation that shape the order, both in §102: the GPU is **8 GB**, which
+> makes a pool of six feasible on disk and sequential in VRAM; and **"Inkling"**, named as an
+> initial candidate, is not identifiable as an open-weight local model — TQ-52 has to answer what
+> it is before anything depends on it.
+>
+> **Owner decision wanted**: whether this lineage or the remaining addendum 44 entries (TQ-46
+> onward) is worked first. They are independent.
 >
 > **TQ-43** (per-client Gateway credentials, §98) is **done** — it was the precondition under
 > most of that, and the demo now seeds three clients who each log in as themselves.
@@ -805,6 +819,292 @@ place that decision gets revisited.
 This is also the increment where `portfolio_valuation` — declared-and-unbuilt since §95 — becomes
 buildable, because it is the first time this system has a real price rather than a simulated one.
 Until then its blocked_reason stays true and stays said.
+
+### TQ-51 — Unpin `routing: none_single_model`, deliberately
+
+**NEED (GREEN) · QUEUED — first of the addendum 45 lineage · addendum 45 §1, §6, §45 Phase A ·
+`SPEC_RECONCILIATION.md` §64, §102**
+
+The precondition under everything else in this lineage, and it exists because §64 put it there on
+purpose: `docs/model_registry.yaml` carries `routing: none_single_model` as a **pinned decision,
+not an omission**, and `tests/test_model_registry.py` fails the suite the day a second configured
+model is registered. Addendum 45 requires four to eight. So the tripwire fires on the first real
+step, which is exactly what it was for — routing gets revisited on purpose rather than acquired by
+drift.
+
+Scope: decide and record what replaces the pin, and change the tripwire from "a second model is a
+failure" to "a second model without a leaderboard entry is a failure". The tripwire must not be
+deleted; it must be re-aimed, or the discipline §64 bought is spent rather than kept.
+
+Also settle here whether the Model Performance Registry (§8) **extends** `model_registry.yaml` or
+sits beside it. They answer different questions — one is "what is configured", the other is "what
+performs well at what" — but two files that both rank models is the two-models-of-one-fact problem
+§70 and §100 have each ruled on once. Decide before either is built.
+
+Small, and deliberately first.
+
+### TQ-52 — The candidate survey: what can actually run on this machine
+
+**NEED (GREEN) · QUEUED · depends on TQ-51 · addendum 45 §5, §34, §35, §43, §44**
+
+Metadata before code (addendum 30 §12), and this one is metadata before *downloads*. Produces
+`docs/local_model_candidates.yaml`: for each candidate, the licence, the parameter count, the
+quantization that fits, the runtime, the VRAM and RAM it needs, and whether it runs here at all.
+No model artifacts, no runtime installation, no code.
+
+**The hardware is the constraint and it is measured, not assumed** (§102): NVIDIA RTX 3050,
+**8 GB VRAM**, 16.5 GB system RAM, 365 GB free disk. A 7B–8B model at 4-bit quantization fits in
+VRAM; a 70B-class model does not, at any quantization. Disk is ample for a pool of six; VRAM is
+not ample for two resident at once, which makes §15's challenger comparisons **sequential**. That
+is a latency cost, not a blocker, and the plan should say so rather than discover it.
+
+**This entry also has to answer what "Inkling" is.** Addendum 45 §5 and §43 name it alongside
+Llama and DeepSeek as an initial candidate. It is not identifiable as an open-weight local model
+from this side, and the project does not fabricate: no task may depend on it until somebody has
+confirmed the actual artifact, its licence and its runtime. If it turns out to be something other
+than a local LLM, the pool is Llama + DeepSeek + Qwen/Mistral/Gemma and that is recorded as a
+finding, **not quietly substituted**.
+
+Output is a decision an owner can act on: the initial pool, named, with the reason each candidate
+is in or out.
+
+### TQ-53 — Task Signature, task categories, and the complexity vocabulary
+
+**NEED (GREEN) · QUEUED · depends on TQ-51 · addendum 45 §20, §21, §42, §45 Phase A**
+
+The vocabulary everything else keys off, and buildable today with no model behind it.
+
+`TaskSignature` (§20's fifteen fields), the eight task categories (§42) and the complexity levels
+(§21) as **closed vocabularies, fail-closed on read as well as write** — the house rule
+`gateway/portfolios.py` and `gateway/holdings.py` already work under.
+
+Exactly the eight categories §42 names, and no more: "do not prematurely create dozens" is the
+instruction, and the project has its own version of it in §70 and §100 — one model of one fact.
+
+Note for the record and not for action here: **`CREATIVE_GENERATION` has no consumer in a
+financial intelligence system.** It is built because §42 says start with exactly these eight, and
+it is expected to carry no traffic. If it still has none when TQ-62 has evidence, merging it is
+the review §42 anticipates.
+
+### TQ-54 — Model Performance Registry and the eight leaderboards, seeded provisional
+
+**NEED (GREEN) · QUEUED · depends on TQ-51, TQ-53 · addendum 45 §8, §9, §10, §11, §12, §13,
+§45 Phase A + C**
+
+The competition, as data. §8's fields, per model per task category, with §12's initial ordering
+seeded by hand and **marked `SEEDED` / `PROVISIONAL`** — the same discipline
+`model_registry.yaml` already applies with `provisional: true` on every row (§35 §2).
+
+The three properties that make it a competition rather than a table, each with its own permanent
+test:
+
+- **§11 — a failure in one category does not demote globally.** A model may lose rank in
+  `LONG_CONTEXT_AND_MEMORY` and stay leader in `CODING_AND_DEBUGGING`.
+- **§10 — outcomes move rank.** Penalties and rewards, tunable.
+- **§13 — no permanent privileged position.** A front-runner can fall behind a runner-up; a
+  challenger can become leader.
+
+Empirical evidence must be able to **dominate the seed** once it exists (§12), which means a
+seeded score and a measured score are distinguishable in the schema rather than averaged into one
+number nobody can interpret later.
+
+No model calls. The registry is real; the data in it is honestly labelled as a guess.
+
+### TQ-55 — The Routing Decision Record
+
+**NEED (GREEN) · QUEUED · depends on TQ-53 · addendum 45 §26, §32, §45 Phase A**
+
+§26's fields, written from the first routing decision onward rather than added once there is
+traffic worth analysing — a log that starts late is a log with a hole in it exactly where the
+early mistakes are.
+
+Records the decision *and* its outcome: estimated versus actual cost and latency, validation
+result, quality score, `was_escalation_worthwhile`. That last field is the one the whole lineage
+is for.
+
+### TQ-56 — `LocalAIService`: the interface and its conformance suite, with nothing behind it
+
+**NEED (GREEN) · QUEUED · depends on TQ-53 · addendum 45 §4, §45 Phase A**
+
+§4's interface, built the way TQ-45b built `PortfolioProvider` (§101) — because that increment
+just proved the pattern and found a real hole in it by attacking it.
+
+**The conformance suite is written before the second implementation**, for the reason §101
+records: a contract with a single implementation is a description of that implementation. The
+guard, applied to every contract test: *could a provider that must load a multi-gigabyte model off
+disk satisfy this?* If it needs an in-process stub, the test is wrong.
+
+Ships with no model. A stub implementation that refuses honestly is the whole of it, and that is
+not a placeholder — it is the shape `ManualPortfolioProvider` has in §101, and it is what makes
+the capability declaration testable before any hardware is involved.
+
+**Agents must never call a local model directly** (§4, §47) — a source-scan tripwire in the style
+of `test_nothing_outside_portfolios_queries_the_portfolios_table`, so the rule survives review
+rather than depending on it.
+
+### TQ-57 — The first local model actually running behind the service
+
+**NEED (YELLOW) · QUEUED · depends on TQ-52, TQ-56 · addendum 45 §44, §45 Phase B**
+
+Where artifacts arrive: runtime, one model from TQ-52's approved pool, health checks, hardware
+monitoring, launch scripts, and a baseline benchmark. It must satisfy TQ-56's conformance suite
+**unchanged** — if it has to modify a test, the contract was wrong, not the model.
+
+**Do not commit model binaries to git** (§44). Storage layout and `.gitignore` are part of this
+entry, not an afterthought — the repository is small and must stay so.
+
+YELLOW rather than GREEN because it is the first entry that depends on a download, a licence and a
+GPU behaving, none of which is under this project's control.
+
+### TQ-58 — The rest of the pool, each entering as a challenger
+
+**WANT · QUEUED · depends on TQ-57 · addendum 45 §34, §43, §45 Phase B**
+
+§34's model addition process, run once per additional candidate: verify licence, verify hardware
+fit, install, baseline benchmark, provisional scores, enter the challenger pool.
+
+A new model enters as a **challenger, not as a leader** (§34), whatever anybody expects of it.
+§43's "do not assume every model must remain permanently installed" applies here with force at
+8 GB: what is resident and what is on disk are different questions.
+
+### TQ-59 — The deterministic-first check, and the capability/escalation decision
+
+**NEED (GREEN) · QUEUED · depends on TQ-53, TQ-54 · addendum 45 §3, §16, §17, §19, §45 Phase D**
+
+§3 is explicit that these are **two decisions that must not be conflated**, so they are two
+entries. This is the first: *can this be done without a model at all, and if a model is needed, is
+local enough?*
+
+§19's deterministic-first check comes before any of it — "AI should not be used merely because AI
+is available" — and it is the cheapest, most testable part of the whole lineage.
+
+The escalation decision is itself an intelligent task with its own leaderboard
+(`CAPABILITY_AND_ESCALATION_DECISION`, §17), and the model best at making it may not be the model
+best at doing the work. That is the point of giving it a category rather than a constant.
+
+### TQ-60 — Model selection, with policy and resource overrides
+
+**NEED (GREEN) · QUEUED · depends on TQ-54, TQ-59 · addendum 45 §9, §18, §24, §25, §35, §36,
+§45 Phase E**
+
+§3's second decision: *which model?* Task signature to leaderboard to front-runner, with
+runner-up fallback and §9's override reasons.
+
+Two overrides that are **not** performance and must beat the leaderboard outright:
+
+- **Privacy** (§36). `LOCAL_ONLY` / `LOCAL_PREFERRED` / `EXTERNAL_ALLOWED` / `EXTERNAL_REQUIRED`.
+  Sensitive data never leaves the machine because an external model ranks higher. This project
+  already has the shape of that rule in the Gateway's capability gating, and client holdings are
+  the obvious `LOCAL_ONLY` case.
+- **Hardware** (§35). The theoretically best model is not selected if it cannot run right now.
+  At 8 GB VRAM this is not a corner case, it is the common path.
+
+Routing at **task-step** level as well as whole-task (§25) — §25's own example is portfolio
+analysis, which this project has.
+
+### TQ-61 — Challenger mode and the exploration policy
+
+**NEED (GREEN) · QUEUED · depends on TQ-54, TQ-60 · addendum 45 §13, §14, §15, §33,
+§45 Phase I (partial)**
+
+The entry that stops the system from being trapped by the original human guess, which §13 names as
+the specific risk of seeding rankings by hand.
+
+Exploration rate (§14), scheduled leader-versus-challenger runs (§15), and periodic re-evaluation
+of a stable leader (§33). Both models get the same task; an evaluator compares correctness,
+completeness, instruction following, format compliance, latency and resource use.
+
+At 8 GB VRAM, leader and challenger **cannot both be resident**, so comparisons are sequential and
+the latency figures need care: a model that had to be loaded from disk did not take longer to
+think. Measure them separately or the ranking learns the wrong lesson.
+
+### TQ-62 — The evaluator, and validation before penalty
+
+**NEED (GREEN) · QUEUED · depends on TQ-54 · addendum 45 §38, §39, §45 Phase F (partial)**
+
+Deliberately queued **before** the simulation competition, because §38 is a precondition for
+scoring rather than a refinement of it: *validate before penalising*, and **"a model should not
+lose points solely because another model disagrees."**
+
+Validation first where it is free and certain — unit tests, schema checks, syntax checks,
+deterministic recalculation, known-answer checks — and an evaluator model only where it is not.
+The evaluator itself is monitored for bias and error (§39), which means it needs a scorecard like
+everything else.
+
+### TQ-63 — Simulation competition
+
+**NEED (GREEN) · QUEUED · depends on TQ-57, TQ-61, TQ-62 · addendum 45 §27, §45 Phase F**
+
+§27's proving ground: a representative benchmark set from real agent tasks, front-runner versus
+challenger, candidate versus candidate, scored and fed back into the registry until the seed bias
+is measurably reduced (§12, §13).
+
+This project already runs a real agent population under the `simulation` pytest marker, which is
+what makes §27 buildable here rather than aspirational.
+
+### TQ-64 — Historical simulation
+
+**WANT · QUEUED · depends on TQ-63 · addendum 45 §28, §45 Phase G**
+
+Replay historical tasks and historical project/market data against the rankings simulation
+produced: do they hold, or did the benchmark set flatter somebody? Refines penalties, rewards and
+escalation thresholds against workloads nobody designed for the test.
+
+### TQ-65 — External providers, and their task-specific scorecards
+
+**WANT · QUEUED · depends on TQ-60, TQ-62 · addendum 45 §22, §23, §37, §45 Phase H**
+
+§23's `ExternalAIProvider` — **partly built already**: `app/model_provider.ModelProvider` is a
+Protocol with `AnthropicProvider` behind it, named for its vendor precisely so a second can exist.
+This entry extends rather than replaces it, and TQ-51's decision about one-registry-or-two governs
+where the scorecards live.
+
+§37's cost model, both halves, and the half that gets forgotten is the local one: **local
+execution is not free** — GPU time, power, queue time, and blocking other agents while a 5 GB
+model holds the card.
+
+### TQ-66 — Observability and the routing error types
+
+**NEED (GREEN) · QUEUED · depends on TQ-55, TQ-63 · addendum 45 §40, §41**
+
+§40's metrics and §41's eight named error types, of which two matter most because they are the
+ones a routing system gets wrong in *opposite* directions and can hide behind each other:
+`UNDER_ESCALATION` and `OVER_ESCALATION`. A system optimising cost drifts to the first; one
+optimising quality drifts to the second; a dashboard showing only "escalation rate" shows neither.
+
+### TQ-67 — Routing knowledge, and its lifecycle
+
+**WANT · QUEUED — precondition unclear · depends on TQ-63, TQ-66 · addendum 45 §30, §31, §32**
+
+§30 requires routing knowledge to join "the linked, multi-entry knowledge architecture", and §31
+gives learned knowledge a lifecycle: `OBSERVED` → `PROVISIONAL` → `VALIDATED` → `STRONG` →
+`DEGRADED` → `RETIRED`, with evidence counts and contradictory evidence tracked.
+
+**The precondition is not obviously built.** Nothing in this repository matches "linked,
+multi-entry knowledge architecture" as a thing that exists, and this entry should not pretend
+otherwise: before it starts, somebody has to say whether that architecture is an existing subsystem
+under another name, a separate unqueued task, or something this entry creates. Recorded as unclear
+rather than assumed — see §102.
+
+The §31 lifecycle is independently valuable and could be built against the registry alone if the
+larger architecture turns out not to exist yet.
+
+### TQ-68 — Production routing thresholds
+
+**WANT · QUEUED · depends on TQ-63, TQ-64, TQ-66 · addendum 45 §29, §45 Phase I**
+
+§29's live-entry rule: before production the system must *know*, with stated confidence, the best
+local model per major category, the runner-ups, the failure patterns, when to escalate, the
+preferred external model per class, and the approximate cost and latency of each.
+
+Then the thresholds, privacy rules, budget rules, exploration rate, challenger schedule and
+dashboards. **The production result may use different models for different jobs, and there may be
+no single universal winner** (§47) — the queue entry says so because a plan that quietly expects
+one winner will be read as a failure when it does not get one.
+
+Not a licence to expose anything: §50's preconditions still stand, and nothing in this lineage
+changes them.
+
 
 ### TQ-42 — Client-owned holdings
 
