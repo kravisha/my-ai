@@ -8437,3 +8437,127 @@ on one 8 GB card it is the half that will actually bind.
 **Which lineage is worked first.** TQ-46 … TQ-50 (the rest of addendum 44 — the Superuser
 ownership domain, its tab, snapshots and audit, the Schwab boundary) and TQ-51 … TQ-68 (this one)
 are independent of each other. TQ-50 is already blocked on owner action; nothing else is.
+
+---
+
+## §103 — The single-model pin becomes a ladder (2026-08-26, TQ-51)
+
+First increment of the addendum 45 lineage (§102). Small on purpose, and it
+changes no runtime behaviour: this system still runs one model, and
+`routing: none_single_model` still stands.
+
+### Why this was first
+
+§64 pinned `routing: none_single_model` in `docs/model_registry.yaml` as a
+decision rather than an omission, with a test that fails the suite the day a
+second model is registered — *"so routing gets revisited on purpose rather than
+by accident."*
+
+Addendum 45 needs four to eight models. The tripwire therefore fired on the
+first real step of the lineage that needed it, which is exactly what it was
+planted for. This increment is the revisit it demanded.
+
+**Re-aimed, not removed.** A discipline deleted the first time it is
+inconvenient was never a discipline — and deleting this one would have been the
+easy read of "unpin it".
+
+### Decision 1 — two registries, split by writer rather than by subject
+
+The question TQ-51 was queued to settle: does addendum 45 §8's Model Performance
+Registry extend `model_registry.yaml`, or sit beside it? Two files that both
+rank models is the two-models-of-one-fact problem §70 and §100 have each ruled
+on once.
+
+**Decided: beside it, and the reason is the writer, not the subject.**
+
+`model_registry.yaml` is hand-authored, committed, reviewed, and asserted against
+the code by tests. The performance registry is machine-written after every task,
+carrying scores, sample counts and confidence that change continuously. Putting
+that in a committed YAML would dirty the working tree on every inference and make
+these assertions race a moving target — the tests would be checking a file that
+changes underneath them.
+
+That is not a subject distinction that could be argued either way. It is a
+mechanical one.
+
+### Decision 2 — the real collision was `preferred_model`, not "both rank models"
+
+Looking rather than reasoning turned up something sharper than the queue entry
+anticipated.
+
+`model_registry.yaml` does not rank models. What it has is `preferred_model` on
+every profile — a hand-authored answer to *"which model should this agent
+use?"*. That is precisely the question the leaderboards will answer empirically,
+and addendum 45 §16 is explicit about who may answer it:
+
+> *"The agent should not need to know every available model. Its responsibility
+> is primarily: classify the task, estimate complexity, estimate risk, estimate
+> confidence… The common routing layer then chooses the model."*
+
+So `preferred_model` is not a field that coexists with routing. It is the field
+addendum 45 supersedes.
+
+It stays for now, because until routing exists something has to name the model
+the code calls. But its meaning has a **planned handover** rather than a quiet
+drift: from TQ-60 it becomes the *seed* the leaderboard starts from (§12's
+provisional initial ordering) and stops being read at call time. Recorded in the
+file itself, at the field, so the transition is a handover somebody executes
+rather than a field that means two different things depending on who is reading.
+
+### Decision 3 — the pin becomes a staged vocabulary
+
+A boolean pin has one problem as a long-term device: unpinning it is a single
+edit, and the day somebody makes that edit the discipline is simply gone.
+
+`routing` is now a rung on a declared ladder, in `routing_stages`:
+
+| rung | earned by | its tripwire |
+|---|---|---|
+| `none_single_model` | TQ-16 (§64) | exactly one configured model, no fallbacks |
+| `seeded_leaderboard` | TQ-54 | every configured model has a seeded entry on every leaderboard |
+| `competitive` | TQ-63 | measured outcomes dominate the seed |
+
+Each rung declares `enforced`, and **a rung whose tripwire is not built refuses
+to be stood on.** That is the half that keeps the discipline: turning one pin
+into a ladder otherwise invites a quiet failure where somebody advances the
+marker to a rung nobody has written an assertion for, the suite goes green, and a
+second configured model is now reachable by nothing. The failure message names
+the queue entry that earns the rung.
+
+An unknown `routing` value fails closed, the house rule every other closed
+vocabulary here works under.
+
+The ladder lives in the YAML rather than in code, following the same
+metadata-before-code doctrine (addendum 30 §12) the file was built under — a
+reader of the registry sees the ladder without going looking for it.
+
+### Verified by attacking it
+
+A re-aimed tripwire that cannot be shown to fire is a re-aimed tripwire that was
+quietly disarmed, and the claim "re-aimed, not removed" is worth exactly as much
+as its demonstration. The same mutation discipline §101 used:
+
+| mutation | result |
+|---|---|
+| marker advanced to a rung whose tripwire is not built | caught |
+| marker set to a rung that does not exist | caught |
+| a second configured model while on `none_single_model` | caught |
+| a rung declaring no requirement | caught |
+| a fallback populated while there is nowhere to fall back to | caught |
+
+Five of five, unlike §101's first run — which is what a suite looks like when the
+lesson from the previous increment was actually carried forward.
+
+### What did not happen
+
+**Nothing was unpinned.** `routing` is still `none_single_model`, one model is
+still configured, and every profile's `fallback_models` is still empty. The way
+past this rung is TQ-54: seed the leaderboards, build that rung's assertion,
+then advance the marker. Registering a second model before then still fails the
+suite, and now says which increment unblocks it.
+
+**Nothing ran.** This increment is metadata and assertions; there is no running
+thing to look at, and the mutation run is the honest substitute rather than a
+green suite standing in as evidence.
+
+Suite: **2301 passing** (2298 before, +3).
