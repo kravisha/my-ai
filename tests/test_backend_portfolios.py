@@ -476,51 +476,32 @@ def test_nothing_outside_portfolios_queries_the_portfolios_table():
 
 
 def test_no_gateway_module_reaches_the_backends_portfolio_subsystem():
-    """The tripwire TQ-69 needs and TQ-44 did not (§110).
+    """The half of the boundary rule that is about *use* rather than import.
 
-    The scan above catches SQL. It does not catch a Gateway module that imports
-    `backend.portfolios` and calls `resolve(gateway_conn, ...)` - which would
-    look entirely reasonable, would pass every other check here, and would put
-    the guard back on the wrong side of the boundary this increment moved it
-    across.
+    `test_no_gateway_module_imports_the_backends_portfolio_subsystem` (in
+    `test_portfolio_surface.py`) says no Gateway module may import these at all,
+    with one exception: `gateway/clients.py`, which shares the single
+    `normalise` so that there is one definition of when two owner ids are the
+    same person. A second normalisation that drifted would make one client into
+    two owners, and no ownership comparison could detect it - both comparisons
+    would be correct, about different people.
 
-    **One exception, and it is a rule rather than a capability:**
-    `gateway/clients.py` imports `normalise`, so that there is one definition of
-    when two owner ids are the same person. A second normalisation that drifted
-    would make one client into two owners, and no ownership comparison could
-    detect it - both comparisons would be correct, about different people. The
-    exception is narrow enough to state, so it is stated, and this checks that
-    nothing else is taken from that module."""
+    This is the check on that exception: that the module takes the one rule and
+    nothing more. An exception nobody bounds is not an exception, it is a
+    precedent."""
     import re
     from pathlib import Path
 
     from conftest import executable_source
 
     root = Path(__file__).resolve().parent.parent
-    forbidden = re.compile(
-        r"backend[.](portfolios|holdings|portfolio_providers|portfolio_migration)\b")
-    offenders = []
-    for path in sorted((root / "gateway").glob("*.py")):
-        text = executable_source(path)
-        if path.name == "clients.py":
-            # Allowed to name the module; not allowed to use more of it than the
-            # one shared rule.
-            used = set(re.findall(r"portfolios[.](\w+)", text)) - {"normalise"}
-            assert not used, (
-                f"gateway/clients.py uses backend.portfolios.{sorted(used)}. It may "
-                "share the one normalisation rule and nothing else.")
-            continue
-        found = forbidden.search(text)
-        if found:
-            offenders.append(f"{path.name}: {found.group(0)}")
+    text = executable_source(root / "gateway" / "clients.py")
 
-    assert not offenders, (
-        "these Gateway modules reach the backend's portfolio subsystem directly:\n  "
-        + "\n  ".join(offenders)
-        + "\nThe Gateway reaches portfolios over HTTP, through "
-          "gateway/portfolio_client.py. Importing those modules would put the "
-          "ownership guard back on the Gateway's side of the boundary."
-    )
+    used = set(re.findall(r"portfolios[.](\w+)", text)) - {"normalise"}
+    assert not used, (
+        f"gateway/clients.py uses backend.portfolios.{sorted(used)}. It may share "
+        "the one normalisation rule and nothing else - everything else the Gateway "
+        "needs from the portfolio subsystem goes over HTTP.")
 
 
 def test_holdings_cannot_be_reached_without_a_resolved_portfolio(portfolio_conn):
