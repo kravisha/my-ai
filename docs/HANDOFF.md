@@ -324,11 +324,18 @@ none. **TQ-46 is blocked on this** — building a `SUPERUSER` domain into
 `gateway.db` and relocating it a week later is the mistake TQ-44 refused to make
 with the entity and its guard.
 
-It needs a specification first, the way TQ-44's, TQ-45's and TQ-46's were. Two
-questions the queue entry already names for it: whether the Gateway keeps a
-read-through cache (leaning no — stale holdings are worse than no holdings), and
-what happens to the other four drifted subsystems (leaning: nothing, until
-something needs them).
+**Specified** — `docs/specs/TQ-69_portfolio_subsystem_behind_the_backend.md`.
+Writing it found the thing that shapes the work: **three separate identity
+populations** exist (backend users in `users.json`, Gateway clients in
+`gateway.db`, environment credentials), and `gateway/auth.py` says the separation
+is deliberate. The decision that keeps the increment small: **the backend stores
+`owner_id` opaquely** — it never learns who Gateway clients are, the Gateway
+authenticates and asserts a subject, the backend authorizes it.
+
+Stated so nobody overclaims it: this **does not** defend against a compromised
+Gateway, which can assert any owner. It defends against a *buggy* one — the
+failure that has actually happened twice here (§93, §106), with no second check
+to catch either.
 
 **None of §96, §99, §100, §101 or §106 is wasted by this.** The guard, the
 canonical holding shape, the provider contract and the decision log are all
