@@ -965,7 +965,62 @@ This entry obtains prices for real securities. What it must settle:
   *"do not silently claim it is current"*, one domain over.
 
 Not a queued convenience: **no valuation, no risk figure and no scenario result can be computed for
-a real portfolio until this exists.** TQ-73 and TQ-74 both wait on it.
+a real portfolio until this exists.**
+
+**It does not block training** (§114). Owner direction the same day: a store holding only simulated
+data means the whole process is a simulation, and that is a legitimate state — it is the training
+environment. TQ-73 and TQ-74 can be built and exercised now against imaginary clients; what waits on
+this entry is **serving a real client**, which is the right thing to gate.
+
+### TQ-76 — A portfolio-analysis curriculum, and imaginary clients to practise on
+
+**NEED (GREEN) · QUEUED — buildable now · owner direction 2026-08-26 (`SPEC_RECONCILIATION.md`
+§114) · addendum 36 (Department of Education), addendum 34 §17, addendum 13, addendum 9**
+
+Owner direction: *"Agents are being trained and we need simulation exercises for simulated requests
+for portfolio analysis from imaginary clients as part of training and this needs to be incorporated
+in the curriculum in the department of education."*
+
+**The Education deferral's own unblock condition has fired**, and it was checked rather than
+asserted (§114). §60 disposition 3 deferred the departmental machinery *"until a real curriculum
+need the existing loop cannot express."* This one cannot be expressed:
+
+- there is **no Portfolio Analyst agent** — `agents/` holds explorer, speculator, analysis, coo;
+  addendum 9's pipeline has been recorded as "Not built" since the addendum-12 gap analysis;
+- the grading substrate is **discovery-shaped** — `grades`' 669 rows score `relevance`, `novelty`,
+  `evidence_quality`, `worth_the_compute`, which are the dimensions of a market *finding*, not of a
+  portfolio analysis;
+- there is no curriculum, exercise or certification table at all.
+
+**Buildable now, and that is the point of §114.** A store holding only synthetic prices makes the
+whole pipeline a simulation, which is the training environment rather than a broken production one.
+TQ-75 gates serving a real client; it does not gate practising.
+
+What this increment owes:
+
+- **Exercises shaped like the real workflow.** The imaginary client supplies their imaginary
+  portfolio per exercise, the analyst consolidates in memory, and nothing is kept but the grade.
+  **§111 applies to training too** — an exercise that stored portfolios would train agents on a
+  workflow this system does not have, and every habit formed would be one that is wrong in
+  production and was rewarded in training.
+- **Grading dimensions that fit the subject.** Did it reconcile two sources into one position? Did
+  it identify the concentration? Did it refuse to price what it could not price, and say so, rather
+  than approximating? The last is the one worth grading hardest, because it is the behaviour the
+  whole domain depends on and the easiest to lose under pressure to produce an answer.
+- **The imaginary clients already exist.** `backend/portfolio_providers.SIMULATED_PORTFOLIOS` holds
+  three with deliberately awkward portfolios — a covered call, a concentrated position, a missing
+  cost basis (§101, addendum 44 §6.1). They were built as demo data to delete before going live;
+  under §114 they are training fixtures, which do not get deleted.
+- **Separate the two policies that share one flag.** "Simulated data that must be gone before a
+  real client exists" and "training fixtures that must still be there in a year" are opposite
+  requirements wearing one `simulated` flag. `demo_clients.outstanding()` asks *"is any simulated
+  client data present"*; the honest question becomes *"outside the training environment"*.
+  **Draw it deliberately** — widening `outstanding()` to ignore anything flagged as training would
+  re-create §100's finding exactly: a clean report that is not true, which is the one a pre-launch
+  checklist believes.
+
+The Speculator curriculum (36 §10) still waits on the collaboration scoring it would be graded by
+(TQ-17); this one does not, because its grading dimensions are its own.
 
 ### TQ-74 — Scenario simulation over a consolidated external portfolio
 
@@ -1784,7 +1839,9 @@ the §6 scenario engine — a substantially larger increment than any detector.
   §1–§2, §5) — the function exists distributed across the addendum-13 loop (versioned
   strategies, evaluation feedback); a role-holding agent waits, per §47's precedent, until a
   curriculum need the existing loop cannot express. The **professor layer** defers itself
-  (36 §2.3). §60 disposition 3.
+  (36 §2.3). §60 disposition 3. **Partially fired 2026-08-26 (§114): a curriculum need arrived
+  that the loop cannot express — see TQ-76. The curriculum lifts; the role-holding agent does
+  not, on the same test one level up.**
 - **Model routing, fallback, and the migration lifecycle** (addendum 35 §7, §10) — activate
   when the Model Registry (TQ-16) holds a second model worth routing to; a routing engine with
   one route is machinery without a decision to make. §60 disposition 2.

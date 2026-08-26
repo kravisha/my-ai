@@ -9886,3 +9886,124 @@ than new ones:
   §100 and §104 already state as *absent is `unknown`, never a plausible default*.
   A greek computed from an assumed volatility is a number about an assumption
   wearing the name of a number about somebody's position.
+
+---
+
+## §114 — The simulated store is not a blocker, it is the training environment (2026-08-26)
+
+Owner direction, 2026-08-26, answering §113's finding:
+
+> *"If only holds simulated data, that means the whole process is a simulation.
+> Agents are being trained and we need simulation exercises for simulated
+> requests for portfolio analysis from imaginary clients as part of training and
+> this needs to be incorporated in the curriculum in the department of
+> education."*
+
+§113 reported that the market data store holds nothing but
+`origin='synthetic'` rows over a synthetic universe, and treated that as a
+prerequisite blocking valuation. **The owner reframed it rather than resolving
+it, and the reframe is better than the finding.** A system whose every price is
+simulated is not a broken production system. It is a **training environment**,
+and this project already has the machinery for that — it simply had not noticed
+that the portfolio pipeline was standing in it.
+
+### Two modes, and the boundary between them is the safety property
+
+| | training | client service |
+|---|---|---|
+| clients | imaginary | real |
+| positions | invented for an exercise | fetched from the client's broker |
+| prices | `origin='synthetic'` | real, once TQ-75 exists |
+| output | graded | delivered |
+
+Everything the portfolio pipeline does today is the left column. That is a
+legitimate state to be in, and saying so out loud converts TQ-75 from a blocker
+into a **precondition for the right column only**. TQ-73 and TQ-74 can be built
+and exercised now, against imaginary clients, which is the ordinary way this
+project has always built things it could not yet point at reality.
+
+**The boundary is the thing that must never blur**, and it is not a new rule —
+§77's `SIMULATED_NOTICE`, addendum 25, the `simulated` flag and
+`observations.origin` are all already in place for exactly this. What is new is
+that the boundary now runs through a pipeline handling somebody's *money*, where
+a mislabelled scenario is worse than anywhere it has run before.
+
+### The training workflow must have the same shape as the real one
+
+The trap in "it is all a simulation" is the licence it appears to grant: if none
+of it is real, why not store the exercise portfolios and make everything easier?
+
+**Because §111 applies to training too**, and for a reason that is about training
+rather than about privacy. An exercise that stores portfolios trains agents on a
+workflow this system does not have. The agent learns that holdings are there to
+be queried, and every habit it forms — reaching for a portfolio it did not fetch,
+assuming a previous client's positions are still available — is a habit that is
+wrong in production and was rewarded in training.
+
+So the imaginary client supplies their imaginary portfolio per exercise, the
+analyst consolidates it in memory, and nothing is kept but the grade. **The
+exercise is the production workflow with invented inputs**, which is what makes
+it training rather than theatre.
+
+### The deferral's unblock condition has fired, and it is evidenced
+
+The Department of Education is **addendum 36**, canonical since the 34–37 set.
+Its departmental machinery was deferred in §60 disposition 3 with a condition
+stated precisely enough to test:
+
+> *"new departmental machinery waits until a real curriculum need the existing
+> loop cannot express."*
+
+The owner has supplied a curriculum need. Whether the existing loop can express
+it was checked rather than asserted:
+
+- **There is no Portfolio Analyst agent.** `agents/` holds `explorer`,
+  `speculator`, `analysis`, `coo`, `dummy` and `introspection`. Addendum 9's
+  pipeline has never been built, and `docs/README.md` has recorded it as *"Not
+  built"* since the addendum-12 gap analysis.
+- **The grading substrate is discovery-shaped.** `grades` holds 669 rows scoring
+  `relevance`, `novelty`, `evidence_quality` and `worth_the_compute` — the
+  dimensions of a market *finding*. A portfolio analysis exercise is good or bad
+  for entirely different reasons: did it reconcile two sources into one position,
+  did it identify a concentration, did it refuse to price what it could not
+  price, did it say what it could not compute rather than approximating it.
+- **There is no curriculum, exercise or certification table.** The function §60
+  described as *"distributed across the addendum-13 machinery"* is distributed
+  across machinery built for one subject.
+
+So the answer is **no, the existing loop cannot express this**, and the deferral
+lifts on its own terms rather than by being overridden. That is worth noting as a
+small vindication of writing unblock conditions down: §60 could have said "later"
+and this moment would have been an argument instead of a check.
+
+**What lifts is the curriculum, not the whole department.** A curriculum need is
+not evidence for a Curriculum Architect *agent*; addendum 36 §2.3's professor
+layer still defers itself, and the standing rule that machinery with no user does
+not get built is untouched. TQ-76 builds exercises and grading. The role-holding
+agent waits for a need that exercises and grading cannot express, which is the
+same test one level up.
+
+### The imaginary clients already exist, and their status changes
+
+`backend/portfolio_providers.SIMULATED_PORTFOLIOS` already holds three imaginary
+clients with deliberately awkward portfolios — a covered call, a concentrated
+position, a missing cost basis (§101, addendum 44 §6.1). They were built as
+**demo data to be deleted before going live** (§96: *"use the simulated client
+data for now and remove it later before live"*).
+
+Under §114 they are something else: **training fixtures, which do not get
+deleted.** Two different things have been wearing one `simulated` flag, and the
+policies are opposite — one must be gone before a real client exists, the other
+must still be there in a year.
+
+The flag can stay one flag; what needs separating is the *policy*, and the
+question `demo_clients.outstanding()` asks. Today it answers *"is any simulated
+client data present"* and treats any as unclean. Under §114 the honest question
+is **"is any simulated client data present outside the training environment"** —
+because a training fixture in the training environment is not contamination, it
+is the curriculum.
+
+That distinction is TQ-76's to draw, and it must be drawn deliberately: the
+lazy version, widening `outstanding()` to ignore anything flagged as training,
+would re-create §100's finding exactly — a clean report that is not true, which
+is the one a pre-launch checklist believes.
