@@ -19,6 +19,7 @@ The three worth reading first:
 import dataclasses
 from pathlib import Path
 
+import conftest
 import pytest
 
 yaml = pytest.importorskip("yaml")
@@ -272,20 +273,7 @@ def test_this_module_names_no_model_and_ranks_nothing():
     what `unknown` means. Those belong to TQ-54, TQ-59 and TQ-60, and a
     vocabulary that quietly decides them would make those increments arguments
     about code that already chose."""
-    import ast
-
-    source = (REPO / "app" / "task_signature.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    # Docstrings stripped, not skimmed. The first version of this test split on
-    # triple quotes and failed on its own prose - it caught the word "ranked"
-    # inside a docstring quoting §36. The module was right and the scanner was
-    # crude, which is its own small lesson about source scans.
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                             ast.AsyncFunctionDef)) and ast.get_docstring(node):
-            node.body = node.body[1:]
-    body = ast.unparse(tree).lower()
+    body = conftest.executable_source(REPO / "app" / "task_signature.py")
 
     for leaked in ("claude", "llama", "deepseek", "anthropic", "rank", "score",
                    "leaderboard"):

@@ -67,7 +67,8 @@ holds the queue, not the record.
 > ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
 > status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
 > **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers. **TQ-55 is done** (§106) — every routing decision is logged from the
+> hardware answers. **TQ-56 is done** (§107) — the interface local intelligence will arrive
+> behind, with nothing behind it yet. **TQ-55 is done** (§106) — every routing decision is logged from the
 > first one, and it already detects §36 privacy misrouting. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
 > provisional, and `routing` now stands on the `seeded_leaderboard` rung. **TQ-53 is done**
 > (§104) — the task signature, the eight categories and the
@@ -986,7 +987,8 @@ violation hides what it exists to reveal. Mutation-tested eight ways, eight caug
 
 ### TQ-56 — `LocalAIService`: the interface and its conformance suite, with nothing behind it
 
-**NEED (GREEN) · QUEUED — next · depends on TQ-53 (done) · addendum 45 §4, §45 Phase A**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §107) · depends on TQ-53 (done) ·
+addendum 45 §4, §45 Phase A**
 
 §4's interface, built the way TQ-45b built `PortfolioProvider` (§101) — because that increment
 just proved the pattern and found a real hole in it by attacking it.
@@ -1004,9 +1006,24 @@ the capability declaration testable before any hardware is involved.
 of `test_nothing_outside_portfolios_queries_the_portfolios_table`, so the rule survives review
 rather than depending on it.
 
+**Done** (§107), as `app/local_ai.py`. `NoLocalModelsService` ships as the honest description of a
+machine with no runtime, and a `_FakeLocalService` in the suite gives the contract a second
+implementation that genuinely differs — without it every refusal test would pass vacuously.
+`infer()` (no model named) refuses naming TQ-60, because choosing needs privacy, hardware and
+budget as well as the leaderboard. `InferenceResult` splits `load_ms` from `latency_ms`, turning
+§102's 8 GB finding into a constraint the type enforces: a cold load may not go unreported, so a
+ranking cannot learn about disk speed and file it as reasoning quality. An unrunnable benchmark
+returns `passed=None`, never `False` — a model that could not run has not failed, it has not taken
+one. The runtime tripwire is planted before any runtime exists.
+
+A source scanner was too crude for the **third** time (§101, §104, §107), so
+`conftest.executable_source()` is now the one implementation of "read only the code" and all four
+scanners use it. Mutation-tested ten ways, ten caught.
+
 ### TQ-57 — The first local model actually running behind the service
 
-**NEED (YELLOW) · QUEUED · depends on TQ-52, TQ-56 · addendum 45 §44, §45 Phase B**
+**NEED (YELLOW) · QUEUED — next once TQ-52 unblocks · depends on TQ-52, TQ-56 (done) ·
+addendum 45 §44, §45 Phase B**
 
 Where artifacts arrive: runtime, one model from TQ-52's approved pool, health checks, hardware
 monitoring, launch scripts, and a baseline benchmark. It must satisfy TQ-56's conformance suite
