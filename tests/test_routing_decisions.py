@@ -16,6 +16,7 @@ The three that carry the increment:
   a log of decisions about tasks nobody can describe.
 """
 
+import conftest
 import pytest
 
 from app import model_performance as mp
@@ -369,16 +370,7 @@ def test_resource_usage_round_trips_when_something_supplies_it():
 def test_nothing_here_selects_a_model():
     """TQ-55's scope, asserted rather than trusted. This module records what was
     decided; deciding is TQ-59's and TQ-60's."""
-    import ast
-    from pathlib import Path
-
-    source = Path(rd.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                             ast.AsyncFunctionDef)) and ast.get_docstring(node):
-            node.body = node.body[1:]
-    body = ast.unparse(tree).lower()
+    body = conftest.executable_source(rd.__file__)
 
     for leaked in ("front_runner", "ranking(", "select_model", "choose"):
         assert leaked not in body, (

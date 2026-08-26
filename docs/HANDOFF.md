@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-55 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-56 complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2403 passed, 1 skipped, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2434 passed, 1 skipped, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -32,7 +32,7 @@ Then read, in order:
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2403 passing, 1
+`master` plus this checkpoint, clean and pushed. Suite **2434 passing, 1
 skipped**. The skip is deliberate: `none_single_model`'s tripwire stands down
 now that a later rung of the routing ladder governs. Nothing running; no
 orphaned processes.
@@ -92,7 +92,8 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | §103 | **TQ-51** the single-model pin becomes a ladder | #51 |
 | §104 | **TQ-53** the vocabulary routing decides on | #52 |
 | §105 | **TQ-54** the competition, as data | #53 |
-| §106 | **TQ-55** every routing decision, and the violation it found | this branch |
+| §106 | **TQ-55** every routing decision, and the violation it found | #54 |
+| §107 | **TQ-56** the interface local intelligence will arrive behind | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
@@ -108,11 +109,16 @@ and recorded in its §11. Nothing outstanding.
 **Addendum 45 is assimilated** (§102) — local intelligence and competitive model
 routing, owner-supplied, queued as TQ-51 … TQ-68. Nothing built.
 
-**TQ-51, TQ-53, TQ-54 and TQ-55 are done** (§103–§106). Still one model and no
+**TQ-51, TQ-53, TQ-54, TQ-55 and TQ-56 are done** (§103–§107). Still one model and no
 model calls anywhere in the lineage. `routing` stands on **`seeded_leaderboard`**,
 the eight leaderboards exist seeded and provisional, and every routing decision
 is logged from the first one — including detection of §36 privacy misrouting,
-which TQ-55 found by running §25's own example.
+which TQ-55 found by running §25's own example. `app/local_ai.py` is the
+interface local models will arrive behind, with an honest null implementation
+and a conformance suite already written.
+
+**Every remaining entry in this lineage needs either hardware or the Inkling
+answer**, so TQ-52 is now the practical head of it.
 
 **The other lineage is still open**: TQ-46 … TQ-50 (the rest of addendum 44).
 Neither blocks the other. See §7.
@@ -196,7 +202,20 @@ Each cost something to learn. Reversing one silently would undo real work.
     refuse a violation** — once prevention exists, a violation can only arrive
     through a bug or a bypass, and a log that would not record those hides what
     it exists to reveal.
-16. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+16. **Agents never reach a local runtime directly** (§107, addendum 45 §4,
+    §47). `app/local_ai.service()` is the only supported entry point, and
+    `test_no_module_reaches_a_local_runtime_directly` parses every module for an
+    import of anything in `KNOWN_LOCAL_RUNTIMES`. Adding a runtime to the pool
+    means adding its name to that list in the same increment.
+17. **A cold load is not slow thinking** (§107, from §102's 8 GB finding).
+    `InferenceResult` keeps `load_ms` separate from `latency_ms` and refuses a
+    cold load that does not report it. Never fold them together — a ranking that
+    did would learn about disk speed and record it as reasoning quality.
+18. **A source scan reads code, not prose.** Use
+    `conftest.executable_source()`; it strips every string literal. Three
+    hand-rolled scanners were too crude before it existed (§101, §104, §107),
+    each time with the module right and the test wrong.
+19. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
     priced (spec §11 Q2). A cash balance is not a price — it is a quantity
     somebody holds, not a valuation — which is why `get_balances` may exist
     without widening the rule.
@@ -207,9 +226,9 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-56** — `LocalAIService` + its conformance suite, nothing behind it | **next** |
-| **TQ-52** — candidate survey: what can run on this machine | blocked — needs the Inkling answer |
-| TQ-51 / TQ-53 / TQ-54 / TQ-55 — ladder, vocabulary, leaderboards, decision log | **DONE** §103–§106 |
+| **TQ-52** — candidate survey: what can run on this machine | **next** — blocked on the Inkling answer |
+| **TQ-59** — deterministic check + escalation decision | buildable now, needs no hardware |
+| TQ-51 / TQ-53 / TQ-54 / TQ-55 / TQ-56 — ladder, vocabulary, leaderboards, decision log, service | **DONE** §103–§107 |
 | TQ-57 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
 | TQ-46 … TQ-50 — the rest of addendum 44 | queued, needs a spec |
 | TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
@@ -227,7 +246,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-Nothing blocks TQ-56. TQ-52 needs one owner answer — see §7.
+TQ-52 needs one owner answer — see §7. TQ-59 is buildable without it.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -272,32 +291,27 @@ Nothing blocks TQ-56. TQ-52 needs one owner answer — see §7.
 
 ## 7. Exactly what to do next
 
-**TQ-56 — `LocalAIService`: the interface and its conformance suite, with
-nothing behind it.** §4's interface, built the way `PortfolioProvider` was built
-in §101 — because that increment proved the pattern *and* found a real hole in it
-by attacking it, and §105 and §106 have each repeated the mutation discipline
-since.
+**The addendum 45 lineage has reached its hardware boundary.** TQ-51, TQ-53,
+TQ-54, TQ-55 and TQ-56 are done, and everything they built runs with no model
+behind it. What remains splits in two:
 
-Three things it owns:
+**Needs an owner answer — TQ-52.** What "Inkling" is. Addendum 45 §47 requires it
+as an initial local candidate alongside Llama and DeepSeek, and it is not
+identifiable as an open-weight local model. It has deliberately **not** been
+substituted with something similarly named — that was the available failure mode,
+the pool quietly becoming Llama + DeepSeek + a guess with §47 recorded as
+satisfied. The hardware half is already measured (§102): 8 GB VRAM, 16.5 GB RAM,
+365 GB free disk. Everything downstream — TQ-57's runtime, TQ-58's pool, TQ-61's
+challengers, TQ-63's competition — waits behind it.
 
-1. **Write the conformance suite before the second implementation.** A contract
-   with one implementation is a description of that implementation. The guard,
-   applied to every contract test: *could a provider that must load a
-   multi-gigabyte model off disk satisfy this?* If it needs an in-process stub,
-   the test is wrong.
-2. **Ships with no model.** A stub that refuses honestly is the whole of it —
-   the shape `ManualPortfolioProvider` has in §101, and what makes the
-   capability declaration testable before any hardware is involved.
-3. **A source-scan tripwire that agents never call a local model directly**
-   (§4, §47), in the style of
-   `test_nothing_outside_portfolios_queries_the_portfolios_table`. The rule has
-   to survive review rather than depend on it.
-
-**TQ-52 is blocked on one owner answer**: what "Inkling" is. Addendum 45 §47
-requires it as an initial local candidate and it is not identifiable as an
-open-weight local model. It has deliberately **not** been substituted with
-something similarly named. The hardware half is already measured (§102): 8 GB
-VRAM, 16.5 GB RAM, 365 GB free disk.
+**Buildable now — TQ-59.** The deterministic-first check and the
+capability/escalation decision (§3, §16, §17, §19). It needs no hardware: §19's
+*"AI should not be used merely because AI is available"* is the cheapest and most
+testable part of the whole lineage, and the escalation decision has its own
+leaderboard already seeded (§105). It can be built against
+`app/local_ai.available()`, which currently answers False — so the honest
+escalation decision today is *"local is not available, so escalate"*, and that
+is a real answer rather than a placeholder.
 
 **The other lineage is TQ-46 … TQ-50** (the rest of addendum 44), independent and
 still unspecified.

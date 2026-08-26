@@ -17,6 +17,7 @@ The three that carry the increment:
   cannot let empirical data dominate later, because nobody could take it apart.
 """
 
+import conftest
 import pytest
 
 from app import model_performance as mp
@@ -372,16 +373,7 @@ def test_nothing_here_selects_a_model():
     privacy rule and §35's hardware rule, because it has neither in front of it.
     `front_runner` answers "who is ahead"; TQ-60 answers "what should run this",
     and the difference is the whole reason those are separate entries."""
-    import ast
-    from pathlib import Path
-
-    source = Path(mp.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                             ast.AsyncFunctionDef)) and ast.get_docstring(node):
-            node.body = node.body[1:]
-    body = ast.unparse(tree).lower()
+    body = conftest.executable_source(mp.__file__)
 
     for leaked in ("privacy", "vram", "gpu", "select_model", "route("):
         assert leaked not in body, (

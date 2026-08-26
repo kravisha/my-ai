@@ -8906,3 +8906,128 @@ naming a model; a decision with no reason; escalation-worth defaulting to `no`;
 and a stored execution path no longer validated on read.
 
 Suite: **2403 passing, 1 skipped** (2371 before, +32).
+
+---
+
+## §107 — The interface local intelligence will arrive behind (2026-08-26, TQ-56)
+
+Fifth increment of the addendum 45 lineage. `app/local_ai.py` and its conformance
+suite: §4's ten-method interface, the canonical request and result objects, and
+one honest implementation for a machine with no local runtime — which is every
+machine this project runs on.
+
+No model, no runtime, no download. Suite **2434 passing, 1 skipped**.
+
+### The suite comes before the second implementation
+
+§101 established why and this repeats it deliberately: **a contract with a single
+implementation is a description of that implementation.** The guard applied to
+every test, carried over verbatim:
+
+> Could a service that must load a multi-gigabyte model off disk satisfy this?
+> If it needs an in-process stub, the test is wrong.
+
+Two implementations run against it. `NoLocalModelsService` ships and honestly
+cannot do anything; `_FakeLocalService` lives in the suite and can. Two that
+*genuinely differ* is the minimum at which a contract is a contract — with only
+the null one, every refusal test would pass vacuously, which is the trap §101
+found by attacking its own suite.
+
+`NoLocalModelsService` is not a placeholder. It is the accurate description of
+the current situation, which means the interface is exercised today and TQ-57's
+arrival is *adding* an implementation rather than replacing a stub nobody ran.
+
+### `infer()` refuses, and names the increment that fixes it
+
+§4 declares both `infer(request)` — you pick the model — and
+`infer_with_model(model_id, request)`.
+
+The first cannot be honestly implemented. Picking needs the leaderboard *and*
+privacy, hardware load, availability and budget (§18, §35, §36), which is TQ-60's
+entire entry; §16 is equally clear the *agent* must not pick either. So `infer`
+is declared and refuses with a sentence naming TQ-60, and the contract asserts
+that every implementation does — a service that quietly picked the only model
+installed and called that routing is precisely the drift this catches.
+
+### A cold load is not slow thinking
+
+`InferenceResult` splits `latency_ms` from `load_ms`, and this comes from a
+finding recorded in §102 **before any of this existed**: 8 GB of VRAM means a
+leader and challenger cannot both be resident, so §15's comparisons are
+sequential and models get loaded mid-run.
+
+Left unseparated, a ranking learns about SSD speed and files it as reasoning
+quality. So the type refuses to let a cold load go unreported —
+`loaded_from_cold=True` with no `load_ms` raises — and `wall_ms` is available for
+what a user actually waited, distinct from what a leaderboard should score.
+
+That a finding from three increments ago became a constraint in a dataclass is
+the point of writing findings down.
+
+### An unrunnable benchmark is not a failed one
+
+`benchmark()` on a service with no runtime returns `passed=None`, not `False`.
+
+§38's distinction, and the one a leaderboard cannot recover from if it is got
+wrong: a model that could not be run has not *failed* a benchmark, it has not
+*taken* one. Recording it as a failure would penalise a model for this machine's
+missing runtime.
+
+### The tripwire is planted before the thing it guards
+
+§4 and §47: *"Agents must not call Llama, Inkling, DeepSeek, or any other local
+model directly."* `test_no_module_reaches_a_local_runtime_directly` parses every
+module under `agents/`, `backend/`, `app/` and `gateway/` and fails on an import
+of any name in `KNOWN_LOCAL_RUNTIMES` outside `app/local_ai.py`.
+
+Written while none of those packages is installed, the way §64's routing pin was
+written before there was a second model — so the day TQ-57 installs a runtime it
+lands in one place or fails the suite. A rule written after the first leak is a
+rule that gets discovered to have been broken for a month.
+
+### A source scanner was too crude, for the third time
+
+`test_this_module_ranks_nothing_and_names_no_leaderboard` failed on its first
+run — it caught the word "leaderboard" inside `NO_ROUTING`, the *refusal message*
+whose whole job is to explain which increment supplies routing. The module was
+right and the scanner was wrong.
+
+That is now three occurrences, each the same shape:
+
+| | what the scanner did | what it caught |
+|---|---|---|
+| §101 | walked a fixed list of method names | nothing — a *newly added* method slipped past, which was the case it existed for |
+| §104 | split the source on triple quotes | "ranked" inside a docstring quoting §36 |
+| §107 | stripped docstrings but not other literals | "leaderboard" inside a refusal message |
+
+So rather than patch it a third time, `conftest.executable_source()` is now the
+one implementation of *"read only the code"* — it strips **every** string
+constant, leaving identifiers, calls and attributes, which is what these
+tripwires actually mean to check. All four existing scanners were switched to it.
+
+Prose that mentions a forbidden concept is not a module doing it, and it took
+three failures to state that once.
+
+### Verified by running it, and by attacking it
+
+**Run:** the null service, read aloud. `available()` is False; health reports
+`healthy=False` *with a reason* rather than raising; `can_run_now` is False with
+VRAM figures `None` rather than zero; `infer()` refuses naming TQ-60;
+`infer_with_model()` refuses naming TQ-57 and adds the consequence — *"a task
+pinned LOCAL_ONLY cannot run at all"*; and `benchmark()` returns
+`passed=None, "Not run … Not a failure - an absence of a result."`
+
+**Attack:** ten mutations, ten caught — `infer()` quietly picking a model; an
+unrunnable benchmark scored as a failure; an unknown model substituted; health
+with no reason; a cold load unreported; a comparison of one model; and a ranking
+identifier introduced into each of the three modules whose scanners had just been
+refactored, plus an `import ollama` in an agent. The last four exist because
+switching four scanners to a shared helper is exactly the change that could have
+quietly disarmed them.
+
+### Deliberately not built
+
+No runtime, no model, no download, no `requirements.txt` entry. TQ-57 owns all of
+it, and TQ-52 — still blocked on what "Inkling" is — owns deciding which models.
+`estimate_latency` returns `None` for every model, because nobody has measured
+one, and `None` says that rather than claiming instant.

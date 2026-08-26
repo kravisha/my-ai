@@ -43,6 +43,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import pathlib
 from pathlib import Path
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
@@ -511,3 +512,37 @@ def mock_portfolio_path(tmp_path, monkeypatch):
 
     monkeypatch.setitem(permissions_module.RESOURCE_PATHS, "portfolio", path)
     return path
+
+
+# --- source scanning, done once ------------------------------------------------------
+
+
+def executable_source(path) -> str:
+    """A module's code with every string literal removed, lower-cased.
+
+    For the source-scan tripwires that assert a module does not do something -
+    that `task_signature` ranks nothing, that `local_ai` chooses nothing, that
+    nothing outside `portfolios` queries its table.
+
+    It exists because the same mistake has now been made three times, each time
+    with the scanner wrong and the module right:
+
+    - §101: the scan walked a fixed list of method names, so a *newly added*
+      method carrying a forbidden argument slipped past - which was precisely
+      the case it existed to catch.
+    - §104: it split on triple quotes and caught the word "ranked" inside a
+      docstring quoting addendum 45 §36.
+    - §107: it stripped docstrings but not other string literals, and caught
+      "leaderboard" inside a refusal *message* whose whole job is to explain
+      which increment supplies routing.
+
+    Prose that mentions a forbidden concept is not a module doing it. Stripping
+    every literal - docstrings, messages, constants - leaves identifiers, calls
+    and attributes, which is what these tripwires actually mean to check."""
+    import ast
+
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            node.value = ""
+    return ast.unparse(tree).lower()
