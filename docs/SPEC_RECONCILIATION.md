@@ -9031,3 +9031,126 @@ No runtime, no model, no download, no `requirements.txt` entry. TQ-57 owns all o
 it, and TQ-52 — still blocked on what "Inkling" is — owns deciding which models.
 `estimate_latency` returns `None` for every model, because nobody has measured
 one, and `None` says that rather than claiming instant.
+
+---
+
+## §108 — Can this be done without a model, and if not, is local enough (2026-08-26, TQ-59)
+
+Sixth increment of the addendum 45 lineage. `app/capability.py`: §3's *first*
+decision — the deterministic check (§19) and the capability/escalation decision
+(§16, §17) — kept separate from §3's second, which is TQ-60's.
+
+Nothing here names a model, reads a leaderboard or ranks anything, and a source
+scan asserts it. Suite **2462 passing, 1 skipped**.
+
+### §19 written down rather than newly imposed
+
+`DETERMINISTIC_CAPABILITIES` declares what this system already does without a
+model. Every entry describes code that exists and is *already* preferred over
+asking one:
+
+| operation | code | why deterministic is right |
+|---|---|---|
+| `portfolio_concentration` | `gateway/holdings.py::concentration` | arithmetic over numbers the client supplied — §96's "a model asked to percentage-weight a portfolio produces something *shaped* like arithmetic" |
+| `iv_surface_detection` | `agents/explorer.py` | a threshold comparison on measured data; already §19 in practice — the detector produces the candidate, a model only gates it afterward |
+| `arbitrage_detection` | `backend/arbitrage.py` | parity relationships are identities, not opinions |
+| `agent_slot_allocation` | `backend/fi_db.py::allocate_slot` | two callers must reach the same answer or the population forks |
+
+That is the useful discovery of the increment: **this project was already doing
+§19**, in four places, without a name for it. The registry is a record of a
+practice rather than a new constraint, which is why it could be written honestly
+at all — a registry of aspirations would have been four claims nobody had tested.
+
+`test_every_declared_capability_points_at_code_that_exists` applies
+`model_registry.yaml`'s discipline: a registry that drifts is worse than none,
+because a router would believe it.
+
+**An unregistered operation is `unknown`, never "needs a model".** §19 asks a
+question a person answers at design time; this records the answers given, and
+silence means nobody has asked. Treating silence as "use AI" would be precisely
+the reflex §19 exists to interrupt.
+
+### The case that is live, and where helpful and correct disagree
+
+A `LOCAL_ONLY` task that needs intelligence, on a machine with no local model,
+**cannot be done**. Not escalated — refused.
+
+`local_ai.available()` is False today, so this is not hypothetical: it is what
+the system currently answers for any sensitive work needing a model.
+
+The tempting alternative is obvious and wrong. Falling back to an external
+provider would be *helpful* and would break the one rule §36 states without
+qualification. Sensitive data does not leave because the external model ranks
+higher, and it does not leave because the local one is missing either.
+
+So `PATH_REFUSED` exists as a fourth answer that is deliberately **not** an
+execution path — `test_this_module_makes_privacy_misrouting_impossible` asserts
+it is absent from `routing_decisions.EXECUTION_PATHS`, because there is nothing
+to log when nothing ran.
+
+That closes §106's finding from the other end. TQ-55 could only *detect* a
+`LOCAL_ONLY` task that had already gone external; routed through this module,
+that decision is never made.
+
+### Constraints and heuristics are marked apart
+
+`forced=True` distinguishes a decision privacy required from one a heuristic
+chose. It matters because §17 gives this decision its own leaderboard: a model
+later judged against these outcomes must not be scored for "getting right" a
+call that privacy made for it, and the escalation rate is not evidence about
+capability when a constraint produced it.
+
+The same instinct produces the availability wording. "No local model is
+installed" is reported as *an availability fact, not a judgement about what local
+intelligence could have handled* — because it changes the day TQ-57 lands, and a
+ranking gathered under it would otherwise read as evidence that local
+intelligence was insufficient.
+
+### The rules are the seed, and say so
+
+§17: *"'Can this be done locally, or should we escalate?' is itself an
+intelligent task"*, with the leaderboard §105 already seeded.
+
+So the heuristics here are provisional in §12's sense — a hand-authored starting
+point evidence should overtake. Each clause returns a *sentence* rather than a
+boolean, because §17's leaderboard only works if a decision can later be judged
+wrong, and one that cannot explain itself cannot be. `RULE_VERSION` exists so a
+routing record can say which ruleset produced a decision, and evidence gathered
+under one set is not silently compared against another.
+
+The privacy rule is not provisional. It is a constraint, and no evidence
+overturns it.
+
+### Ordering, and why deterministic-before-privacy is safe
+
+The deterministic check runs first, unconditionally — before privacy, before
+availability. That is only safe because **a deterministic solution is this
+system's own code on this machine**: it sends nothing anywhere, so it cannot
+violate `LOCAL_ONLY`.
+
+Asserted rather than assumed
+(`test_a_deterministic_solution_is_privacy_safe_by_construction`), because the
+ordering would be a hole the day somebody registered a "deterministic" capability
+that made an external call.
+
+### Verified by running it, and by attacking it
+
+**Run:** six cases read aloud — a registered deterministic operation; `LOCAL_ONLY`
+with and without a local model; ordinary work with and without; and `HIGH_STAKES`
+work. Each returned the expected path with its reasoning, and `summary()` states
+plainly that with no local model any `LOCAL_ONLY` task needing intelligence
+cannot be done.
+
+**Attack:** nine mutations, nine caught — including both privacy ones (a
+`LOCAL_ONLY` task escalating instead of being refused, and the heuristics being
+allowed to override privacy), the deterministic check no longer running first, a
+capability registered against code that does not exist, and the module acquiring
+a leaderboard opinion.
+
+### Deliberately not built
+
+No model makes this decision yet, though §17 says one eventually should. That
+needs a local model to compare against the rules, which is TQ-57's, and a
+challenger harness, which is TQ-61's. Building a model-driven escalation decision
+now would mean asking the *external* model whether the external model is
+necessary — a question it is in no position to answer neutrally.
