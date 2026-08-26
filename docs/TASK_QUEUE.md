@@ -60,12 +60,15 @@ holds the queue, not the record.
 > **Addendum 44 (portfolio subsystem, §97).** TQ-44 done (§99) — every portfolio has an explicit
 > owner, `resolve()` is the only way to one, and the §15.5 regression is permanent. TQ-45 done —
 > 45a the canonical holding shape (§100), 45b the provider abstraction and its conformance suite
-> (§101). **TQ-46 is specified and blocked on TQ-69**; TQ-47, TQ-48 and TQ-49 follow it. TQ-50 is
-> blocked on owner action.
+> (§101). TQ-69 done (§110) — the whole subsystem now sits behind the backend. **TQ-46 is specified
+> and next**; TQ-47, TQ-48 and TQ-49 follow it. TQ-50 is blocked on owner action.
 >
 > **Owner direction 2026-08-26 (§109): the Gateway authenticates; the backend authorizes and holds
-> business logic.** The portfolio subsystem is on the wrong side of that line, which is what TQ-69
-> corrects. Route-level capability gating stays at the Gateway and is not the drift.
+> business logic.** **TQ-69 is done (§110)** — `portfolios` and `portfolio_holdings`, the ownership
+> guard, `holdings` and the providers are in `financial_intelligence.db`, and the Gateway reaches
+> them over HTTP behind `require_gateway`. There are now two checks where there was one. Route-level
+> capability gating stays at the Gateway and was never the drift. **TQ-46 is unblocked and next**;
+> it raised **TQ-70** (three identity populations) and **TQ-71** (four retired holdings tables).
 >
 > **Addendum 45 (local intelligence and competitive model routing, §102).** Six increments built
 > and **no local model behind any of them**: TQ-51 the routing ladder (§103), TQ-53 the task
@@ -741,8 +744,8 @@ long calls or protective puts, diversified plus cash — which needs `asset_clas
 
 ### TQ-69 — Move the portfolio subsystem behind the backend, where authorization lives
 
-**NEED (ORANGE) · SPECIFIED — next · blocks TQ-46 · owner direction 2026-08-26
-(`SPEC_RECONCILIATION.md` §109) · addendum 16 §7, addendum 40 §14 ·
+**NEED (ORANGE) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §110) · unblocks TQ-46 ·
+owner direction 2026-08-26 (§109) · addendum 16 §7, addendum 40 §14 ·
 spec: `docs/specs/TQ-69_portfolio_subsystem_behind_the_backend.md`**
 
 Owner direction: *"Gateway is for establishing identity — Gateway only does authentication. Back
@@ -801,6 +804,41 @@ resolves `username = Depends(get_current_user)` and hands it nowhere near `retri
 §16.7's "ownerless retrieval" is not missing an identity mechanism — it is discarding one it
 already has.
 
+**Done** (§110). The tables, the guard, `holdings` and the providers are in
+`financial_intelligence.db`; the Gateway reaches them over HTTP through
+`gateway/portfolio_client.py`, behind `require_gateway` (`app/gateway_auth.py`). Suite 2462 →
+**2497 passing, 1 skipped**.
+
+The three §10 questions were decided and recorded before any code: the routing decision log stays
+in `app/` (confirmed by reading its twenty-seven columns and `task_signature`'s fifteen fields —
+none of them carries client content, so there is no second copy to leave outside the guard); the
+identity populations are not reconciled here and the question is queued as **TQ-70**; and which id
+owns the SUPERUSER portfolio is flagged into TQ-46's spec as its Q4 rather than settled cheaply
+here.
+
+**The migration's ordering is its design.** Two files cannot be written atomically, so: bring the
+source to the current shape, copy inside the destination's transaction, **verify while the source
+is still intact**, and only then rename to `*_pre69`. Verification is by *ownership* rather than by
+count — a move that landed every row and swapped two owners would pass a count check perfectly, and
+would be the worst outcome the increment could have.
+
+**`gateway/store.init_schema` refuses to start on an unmigrated database.** Not a warning, because
+the failure it prevents does not look like one: the client is not shown an error, they are given a
+brand-new empty portfolio while their real one sits unreachable, and holdings recorded into the new
+one are hidden by a later migration.
+
+Verified live, all three steps, against `gateway.db` seeded by the pre-TQ-69 code in a worktree and
+made harder than the happy path (an archived portfolio, an unflagged holding stated in
+conversation, a SUPERUSER portfolio): migrated a copy with every id, owner and `as_of` identical;
+two demo clients over real HTTP against both running processes seeing only their own; and the
+backend **killed** underneath a live Gateway, where all four holdings tools returned
+`{error, unavailable}` and nothing else.
+
+Mutation-tested twenty-six ways across four rounds, which found two real defects — a test that was
+green for the wrong reason, and an import tripwire that matched one spelling and missed the
+ordinary one. That is the fourth scanner in this project to be wrong while the module it guarded
+was right (§101, §104, §107).
+
 ### TQ-70 — Three identity populations, and whether any two of them are one
 
 **NEED (YELLOW) · QUEUED · raised by TQ-69 (spec §10 Q2, decided 2026-08-26) · addendum 16 §7,
@@ -848,13 +886,22 @@ the question was asked.
 
 ### TQ-46 — The Superuser portfolio as its own ownership domain
 
-**NEED (YELLOW) · SPECIFIED · BLOCKED on TQ-69 · depends on TQ-44 (done), TQ-45 (done) ·
-addendum 44 §4, §10, §16, §21.4, §21.6 · spec: `docs/specs/TQ-46_superuser_ownership_domain.md`**
+**NEED (YELLOW) · SPECIFIED — next · UNBLOCKED 2026-08-26 by TQ-69 (§110) · depends on TQ-44
+(done), TQ-45 (done), TQ-69 (done) · addendum 44 §4, §10, §16, §21.4, §21.6 ·
+spec: `docs/specs/TQ-46_superuser_ownership_domain.md`**
 
-**Blocked 2026-08-26 by owner direction** (§109): the Gateway authenticates, the backend
-authorizes and holds business logic. The portfolio subsystem is on the wrong side of that line, so
-TQ-69 moves it first — building a `SUPERUSER` domain into `gateway.db` and moving it a week later
-is the mistake TQ-44 refused to make with the entity and its guard.
+**Was blocked by owner direction** (§109): the Gateway authenticates, the backend authorizes and
+holds business logic. The portfolio subsystem was on the wrong side of that line, so TQ-69 moved it
+first — building a `SUPERUSER` domain into `gateway.db` and moving it a week later is the mistake
+TQ-44 refused to make with the entity and its guard. TQ-69 is done, and this is next.
+
+**Read its spec §11 Q4 before starting.** TQ-69 flagged the question this increment cannot proceed
+without: *which id owns the SUPERUSER portfolio*. Only two callers can assert an owner — the
+Gateway, which knows a Gateway subject, and `/chat`, which knows a backend `username` — and they
+are different identity populations (TQ-70). Pick one, store the choice, and test it: with two owner
+domains and two candidate ids, **the wrong pairing is not refused, it returns an empty portfolio**.
+§15.5's regression covers a client receiving the operator's; nothing yet covers the operator
+silently receiving nobody's.
 
 **Q1 is decided: reading B** — keep the capability, remove the ownerlessness. The spec called B
 expensive because the backend cannot reach `gateway.db`; under the corrected architecture that
@@ -895,6 +942,41 @@ remove the ownerless retrieval, which admits two readings — retire `retrieve_p
 it an owner. Re-owning it is blocked by architecture (the backend cannot reach `gateway.db`), so
 the leaning is to retire it — but that removes a portfolio tool from `backend/main.py`'s `/chat`,
 which is a product decision rather than a technical one.
+
+### TQ-71 — Drop the retired holdings tables, deliberately
+
+**NEED (GREEN) · QUEUED · raised by TQ-69 (§110) · §99, §100, §110**
+
+A fully-migrated `gateway.db` now carries four tables holding retired copies of client financial
+records:
+
+| table | left by | keyed by |
+|---|---|---|
+| `client_holdings_legacy` | TQ-44 (§99) | client |
+| `portfolio_holdings_pre45` | TQ-45a (§100) | portfolio |
+| `portfolios_pre69` | TQ-69 (§110) | portfolio |
+| `portfolio_holdings_pre69` | TQ-69 (§110) | portfolio |
+
+Renaming rather than dropping was right every time — it is what makes each migration idempotent by
+construction, and it is the only way anybody can answer "did that move the data correctly?" a week
+later. **Four of them is no longer a habit, it is an accumulation**, and §100 already showed what
+an unwatched archive costs: after the TQ-45a rename, `clear()` emptied the live table while ten
+demo holdings sat in `portfolio_holdings_pre45` and `outstanding()` reported everything clean.
+
+This entry exists because **dropping a table holding client financial records is not a side effect
+of anything**. It needs its own decision, and three things settled with it:
+
+- **A retention answer, not a tidiness one.** How long is a pre-migration copy worth keeping, and
+  what is it for? "Diagnosis" was the reason given in TQ-44's spec §10 Q2 and nobody has needed it
+  since; that is evidence either way and should be stated rather than assumed.
+- **Demo rows go first regardless.** `gateway/demo_clients._clear_archives` already reaches every
+  one of these, and it must keep doing so for as long as they exist — a pre-launch check that says
+  "clean" while simulated customers sit in an archive is the §100 finding again.
+- **Verified against a copy before dropping**, like every other change to these tables, and after
+  confirming the live data matches. A drop is the one migration step that cannot be rolled back by
+  renaming something.
+
+Cheap, and worth doing before anything else adds a fifth.
 
 ### TQ-47 — The Superuser Portfolio tab
 
