@@ -54,9 +54,9 @@ holds the queue, not the record.
 > **Current focus: the portfolio subsystem** (addendum 44, assimilated 2026-08-26, §97) —
 > **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
 > **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
-> and the §15.5 regression is permanent. Next is **TQ-45** (the provider abstraction, which
-> also carries the holding-field rename TQ-44 deliberately deferred, and is now **specified** —
-> `docs/specs/TQ-45_portfolio_provider_abstraction.md`), then TQ-46 (the
+> and the §15.5 regression is permanent. **TQ-45a** (the canonical holding shape) is **done**
+> (§100). Next is **TQ-45b** — the provider abstraction and its conformance suite,
+> `docs/specs/TQ-45_portfolio_provider_abstraction.md` — then TQ-46 (the
 > Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots, provenance, audit), TQ-49
 > (the Schwab boundary). TQ-50 is blocked on owner action.
 >
@@ -677,14 +677,26 @@ Superuser portfolio itself (TQ-46), and `app/tools/portfolio.py`'s missing owner
 
 ### TQ-45 — The PortfolioProvider abstraction, and its conformance suite
 
-**NEED (GREEN) · SPECIFIED — next · depends on TQ-44 (done, §99) · addendum 44 §7, §6.3, §15.3,
-§15.4, §20 Phase 2 · spec: `docs/specs/TQ-45_portfolio_provider_abstraction.md`**
+**NEED (GREEN) · 45a DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §100) · 45b IN PROGRESS — next ·
+depends on TQ-44 (done, §99) · addendum 44 §7, §6.3, §15.3, §15.4, §20 Phase 2 ·
+spec: `docs/specs/TQ-45_portfolio_provider_abstraction.md`**
 
-A full implementation specification is written. It splits the work into **45a** (the canonical
-holding shape — the field rename and the `asset_class` vocabulary) and **45b** (the provider,
-the conformance suite and the demo rebuild), in that order, so the provider is written against
-the final holding shape once rather than twice. Five open questions are recorded with leanings
-and should be decided before any code, the way TQ-44's three were.
+Split into **45a** (the canonical holding shape) and **45b** (the provider, the conformance suite
+and the demo rebuild), so the provider is written against the final holding shape once rather
+than twice.
+
+**45a is done** (§100). Holdings are `symbol` / `quantity` / `average_cost` / `as_of`, and
+`asset_class` speaks the house vocabulary — `stock`, `stock_option`, … plus `unknown` — imported
+from `reference_data` rather than mirrored, because §70 had already refused that substitution
+once. Both migration paths were verified against genuinely old databases seeded by the old code
+in a worktree. Running it found a defect no test saw: `clear()` emptied the live table while ten
+demo holdings survived in the retired one, and `outstanding()` reported clean. Fixed, with two
+permanent regressions.
+
+**45b is what remains**: `PortfolioProvider`, the conformance suite, `SimulatedPortfolioProvider`,
+and the demo rebuild on §6.1's diversity. Spec §11 Q2, Q3 and Q5 are still open and belong to it —
+Q2 (whether a labelled simulated portfolio may show simulated prices; leaning firmly no) is the
+one flagged twice.
 
 `PortfolioProvider` with `list_accounts` / `get_account` / `get_holdings` / `get_balances` /
 `get_positions` / `refresh` / `health_check`, returning canonical internal objects rather than

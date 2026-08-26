@@ -135,7 +135,7 @@ def test_a_suspended_client_cannot_log_in_but_keeps_their_data(gateway_conn):
 
     _, password = clients.register(gateway_conn, "alice")
     alice = portfolios.primary_for(gateway_conn, portfolios.for_client("alice"))
-    holdings.record(gateway_conn, alice, ticker="SYN1", shares=10, cost_basis=5)
+    holdings.record(gateway_conn, alice, symbol="SYN1", quantity=10, average_cost=5)
 
     clients.set_status(gateway_conn, "alice", clients.STATUS_SUSPENDED)
 
@@ -205,7 +205,7 @@ def test_removing_a_login_keeps_the_holdings(gateway_conn):
 
     clients.register(gateway_conn, "alice")
     alice = portfolios.primary_for(gateway_conn, portfolios.for_client("alice"))
-    holdings.record(gateway_conn, alice, ticker="SYN1", shares=10, cost_basis=5)
+    holdings.record(gateway_conn, alice, symbol="SYN1", quantity=10, average_cost=5)
 
     assert clients.remove(gateway_conn, "alice") is True
 

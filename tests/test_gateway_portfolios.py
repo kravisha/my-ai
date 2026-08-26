@@ -362,7 +362,7 @@ def test_the_concentration_report_takes_its_priced_flag_from_the_one_rule(gatewa
     """Not a second hard-coded False. Routed through `is_priced` so the report
     cannot drift from every other caller's answer to the same question."""
     portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
-    holdings.record(gateway_conn, portfolio, ticker="SYN1", shares=10, cost_basis=5)
+    holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=10, average_cost=5)
 
     report = holdings.concentration(gateway_conn, portfolio)
 
@@ -426,10 +426,10 @@ def test_pre_tq44_rows_land_in_a_manual_portfolio_owned_by_their_client(tmp_path
         assert portfolios.is_priced(avery) is False
 
         moved = holdings.listing(conn, avery)
-        assert [h["ticker"] for h in moved] == ["SYN1", "SYN2"]
+        assert [h["symbol"] for h in moved] == ["SYN1", "SYN2"]
         # The client said it then, not today. A migration that restamped every
         # row would have quietly destroyed a fact about them.
-        assert moved[0]["stated_at"] == "2025-05-05T09:00:00"
+        assert moved[0]["as_of"] == "2025-05-05T09:00:00"
     finally:
         conn.close()
 
@@ -445,8 +445,8 @@ def test_the_migration_changes_nobodys_owner(tmp_path):
         avery = portfolios.primary_for(conn, portfolios.for_client("avery"))
         morgan = portfolios.primary_for(conn, portfolios.for_client("morgan"))
 
-        assert [h["ticker"] for h in holdings.listing(conn, avery)] == ["SYN1"]
-        assert [h["ticker"] for h in holdings.listing(conn, morgan)] == ["SYN2"]
+        assert [h["symbol"] for h in holdings.listing(conn, avery)] == ["SYN1"]
+        assert [h["symbol"] for h in holdings.listing(conn, morgan)] == ["SYN2"]
         # And neither can reach the other's, which is the point of having moved
         # them into owned entities at all.
         with pytest.raises(portfolios.NotAuthorized):
@@ -566,7 +566,7 @@ def test_clearing_reaches_an_archived_demo_portfolio(gateway_conn, monkeypatch):
     owner = portfolios.for_client("avery")
     retired = portfolios.create(gateway_conn, owner, display_name="Old",
                                 portfolio_type=portfolios.TYPE_SECONDARY, simulated=True)
-    holdings.record(gateway_conn, retired, ticker="SYN8", shares=3, simulated=True)
+    holdings.record(gateway_conn, retired, symbol="SYN8", quantity=3, simulated=True)
     portfolios.archive(gateway_conn, retired["portfolio_id"], owner)
 
     demo_clients.clear(gateway_conn)
@@ -579,7 +579,7 @@ def test_a_real_clients_portfolio_is_never_cleared(gateway_conn, monkeypatch):
     monkeypatch.setattr(demo_clients, "_require_development_stage", lambda: "PRE_ALPHA")
     demo_clients.seed(gateway_conn)
     real = portfolios.primary_for(gateway_conn, portfolios.for_client("paying-client"))
-    holdings.record(gateway_conn, real, ticker="SYN1", shares=10, cost_basis=4)
+    holdings.record(gateway_conn, real, symbol="SYN1", quantity=10, average_cost=4)
 
     demo_clients.clear(gateway_conn)
 
@@ -638,7 +638,7 @@ def test_holdings_cannot_be_reached_without_a_resolved_portfolio(gateway_conn):
         with pytest.raises(TypeError):
             holdings.listing(gateway_conn, wrong)
         with pytest.raises(TypeError):
-            holdings.record(gateway_conn, wrong, ticker="SYN1", shares=1)
+            holdings.record(gateway_conn, wrong, symbol="SYN1", quantity=1)
 
 
 # --- agent context isolation (§9.4) ------------------------------------------------
@@ -655,8 +655,288 @@ def test_a_turn_reaches_the_portfolio_of_whoever_is_speaking(gateway_conn):
         return tools.execute(gateway_conn, name, arguments or {},
                              role=roles.ROLE_CLIENT, subject=subject)
 
-    run("avery", "record_holding", {"ticker": "SYN1", "shares": 100})
-    run("morgan", "record_holding", {"ticker": "SYN2", "shares": 5})
+    run("avery", "record_holding", {"symbol": "SYN1", "quantity": 100})
+    run("morgan", "record_holding", {"symbol": "SYN2", "quantity": 5})
 
-    assert [h["ticker"] for h in run("avery", "list_holdings")["holdings"]] == ["SYN1"]
-    assert [h["ticker"] for h in run("morgan", "list_holdings")["holdings"]] == ["SYN2"]
+    assert [h["symbol"] for h in run("avery", "list_holdings")["holdings"]] == ["SYN1"]
+    assert [h["symbol"] for h in run("morgan", "list_holdings")["holdings"]] == ["SYN2"]
+
+
+# --- the canonical holding shape (TQ-45a) ------------------------------------------
+
+
+def test_the_asset_class_vocabulary_is_the_house_one():
+    """One model of one fact (spec §11 Q1).
+
+    TQ-44 introduced EQUITY/OPTION from addendum 44 §3.4 while this system
+    already had eleven finer codes, which is the second naming scheme §70 refused
+    once before for addendum 39's labels. This asserts the two can never drift:
+    the Gateway's vocabulary is `reference_data`'s codes plus `unknown`, and a
+    class added to the registry appears here without anybody remembering to
+    copy it."""
+    from backend.reference_data import ASSET_CLASSES as house
+
+    assert set(holdings.ASSET_CLASSES) == {code for code, _ in house} | {"unknown"}
+    assert holdings.ASSET_UNKNOWN == "unknown"
+    for retired in ("EQUITY", "OPTION", "UNKNOWN"):
+        assert retired not in holdings.ASSET_CLASSES
+
+
+def test_a_client_may_hold_a_class_this_system_cannot_process(gateway_conn):
+    """`implemented_asset_classes` says what this organization can *process*, not
+    what somebody is allowed to own. Refusing to record a fact about their money
+    because our reference data is incomplete is the refusal `_clean_symbol`
+    already declines to make about symbols."""
+    from backend import boot_config
+
+    portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
+    unimplemented = [c for c in holdings.ASSET_CLASSES
+                     if c not in boot_config.load().implemented_asset_classes
+                     and c != holdings.ASSET_UNKNOWN]
+    assert unimplemented, "this test needs a class the system does not implement"
+
+    recorded = holdings.record(gateway_conn, portfolio, symbol="XYZ", quantity=1,
+                               asset_class=unimplemented[0])
+    assert recorded["asset_class"] == unimplemented[0]
+
+
+def test_an_asset_class_is_normalised_rather_than_case_sensitive(gateway_conn):
+    portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
+    recorded = holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=1,
+                               asset_class="  Stock_Option  ")
+    assert recorded["asset_class"] == "stock_option"
+
+
+def test_an_unrecognised_asset_class_is_refused(gateway_conn):
+    """`equity` is addendum 44's word, and it is deliberately not a house code -
+    it does not settle stock versus etf. Refused rather than interpreted."""
+    portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
+    with pytest.raises(holdings.HoldingRefused):
+        holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=1,
+                        asset_class="equity")
+
+
+def test_a_holding_records_when_its_data_is_from_not_when_it_was_written(gateway_conn):
+    """`as_of` is supplied by a provider that knows when its data is from, and
+    defaults to now for a client speaking. That distinction is why the field was
+    renamed from `stated_at` - only a person states anything, and the shape has
+    to fit a brokerage account too."""
+    portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
+
+    default = holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=1)
+    supplied = holdings.record(gateway_conn, portfolio, symbol="SYN2", quantity=1,
+                               as_of="2024-01-01T00:00:00+00:00")
+
+    assert default["as_of"]
+    assert supplied["as_of"] == "2024-01-01T00:00:00+00:00"
+
+
+def _tq44_shaped_database(tmp_path, rows):
+    """A gateway.db as TQ-44 left it: `portfolio_holdings` with the old column
+    names. Built by creating the current schema and putting the old table back,
+    the same shape `_legacy_database` uses one migration earlier."""
+    conn = store.get_connection(tmp_path / "tq44.db")
+    store.init_schema(conn)
+    portfolio = portfolios.primary_for(conn, portfolios.for_client("avery"))
+    conn.execute("DROP TABLE portfolio_holdings")
+    conn.executescript("""
+        CREATE TABLE portfolio_holdings (
+            portfolio_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            shares REAL NOT NULL,
+            cost_basis REAL,
+            asset_class TEXT NOT NULL DEFAULT 'UNKNOWN',
+            acquired_on TEXT,
+            note TEXT,
+            stated_at TEXT NOT NULL,
+            simulated INTEGER NOT NULL DEFAULT 0,
+            schema_version INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (portfolio_id, ticker)
+        );
+    """)
+    for row in rows:
+        conn.execute(
+            "INSERT INTO portfolio_holdings (portfolio_id, ticker, shares, cost_basis, "
+            "asset_class, acquired_on, note, stated_at, simulated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (portfolio["portfolio_id"], row["ticker"], row["shares"], row.get("cost_basis"),
+             row.get("asset_class", "UNKNOWN"), row.get("acquired_on"), row.get("note"),
+             row.get("stated_at", "2026-01-01T00:00:00"), row.get("simulated", 0)))
+    return conn, portfolio
+
+
+def test_the_rename_moves_every_holding_under_the_canonical_names(tmp_path):
+    conn, portfolio = _tq44_shaped_database(tmp_path, [
+        {"ticker": "SYN1", "shares": 100, "cost_basis": 10,
+         "stated_at": "2025-05-05T09:00:00"},
+        {"ticker": "SYN2", "shares": 5},
+    ])
+    try:
+        outcome = holdings.migrate_holding_field_names(conn)
+
+        assert (outcome["migrated"], outcome["holdings"]) == (True, 2)
+        moved = holdings.listing(conn, portfolio)
+        assert [h["symbol"] for h in moved] == ["SYN1", "SYN2"]
+        assert moved[0]["quantity"] == 100
+        assert moved[0]["average_cost"] == 10
+        # When the client said it survives the rename, as it survived TQ-44's.
+        assert moved[0]["as_of"] == "2025-05-05T09:00:00"
+        assert moved[1]["average_cost"] is None
+    finally:
+        conn.close()
+
+
+def test_the_rename_maps_the_old_unknown_to_the_house_unknown(tmp_path):
+    conn, portfolio = _tq44_shaped_database(
+        tmp_path, [{"ticker": "SYN1", "shares": 1, "asset_class": "UNKNOWN"}])
+    try:
+        holdings.migrate_holding_field_names(conn)
+        assert holdings.listing(conn, portfolio)[0]["asset_class"] == "unknown"
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("ambiguous", ["EQUITY", "OPTION"])
+def test_the_rename_refuses_an_asset_class_it_would_have_to_guess(tmp_path, ambiguous):
+    """`EQUITY` does not determine `stock` versus `etf`, so the migration says so
+    and stops rather than picking one. No row can actually hold these - the only
+    writer defaulted to UNKNOWN - which is why refusing costs nothing real and
+    keeps the no-fabrication rule true even where real data cannot test it."""
+    conn, _ = _tq44_shaped_database(
+        tmp_path, [{"ticker": "SYN1", "shares": 1, "asset_class": ambiguous}])
+    try:
+        with pytest.raises(holdings.MigrationRefused, match="house code"):
+            holdings.migrate_holding_field_names(conn)
+        # Rolled back: the old table is untouched and nothing was renamed.
+        assert "ticker" in holdings._columns(conn, "portfolio_holdings")
+        assert not holdings._table_exists(conn, holdings.PRE_45_ARCHIVE)
+    finally:
+        conn.close()
+
+
+def test_the_rename_is_idempotent(tmp_path):
+    conn, portfolio = _tq44_shaped_database(
+        tmp_path, [{"ticker": "SYN1", "shares": 1}, {"ticker": "SYN2", "shares": 2}])
+    try:
+        holdings.migrate_holding_field_names(conn)
+        again = holdings.migrate_holding_field_names(conn)
+        store.init_schema(conn)
+        store.init_schema(conn)
+
+        assert again["migrated"] is False
+        assert len(holdings.listing(conn, portfolio)) == 2
+    finally:
+        conn.close()
+
+
+def test_the_rename_archives_the_old_table_rather_than_dropping_it(tmp_path):
+    conn, _ = _tq44_shaped_database(tmp_path, [{"ticker": "SYN1", "shares": 1}])
+    try:
+        holdings.migrate_holding_field_names(conn)
+
+        assert holdings._table_exists(conn, holdings.PRE_45_ARCHIVE)
+        assert conn.fetchone(
+            f"SELECT COUNT(*) AS n FROM {holdings.PRE_45_ARCHIVE}")["n"] == 1
+    finally:
+        conn.close()
+
+
+def test_an_unfinished_rename_refuses_rather_than_overwriting_the_archive(tmp_path):
+    conn, _ = _tq44_shaped_database(tmp_path, [{"ticker": "SYN1", "shares": 1}])
+    try:
+        conn.executescript(
+            f"CREATE TABLE {holdings.PRE_45_ARCHIVE} (portfolio_id TEXT, ticker TEXT);")
+
+        with pytest.raises(holdings.MigrationRefused):
+            holdings.migrate_holding_field_names(conn)
+
+        assert "ticker" in holdings._columns(conn, "portfolio_holdings")
+    finally:
+        conn.close()
+
+
+def test_a_pre_tq44_database_arrives_at_the_canonical_shape_in_one_step(tmp_path):
+    """A database that never ran TQ-44 does not pass through TQ-44's column names
+    on the way here - `migrate_client_holdings` writes the canonical ones
+    directly, because the intermediate shape no longer exists in this build."""
+    conn = _legacy_database(tmp_path, [
+        {"client_id": "avery", "ticker": "SYN1", "shares": 100, "cost_basis": 10},
+    ])
+    try:
+        store.init_schema(conn)
+
+        avery = portfolios.primary_for(conn, portfolios.for_client("avery"))
+        held = holdings.listing(conn, avery)
+        assert [h["symbol"] for h in held] == ["SYN1"]
+        assert held[0]["asset_class"] == holdings.ASSET_UNKNOWN
+        # The 45a rename found nothing to do, because there was nothing old left.
+        assert not holdings._table_exists(conn, holdings.PRE_45_ARCHIVE)
+    finally:
+        conn.close()
+
+
+def test_clearing_reaches_the_retired_holdings_tables(tmp_path, monkeypatch):
+    """Found by looking, not by reasoning, and the suite was green while it was
+    broken (§100).
+
+    After the 45a rename, `clear()` emptied the live table and `outstanding()`
+    reported "No simulated client data is present" while ten demo holdings sat
+    in `portfolio_holdings_pre45`. A clean report that is not true is worse than
+    no report: it is the one a pre-launch checklist believes.
+
+    The two archives are keyed differently - the pre-TQ-44 one by client, the
+    pre-TQ-45 one by portfolio - which is exactly why this was easy to get
+    half-right."""
+    monkeypatch.setattr(demo_clients, "_require_development_stage", lambda: "PRE_ALPHA")
+    conn = store.get_connection(tmp_path / "archives.db")
+    try:
+        store.init_schema(conn)
+        demo_clients.seed(conn)
+
+        # Retire the live table the way the rename does, so both archives exist
+        # and both hold demo rows.
+        owner = portfolios.for_client("avery")
+        portfolio = portfolios.primary_for(conn, owner)
+        conn.execute(
+            f"CREATE TABLE {holdings.PRE_45_ARCHIVE} (portfolio_id TEXT, symbol TEXT)")
+        conn.execute(
+            f"INSERT INTO {holdings.PRE_45_ARCHIVE} (portfolio_id, symbol) VALUES (?, ?)",
+            (portfolio["portfolio_id"], "SYN2"))
+        conn.execute(
+            f"CREATE TABLE {holdings.LEGACY_ARCHIVE} (client_id TEXT, ticker TEXT)")
+        conn.execute(
+            f"INSERT INTO {holdings.LEGACY_ARCHIVE} (client_id, ticker) VALUES (?, ?)",
+            ("avery", "SYN2"))
+
+        outcome = demo_clients.clear(conn)
+
+        assert outcome["legacy_removed"] == 2, "both archives must be reached"
+        for archive in (holdings.PRE_45_ARCHIVE, holdings.LEGACY_ARCHIVE):
+            left = conn.fetchone(f"SELECT COUNT(*) AS n FROM {archive}")["n"]
+            assert left == 0, f"{archive} still holds demo data after a clear"
+        assert demo_clients.outstanding(conn)["clean"] is True
+    finally:
+        conn.close()
+
+
+def test_clearing_leaves_a_real_clients_rows_in_the_archives(tmp_path, monkeypatch):
+    """The other half: an archive is kept *for diagnosis*, so a real client's
+    retired rows must survive a demo clear."""
+    monkeypatch.setattr(demo_clients, "_require_development_stage", lambda: "PRE_ALPHA")
+    conn = store.get_connection(tmp_path / "archives-real.db")
+    try:
+        store.init_schema(conn)
+        demo_clients.seed(conn)
+        paying = portfolios.primary_for(conn, portfolios.for_client("paying-client"))
+        conn.execute(
+            f"CREATE TABLE {holdings.PRE_45_ARCHIVE} (portfolio_id TEXT, symbol TEXT)")
+        conn.execute(
+            f"INSERT INTO {holdings.PRE_45_ARCHIVE} (portfolio_id, symbol) VALUES (?, ?)",
+            (paying["portfolio_id"], "SYN2"))
+
+        demo_clients.clear(conn)
+
+        assert conn.fetchone(
+            f"SELECT COUNT(*) AS n FROM {holdings.PRE_45_ARCHIVE}")["n"] == 1
+    finally:
+        conn.close()
