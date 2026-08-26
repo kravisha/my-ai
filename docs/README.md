@@ -46,10 +46,12 @@ Work that is specified and queued but not yet built.
 | [`specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md) | TQ-45 | **BUILT** 2026-08-26 — 45a the canonical holding shape (`SPEC_RECONCILIATION.md` §100), 45b the provider abstraction and its conformance suite (§101). Kept because its §3 and §11 record decisions the code depends on. |
 | [`specs/TQ-44_portfolio_ownership_and_isolation.md`](specs/TQ-44_portfolio_ownership_and_isolation.md) | TQ-44 | **BUILT** 2026-08-26, `SPEC_RECONCILIATION.md` §99. Kept because its §3 and §10 record decisions the code depends on and must not have re-litigated. |
 
-**TQ-46 is next and has no specification yet.** Addendum 44 also generates TQ-47 through TQ-50
-(the Superuser Portfolio tab, snapshots and audit, the Schwab boundary, and Schwab live — the last
-blocked on the owner obtaining API access). Those are scoped in `TASK_QUEUE.md` and specified when
-they reach the head of the queue.
+**Two lineages are open and neither has a specification yet.** Addendum 44 generates TQ-46 through
+TQ-50 (the Superuser ownership domain and its tab, snapshots and audit, the Schwab boundary, and
+Schwab live — the last blocked on the owner obtaining API access). Addendum 45, assimilated
+2026-08-26 (`SPEC_RECONCILIATION.md` §102), generates TQ-51 through TQ-68 — local intelligence and
+competitive model routing. Both are scoped in `TASK_QUEUE.md` and specified when they reach the
+head of the queue; which goes first is an owner decision.
 
 ---
 
@@ -232,7 +234,8 @@ portfolio subsystem. Dispositions for all five are in `SPEC_RECONCILIATION.md` �
 | [41 — Executive Presenter & Live Studio](addenda/addendum_41_executive_presenter_live_studio.md) | The COO as a live presenter named Kumbhakarnan, and the visual direction that reverses an earlier owner instruction: broadcast studio, explicitly **not** a Bloomberg terminal. §23's role-based studio. |
 | [42 — COO Persistence Handling](addenda/addendum_42_coo_persistence_handling.md) | Persist state, not runtime objects. Three version types kept apart, sequential migrations, and §11's rule that missing *facts* are never fabricated. |
 | [43 — Desktop Runtime v2](addenda/addendum_43_desktop_runtime_living_workspace_v2.md) | A tighter restatement of 40, adding search state, panel state, briefing position and presenter state to what must persist. §15/§16 specify the role-scoped Gateway and the personal client agent. |
-| [44 — Client-Owned Holdings + Superuser Portfolio](addenda/addendum_44_client_owned_holdings_superuser_portfolio.md) | **The active specification.** Portfolio ownership and isolation, a separate superuser ownership domain, a broker-agnostic provider interface, and a Schwab boundary prepared but disabled. Generates TQ-44 through TQ-50. |
+| [44 — Client-Owned Holdings + Superuser Portfolio](addenda/addendum_44_client_owned_holdings_superuser_portfolio.md) | Portfolio ownership and isolation, a separate superuser ownership domain, a broker-agnostic provider interface, and a Schwab boundary prepared but disabled. Generates TQ-44 through TQ-50; TQ-44 and TQ-45 are built (§99–§101). |
+| [45 — Local Intelligence + Competitive Model Routing](addenda/addendum_45_local_intelligence_competitive_model_routing.md) | **The newest specification**, and it supersedes the earlier local-model routing spec. Local intelligence by default with justified escalation, a model-agnostic `LocalAIService`, and eight task-specific leaderboards on which models compete continuously — no model permanently the best. Generates TQ-51 through TQ-68 (§102). |
 
 **Historical** — kept for provenance, not for guidance.
 

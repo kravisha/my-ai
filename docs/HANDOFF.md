@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-45 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-45 complete; addendum 45 assimilated)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -85,7 +85,8 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | §99 | **TQ-44** portfolios as owned entities + the guard | #46 |
 | — | TQ-45 specified; two collisions named before anybody hit them | #47 |
 | §100 | **TQ-45a** the canonical holding shape | #48 |
-| §101 | **TQ-45b** the provider abstraction + its conformance suite | this branch |
+| §101 | **TQ-45b** the provider abstraction + its conformance suite | #49 |
+| §102 | Addendum 45 assimilated; TQ-51…TQ-68 queued | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
@@ -98,7 +99,12 @@ come from, with a conformance suite two providers satisfy, and rebuilt the demo
 clients on §6.1's diversity. All five of the spec's open questions are decided
 and recorded in its §11. Nothing outstanding.
 
-**TQ-46 is next and has no specification yet.**
+**Addendum 45 is assimilated** (§102) — local intelligence and competitive model
+routing, owner-supplied, queued as TQ-51 … TQ-68. Nothing built.
+
+**There are now two independent lineages and the owner has not said which comes
+first**: TQ-46 … TQ-50 (the rest of addendum 44) or TQ-51 … TQ-68 (addendum 45).
+Neither blocks the other. See §7.
 
 ---
 
@@ -162,7 +168,9 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-46** — superuser ownership domain; retire the ownerless retrieval | **next — needs a spec** |
+| **TQ-46** — superuser ownership domain; retire the ownerless retrieval | **candidate next — needs a spec** |
+| **TQ-51** — unpin `routing: none_single_model` | **candidate next** — head of the addendum 45 lineage |
+| TQ-52 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
 | TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
 | TQ-47 — Superuser Portfolio tab | queued |
 | TQ-48 — snapshots, provenance, audit logging | queued |
@@ -223,22 +231,33 @@ None blocks TQ-46.
 
 ## 7. Exactly what to do next
 
-**TQ-46 — the Superuser portfolio as its own ownership domain.** Its queue entry
-is written; **there is no implementation spec yet**, so the first step is writing
-one the way TQ-44's and TQ-45's were written. Both are the model to follow, and
-deciding their open questions before coding is the part that paid off twice.
+**Ask the owner which lineage to work first.** Two are open and independent, and
+picking one unasked would be choosing for them:
 
-What TQ-46 inherits, already decided and built:
+- **TQ-46 … TQ-50** — the rest of addendum 44: the Superuser ownership domain,
+  its UI tab, snapshots and audit, the Schwab boundary. TQ-50 is already blocked
+  on owner action (Schwab API access).
+- **TQ-51 … TQ-68** — addendum 45, assimilated 2026-08-26 (§102): local
+  intelligence and competitive model routing.
 
-1. **`SUPERUSER` is a separate owner domain, not a skeleton key** (§99). The
-   guard already refuses a superuser reaching a client's portfolio, and a test
-   asserts it from both directions. TQ-46 gives the operator portfolios of their
-   *own*; it must not add a branch to `resolve`.
-2. **`app/tools/portfolio.py` still has no owner argument** — addendum 44 §16.7
-   says to remove that global behaviour, and this is the entry that owns it.
-   Currently unreachable from the Gateway.
-3. **A provider interface exists** (§101), so the operator's portfolio has an
-   obvious shape to arrive in rather than needing a new one.
+Both start with a specification written the way TQ-44's and TQ-45's were —
+neither TQ-46 nor TQ-51 has one yet, and deciding their open questions before
+coding is the part that has now paid off three times.
+
+**If it is TQ-46:** `SUPERUSER` is already a separate owner domain with a guard
+that refuses in both directions (§99). TQ-46 gives the operator portfolios of
+their *own*; it must not add a branch to `resolve`. It also owns removing
+`app/tools/portfolio.py`'s missing owner argument (addendum 44 §16.7).
+
+**If it is TQ-51:** it is small and deliberately first. `model_registry.yaml`
+carries `routing: none_single_model` as a pinned decision, and
+`tests/test_model_registry.py` fails the suite the day a second model is
+registered — the tripwire §64 planted for exactly this moment. **Re-aim it, do
+not delete it.** Two findings from assimilation shape the work and are in §102:
+the GPU is **8 GB** (a pool of six is feasible on disk, sequential in VRAM), and
+**"Inkling"** — named as a required initial candidate by addendum 45 §47 — is not
+identifiable as an open-weight local model. TQ-52 has to answer what it is, and
+it has deliberately **not** been substituted with something similar.
 
 Then: `git checkout -b <name>`, one increment, full suite green, a
 `SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.
