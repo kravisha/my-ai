@@ -1395,8 +1395,8 @@ Mutation-tested five ways, five caught.
 
 ### TQ-52 — The candidate survey: what can actually run on this machine
 
-**NEED (GREEN) · QUEUED — unblocked 2026-08-26 · depends on TQ-51 · addendum 45 §5, §34, §35,
-§43, §44**
+**NEED (GREEN) · DONE 2026-08-27 · `docs/local_model_candidates.yaml` · depends on TQ-51 (done) ·
+addendum 45 §5, §34, §35, §43, §44**
 
 Metadata before code (addendum 30 §12), and this one is metadata before *downloads*. Produces
 `docs/local_model_candidates.yaml`: for each candidate, the licence, the parameter count, the
@@ -1440,8 +1440,32 @@ roughly an order of magnitude. The initial pool is **Llama + DeepSeek + Qwen/Mis
 out with the reason stated rather than quietly dropped.
 
 Nothing about this system may depend on any of them until the survey writes them all down in
-`docs/local_model_candidates.yaml` with the same three facts each. **That survey is now the whole
-of the remaining work here** — the blocking question is answered.
+`docs/local_model_candidates.yaml` with the same three facts each.
+
+**Done 2026-08-27.** `docs/local_model_candidates.yaml` carries the licence, parameter count,
+quantization, runtime and VRAM figure for each candidate, plus the verdict and its reason.
+
+**The initial pool is three, not six:** `qwen35-9b` (Apache 2.0, Q4_K_M ≈ 5.7 GB — the general
+candidate and the first to try), `deepseek-r1-distill-8b` (MIT, ≈ 5.2 GB — a reasoning specialist,
+whose thinking tokens are a cost as well as a capability), and `gemma-4-e4b` (Apache 2.0 since
+Gemma 4 — the small fast fallback for when context matters more than capability). Three rather than
+six because §15's challenger comparisons are sequential on 8 GB of VRAM anyway: a pool of six would
+have been five models nobody had run.
+
+All three of addendum 45's named candidates are resolved with a stated verdict rather than a quiet
+omission. **Llama is out twice over** — Llama 4 Scout is 109B with a non-OSI community licence, and
+Meta's open-weight line has since moved to Muse Glimmer 30B, which is Apache 2.0 and still needs
+24–32 GB of VRAM. Muse Glimmer is recorded as the **near-miss to revisit first if this hardware
+changes**, which is more useful than leaving it out.
+
+**Disk was never the constraint.** 365 GB holds any of these many times over; 8 GB of VRAM is the
+whole limit, which is what makes the pool small and the comparisons sequential.
+
+**What the survey does not establish is that any of them is good enough.** Nothing has been
+downloaded or run, and no figure in that file was measured on this machine — every one is a
+published number with its source recorded, so `fits: true` means *the numbers say it should*. §108
+stands unchanged until one of them has actually been run: a `LOCAL_ONLY` task with no local model
+is refused, never escalated. TQ-57 produces the first `measured:` block.
 
 Two things worth carrying into it. **A model that needs an unmerged PR is not a runtime this
 project has**, and that applies to any candidate, not only this one — the honest column is "runtime

@@ -1,0 +1,350 @@
+# Local model candidates — what can actually run on this machine
+#
+# TASK_QUEUE TQ-52. Addendum 45 §5, §34, §35, §43, §44.
+# Surveyed 2026-08-27, the day this machine first had internet access.
+#
+# ## What this document is, and what it is not
+#
+# It is **metadata before downloads** (addendum 30 §12). No model artifact has
+# been fetched, no runtime installed, and nothing here has been run. Every
+# figure below was read from a vendor's own page or a third-party benchmark on
+# the date given, and is recorded with its source so a reader can check it
+# rather than trust it.
+#
+# So `fits: true` means *"the published numbers say it should"* and never
+# *"we ran it"*. The difference matters: this project's own history is a
+# sequence of things that looked right until somebody started them and looked
+# (§110's live check, §100's clean report that was not true). The first
+# candidate actually downloaded gets a `measured:` block underneath its
+# `published:` one, and where the two disagree the measurement wins.
+#
+# ## The hardware, measured rather than assumed (§102)
+#
+# GPU:  NVIDIA RTX 3050, 8 GB VRAM
+# RAM:  16.5 GB system
+# Disk: 365 GB free
+#
+# Two things that number-shopping tends to skip:
+#
+# - **8 GB of VRAM is not 8 GB of usable VRAM.** The display and the desktop
+#   compositor hold some of it. Budget ~7.0–7.5 GB, which is why a build that
+#   lands at 7.0 GB is "tight" here rather than "fits".
+# - **The KV cache grows with context and lives in VRAM.** A 5.7 GB weight file
+#   on a 262K-context model does not mean 262K of context fits. Long-context
+#   work on this machine means short context or offload, and offload means
+#   system RAM, of which there is 16.5 GB shared with everything else.
+#
+# ## Standing rules this survey works under
+#
+# - **A finding, never a substitution.** Where a named candidate does not fit,
+#   it is recorded as out *with the reason*, and nothing similarly named is
+#   quietly put in its place. This was the rule while "Inkling" was still an
+#   unknown name (§102) and it is the rule now that it is a known model.
+# - **Absent is `unknown`, never a plausible default** (§100, §104). A figure
+#   nobody published is `unknown`. It is not interpolated from a similar model.
+# - **"Runtime available today", not "runtime announced."** A model that needs
+#   an unmerged pull request is a model this project cannot run, however close
+#   the support is.
+# - **Nothing here changes §108.** A LOCAL_ONLY task with no local model is
+#   refused, never escalated. That rule is live today and stays live until
+#   something in the `pool` below is downloaded, run and measured.
+
+surveyed_at: 2026-08-27
+surveyed_by: TQ-52
+status: SURVEY_COMPLETE_NOTHING_INSTALLED
+
+hardware:
+  gpu: NVIDIA RTX 3050
+  vram_gb: 8
+  vram_usable_gb_estimate: 7.25   # display and compositor take the rest
+  system_ram_gb: 16.5
+  free_disk_gb: 365
+  measured_in: "SPEC_RECONCILIATION.md §102"
+
+# --- the three addendum 45 named as initial candidates -----------------------------
+#
+# §5 and §43 name Llama, DeepSeek and Inkling. Each is answered here explicitly,
+# because a specification naming a candidate deserves a stated verdict rather
+# than a quiet omission.
+
+named_by_addendum_45:
+
+  - name: Inkling
+    vendor: Thinking Machines Lab
+    verdict: OUT
+    reason: >-
+      Real, properly licensed, and out of reach of this hardware by roughly an
+      order of magnitude. The smallest published build is 226 GB at 1-bit; this
+      machine has 8 GB of VRAM and 16.5 GB of RAM. It would fit on the disk with
+      about 139 GB to spare, and that is the only sense in which it fits —
+      running it means streaming roughly nine tenths of every token's weights
+      off disk, at a quantization where "it ran" would not mean "it answered".
+    parameters_total: 975B
+    parameters_active_per_token: 41B
+    architecture: "MoE — 6 of 256 experts plus 2 shared, 66 layers"
+    licence: Apache-2.0
+    context_window: 1048576
+    modalities: [text, image, audio]
+    smallest_published_build_gb: 226      # 1-bit
+    quantization_that_fits: none
+    vram_required_gb: unknown             # no published figure at any build
+    runtimes_available_today: [SGLang, vLLM, Transformers, Ollama, "LM Studio"]
+    runtime_caveat: >-
+      llama.cpp support is not in a mainline release; it needs a build from the
+      unmerged PR #25731. Recorded because "runtime announced" is not "runtime
+      available today".
+    fits_here: false
+    note: >-
+      MoE helps compute and not storage. 41B active per token still selects
+      those experts from all 975B, which have to be somewhere reachable.
+    sources:
+      - https://thinkingmachines.ai/news/introducing-inkling/
+      - https://huggingface.co/thinkingmachines/Inkling
+      - https://huggingface.co/AtomicChat/Inkling-GGUF
+
+  - name: Llama 4 Scout
+    vendor: Meta
+    verdict: OUT
+    reason: >-
+      109B total with 17B active — far past this machine at any quantization —
+      and the Llama Community Licence carries restrictions that a permissively
+      licensed alternative does not. Two independent reasons to pass, and the
+      licence one would matter even on bigger hardware.
+    parameters_total: 109B
+    parameters_active_per_token: 17B
+    architecture: "MoE — 16 experts"
+    licence: "Llama Community Licence (not OSI; MAU-threshold and naming terms)"
+    quantization_that_fits: none
+    vram_required_gb: unknown
+    fits_here: false
+    successor_note: >-
+      Meta's open-weight line moved on. Muse Spark replaced Llama in April 2026,
+      and Muse Glimmer 30B followed on 2026-08-10 under plain Apache 2.0 — see
+      `also_considered`. So "Llama" as addendum 45 named it is both too large
+      and no longer the vendor's current open model.
+    sources:
+      - https://en.wikipedia.org/wiki/Llama_(language_model)
+      - https://www.thundercompute.com/blog/best-open-source-llms
+
+  - name: DeepSeek
+    vendor: DeepSeek
+    verdict: IN — via the distilled checkpoints, not the flagship
+    reason: >-
+      The flagships are out of reach (V4-Pro 1.6T, V4-Flash 284B, both MIT,
+      both far past this machine). The distilled line is exactly what this
+      hardware is for, and DeepSeek publishes it deliberately for that.
+    see: pool[deepseek-r1-distill-8b]
+    licence: MIT
+    sources:
+      - https://deepseekmodel.com/deepseek-models
+      - https://huggingface.co/blog/daya-shankar/open-source-llms
+
+# --- the pool: what this machine can actually run ----------------------------------
+#
+# Ordered by how well the published figures fit, not by benchmark rank. A model
+# that does not fit has no rank here.
+
+pool:
+
+  - id: qwen35-9b
+    name: Qwen3.5-9B
+    vendor: Alibaba (Qwen)
+    licence: Apache-2.0
+    released: 2026-03-02
+    parameters_total: 9B
+    architecture: dense, unified vision-language with early fusion
+    context_window: 262144
+    modalities: [text, image]
+    quantization_that_fits: Q4_K_M
+    disk_gb: 5.7
+    vram_required_gb: 5.7          # weights; KV cache is on top and grows with context
+    system_ram_gb_if_offloading: 8
+    runtimes_available_today: ["llama.cpp", Ollama, "LM Studio", vLLM, Transformers]
+    fits_here: true
+    confidence: high
+    fit_note: >-
+      About 5.7 GB of weights against ~7.25 GB usable leaves roughly 1.5 GB for
+      KV cache and runtime overhead. That is a working margin at short context
+      and not at 262K — the context window is a property of the model, not of
+      what this GPU can hold.
+    suitability_note: >-
+      The strongest general candidate for 8 GB in the published comparisons, and
+      multimodal, which nothing else in this pool at this size is. Whether it is
+      the right model for *this* system is a separate question TQ-53's task
+      signature exists to ask — financial reasoning under `PRIVACY_LOCAL_ONLY`
+      is not what these leaderboards measure.
+    sources:
+      - https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/LICENSE
+      - https://atomic.chat/blog/guides/best-local-llm-8gb
+      - https://codersera.com/blog/qwen-3-5-complete-guide-2026/
+
+  - id: deepseek-r1-distill-8b
+    name: DeepSeek-R1-Distill-8B
+    vendor: DeepSeek
+    licence: MIT
+    parameters_total: 8B
+    architecture: dense, distilled from Qwen3
+    base_model_note: >-
+      Distilled from Qwen3, so it inherits that lineage's terms as well as
+      DeepSeek's MIT — the distilled checkpoints carry extra notes for exactly
+      this reason. Read both before shipping anything on it.
+    modalities: [text]
+    quantization_that_fits: Q4
+    disk_gb: 5.2
+    vram_required_gb: 5.2
+    system_ram_gb_if_offloading: 8
+    runtimes_available_today: [Ollama, "llama.cpp", "LM Studio", vLLM]
+    fits_here: true
+    confidence: high
+    suitability_note: >-
+      A reasoning model that thinks step by step before answering. That is
+      interesting for this system and it is also a cost: reasoning tokens are
+      tokens, and §105's leaderboards measure latency as well as quality. It is
+      a candidate for the categories where the thinking pays, not a default.
+    sources:
+      - https://deepseekmodel.com/deepseek-models
+      - https://localaimaster.com/blog/deepseek-r1-local-setup-guide
+
+  - id: ministral-3-8b
+    name: Ministral 3 8B
+    vendor: Mistral
+    licence: Apache-2.0
+    parameters_total: 8B
+    architecture: dense
+    context_window: 262144
+    modalities: [text, image]
+    quantization_that_fits: Q4_K_M
+    disk_gb: unknown          # no published figure found; ~5 GB by class, not recorded as fact
+    vram_required_gb: unknown
+    runtimes_available_today: ["llama.cpp", Ollama, "LM Studio", vLLM]
+    fits_here: probable
+    confidence: medium
+    fit_note: >-
+      An 8B dense model at Q4 is comfortably inside this envelope by class, but
+      no published file size was found for this specific build, so the figure is
+      `unknown` rather than interpolated (§100). Confirm before it is chosen
+      over `qwen35-9b`, for which a benchmarked number exists.
+    suitability_note: >-
+      Noted as strong in European languages. Nothing in this system needs that
+      today; recorded because a survey that only lists what today needs is a
+      survey that has to be redone.
+    sources:
+      - https://computingforgeeks.com/open-source-llm-comparison/
+      - https://precisionaiacademy.com/blog/open-source-ai-models-guide-2026
+
+  - id: gemma-4-e4b
+    name: Gemma 4 E4B
+    vendor: Google
+    licence: Apache-2.0
+    released: 2026-03-31
+    parameters_total: 4B
+    parameters_effective: 4.5B
+    architecture: dense, per-layer embeddings
+    context_window: 131072
+    modalities: [text, image, audio]
+    quantization_that_fits: Q4_K_M
+    disk_gb: unknown
+    vram_required_gb: unknown
+    runtimes_available_today: ["llama.cpp", Ollama, "LM Studio", Transformers]
+    fits_here: true
+    confidence: medium
+    fit_note: >-
+      Built for phone and edge deployment, so it fits this machine with room to
+      spare — which makes it the fallback when a 9B build leaves too little VRAM
+      for the context a task needs.
+    licence_note: >-
+      Gemma 4 moved to plain Apache 2.0 with no separate Google agreement. Worth
+      recording because earlier Gemma generations did not, and a stale memory of
+      that would have ruled it out wrongly.
+    sources:
+      - https://www.digitalapplied.com/blog/open-source-ai-landscape-april-2026-gemma-qwen-llama
+      - https://gemma4-ai.com/blog/best-local-ai-models-2026
+
+  - id: qwen35-4b
+    name: Qwen3.5-4B
+    vendor: Alibaba (Qwen)
+    licence: Apache-2.0
+    released: 2026-03-02
+    parameters_total: 4B
+    architecture: dense
+    modalities: [text, image]
+    quantization_that_fits: Q4_K_M
+    disk_gb: unknown
+    vram_required_gb: unknown
+    runtimes_available_today: ["llama.cpp", Ollama, "LM Studio", vLLM]
+    fits_here: true
+    confidence: medium
+    suitability_note: >-
+      The same family as the leading candidate, one size down. Its value is as a
+      controlled comparison: §105's leaderboards can only tell you a model is
+      better than another if two models differ in one thing, and these two
+      differ in size alone.
+    sources:
+      - https://codersera.com/blog/qwen-3-5-complete-guide-2026/
+
+# --- considered and out ------------------------------------------------------------
+
+also_considered:
+
+  - name: Muse Glimmer 30B
+    vendor: Meta
+    verdict: OUT — by a factor of about three
+    licence: Apache-2.0
+    released: 2026-08-10
+    parameters_total: 30B
+    architecture: dense, multimodal, agent-tuned
+    context_window: 131072
+    official_4bit_footprint_gb: "17–20"
+    vram_required_gb: "24–32"
+    fits_here: false
+    reason: >-
+      Meta's official 4-bit build is sized for 24–32 GB of VRAM and lands at
+      17–20 GB. This machine has 8. Recorded rather than omitted because it is
+      the most interesting near-miss in the survey: Apache 2.0, agent-tuned,
+      explicitly built for local execution, and the first open weights Meta has
+      shipped since Llama 4. **It is the model to revisit first if this hardware
+      ever changes** — which is a more useful thing for this file to say than
+      silence.
+    sources:
+      - https://huggingface.co/meta-models/Muse-Glimmer-30B
+      - https://www.infoq.com/news/2026/08/meta-muse-glimmer/
+      - https://runaihome.com/blog/muse-glimmer-30b-local-ai-hardware-guide-2026/
+
+  - name: DeepSeek V4-Flash / V4-Pro
+    vendor: DeepSeek
+    verdict: OUT
+    licence: MIT
+    released: 2026-04
+    parameters_total: "284B (Flash) / 1.6T (Pro)"
+    context_window: 1000000
+    fits_here: false
+    reason: Both are far past 8 GB of VRAM at any quantization.
+
+# --- what this survey concludes ----------------------------------------------------
+
+conclusion:
+  initial_pool: [qwen35-9b, deepseek-r1-distill-8b, gemma-4-e4b]
+  first_to_try: qwen35-9b
+  reasoning: >-
+    Three models rather than six. Addendum 45 §15's challenger comparisons are
+    sequential on this hardware anyway — 8 GB of VRAM holds one of these at a
+    time — so a pool of six would be five models nobody had run. Three covers
+    the axes that differ: a general multimodal model, a reasoning specialist,
+    and a small fast fallback for when context matters more than capability.
+  named_candidates_resolved:
+    inkling: "out — 226 GB at 1-bit against 8 GB VRAM"
+    llama: "out — 109B and a restrictive licence; the vendor's line has moved to Muse Glimmer, also out at 17–20 GB"
+    deepseek: "in, via the 8B distill; the flagships are out"
+  disk_is_not_the_constraint: >-
+    365 GB free holds all three of these many times over. VRAM is the whole
+    constraint, which is what makes the pool small and the comparisons
+    sequential.
+  what_this_does_not_establish: >-
+    That any of them is good enough. Nothing has been downloaded or run, and no
+    figure here was measured on this machine. §108 stands unchanged until one of
+    them has been: a LOCAL_ONLY task with no local model is refused, never
+    escalated.
+  next: >-
+    TQ-57 downloads and runs the first candidate behind `app/local_ai.service()`
+    (§107), and the first thing it produces is a `measured:` block for
+    `qwen35-9b` to sit beneath the `published:` figures above.
