@@ -279,24 +279,30 @@ HOLDINGS_TOOLS = [
         "name": "record_holding",
         "description": (
             "Record what the client says they hold. Use this when they tell you about a "
-            "position. Recording the same ticker again replaces the earlier statement, "
+            "position. Recording the same symbol again replaces the earlier statement, "
             "because that is a correction rather than a second position. Never invent a "
             "holding, and never record one they have not stated."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "description": "The symbol, as they said it."},
-                "shares": {"type": "number", "description": "How many shares."},
-                "cost_basis": {
+                "symbol": {"type": "string", "description": "The symbol, as they said it."},
+                "quantity": {"type": "number", "description": "How many shares or contracts."},
+                "average_cost": {
                     "type": "number",
                     "description": "Price paid per share, if they said. Omit if they did not - "
                                    "do not guess, and do not use a market price.",
                 },
+                "asset_class": {
+                    "type": "string",
+                    "description": "What kind of instrument, if they made it clear - for "
+                                   "example stock, stock_option, etf. Omit if they did not "
+                                   "say; 'shares' alone does not settle it.",
+                },
                 "acquired_on": {"type": "string", "description": "When acquired, if stated."},
                 "note": {"type": "string", "description": "Anything they added about it."},
             },
-            "required": ["ticker", "shares"],
+            "required": ["symbol", "quantity"],
         },
     },
     {
@@ -311,8 +317,8 @@ HOLDINGS_TOOLS = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"ticker": {"type": "string"}},
-            "required": ["ticker"],
+            "properties": {"symbol": {"type": "string"}},
+            "required": ["symbol"],
         },
     },
     {
@@ -506,14 +512,15 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                 if name == "record_holding":
                     return {"recorded": holdings.record(
                         conn, portfolio,
-                        ticker=arguments["ticker"], shares=arguments["shares"],
-                        cost_basis=arguments.get("cost_basis"),
+                        symbol=arguments["symbol"], quantity=arguments["quantity"],
+                        average_cost=arguments.get("average_cost"),
+                        asset_class=arguments.get("asset_class"),
                         acquired_on=arguments.get("acquired_on"),
                         note=arguments.get("note"))}
                 if name == "list_holdings":
                     return {"holdings": holdings.listing(conn, portfolio)}
                 if name == "forget_holding":
-                    removed = holdings.forget(conn, portfolio, str(arguments["ticker"]))
+                    removed = holdings.forget(conn, portfolio, str(arguments["symbol"]))
                     return {"forgotten": removed,
                             "note": None if removed else "You had not told me about that one."}
                 return {"analysis": holdings.concentration(conn, portfolio)}

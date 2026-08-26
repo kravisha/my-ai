@@ -71,46 +71,82 @@ client's real positions would be presenting synthetic output as real — what §
 refused for trade ideas, arriving one field over. Cost basis is a fact the
 client stated; current value is a fact nobody here has.
 
-## Field names stay `ticker` / `shares` / `cost_basis` until TQ-45
+## The canonical holding shape (TQ-45a)
 
-Addendum 44 §3.4 calls them `symbol`, `quantity`, `average_cost`. The rename is
-budgeted into TQ-45 rather than done here, because the canonical holding shape is
-*what a provider returns* and TQ-45 is where `PortfolioProvider` gets defined —
-renaming now means touching the tool schemas and both test files twice.
-`average_cost` is the better name and should win when it happens. **This is a
-recorded decision, not an oversight to tidy** (spec §3.9).
+Fields are addendum 44 §3.4's — `symbol`, `quantity`, `average_cost` — renamed
+from `ticker` / `shares` / `cost_basis` here rather than in TQ-44, because the
+canonical shape is *what a provider returns* and TQ-45 is where
+`PortfolioProvider` gets defined. Doing it in TQ-44 would have meant touching the
+tool schemas and both test files twice.
+
+`average_cost` is the better name for what was always stored: a per-share figure,
+which is what `cost_basis` already meant here and what `holdings.concentration`
+already assumed. `as_of` replaces `stated_at` for a subtler reason — a provider's
+data is *as of* a time, and only a person "states" anything. The shape has to fit
+a brokerage account as well as a conversation.
+
+`asset_class` speaks the house vocabulary rather than addendum 44's EQUITY/OPTION.
+See the constant below; §70 had already ruled on that kind of substitution.
+
+Deliberately still absent: `market_price`, `market_value`, `provider_position_id`,
+`currency`, `metadata`. A field existing is not permission to fill it in, and
+none of these has a producer in this build. `currency` in particular was
+considered and declined for TQ-49 (spec §11 Q4): `store._ADDITIVE_COLUMNS` makes
+adding a column later a one-line change, so an always-NULL column now would be
+machinery with no user.
 """
 
 from __future__ import annotations
 
 from backend.db import Database, now_iso
+from backend.reference_data import ASSET_CLASSES as _HOUSE_ASSET_CLASSES
 from gateway import portfolios
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # A ceiling on how many positions one portfolio may record. Not a storage
 # concern: a "portfolio" of ten thousand lines is somebody using a
 # conversational agent as a database, which is a different product.
 MAX_POSITIONS = 200
 
-# Closed, and extensible per addendum 44 §3.4. `UNKNOWN` is a member rather than
-# an absence (spec §10 Q3): the client said "400 shares", and inferring EQUITY
-# from the word "shares" is a fabrication one step smaller than inventing the
-# holding. Recording that we do not know is a fact; NULL would be a gap every
-# reader has to remember how to interpret.
-ASSET_EQUITY = "EQUITY"
-ASSET_OPTION = "OPTION"
-ASSET_UNKNOWN = "UNKNOWN"
-ASSET_CLASSES = (ASSET_EQUITY, ASSET_OPTION, ASSET_UNKNOWN)
+# The house asset-class vocabulary, imported rather than mirrored (TQ-45a, spec
+# §11 Q1).
+#
+# TQ-44 introduced EQUITY/OPTION from addendum 44 §3.4. This system already had
+# eleven finer codes in backend/reference_data.py, and §70 had already refused
+# exactly that substitution once - for addendum 39's EQUITIES/OPTIONS_ON_EQUITIES
+# - because two naming schemes for one fact is what the Conflict Rule forbids.
+# §3.4 asks for EQUITY and OPTION "at minimum", which the finer set satisfies
+# rather than contradicts.
+#
+# Imported, not copied: a mirrored list would recreate the same two-models
+# problem one scale smaller, with nothing to notice the drift. The import is
+# safe - backend/reference_data opens no connection at import - and a constant
+# tuple of class codes is a vocabulary, not organization data, so the §95
+# invariant is untouched. `test_the_asset_class_vocabulary_is_the_house_one`
+# fails if the two ever diverge.
+ASSET_UNKNOWN = "unknown"
+ASSET_CLASSES = tuple(code for code, _ in _HOUSE_ASSET_CLASSES) + (ASSET_UNKNOWN,)
 
-_FIELDS = ("ticker", "shares", "cost_basis", "asset_class", "acquired_on", "note",
-           "stated_at", "simulated")
+# What a client may hold is deliberately NOT limited to boot configuration's
+# `implemented_asset_classes`. That list says what this organization can
+# process; somebody may own something it cannot, and refusing to record a fact
+# about their money because our reference data is incomplete is the refusal
+# `_clean_ticker` already declines to make about symbols.
+
+_FIELDS = ("symbol", "quantity", "average_cost", "asset_class", "acquired_on", "note",
+           "as_of", "simulated")
 
 SCHEMA = """
 -- What a client has told their representative they hold (TQ-42), owned through
--- a portfolio rather than by a client id (TQ-44). One row per portfolio per
--- ticker: telling your representative about the same holding twice is a
--- correction, not a second position.
+-- a portfolio rather than by a client id (TQ-44), in addendum 44 §3.4's names
+-- (TQ-45a). One row per portfolio per symbol: telling your representative about
+-- the same holding twice is a correction, not a second position.
+--
+-- `average_cost` is per share, which is what `cost_basis` already meant here and
+-- what the new name says out loud. `as_of` replaces `stated_at` because a
+-- provider's data is *as of* a time, and only a person "states" anything - the
+-- shape has to fit a broker as well as a conversation (TQ-45b).
 --
 -- There is deliberately no client_id column beside portfolio_id. Two sources of
 -- truth for ownership can disagree, and ownership is reached by joining through
@@ -126,16 +162,16 @@ SCHEMA = """
 -- exact and auditable instead of a careful guess.
 CREATE TABLE IF NOT EXISTS portfolio_holdings (
     portfolio_id TEXT NOT NULL,
-    ticker TEXT NOT NULL,
-    shares REAL NOT NULL,
-    cost_basis REAL,
-    asset_class TEXT NOT NULL DEFAULT 'UNKNOWN',
+    symbol TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    average_cost REAL,
+    asset_class TEXT NOT NULL DEFAULT 'unknown',
     acquired_on TEXT,
     note TEXT,
-    stated_at TEXT NOT NULL,
+    as_of TEXT NOT NULL,
     simulated INTEGER NOT NULL DEFAULT 0,
-    schema_version INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (portfolio_id, ticker)
+    schema_version INTEGER NOT NULL DEFAULT 2,
+    PRIMARY KEY (portfolio_id, symbol)
 );
 """
 
@@ -162,23 +198,23 @@ def _portfolio_id(portfolio) -> str:
     return portfolio["portfolio_id"]
 
 
-def _clean_ticker(raw) -> str:
-    ticker = str(raw or "").strip().upper()
-    if not ticker:
-        raise HoldingRefused("A holding needs a ticker.")
-    if len(ticker) > 24:
-        raise HoldingRefused("That is too long to be a ticker.")
+def _clean_symbol(raw) -> str:
+    symbol = str(raw or "").strip().upper()
+    if not symbol:
+        raise HoldingRefused("A holding needs a symbol.")
+    if len(symbol) > 24:
+        raise HoldingRefused("That is too long to be a symbol.")
     # Deliberately not checked against this organization's security universe. A
     # client may hold something this system has never heard of, and refusing it
     # would be refusing a fact about their money because our reference data is
     # incomplete.
-    return ticker
+    return symbol
 
 
 def _clean_asset_class(raw) -> str:
     if raw is None or raw == "":
         return ASSET_UNKNOWN
-    value = str(raw).strip().upper()
+    value = str(raw).strip().lower()
     if value not in ASSET_CLASSES:
         raise HoldingRefused(
             f"I do not recognise {value!r} as an asset class. Known are "
@@ -208,32 +244,36 @@ def _interpret(row) -> dict:
     holding = dict(row)
     if holding["asset_class"] not in ASSET_CLASSES:
         raise HoldingRefused(
-            f"stored holding {holding['ticker']!r} has asset class "
+            f"stored holding {holding['symbol']!r} has asset class "
             f"{holding['asset_class']!r}, which this build does not recognise; "
             "refusing rather than guessing what it is.")
     holding["simulated"] = bool(holding["simulated"])
     return holding
 
 
-def record(conn: Database, portfolio, *, ticker: str, shares,
-           cost_basis=None, asset_class: str | None = None,
+def record(conn: Database, portfolio, *, symbol: str, quantity,
+           average_cost=None, asset_class: str | None = None,
            acquired_on: str | None = None, note: str | None = None,
-           simulated: bool = False) -> dict:
+           simulated: bool = False, as_of: str | None = None) -> dict:
     """Record what this client says they hold, replacing any earlier statement
-    about the same ticker.
+    about the same symbol.
 
     Replacing rather than appending: a client mentioning a holding twice is
     correcting themselves, and a representative who accumulated both would be
-    reporting a position its owner never held."""
+    reporting a position its owner never held.
+
+    `as_of` defaults to now, which is right for a client speaking. A provider
+    supplying its own timestamp passes it, because when the *data* is from is not
+    the same fact as when it was written down (TQ-45b)."""
     portfolio_id = _portfolio_id(portfolio)
-    symbol = _clean_ticker(ticker)
-    quantity = _positive(shares, "a number of shares", required=True)
-    cost = _positive(cost_basis, "a cost basis", required=False)
+    ticker = _clean_symbol(symbol)
+    amount = _positive(quantity, "a quantity", required=True)
+    cost = _positive(average_cost, "an average cost", required=False)
     classification = _clean_asset_class(asset_class)
 
     held = conn.fetchone(
-        "SELECT COUNT(*) AS n FROM portfolio_holdings WHERE portfolio_id = ? AND ticker != ?",
-        (portfolio_id, symbol))["n"]
+        "SELECT COUNT(*) AS n FROM portfolio_holdings WHERE portfolio_id = ? AND symbol != ?",
+        (portfolio_id, ticker))["n"]
     if held >= MAX_POSITIONS:
         raise HoldingRefused(
             f"That would be more than {MAX_POSITIONS} positions. I am your point of "
@@ -241,24 +281,24 @@ def record(conn: Database, portfolio, *, ticker: str, shares,
 
     conn.execute(
         "INSERT INTO portfolio_holdings "
-        "(portfolio_id, ticker, shares, cost_basis, asset_class, acquired_on, note, "
-        "stated_at, simulated, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(portfolio_id, ticker) DO UPDATE SET "
-        "shares = excluded.shares, cost_basis = excluded.cost_basis, "
+        "(portfolio_id, symbol, quantity, average_cost, asset_class, acquired_on, note, "
+        "as_of, simulated, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(portfolio_id, symbol) DO UPDATE SET "
+        "quantity = excluded.quantity, average_cost = excluded.average_cost, "
         "asset_class = excluded.asset_class, acquired_on = excluded.acquired_on, "
-        "note = excluded.note, stated_at = excluded.stated_at, "
+        "note = excluded.note, as_of = excluded.as_of, "
         "simulated = excluded.simulated",
-        (portfolio_id, symbol, quantity, cost, classification, (acquired_on or None),
-         (note or None), now_iso(), 1 if simulated else 0, SCHEMA_VERSION),
+        (portfolio_id, ticker, amount, cost, classification, (acquired_on or None),
+         (note or None), (as_of or now_iso()), 1 if simulated else 0, SCHEMA_VERSION),
     )
-    return one(conn, portfolio, symbol)
+    return one(conn, portfolio, ticker)
 
 
-def one(conn: Database, portfolio, ticker: str) -> dict | None:
+def one(conn: Database, portfolio, symbol: str) -> dict | None:
     row = conn.fetchone(
         f"SELECT {', '.join(_FIELDS)} FROM portfolio_holdings "
-        "WHERE portfolio_id = ? AND ticker = ?",
-        (_portfolio_id(portfolio), _clean_ticker(ticker)))
+        "WHERE portfolio_id = ? AND symbol = ?",
+        (_portfolio_id(portfolio), _clean_symbol(symbol)))
     return _interpret(row) if row else None
 
 
@@ -272,19 +312,19 @@ def listing(conn: Database, portfolio) -> list[dict]:
     a worse version of the bug that started all this (§93)."""
     rows = conn.fetchall(
         f"SELECT {', '.join(_FIELDS)} FROM portfolio_holdings "
-        "WHERE portfolio_id = ? ORDER BY ticker", (_portfolio_id(portfolio),))
+        "WHERE portfolio_id = ? ORDER BY symbol", (_portfolio_id(portfolio),))
     return [_interpret(row) for row in rows]
 
 
-def forget(conn: Database, portfolio, ticker: str) -> bool:
+def forget(conn: Database, portfolio, symbol: str) -> bool:
     """Remove one holding; returns whether there was one to remove.
 
     It is the client's data, so they can take it back. A representative who
     could be told something but never told to forget it is keeping a record
     rather than holding a relationship."""
     return conn.execute_returning_rowcount(
-        "DELETE FROM portfolio_holdings WHERE portfolio_id = ? AND ticker = ?",
-        (_portfolio_id(portfolio), _clean_ticker(ticker))) > 0
+        "DELETE FROM portfolio_holdings WHERE portfolio_id = ? AND symbol = ?",
+        (_portfolio_id(portfolio), _clean_symbol(symbol))) > 0
 
 
 def forget_all(conn: Database, portfolio) -> int:
@@ -313,15 +353,15 @@ def concentration(conn: Database, portfolio) -> dict:
         return {"positions": 0, "known_cost": None, "weights": [], "priced": False,
                 "note": "You have not told me about any holdings yet."}
 
-    with_cost = [r for r in rows if r["cost_basis"] is not None]
-    missing_cost = [r["ticker"] for r in rows if r["cost_basis"] is None]
-    total = sum(r["shares"] * r["cost_basis"] for r in with_cost)
+    with_cost = [r for r in rows if r["average_cost"] is not None]
+    missing_cost = [r["symbol"] for r in rows if r["average_cost"] is None]
+    total = sum(r["quantity"] * r["average_cost"] for r in with_cost)
 
     weights = []
-    for row in sorted(with_cost, key=lambda r: r["shares"] * r["cost_basis"], reverse=True):
-        value = row["shares"] * row["cost_basis"]
+    for row in sorted(with_cost, key=lambda r: r["quantity"] * r["average_cost"], reverse=True):
+        value = row["quantity"] * row["average_cost"]
         weights.append({
-            "ticker": row["ticker"],
+            "symbol": row["symbol"],
             "cost": round(value, 2),
             "weight_pct": round(100 * value / total, 2) if total else None,
         })
@@ -343,10 +383,10 @@ def concentration(conn: Database, portfolio) -> dict:
         "largest_position": weights[0] if weights else None,
         "top_three_pct": (round(sum(w["weight_pct"] or 0 for w in weights[:3]), 2)
                           if weights else None),
-        "missing_cost_basis": missing_cost,
+        "missing_average_cost": missing_cost,
         "missing_cost_note": (
-            f"{len(missing_cost)} holding(s) have no cost basis, so they are counted as "
-            "positions but left out of the weights."
+            f"{len(missing_cost)} holding(s) have no average cost recorded, so they are "
+            "counted as positions but left out of the weights."
         ) if missing_cost else None,
     }
 
@@ -399,6 +439,9 @@ def migrate_client_holdings(conn: Database) -> dict:
     rows = conn.fetchall(
         "SELECT client_id, ticker, shares, cost_basis, acquired_on, note, stated_at, "
         f"simulated FROM {LEGACY_TABLE} ORDER BY client_id, ticker")
+    # Reads the pre-TQ-44 names and writes the canonical ones (TQ-45a). A
+    # database that never ran TQ-44 arrives at today's shape in one step rather
+    # than through an intermediate that no longer exists in this build.
     before = len(rows)
 
     by_client: dict[str, list[dict]] = {}
@@ -424,12 +467,12 @@ def migrate_client_holdings(conn: Database) -> dict:
 
             for holding in holdings_for_client:
                 # Written directly rather than through `record`, which stamps a
-                # fresh `stated_at`. When the client said it is a fact about
-                # them, and a migration that rewrote every one to today would
-                # have quietly destroyed it.
+                # fresh `as_of`. When the client said it is a fact about them,
+                # and a migration that rewrote every one to today would have
+                # quietly destroyed it.
                 conn.execute(
-                    "INSERT INTO portfolio_holdings (portfolio_id, ticker, shares, "
-                    "cost_basis, asset_class, acquired_on, note, stated_at, simulated, "
+                    "INSERT INTO portfolio_holdings (portfolio_id, symbol, quantity, "
+                    "average_cost, asset_class, acquired_on, note, as_of, simulated, "
                     "schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (portfolio["portfolio_id"], holding["ticker"], holding["shares"],
                      holding["cost_basis"], ASSET_UNKNOWN, holding["acquired_on"],
@@ -461,3 +504,119 @@ def migrate_client_holdings(conn: Database) -> dict:
 
     return {"migrated": True, "clients": len(created), "holdings": before,
             "portfolios": sorted(created.values()), "archived_table": LEGACY_ARCHIVE}
+
+
+# --- the field rename (TQ-45a, spec §6) --------------------------------------------
+#
+# The second migration in this file, and much smaller than the first: it moves
+# `portfolio_holdings` from TQ-44's column names to addendum 44 §3.4's.
+#
+# Same place and same reasoning as the first (spec §10 Q1 of TQ-44):
+# backend/migrations.py backs up the backend's continuity domain, not gateway.db,
+# so registering a Gateway store there would announce a backup that did not
+# contain the file being migrated.
+#
+# SQLite can ALTER TABLE ... RENAME COLUMN, which is tempting and deliberately
+# not used: four separate renames cannot be made atomic with the verification
+# step, and the copy-verify-rename shape above is already proven against a real
+# database. Matching it costs a few more lines and no thought.
+
+PRE_45_ARCHIVE = "portfolio_holdings_pre45"
+
+# What the old vocabulary maps to. UNKNOWN has an exact counterpart; the other
+# two deliberately do not (spec §11 Q1).
+_ASSET_CLASS_RENAMES = {"UNKNOWN": ASSET_UNKNOWN}
+
+
+def _columns(conn: Database, table: str) -> set[str]:
+    return {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
+
+
+def _renamed_asset_class(value):
+    """The house code for a stored TQ-44 asset class.
+
+    `EQUITY` and `OPTION` are refused rather than mapped. `EQUITY` does not
+    determine `stock` versus `etf`, and picking one is the fabrication this
+    project refuses everywhere else - so the migration says which two codes it
+    could mean and stops, rather than choosing.
+
+    This costs nothing real: no row can hold either value, because the only
+    writer defaulted to `UNKNOWN` and no tool ever supplied a class. It is here
+    so that the rule holds even in the case that cannot happen."""
+    if value in _ASSET_CLASS_RENAMES:
+        return _ASSET_CLASS_RENAMES[value]
+    if value in ASSET_CLASSES:
+        return value
+    raise MigrationRefused(
+        f"stored asset class {value!r} has no unambiguous house code. "
+        f"{value!r} could be more than one of {list(ASSET_CLASSES)}, and this "
+        "migration will not choose for you - set the column deliberately and re-run.")
+
+
+def migrate_holding_field_names(conn: Database) -> dict:
+    """Move `portfolio_holdings` to the canonical column names.
+
+    Fires only on a database that ran TQ-44 but not this: detected by the old
+    `ticker` column still being present, which is a fact about the table rather
+    than a version number that can disagree with it."""
+    if not _table_exists(conn, "portfolio_holdings"):
+        return {"migrated": False, "reason": "no holdings table", "holdings": 0}
+    if "ticker" not in _columns(conn, "portfolio_holdings"):
+        return {"migrated": False, "reason": "already canonical", "holdings": 0}
+    if _table_exists(conn, PRE_45_ARCHIVE):
+        raise MigrationRefused(
+            f"both 'portfolio_holdings' and {PRE_45_ARCHIVE!r} exist, which means an "
+            "earlier rename did not finish. Refusing rather than overwriting the "
+            "archived copy - inspect both tables and remove one deliberately.")
+
+    rows = conn.fetchall(
+        "SELECT portfolio_id, ticker, shares, cost_basis, asset_class, acquired_on, "
+        "note, stated_at, simulated FROM portfolio_holdings ORDER BY portfolio_id, ticker")
+    before = len(rows)
+
+    with conn.transaction():
+        # `execute`, not `executescript`: sqlite3 commits before running a
+        # script, which would end this transaction and make the rollback below
+        # impossible while still looking atomic. backend/db.py refuses it
+        # outright, and this is the case that guard exists for.
+        conn.execute(
+            "CREATE TABLE portfolio_holdings_canonical ("
+            "portfolio_id TEXT NOT NULL, "
+            "symbol TEXT NOT NULL, "
+            "quantity REAL NOT NULL, "
+            "average_cost REAL, "
+            "asset_class TEXT NOT NULL DEFAULT 'unknown', "
+            "acquired_on TEXT, "
+            "note TEXT, "
+            "as_of TEXT NOT NULL, "
+            "simulated INTEGER NOT NULL DEFAULT 0, "
+            "schema_version INTEGER NOT NULL DEFAULT 2, "
+            "PRIMARY KEY (portfolio_id, symbol))")
+        for row in rows:
+            conn.execute(
+                "INSERT INTO portfolio_holdings_canonical (portfolio_id, symbol, quantity, "
+                "average_cost, asset_class, acquired_on, note, as_of, simulated, "
+                "schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (row["portfolio_id"], row["ticker"], row["shares"], row["cost_basis"],
+                 _renamed_asset_class(row["asset_class"]), row["acquired_on"], row["note"],
+                 row["stated_at"], row["simulated"], SCHEMA_VERSION))
+
+        after = conn.fetchone(
+            "SELECT COUNT(*) AS n FROM portfolio_holdings_canonical")["n"]
+        if after != before:
+            raise MigrationRefused(
+                f"rename would have moved {before} holding(s) but landed {after}; "
+                "rolling back and changing nothing.")
+        moved = conn.fetchone(
+            "SELECT COUNT(*) AS n FROM portfolio_holdings_canonical c "
+            "JOIN portfolio_holdings o ON o.portfolio_id = c.portfolio_id "
+            "AND o.ticker = c.symbol")["n"]
+        if moved != before:
+            raise MigrationRefused(
+                f"{before - moved} holding(s) did not land under the same portfolio and "
+                "symbol; rolling back and changing nothing.")
+
+        conn.execute(f"ALTER TABLE portfolio_holdings RENAME TO {PRE_45_ARCHIVE}")
+        conn.execute("ALTER TABLE portfolio_holdings_canonical RENAME TO portfolio_holdings")
+
+    return {"migrated": True, "holdings": before, "archived_table": PRE_45_ARCHIVE}

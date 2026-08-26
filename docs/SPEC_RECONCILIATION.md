@@ -7984,3 +7984,144 @@ Stack stopped afterwards; no orphaned processes.
   Gateway; TQ-46 owns it.
 
 Suite: **2232 passing** (2187 before, +45).
+
+---
+
+## §100 — The canonical holding shape, and a clean report that was not true (2026-08-26, TQ-45a)
+
+Built from [`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md)
+§3.1's first half, which realizes addendum 44 §3.4 and §20 Phase 2's groundwork.
+
+### What this increment is
+
+The holding shape TQ-44 deliberately deferred. `ticker`/`shares`/`cost_basis`
+become `symbol`/`quantity`/`average_cost`, `stated_at` becomes `as_of`, and
+`asset_class` stops speaking a vocabulary of its own.
+
+Split out from TQ-45 proper (spec §3.1) so the provider is written against the
+final holding shape once rather than twice — the same reasoning that moved the
+rename out of TQ-44, one level down. 45b is the provider, its conformance suite
+and the demo rebuild.
+
+`as_of` is the rename worth explaining. `stated_at` encoded an assumption: that a
+person said this. A provider's data is *as of* a time, and the shape has to fit a
+brokerage account as well as a conversation. `record()` still defaults it to now,
+which is right for a client speaking, and now accepts one, which is what a
+provider will need.
+
+### Q1 — the vocabulary, and a collision this project had already ruled on
+
+TQ-44 introduced `EQUITY`/`OPTION`/`UNKNOWN`, reading addendum 44 §3.4 as
+normative. This system already had eleven finer codes in
+`backend/reference_data.ASSET_CLASSES`, validated against `boot_config.json`.
+
+**§70 refused exactly this substitution once already** — for addendum 39's
+`EQUITIES`/`OPTIONS_ON_EQUITIES` — on the grounds that it would be *"two models
+of one fact, which the Conflict Rule forbids"*. §3.4 asks for EQUITY and OPTION
+"at minimum", which the finer set satisfies rather than contradicts. So the house
+vocabulary wins, plus `unknown` for a holding whose class nobody recorded.
+
+The §95 worry — that the Gateway would now depend on a backend vocabulary — was
+checked rather than argued: `backend/reference_data` imports `os`, `json`, `re`
+and `backend.db`, opens no connection at import, and `gateway/store.py` already
+imports `backend.db`. A constant tuple of class codes is a vocabulary, not
+organization data; the boundary §95 protects is the database.
+
+So the Gateway **imports** the list rather than mirroring it, and
+`test_the_asset_class_vocabulary_is_the_house_one` asserts its vocabulary is
+exactly those codes plus `unknown`. A mirrored list would have recreated the same
+two-models problem one scale smaller, with nothing to notice the drift.
+
+Two consequences worth stating:
+
+- **`implemented_asset_classes` is not a constraint on what a client may hold.**
+  That list says what this organization can *process*. Somebody may own something
+  it cannot, and refusing to record a fact about their money because our
+  reference data is incomplete is the refusal `_clean_symbol` already declines to
+  make about symbols. Tested.
+- **`EQUITY` and `OPTION` migrate to nothing.** They are refused, not mapped:
+  `EQUITY` does not determine `stock` versus `etf`, and picking one is the
+  fabrication this project refuses. It costs nothing real — no row can hold
+  either, because the only writer defaulted to `UNKNOWN` — which is precisely why
+  it was cheap to keep the rule true in the case that cannot happen.
+
+### Q4 — `currency`, where the spec's own leaning was wrong
+
+The spec leaned toward adding `currency` in 45a to save TQ-49 a second migration.
+Looking at `gateway/store._ADDITIVE_COLUMNS` undid that argument: adding a column
+later is **one line in a dictionary**, applied on the next start. The migration it
+would have saved does not exist.
+
+What was left was an always-`NULL` column with no producer and no consumer —
+machinery with no user, which this project does not build. Deferred to TQ-49,
+which is the first thing that will know a currency.
+
+### The defect: a clean report that was not true
+
+Found by running it, and the suite was green throughout.
+
+After the rename, `demo_clients.clear()` emptied the live table and
+`outstanding()` reported *"No simulated client data is present"* — while **ten
+demo holdings sat in `portfolio_holdings_pre45`**. Every test passed. The full
+suite passed. It was visible only by clearing a real migrated database and
+counting the rows left behind.
+
+A clean report that is not true is worse than no report, because it is the one a
+pre-launch checklist believes — and the check exists specifically so that
+"removed before live" is knowledge rather than intention (§96).
+
+The cause is worth keeping, because it is what made this easy to get half-right:
+**the two archives are keyed differently.** `client_holdings_legacy` is keyed by
+*client*; `portfolio_holdings_pre45` by *portfolio*. `clear()` had the client ids
+and had already purged the portfolios by the time it reached the second table, so
+the ids it needed no longer existed. The fix collects portfolio ids *before* the
+purge and clears both, and `_clear_archives` says why in the code rather than in
+a commit message.
+
+Two permanent regressions: one that both archives are emptied of demo data, one
+that a *real* client's archived rows survive — because an archive kept for
+diagnosis that gets emptied by a demo clear is the opposite failure.
+
+### Verification
+
+**Both migration paths, each from a genuinely old database** built by checking
+out the old code in a `git worktree` and seeding through its own seeder.
+
+| path | from | result |
+|---|---|---|
+| TQ-44 shape → canonical | worktree at `c1cdd49` | 11 → 11 holdings, **0 value or timestamp mismatches**, archive kept |
+| pre-TQ-44 → canonical | worktree at `74f8fbe` | 11 → 11, straight through in one step, no `pre45` archive created |
+
+The second is the case the code was shaped for: `migrate_client_holdings` writes
+the canonical names directly, so a database that never ran TQ-44 does not pass
+through a column layout this build no longer contains.
+
+**Run it and look.** Gateway started on a seeded database; two clients logged in.
+Avery got the concentration report under the new names, unprompted about the
+by-cost caveat. Morgan was told *"I bought 50 shares of SYN8 at 12.40 last
+month"* and the agent recorded it through the renamed tool schema — the row
+landed with `symbol=SYN8`, `quantity=50`, `average_cost=12.4`, and
+**`asset_class=unknown`**. The model did not guess `stock` from the word
+"shares", which is what the schema description asks of it and the thing most
+worth checking about this change.
+
+`simulated` was `False` on that row and `True` on the seeded ones — §96's
+distinction between "demo data" and "stated by a demo client" survives the
+rename.
+
+One observation, not fixed here: the agent stored `acquired_on = "last month"`.
+The field is free text and always has been, and "last month" is what the client
+said rather than an invention — but a date column that accepts prose is worth a
+decision. Noted in the queue rather than fixed, because it predates this
+increment and belongs with TQ-48's provenance work.
+
+### A guard that caught me
+
+`Database.transaction` refuses `executescript` inside a block, because sqlite3
+commits before running a script — which would end the transaction and make the
+rollback impossible while still looking atomic. The rename migration hit it on
+first run. The DDL is now a single `execute`, and the comment says which guard it
+is obeying. Worth recording that the guard did its job on the first real caller
+after it was written.
+
+Suite: **2247 passing** (2232 before, +15).

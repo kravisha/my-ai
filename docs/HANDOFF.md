@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-44 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-45a complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2232 passed, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2247 passed, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -32,7 +32,7 @@ Then read, in order:
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2232 passing**. Nothing
+`master` plus this checkpoint, clean and pushed. Suite **2247 passing**. Nothing
 running; no orphaned processes.
 
 **Two processes, two databases.**
@@ -79,14 +79,20 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | §97 | Addendum 44 assimilated; TQ-44…TQ-50 queued | #42 |
 | §98 | **TQ-43** per-client Gateway credentials | #43 |
 | — | TQ-44 specification + previous handoff | #44 |
-| §99 | **TQ-44** portfolios as owned entities + the guard | this branch |
+| §99 | **TQ-44** portfolios as owned entities + the guard | #46 |
+| — | TQ-45 specified; two collisions named before anybody hit them | #47 |
+| §100 | **TQ-45a** the canonical holding shape | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
-guard; holdings are re-keyed from `client_id` to `portfolio_id`; the migration
-ran against a copy of a genuinely pre-TQ-44 database (11 holdings, 4 clients, no
-orphans, no owner changed); two clients logged into a running Gateway and each
-saw only their own. The spec's three open questions were decided before any code
-and are recorded in its §10. Nothing outstanding.
+guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
+logged into a running Gateway and each saw only their own.
+
+**TQ-45a final status: COMPLETE.** Holdings are `symbol` / `quantity` /
+`average_cost` / `as_of`, and `asset_class` speaks the house vocabulary.
+Both migration paths verified against genuinely old databases. Running it found a
+defect no test saw — see §100 and item 6 below. Nothing outstanding.
+
+**TQ-45b is next and is specified but not built.**
 
 ---
 
@@ -120,9 +126,12 @@ Each cost something to learn. Reversing one silently would undo real work.
    **The ordering inside `resolve` is load-bearing** — ownership is compared
    *before* the row is interpreted, so a corrupt row cannot become an existence
    oracle. See §99 and `test_an_unreadable_row_still_refuses_a_stranger…`.
-8. **Holding field names stay `ticker`/`shares`/`cost_basis` until TQ-45.** The
-   rename to addendum 44's `symbol`/`quantity`/`average_cost` is budgeted there.
-   Spec §3.9. Do not treat the current names as an oversight.
+8. **One vocabulary for asset class** (§100, spec §11 Q1). `gateway/holdings.py`
+   **imports** `reference_data.ASSET_CLASSES` rather than mirroring it, plus
+   `unknown`. Addendum 44's `EQUITY`/`OPTION` were withdrawn because §70 had
+   already refused that substitution once — two models of one fact. Do not
+   reintroduce them, and do not copy the list.
+   `implemented_asset_classes` is **not** a limit on what a client may hold.
 9. **`resolve()` is the only way to a portfolio, and holdings take a resolved
    portfolio rather than an id.** A second by-id retrieval path is the failure
    mode to watch for — it will not look like a bypass, it will look like a
@@ -134,7 +143,8 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-45** — `PortfolioProvider` abstraction + conformance suite | **SPECIFIED — next** |
+| **TQ-45b** — `PortfolioProvider` + conformance suite + demo rebuild | **SPECIFIED — next** |
+| TQ-45a — the canonical holding shape | **DONE** §100 |
 | TQ-46 — superuser ownership domain; retire the ownerless retrieval | queued |
 | TQ-47 — Superuser Portfolio tab | queued |
 | TQ-48 — snapshots, provenance, audit logging | queued |
@@ -150,7 +160,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-None blocks TQ-45.
+None blocks TQ-45b.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -167,45 +177,58 @@ None blocks TQ-45.
 5. **`app/tools/portfolio.py` has no owner argument.** Addendum 44 §16.7 says to
    remove that global behaviour. Currently unreachable from the Gateway, so not
    urgent; TQ-46 owns it.
-6. **`client_holdings_legacy` exists in any migrated database.** Kept for
-   diagnosis (spec §10 Q2), dropped in a later increment once confidence is
-   established. `demo_clients.clear()` already removes demo rows from it.
-7. **`gateway.db` may hold demo data** if the Gateway has been run locally.
+6. **Two retired holdings tables now exist** in a migrated database:
+   `client_holdings_legacy` (pre-TQ-44, keyed by *client*) and
+   `portfolio_holdings_pre45` (pre-TQ-45a, keyed by *portfolio*). Both are kept
+   for diagnosis and both are reached by `demo_clients.clear()` — the second only
+   after §100 found it was not. **They are keyed differently, which is what made
+   that easy to get half-right**; anything else that sweeps them must handle both
+   keys. Dropping them deliberately is worth a line in TQ-46.
+7. **`acquired_on` accepts prose.** A live agent stored `"last month"` there,
+   which is what the client said rather than an invention, but a date column that
+   takes free text is worth a decision. Predates TQ-45a; belongs with TQ-48's
+   provenance work.
+8. **`gateway.db` may hold demo data** if the Gateway has been run locally.
    `python -m gateway.demo_clients status` reports; `clear` removes. Must be
    clean before any live exposure.
-8. **No exposure beyond loopback.** Nothing is externally reachable (§50's
+9. **No exposure beyond loopback.** Nothing is externally reachable (§50's
    preconditions). Several queued items are preconditions *for* exposure, not
    licence to enable it.
-9. **Bash heredocs are unreliable here** for large Python files — they fail with
-   "unexpected EOF". Use the Write tool for multi-line file creation.
+10. **Bash heredocs are unreliable here** for large Python files — they fail
+    with "unexpected EOF". Confirmed again this session. Use the Write tool.
+11. **`Database.transaction` refuses `executescript`.** sqlite3 commits before
+    running a script, which would end the transaction and make a rollback
+    impossible while still looking atomic. Issue DDL with `execute` inside a
+    transaction block. The TQ-45a migration hit this on its first run.
 
 ---
 
 ## 7. Exactly what to do next
 
-**Implement TQ-45a**, following
+**Implement TQ-45b**, following
 [`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md).
+45a is done (§100); 45b is the rest of that spec.
 
-The spec splits the work in two on purpose (§3.1): **45a** is the canonical
-holding shape — the field rename and the `asset_class` vocabulary — and **45b**
-is the provider, its conformance suite and the demo rebuild. 45a first, so the
-provider is written against the final holding shape once.
-
-1. Read the spec end to end. §3.2 (the provider takes a resolved portfolio, not
-   an `account_ref`) and §11 (five open questions) matter most.
-2. **Decide the five open questions in §11 and record the decisions**, the way
-   TQ-44's three were decided before any code. Q1 (which `asset_class`
-   vocabulary) and Q2 (whether a simulated portfolio gets simulated prices) are
-   the two that change the shape of the work.
-3. `git checkout -b <name>` — 45a and 45b are separate branches, PRs and §records.
-4. §10 names two collisions found while specifying: `asset_class` has two
-   vocabularies and §70 already ruled on that kind of substitution, and demo
-   portfolios are `MANUAL` where addendum 44 §6.2 says `SIMULATED`. Neither is a
-   defect in shipped behaviour; both have to be resolved here.
-5. Full suite, then §14's live check — and note step 3 of it, which is new: ask
-   the agent for a cash balance and listen to how it refuses.
-
----
+1. Read the spec end to end. **§3.2 is the load-bearing decision**: the provider
+   takes a *resolved portfolio*, not an `account_ref`. Addendum 44 §7's
+   conceptual interface is `get_holdings(account_ref)`, and a public function
+   taking a bare reference string is the second by-id retrieval path TQ-44 exists
+   to prevent — one layer below where the tripwire looks. It would not read as a
+   bypass; it would read as implementing the specification.
+2. **Decide §11's Q2, Q3 and Q5 and record them.** Q1 and Q4 were decided for
+   45a and are recorded there. Q2 — whether a labelled simulated portfolio may
+   show simulated prices — is flagged twice on purpose; the leaning is firmly no,
+   because `is_priced()` is one line and widening it makes it two.
+3. `git checkout -b <name>`.
+4. **Write the conformance suite before the second provider exists.** That is the
+   point of the increment (§15.4): a contract with one implementation is a
+   description of that implementation. The concrete guard is in §12 Risk 1 —
+   while writing each test, ask whether a provider that must make a network call
+   could satisfy it. If it needs a local database, the test is wrong.
+5. Full suite, then §14's live check — and note **step 3**, which is new: ask the
+   agent for a cash balance and listen to how it refuses. It is the first time
+   this system declines something because a *provider* cannot answer rather than
+   because a skill is unbuilt.
 
 ## 8. Working conventions
 

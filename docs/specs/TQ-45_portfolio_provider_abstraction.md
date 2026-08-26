@@ -489,62 +489,78 @@ conversation* — genuinely MANUAL data inside a SIMULATED portfolio. See §11 Q
 
 ---
 
-## 11. Open questions
+## 11. Open questions — Q1 and Q4 decided 2026-08-26 (TQ-45a)
 
-Decide these first and record the decisions, the way TQ-44's §10 was decided
-before any code. Each has a leaning; none is settled.
+Q1 and Q4 shape 45a and were decided before its code. **Q2, Q3 and Q5 belong to
+45b** and are left open below, deliberately: Q3 and Q5 need the provider in front
+of them to answer honestly, and answering them now would be guessing early rather
+than deciding early.
 
-**Q1 — Which `asset_class` vocabulary?** House (`stock`/`stock_option`/…) or
-addendum 44's (`EQUITY`/`OPTION`)? **Leaning house**, on §70's precedent and the
-Conflict Rule: one model of one fact. It is finer, already validated against
-`reference_data.ASSET_CLASSES`, and satisfies §3.4's "at minimum" by covering
-more. Against it: the Gateway would then depend on a backend vocabulary, which
-brushes against the §95 invariant — though importing a *constant list* is not
-reading organization data, and the boundary that matters is the database. If
-adopted, decide what the unknown value is called (`unknown`, matching the house
-lower-case style) and confirm `boot_config`'s `implemented_asset_classes` is not
-accidentally made a constraint on what a *client* may say they hold — it must
-not be. A client may hold something this system cannot process.
+### Q1 — Which `asset_class` vocabulary? **Decided: the house one.**
 
-**Q2 — Does a `SIMULATED` portfolio get simulated prices?** **Leaning firmly no,
-and this is the one most likely to be got wrong by somebody being helpful.** The
-argument for is superficially strong: the portfolio is explicitly labeled
-simulated, so a simulated valuation is not a lie, and it would make the demo far
-more impressive. The argument against is that `is_priced()` is one line and one
-rule (§3.7), and widening it to "LIVE, or SIMULATED-and-labeled" makes it two —
-which is precisely the drift a single function exists to prevent. Labels are lost
-in screenshots; a second branch is not lost in code. If a demo genuinely needs it
-later, build it as a separately named `simulated_valuation` that can never be
-mistaken for the real one — and only when something actually asks, per the
-standing rule that machinery with no user does not get built.
+`stock`, `stock_option`, `etf`, `etf_option`, `future`, `future_option`,
+`commodity`, `commodity_option`, `fx`, `fixed_income`, `digital_asset` — plus
+`unknown` for a holding whose class nobody recorded.
 
-**Q3 — `data_mode` for demo clients.** §6.2 says `SIMULATED`/`SIMULATED`; they
-are `MANUAL`/`MANUAL` today (§10.2). **Leaning: seed them as SIMULATED**, since
-that is what they are and §6.2 is explicit. The awkward case is a holding a demo
-client states in conversation, which is genuinely MANUAL data inside a SIMULATED
-portfolio — the same shape as §96's "a demo client's stated holding is unflagged
-but still demo data". Probably: the *portfolio's* `data_mode` describes its
-provider, the *row's* `simulated` flag describes whether it is demo data, and the
-two are allowed to differ because they answer different questions. Confirm that
-reading survives contact with the conformance suite.
+§70's precedent applies exactly and was followed: adopting addendum 44's
+`EQUITY`/`OPTION` alongside the eleven existing codes would be two models of one
+fact, which the Conflict Rule forbids. §3.4's "at minimum EQUITY and OPTION" is
+satisfied more finely rather than contradicted.
 
-**Q4 — `currency` now or in TQ-49?** Every holding is implicitly USD and nothing
-records it. **Leaning: add it in 45a with a `'USD'` default**, because a
-canonical holding shape that cannot express currency is one TQ-49 will have to
-migrate again. Against: a default is a small fabrication for a client who states
-a foreign holding, and this project does not default. Possible resolution — the
-column exists, `NULL` means unrecorded, and the simulated provider sets `'USD'`
-because it knows what it generated.
+The §95 concern raised when this was still open — that the Gateway would depend
+on a backend vocabulary — was checked rather than argued: `backend/reference_data`
+imports `os`, `json`, `re` and `backend.db`, opens no connection at import, and
+`gateway/store.py` already imports `backend.db`. **A constant tuple of asset-class
+codes is a vocabulary, not organization data**; the boundary §95 protects is the
+database, and nothing here reaches it.
 
-**Q5 — Does `ManualPortfolioProvider` earn its place, or is MANUAL just
-"no provider"?** **Leaning: it earns it.** Without it the client-stated path is
-the special case every other provider is compared against, which is how an
-interface ends up shaped like its first implementation — the §2 trap. Against: it
-is an adapter over a local table with no external source, and `supports()` will
-be false for most of the interface. That is not an argument against building it;
-it is the first real test of whether §3.4's capability declaration works.
+So the Gateway imports `ASSET_CLASSES` rather than mirroring it, and a test
+asserts its vocabulary is exactly those codes plus `unknown`. A mirrored list
+would have recreated the same two-models problem one scale smaller, with nothing
+to notice the drift.
 
----
+**`unknown` is a member, not an absence** — the reasoning TQ-44's §10 Q3 already
+recorded, now expressed in the house's lower-case style.
+
+**`implemented_asset_classes` is not a constraint on what a client may hold.**
+That list says what this system can *process*; a client may hold something it
+cannot, and refusing to record a fact about somebody's money because our
+reference data is incomplete is the refusal `_clean_ticker` already declines to
+make about symbols.
+
+**Migrating the old values.** `UNKNOWN` becomes `unknown`. `EQUITY` and `OPTION`
+are **refused, not mapped** — `EQUITY` does not determine `stock` versus `etf`,
+and picking one is exactly the fabrication this project refuses. Refusing costs
+nothing real: no row can hold those values, because the only writer defaulted to
+`UNKNOWN` and the tool never supplied a class. The error names both candidate
+codes so an operator can resolve it deliberately.
+
+### Q4 — `currency` now or in TQ-49? **Decided: TQ-49. The leaning here was wrong.**
+
+The leaning was to add it in 45a to save TQ-49 a second migration. Looking at
+`gateway/store._ADDITIVE_COLUMNS` undoes that argument: adding a column later is
+**one line in a dictionary**, applied on the next start. The migration this would
+have saved does not exist.
+
+What is left is a column that is always `NULL`, with no producer and no consumer
+— machinery with no user, which this project does not build. TQ-49's broker is
+the first thing that will know a currency, and it can add the column in the same
+increment that first populates it.
+
+### Q2 — Does a `SIMULATED` portfolio get simulated prices? **Still open; 45b.**
+
+Leaning unchanged and firm: **no**. Recorded here only to note it was not
+quietly settled by 45a — nothing in this increment touches `is_priced`, which is
+still one line.
+
+### Q3 — `data_mode` for demo clients. **Still open; 45b.**
+
+Needs the provider. 45a leaves demo clients `MANUAL`/`MANUAL`, unchanged.
+
+### Q5 — Does `ManualPortfolioProvider` earn its place? **Still open; 45b.**
+
+Genuinely undecidable until the interface is written.
+
 
 ## 12. Risks
 

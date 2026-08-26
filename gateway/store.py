@@ -88,6 +88,11 @@ def init_schema(conn: Database) -> None:
     # Q1. A no-op once it has run: it renames the legacy table away, so a second
     # call finds nothing to do.
     holdings.migrate_client_holdings(conn)
+    # The field rename to addendum 44 §3.4's names (TQ-45a). Fires only on a
+    # database that ran TQ-44 but not this one; detected by the old column still
+    # being present rather than by a version number that could disagree with the
+    # table it describes.
+    holdings.migrate_holding_field_names(conn)
 
 
 # Columns added after a database already existed. Additive only, matching the
