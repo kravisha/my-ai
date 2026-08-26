@@ -385,6 +385,40 @@ already covered by the `simulated` flag. **Leaning: two now**, the rest when
 something needs them — the standing rule that machinery with no user does not get
 built.
 
+**Q4 — Which id owns the SUPERUSER portfolio?** *Flagged here by TQ-69 (its §10
+Q3, decided 2026-08-26 to flag rather than settle), and it is load-bearing for
+this increment in a way that is easy to miss.*
+
+TQ-69 put the portfolio subsystem behind the backend and had the backend store
+`(owner_type, owner_id)` **opaquely** — it authorizes those strings and never
+interprets them. That makes this question un-answerable by the backend on purpose,
+and answerable by exactly two callers, because only two can assert an owner:
+
+- **the Gateway**, which knows a Gateway subject — §109's reading, where SUPERUSER
+  means the operator at the door; and
+- **`/chat`**, which knows a backend `username` from `users.json`, already resolved
+  by `Depends(get_current_user)` and currently discarded (TQ-69 spec §3).
+
+Those are two different identity populations (TQ-70), so this is a choice between
+them rather than a naming detail. TQ-69 narrows the space and deliberately does not
+choose within it: choosing there would have been choosing cheaply, in the increment
+with no consumer for the answer.
+
+**What this spec must do, beyond deciding:** *store* the choice, and test it.
+With two owner domains and two candidate operator ids, the wrong pairing is **not
+refused — it returns an empty portfolio.** `resolve()` is working correctly when
+that happens: the operator asked under one id and the row is owned by the other,
+which is precisely the "not yours" answer, indistinguishable by design from "no
+such portfolio" (addendum 44 §9.3). §15.5's permanent regression covers a client
+receiving the operator's portfolio. **Nothing yet covers the operator silently
+receiving nobody's**, and "no data" is the failure that reads as a working system —
+so this increment owes a test with the opposite shape to §15.5's.
+
+Note this interacts with Q1's decided reading B: an owned backend equivalent of
+`retrieve_portfolio` reads *the migrated SUPERUSER portfolio*, so if the migration
+stamped one id and `/chat` asserts the other, reading B delivers an empty tool
+result rather than an error, on the increment's headline path.
+
 ---
 
 ## 12. Risks

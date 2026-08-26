@@ -74,11 +74,12 @@ holds the queue, not the record.
 > suite (§107), TQ-59 the deterministic check and escalation decision (§108). `routing` now stands
 > on the `seeded_leaderboard` rung.
 >
-> **That lineage is blocked at TQ-52 on one owner answer: what "Inkling" is.** Addendum 45 §47
-> requires it as an initial local candidate and it is not identifiable as an open-weight local
-> model; it has deliberately **not** been substituted with something similarly named. TQ-57,
-> TQ-58, TQ-60 … TQ-68 all queue behind it. Hardware is measured (§102): 8 GB VRAM, 16.5 GB RAM,
-> 365 GB free disk — a pool of six is feasible on disk and sequential in VRAM.
+> **TQ-52 is unblocked (2026-08-26).** It was held on one owner answer — what "Inkling" is — and
+> the owner has given it: **Inkling Labs' local model**. The survey may now go and read that
+> vendor's own material for the artifact, licence and runtime; it still may not assume them, and
+> substitution stays refused. TQ-57, TQ-58, TQ-60 … TQ-68 queue behind the survey rather than
+> behind the question. Hardware is measured (§102): 8 GB VRAM, 16.5 GB RAM, 365 GB free disk — a
+> pool of six is feasible on disk and sequential in VRAM.
 >
 > Also open: **TQ-07** (consumer-gated), **TQ-20** and **TQ-21** (owner actions), **TQ-28**
 > (the isolation guard), and the deferred animated presenter.
@@ -800,6 +801,51 @@ resolves `username = Depends(get_current_user)` and hands it nowhere near `retri
 §16.7's "ownerless retrieval" is not missing an identity mechanism — it is discarding one it
 already has.
 
+### TQ-70 — Three identity populations, and whether any two of them are one
+
+**NEED (YELLOW) · QUEUED · raised by TQ-69 (spec §10 Q2, decided 2026-08-26) · addendum 16 §7,
+addendum 44 §9.2, §98, §109**
+
+This system authenticates people in three unrelated places, and it was never decided that it
+should:
+
+| population | where | who is in it |
+|---|---|---|
+| backend users | `users.json`, `app/users.py`, `user_data/<username>/` | My AI users — per-user permissions, preferences, audit |
+| Gateway clients | `clients` in `gateway.db` (§98) | the `subject` that owns portfolios, holdings, conversations |
+| environment credentials | `gateway/auth.py`, `MY_AI_ADMIN_USERS`, `GATEWAY_BACKEND_USER` | the operator, internal accounts, and the Gateway's own backend account |
+
+TQ-69 found them (spec §3) and deliberately kept them apart: the backend stores `(owner_type,
+owner_id)` **opaquely**, so it authorizes strings it never has to interpret. That was the right
+call for that increment and it is not a decision about the long run. This entry is the long run.
+
+**The entry exists so the fourth store cannot arrive without comment.** Three identity stores with
+no queue entry saying so is a system where a fourth is added by somebody who reasonably assumes
+that is how this is done.
+
+Three things it has to get right, and one it must not do:
+
+- **It is a data migration over credentials.** Deliberately not run alongside TQ-69, which is a
+  data migration over client financial records: two at once means that if the result is wrong,
+  nobody can tell which half did it.
+- **Nothing may be re-keyed.** The backend now holds real client portfolios under those opaque
+  strings. Any merge either preserves them exactly or changes whose data a portfolio is — and
+  TQ-69 spec §6.3 already ruled on that: *a migration that restamps or re-keys anything has
+  changed whose data it is.*
+- **`normalise` stays one implementation.** Two normalisations that can disagree are two
+  identities for one person, which is the failure `gateway/clients.normalise` exists to prevent.
+  It is one function today, imported rather than copied; a reconciliation is exactly where a
+  second one gets written.
+- **The environment credentials are not a merge candidate.** `gateway/auth.py` says their
+  separation is intentional, and an operator credential living in the same store as customer
+  logins is one compromise away from being one. This entry treats "three stores" as three
+  different *kinds* of thing, not three copies of one.
+
+Output is a decision, not necessarily a merge: "these two are one population and here is the
+migration", or "they are three populations and here is the entry that says why", are both
+acceptable answers. What is not acceptable is the current state — no answer, and no record that
+the question was asked.
+
 ### TQ-46 — The Superuser portfolio as its own ownership domain
 
 **NEED (YELLOW) · SPECIFIED · BLOCKED on TQ-69 · depends on TQ-44 (done), TQ-45 (done) ·
@@ -951,7 +997,8 @@ Mutation-tested five ways, five caught.
 
 ### TQ-52 — The candidate survey: what can actually run on this machine
 
-**NEED (GREEN) · QUEUED · depends on TQ-51 · addendum 45 §5, §34, §35, §43, §44**
+**NEED (GREEN) · QUEUED — unblocked 2026-08-26 · depends on TQ-51 · addendum 45 §5, §34, §35,
+§43, §44**
 
 Metadata before code (addendum 30 §12), and this one is metadata before *downloads*. Produces
 `docs/local_model_candidates.yaml`: for each candidate, the licence, the parameter count, the
@@ -964,12 +1011,24 @@ VRAM; a 70B-class model does not, at any quantization. Disk is ample for a pool 
 not ample for two resident at once, which makes §15's challenger comparisons **sequential**. That
 is a latency cost, not a blocker, and the plan should say so rather than discover it.
 
-**This entry also has to answer what "Inkling" is.** Addendum 45 §5 and §43 name it alongside
-Llama and DeepSeek as an initial candidate. It is not identifiable as an open-weight local model
-from this side, and the project does not fabricate: no task may depend on it until somebody has
-confirmed the actual artifact, its licence and its runtime. If it turns out to be something other
-than a local LLM, the pool is Llama + DeepSeek + Qwen/Mistral/Gemma and that is recorded as a
-finding, **not quietly substituted**.
+**"Inkling" — answered by the owner, 2026-08-26: it is Inkling Labs' local model.** That is the
+fact this entry was blocked on and it is recorded as the owner gave it, which unblocks the survey
+and the lineage behind it (TQ-57, TQ-58, TQ-60 … TQ-68).
+
+What it unblocks is the *looking*, not the conclusion. The survey still owes the same three facts
+for Inkling that it owes every other candidate — **the actual artifact, its licence, and its
+runtime** — plus the parameter count and the quantization that fits 8 GB of VRAM, and it must
+obtain them from Inkling Labs' own published material rather than from a name. Nothing about this
+system may depend on it until those are written down in `docs/local_model_candidates.yaml`
+alongside every other candidate's.
+
+Two failure modes stay refused, and they are why this paragraph is longer than the answer:
+**substitution** — if what turns up is not an obtainable open-weight local model, the pool is
+Llama + DeepSeek + Qwen/Mistral/Gemma and that is recorded as a finding, never filled in with
+something similarly named (§102's original refusal, still standing) — and **fabrication**, if the
+survey cannot find the licence or the weights, the row says `unknown` and the candidate is out
+until somebody supplies them. An owner's identification settles which vendor to go and read; it
+does not settle what the model is.
 
 Output is a decision an owner can act on: the initial pool, named, with the reason each candidate
 is in or out.

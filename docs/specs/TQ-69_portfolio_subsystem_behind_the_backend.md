@@ -305,6 +305,45 @@ like `model_budget`, and that is a third honest category rather than drift. Wort
 ten minutes' confirmation, because "leave it" is also what somebody would say to
 avoid the work.
 
+**Decided 2026-08-26: leave it — and the ten minutes were spent rather than
+skipped.**
+
+The confirmation the leaning asked for is a specific one, because "it records
+routing, not portfolios" is an assertion about *columns*, and a column is
+checkable. The question that decides Q1 is not "is this module about
+portfolios?" — it is **does this table hold a second copy of client financial
+data outside the guard?** If it did, leaving it would put holdings somewhere
+`resolve()` cannot reach: the failure this whole increment exists to close,
+wearing a name that would never attract attention.
+
+It does not. `routing_decisions`' twenty-seven columns were read — identifiers,
+timings, costs, a model name, a rank, a validation result, a status — and
+`task_signature`, which is `app/task_signature.py`'s fifteen fields serialised.
+Those fifteen were read too, and every one is a *classification* of a task
+(category, complexity, privacy level, error cost, four required-capability
+booleans, a context **length**) rather than any of its content. **No symbol, no
+quantity, no owner id, no free-text payload.** Nothing in the log identifies a
+client or reveals a position, so nothing in it belongs behind the ownership
+guard, and there is no second copy to leave behind.
+
+That is what makes the "third honest category" argument load-bearing rather than
+convenient. `app/` holds what both processes import and neither owns —
+`model_budget`, `capability`, `task_signature`, and this. The owner's line
+(§109) divides *Gateway* from *backend*; it does not say everything must be one
+of those two, and inventing that reading would move `model_budget` next, then
+`capability`, and the boundary correction becomes the rewrite §109 explicitly
+declined.
+
+One consequence is worth stating rather than discovering: the routing log now
+records work whose *data* lives in a different process from the one that logged
+the decision. That costs nothing today — the two are never joined, and the log
+was already keyed by task rather than by portfolio — but if anything ever wants
+"which routing decisions touched this client's holdings", the answer is that the
+log cannot say, deliberately. Adding an owner id to it would be adding client
+identity to a table that has spent this increment earning the right not to have
+any. **§106's rule stands unchanged: the log detects privacy misrouting, it does
+not prevent it, and it must never become a place client data is kept.**
+
 **Q2 — Do the identity populations get reconciled?** Three exist (§3), and this
 increment deliberately keeps them apart by storing `owner_id` opaquely. Merging
 `users.json` with the Gateway's `clients` table is a much larger change, needed by
@@ -312,11 +351,64 @@ nothing here. **Leaning: not now, and record it as known.** But it should be
 *queued* rather than left implicit — a system with three identity stores and no
 entry saying so is one where the fourth arrives without comment.
 
+**Decided 2026-08-26: not now, and queued as TQ-70 rather than recorded as a
+footnote.**
+
+Not now, for the reason the leaning gives and one it does not. The reason it
+gives: nothing in this increment needs it, and §4.2's opaque `owner_id` is what
+keeps the move small. The reason it does not: **reconciling identity stores is a
+data migration over credentials**, and this increment is already a data migration
+over client financial records. Two of those in one change means that if the
+result is wrong, nobody can tell which half did it.
+
+Queued rather than noted, because a known thing with no entry is an unknown thing
+with a good memory. TQ-70 owns the question, and it inherits one fact this
+increment establishes that the reconciliation will have to answer to: the backend
+now stores `(owner_type, owner_id)` for real client financial data **without
+knowing what those strings mean**. Any future merge of `users.json` with the
+`clients` table either preserves those strings exactly or re-keys somebody's
+portfolio, and §6.3 already says what this project thinks of re-keying — *a
+migration that restamps or re-keys anything has changed whose data it is.*
+
+The third population — environment credentials (`gateway/auth.py`,
+`MY_AI_ADMIN_USERS`, and now `GATEWAY_BACKEND_USER` as the backend reads it) —
+is deliberately **not** a merge candidate. `gateway/auth.py` says its separation
+is intentional, and an operator credential living in the same store as customer
+logins would be one compromise away from being one. TQ-70 should say that out
+loud rather than treat "three stores" as three of the same kind of thing.
+
 **Q3 — Which id owns the SUPERUSER portfolio?** TQ-46's, but this increment
 determines the answer space. §109 says SUPERUSER means the operator at the
 Gateway; `/chat` knows a backend `username`. Those are different populations, and
 TQ-46 cannot be built until somebody says which one owns the operator's
 portfolio. **Flag it in TQ-46's spec rather than deciding it here.**
+
+**Decided 2026-08-26: not decided here — flagged in TQ-46's spec as its §11 Q4 (its Q3 was already taken).
+This increment narrows the answer space rather than choosing within it.**
+
+Deciding it here would be deciding it *cheaply*, in the increment that has no
+consumer for the answer, and it would arrive in TQ-46 as a constraint nobody
+remembered choosing.
+
+What this increment does settle, and what TQ-46 inherits:
+
+- `owner_type` stays a two-member closed vocabulary, `CLIENT` and `SUPERUSER`,
+  and `SUPERUSER` remains **a separate owner domain, not a skeleton key**
+  (addendum 44 §5.3). Whichever id wins, it wins *inside* that domain and reaches
+  no client.
+- The backend never interprets `owner_id` (§4.2). So the question is not "what
+  can the backend accept?" — it accepts either string — it is **who asserts it**,
+  and only two callers can: the Gateway, which knows a Gateway subject, and
+  `/chat`, which knows a backend `username` that is already resolved and already
+  discarded (§3).
+- The answer is therefore forced to be one of exactly two, and TQ-46 must pick one
+  and *store the choice*.
+
+That last point carries a consequence worth naming now. With two owner domains
+and two possible operator ids, the wrong pairing is **not refused — it produces
+an empty portfolio**. §15.5's regression covers a client receiving the operator's
+portfolio; nothing yet covers the operator silently receiving nobody's, and
+"no data" is the failure that reads as a working system.
 
 ---
 
