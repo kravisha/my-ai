@@ -747,9 +747,60 @@ Also rebuilds the demo clients on the provider interface. §96's three clients (
 portfolios per client with the diversity it names — large-cap plus a covered call, growth plus
 long calls or protective puts, diversified plus cash — which needs `asset_class` from TQ-44.
 
+### TQ-69 — Move the portfolio subsystem behind the backend, where authorization lives
+
+**NEED (ORANGE) · QUEUED — blocks TQ-46 · owner direction 2026-08-26
+(`SPEC_RECONCILIATION.md` §109) · addendum 16 §7, addendum 40 §14**
+
+Owner direction: *"Gateway is for establishing identity — Gateway only does authentication. Back
+end does authorization and all business logic."*
+
+`gateway.db` holds nine tables and two of them are authentication. `portfolios` and
+`portfolio_holdings` — with the ownership guard that authorizes every read of them — are business
+logic sitting in the process specified to do none. Addendum 16 §7 says external clients must not
+reach internal databases; the Gateway holding the database is the same boundary crossed from the
+other side.
+
+Scope: `portfolios`, `portfolio_holdings`, `gateway/portfolios.py`'s guard,
+`gateway/holdings.py` and `gateway/portfolio_providers.py` move backend-side. The Gateway reaches
+them over HTTP, the way `gateway/jarvis.py` already reaches `/admin` — read-only enforcement in the
+one method that touches the network, which is the pattern that already exists rather than a new
+one.
+
+**None of the work in §96, §99, §100, §101 or §106 is wasted.** The ownership guard, the canonical
+holding shape, the provider contract and the routing decision log are all correct and all
+portable. What changes is which process owns the table and which process authorizes the call —
+and the guard gets *stronger*, because a Gateway request then passes a backend authorization check
+it currently is the only check for.
+
+Flagged ORANGE, not for difficulty but for blast radius: it moves live client financial data
+between databases, and §99's rule stands — test against a **copy** of a seeded database, and the
+§15.5 regression must still pass at the end, from the Gateway's side, over HTTP.
+
+Two things to settle before building, in the spec this entry needs:
+
+- **Does the Gateway keep a read-through cache?** §23 wants the Gateway usable when an internal
+  component is down, which is the reason it has local storage at all. A portfolio it cannot reach
+  is different from a conversation it cannot reach — showing somebody stale holdings is worse than
+  showing them nothing. Leaning: no cache, and an honest refusal when the backend is down.
+- **What happens to the client agent, conversations and the scoreboard?** Same category of drift
+  (§109), deliberately not moved here. Moving four subsystems because one needed it is how a
+  boundary correction becomes a rewrite.
+
 ### TQ-46 — The Superuser portfolio as its own ownership domain
 
-**NEED (YELLOW) · QUEUED · depends on TQ-44 · addendum 44 §4, §10, §16, §21.4, §21.6**
+**NEED (YELLOW) · SPECIFIED · BLOCKED on TQ-69 · depends on TQ-44 (done), TQ-45 (done) ·
+addendum 44 §4, §10, §16, §21.4, §21.6 · spec: `docs/specs/TQ-46_superuser_ownership_domain.md`**
+
+**Blocked 2026-08-26 by owner direction** (§109): the Gateway authenticates, the backend
+authorizes and holds business logic. The portfolio subsystem is on the wrong side of that line, so
+TQ-69 moves it first — building a `SUPERUSER` domain into `gateway.db` and moving it a week later
+is the mistake TQ-44 refused to make with the entity and its guard.
+
+**Q1 is decided: reading B** — keep the capability, remove the ownerlessness. The spec called B
+expensive because the backend cannot reach `gateway.db`; under the corrected architecture that
+sentence describes the problem rather than the constraint, and B is simply the shape the system
+was specified to have.
 
 The Superuser portfolio is not a client portfolio and must never be reachable through a client
 path (§1, §4.1, §4.2). Today the operator's portfolio is `data/portfolio.xlsx` behind
@@ -768,6 +819,23 @@ those holdings are the operator's own Gateway-stated ones; it stops being harmle
 SUPERUSER-owned portfolio exists and the two paths can resolve to each other. §97 records the
 three-way vocabulary collision (Server Superuser, Gateway Super User, ROLE_OPERATOR) that makes
 this easy to get wrong.
+
+**Specified 2026-08-26** — `docs/specs/TQ-46_superuser_ownership_domain.md`. Writing it settled
+what the YELLOW flag actually is, **by measuring rather than reasoning**: the two paths *cannot*
+resolve to each other. `_owned_by` compares `(owner_type, owner_id)` as a pair, so one name in two
+domains is two owners, and TQ-44's guard already refuses in both directions. The security half of
+the flag is closed.
+
+What remains is narrower and different — **ambiguity**. After this increment the operator has two
+portfolios under one name, and nothing distinguishes them in what they read. That is not a breach;
+it is somebody being shown the wrong money, which §96 already called "a confusion worth naming".
+The flag stays YELLOW because that hazard is real, just not the one the entry named.
+
+Three open questions in the spec's §11, and **Q1 is load-bearing and is the owner's**: §16.7 says
+remove the ownerless retrieval, which admits two readings — retire `retrieve_portfolio`, or give
+it an owner. Re-owning it is blocked by architecture (the backend cannot reach `gateway.db`), so
+the leaning is to retire it — but that removes a portfolio tool from `backend/main.py`'s `/chat`,
+which is a product decision rather than a technical one.
 
 ### TQ-47 — The Superuser Portfolio tab
 

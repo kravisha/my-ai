@@ -9154,3 +9154,102 @@ needs a local model to compare against the rules, which is TQ-57's, and a
 challenger harness, which is TQ-61's. Building a model-driven escalation decision
 now would mean asking the *external* model whether the external model is
 necessary — a question it is in no position to answer neutrally.
+
+---
+
+## §109 — Owner direction: the Gateway authenticates, the backend authorizes (2026-08-26)
+
+Owner clarification, 2026-08-26, given while deciding TQ-46's §11 Q1:
+
+> *"Gateway is for establishing identity — Gateway only does authentication. Back
+> end does authorization and all business logic."*
+
+Recorded here rather than only in the spec it was asked about, because it settles
+a boundary question wider than TQ-46 and it reverses a decision that spec had
+already made.
+
+### It confirms what was written, and names what drifted
+
+The direction is not new. Three places already said it:
+
+- **Addendum 16 §7** — the Gateway is the only externally exposed service, and
+  external clients must not reach internal APIs, Controller, agents *or
+  databases*.
+- **`gateway/main.py`'s own docstring** — *"It is a client of Jarvis, not part of
+  it: the same shape as `agents/coo.py`, `panel/app.py` and `monitor/app.py`, all
+  of which are separate processes talking HTTP to the backend."*
+- **Addendum 40 §14** — *"The presentation layer must never bypass backend
+  authorization just because information exists on the server."*
+
+`gateway/jarvis.py` follows it exactly: a read-only HTTP client against the
+backend's `/admin` surface, with the read-only property enforced in the one
+method that reaches the network.
+
+**What drifted is data ownership.** `gateway.db` holds nine tables:
+
+| table | what it is | where it belongs |
+|---|---|---|
+| `sessions`, `clients` | authentication | **Gateway — correct** |
+| `client_agents`, `conversations`, `messages` | business logic | backend |
+| `scoreboard_items`, `scoreboard_notes` | business logic | backend |
+| `portfolios`, `portfolio_holdings` | business logic *and its authorization* | backend |
+
+Two of nine are where the direction puts them. The Gateway became the system of
+record for client financial data, which is the part that is not a presentation
+concern under any reading.
+
+**Route-level capability gating stays at the Gateway and is not the drift.**
+Addendum 17 §66–§80 reserves capabilities for the Super User interface and §14
+calls it a high-security boundary; §92 built that deliberately. A door that
+refuses is not a door doing business logic. The issue is narrower: when the data
+is *also* at the Gateway there is no backend authorization to defer to, so the
+Gateway's check is the only one — which is the arrangement addendum 40 §14 warns
+about, arrived at from the other direction.
+
+### What this reverses
+
+TQ-46's spec had decided (§4.1) that the Superuser portfolio lives in
+`gateway.db` "with every other portfolio", reasoning from one-table-one-guard.
+That reasoning was sound and its premise was wrong: it took the current location
+of the portfolio subsystem as given.
+
+Under this direction the premise fails. The portfolio subsystem — `portfolios`,
+`portfolio_holdings`, the ownership guard, the providers — is business logic and
+authorization, and belongs backend-side. **§4.1 is withdrawn.**
+
+Which also settles TQ-46's Q1, and cheaply. The owner chose **reading B** — keep
+the capability, remove the ownerlessness — and the spec called that the expensive
+option because the backend "cannot reach `gateway.db` by design". Under the
+correct architecture that sentence describes the problem rather than the
+constraint: the backend cannot reach `gateway.db` because the data should never
+have been there. B is not expensive; it is the shape the system was specified to
+have.
+
+### The consequence, stated before anybody builds on it
+
+TQ-46 cannot sensibly be built where the portfolio subsystem currently sits.
+Building a `SUPERUSER` domain into `gateway.db` and moving it a week later is the
+same mistake TQ-44 refused to make with the entity and its guard — work done in a
+place it is known not to belong.
+
+So **TQ-69** is queued ahead of it: move the portfolio subsystem backend-side,
+with the Gateway reaching it over HTTP the way `jarvis.py` already reaches
+`/admin`. TQ-46 depends on it.
+
+That is a large increment touching five merged records (§96, §99, §100, §101,
+§106), and it is worth being plain about the cost: none of that work is wasted —
+the ownership guard, the canonical holding shape, the provider contract and the
+decision log are all correct and all portable. What moves is where they live and
+who authorizes the call.
+
+### What is not queued from this
+
+**Conversations, messages, client agents and the scoreboard are not moved here.**
+They are the same category of drift and the same argument applies, but nothing in
+the current queue needs them moved, and moving four subsystems at once because
+one needed it is how a boundary correction becomes a rewrite. They are recorded
+as known drift (§6 of the handoff) and get their own entries when something needs
+them.
+
+**No exposure changes.** §50's preconditions stand. This is about which process
+owns which table, not about what is reachable from outside.
