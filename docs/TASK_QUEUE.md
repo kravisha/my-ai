@@ -54,9 +54,8 @@ holds the queue, not the record.
 > **Current focus: the portfolio subsystem** (addendum 44, assimilated 2026-08-26, §97) —
 > **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
 > **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
-> and the §15.5 regression is permanent. **TQ-45a** (the canonical holding shape) is **done**
-> (§100). Next is **TQ-45b** — the provider abstraction and its conformance suite,
-> `docs/specs/TQ-45_portfolio_provider_abstraction.md` — then TQ-46 (the
+> and the §15.5 regression is permanent. **TQ-45 is done** — 45a the canonical holding shape
+> (§100), 45b the provider abstraction and its conformance suite (§101). Next is **TQ-46** (the
 > Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots, provenance, audit), TQ-49
 > (the Schwab boundary). TQ-50 is blocked on owner action.
 >
@@ -677,7 +676,7 @@ Superuser portfolio itself (TQ-46), and `app/tools/portfolio.py`'s missing owner
 
 ### TQ-45 — The PortfolioProvider abstraction, and its conformance suite
 
-**NEED (GREEN) · 45a DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §100) · 45b IN PROGRESS — next ·
+**NEED (GREEN) · DONE 2026-08-26 (45a `SPEC_RECONCILIATION.md` §100, 45b §101) ·
 depends on TQ-44 (done, §99) · addendum 44 §7, §6.3, §15.3, §15.4, §20 Phase 2 ·
 spec: `docs/specs/TQ-45_portfolio_provider_abstraction.md`**
 
@@ -693,10 +692,18 @@ in a worktree. Running it found a defect no test saw: `clear()` emptied the live
 demo holdings survived in the retired one, and `outstanding()` reported clean. Fixed, with two
 permanent regressions.
 
-**45b is what remains**: `PortfolioProvider`, the conformance suite, `SimulatedPortfolioProvider`,
-and the demo rebuild on §6.1's diversity. Spec §11 Q2, Q3 and Q5 are still open and belong to it —
-Q2 (whether a labelled simulated portfolio may show simulated prices; leaning firmly no) is the
-one flagged twice.
+**45b is done** (§101). `PortfolioProvider` is a Protocol whose data-reaching methods take a
+*resolved portfolio* rather than addendum 44 §7's `account_ref` — a public function taking a bare
+reference is the by-id bypass TQ-44 exists to prevent, one layer below where the tripwire looks.
+`ManualPortfolioProvider` and `SimulatedPortfolioProvider` both satisfy a conformance suite written
+before the second one existed, and they genuinely differ in what they can answer, which is what
+makes `supports()` a contract rather than a decoration. The demo clients are rebuilt on §6.1's
+diversity, including a covered call — which is *short*, and forced a decision about how a short
+position is counted and why it must not be weighted.
+
+The suite was mutation-tested rather than trusted: five deliberate breakages, and the one it
+initially **missed** was the §3.2 bypass it exists to prevent. Widened, it then caught a violation
+in this increment's own code. All five open questions in the spec are now decided and recorded.
 
 `PortfolioProvider` with `list_accounts` / `get_account` / `get_holdings` / `get_balances` /
 `get_positions` / `refresh` / `health_check`, returning canonical internal objects rather than

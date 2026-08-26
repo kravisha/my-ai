@@ -18,7 +18,7 @@ against it is permanent.
 
 import pytest
 
-from gateway import demo_clients, holdings, portfolios, store
+from gateway import demo_clients, holdings, portfolio_providers, portfolios, store
 
 
 # --- ownership isolation (§15.1) ---------------------------------------------------
@@ -364,7 +364,8 @@ def test_the_concentration_report_takes_its_priced_flag_from_the_one_rule(gatewa
     portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
     holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=10, average_cost=5)
 
-    report = holdings.concentration(gateway_conn, portfolio)
+    provider = portfolio_providers.for_portfolio(portfolio)
+    report = holdings.concentration(provider.get_holdings(gateway_conn, portfolio))
 
     assert report["priced"] is False
     assert report["priced"] == portfolios.is_priced(portfolio)

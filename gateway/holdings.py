@@ -222,6 +222,32 @@ def _clean_asset_class(raw) -> str:
     return value
 
 
+def _quantity(value) -> float:
+    """How much is held. **Negative means short**, and zero is still refused.
+
+    Found while building the demo (§101): addendum 44 §6.1 asks for a covered
+    call, and a covered call is a *written* option - you are short four
+    contracts, not long four. Storing it as positive would have been the wrong
+    fact about somebody's position, and dropping it would have been quietly
+    narrowing what §6.1 asked for.
+
+    Zero stays refused, for the reason it always was: a position of zero is not a
+    position, and silently storing one because a number would not parse is worse
+    than saying the number would not parse. Somebody who has closed a position
+    tells their representative to forget it."""
+    if value is None or value == "":
+        raise HoldingRefused("A holding needs a quantity.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise HoldingRefused("That is not a number I can use for a quantity.") from None
+    if number == 0:
+        raise HoldingRefused(
+            "A quantity of zero is not a position. If you have closed it, tell me to "
+            "forget it instead.")
+    return number
+
+
 def _positive(value, field: str, *, required: bool) -> float | None:
     if value is None or value == "":
         if required:
@@ -267,7 +293,7 @@ def record(conn: Database, portfolio, *, symbol: str, quantity,
     the same fact as when it was written down (TQ-45b)."""
     portfolio_id = _portfolio_id(portfolio)
     ticker = _clean_symbol(symbol)
-    amount = _positive(quantity, "a quantity", required=True)
+    amount = _quantity(quantity)
     cost = _positive(average_cost, "an average cost", required=False)
     classification = _clean_asset_class(asset_class)
 
@@ -332,36 +358,61 @@ def forget_all(conn: Database, portfolio) -> int:
         "DELETE FROM portfolio_holdings WHERE portfolio_id = ?", (_portfolio_id(portfolio),))
 
 
-def concentration(conn: Database, portfolio) -> dict:
-    """Weights and concentration, by stated cost basis.
+def concentration(positions) -> dict:
+    """Weights and concentration, over canonical holdings from anywhere.
+
+    **Takes holdings, not a connection** (TQ-45b, spec §3.8). That is what makes
+    §15.3's "switching provider does not change analyzer contract" a real claim
+    rather than a tautology: an analyzer that read the table itself would agree
+    with every provider trivially, because they all write to the same table. This
+    one has no idea where its input came from, so feeding it two providers'
+    output and comparing is an actual test.
+
+    `positions` is a sequence of `portfolio_providers.Holding`. Not imported here
+    - that module imports this one - so the contract is the attribute names
+    rather than the type, which is also what lets a future provider return its
+    own canonical object.
 
     Computed here rather than described to a model, because a model asked to
-    percentage-weight a portfolio produces something *shaped* like arithmetic.
+    percentage-weight a portfolio produces something *shaped* like arithmetic,
+    and somebody's money is the last place a plausible-looking number belongs.
 
     By cost, never by market value: every price this organization can produce is
     simulated (addendum 25), and applying it to a client's real positions would
-    present synthetic output as real. Cost basis is a fact the client stated.
-    Current value is a fact nobody here has, and the report says so rather than
-    leaving its absence to be noticed.
+    present synthetic output as real. Average cost is a fact the client stated.
+    What it is worth today is a fact nobody here has, and the report says so
+    rather than leaving its absence to be noticed.
 
-    `asset_class` is deliberately not read here (spec §10 Q3). Weights are by
-    cost regardless of class, so an unknown class costs this report nothing; a
-    class-aware view belongs to TQ-45, where the provider defines what a holding
-    is."""
-    rows = listing(conn, portfolio)
+    `asset_class` is deliberately not read. Weights are by cost regardless of
+    class, so an unknown class costs this report nothing; a class-aware view
+    belongs to whoever first has a reason for one.
+
+    **Short positions are counted but not weighted** - see the comment below. The
+    weights are across long positions; `short_positions` lists the rest."""
+    rows = list(positions)
     if not rows:
         return {"positions": 0, "known_cost": None, "weights": [], "priced": False,
                 "note": "You have not told me about any holdings yet."}
 
-    with_cost = [r for r in rows if r["average_cost"] is not None]
-    missing_cost = [r["symbol"] for r in rows if r["average_cost"] is None]
-    total = sum(r["quantity"] * r["average_cost"] for r in with_cost)
+    # Short positions are counted but never weighted (§101). A short's
+    # `average_cost` is a credit *received*, not an amount paid, so folding it
+    # into cost weights would produce a negative share of a total that no longer
+    # means anything - a percentage that looks like arithmetic and is not. They
+    # are reported separately rather than dropped, because they are real
+    # positions and leaving them out silently would understate what somebody
+    # holds.
+    longs = [r for r in rows if r.quantity > 0]
+    shorts = [r for r in rows if r.quantity < 0]
+
+    with_cost = [r for r in longs if r.average_cost is not None]
+    missing_cost = [r.symbol for r in longs if r.average_cost is None]
+    total = sum(r.quantity * r.average_cost for r in with_cost)
 
     weights = []
-    for row in sorted(with_cost, key=lambda r: r["quantity"] * r["average_cost"], reverse=True):
-        value = row["quantity"] * row["average_cost"]
+    for row in sorted(with_cost, key=lambda r: r.quantity * r.average_cost, reverse=True):
+        value = row.quantity * row.average_cost
         weights.append({
-            "symbol": row["symbol"],
+            "symbol": row.symbol,
             "cost": round(value, 2),
             "weight_pct": round(100 * value / total, 2) if total else None,
         })
@@ -371,10 +422,13 @@ def concentration(conn: Database, portfolio) -> dict:
         "known_cost": round(total, 2) if with_cost else None,
         "weights": weights,
         # Named rather than implied. A report that simply omitted market value
-        # would read as a portfolio worth its cost basis. Routed through the one
-        # pricing rule (§3.7) so this cannot drift from every other caller's
-        # answer to the same question.
-        "priced": portfolios.is_priced(portfolio),
+        # would read as a portfolio worth its cost basis.
+        #
+        # Hard False here, and that is not a second copy of the pricing rule:
+        # this report is *by cost* whatever its input, so there is no data mode
+        # that would make it priced. `portfolios.is_priced` remains the one rule
+        # for whether market-derived values may be shown at all.
+        "priced": False,
         "priced_note": (
             "These are weights by what you paid, not by what the positions are worth "
             "now. This system has no real market prices — everything it generates is "
@@ -383,6 +437,16 @@ def concentration(conn: Database, portfolio) -> dict:
         "largest_position": weights[0] if weights else None,
         "top_three_pct": (round(sum(w["weight_pct"] or 0 for w in weights[:3]), 2)
                           if weights else None),
+        "short_positions": [
+            {"symbol": r.symbol, "quantity": r.quantity, "asset_class": r.asset_class,
+             "average_cost": r.average_cost}
+            for r in sorted(shorts, key=lambda r: r.symbol)
+        ],
+        "short_note": (
+            f"{len(shorts)} position(s) are short, so they are counted but not weighted: "
+            "what you received for writing them is a credit, not an amount paid, and "
+            "mixing it into cost weights would give you a percentage that means nothing."
+        ) if shorts else None,
         "missing_average_cost": missing_cost,
         "missing_cost_note": (
             f"{len(missing_cost)} holding(s) have no average cost recorded, so they are "

@@ -30,9 +30,17 @@ promise to clean up and a way to know.
 
 ## What these clients are
 
-Names and positions invented here, holding this system's own synthetic symbols
-(SYN1-SYN10) rather than real tickers. A demo portfolio of real companies is one
-screenshot away from being read as advice about them.
+Names here; positions in `gateway/portfolio_providers.SIMULATED_PORTFOLIOS`,
+because a simulated portfolio is stocked by the simulated provider (TQ-45b). They
+hold this system's own synthetic symbols rather than real tickers - a demo
+portfolio of real companies is one screenshot away from being read as advice
+about them.
+
+Addendum 44 §6.1 asks for real diversity between them, and they now have it:
+large-cap plus a covered call, growth plus long calls and a protective put, and
+diversified with cash. That is not decoration - it is what makes the demo show
+`asset_class` doing something, and one client's concentration genuinely
+uncomfortable.
 
 All three can log in, each as themselves. That stopped being a gap when TQ-43
 gave clients a registry (§98) — before it they shared one credential and
@@ -48,7 +56,7 @@ shown once by `python -m gateway.clients add`.
 
 from __future__ import annotations
 
-from gateway import client_agent, clients, holdings, portfolios
+from gateway import client_agent, clients, holdings, portfolio_providers, portfolios
 from backend.db import Database
 
 # Development stages only. Same list and same reasoning as
@@ -63,28 +71,12 @@ SEEDABLE_STAGES = ("PRE_ALPHA", "ALPHA")
 # this is a convenience for data that is going to be deleted.
 DEMO_PASSWORD = "demo-client-password"
 
-DEMO_CLIENTS: dict[str, list[dict]] = {
-    "customer": [
-        {"symbol": "SYN1", "quantity": 400, "average_cost": 42.50, "acquired_on": "2024-03-11"},
-        {"symbol": "SYN3", "quantity": 120, "average_cost": 118.00, "acquired_on": "2024-09-02"},
-        {"symbol": "SYN7", "quantity": 250, "average_cost": 61.25, "acquired_on": "2025-01-20"},
-        {"symbol": "SYN10", "quantity": 60, "average_cost": 305.00, "acquired_on": "2025-06-30"},
-    ],
-    # Deliberately concentrated, so the concentration report has something true
-    # and uncomfortable to say.
-    "avery": [
-        {"symbol": "SYN2", "quantity": 3000, "average_cost": 318.40, "acquired_on": "2023-11-05"},
-        {"symbol": "SYN5", "quantity": 90, "average_cost": 180.10, "acquired_on": "2025-02-14"},
-    ],
-    # Deliberately missing a cost basis, so the "counted but not weighted" path
-    # is exercised by real demo data rather than only by a test.
-    "morgan": [
-        {"symbol": "SYN4", "quantity": 500, "average_cost": 27.80, "acquired_on": "2024-06-18"},
-        {"symbol": "SYN6", "quantity": 75, "average_cost": None,
-         "note": "inherited; cost basis unknown"},
-        {"symbol": "SYN9", "quantity": 210, "average_cost": 54.00, "acquired_on": "2025-04-09"},
-    ],
-}
+# Who the demo clients are. Their *positions* live in
+# gateway/portfolio_providers.SIMULATED_PORTFOLIOS, because a simulated portfolio
+# is stocked by the simulated provider (TQ-45b) - keeping a second copy here
+# would be two descriptions of one demo, and the one that drifts is the one
+# nobody is looking at.
+DEMO_CLIENTS: tuple[str, ...] = ("customer", "avery", "morgan")
 
 
 class SeedRefused(RuntimeError):
@@ -114,7 +106,7 @@ def seed(conn: Database) -> dict:
     """Create the demo clients and their holdings, all flagged simulated."""
     stage = _require_development_stage()
     created = {}
-    for client_id, positions in DEMO_CLIENTS.items():
+    for client_id in DEMO_CLIENTS:
         if clients.get(conn, client_id) is None:
             clients.register(conn, client_id, display_name=client_id.title(),
                              password=DEMO_PASSWORD, simulated=True)
@@ -125,11 +117,30 @@ def seed(conn: Database) -> dict:
         # the demo exercises the real path rather than a seeding shortcut beside
         # it. A seeder that wrote holdings directly would be the one caller whose
         # ownership was never checked.
+        #
+        # SIMULATED rather than MANUAL (§6.2, spec §11 Q3): these positions were
+        # invented, and saying so in the row is what stops simulated data from
+        # ever being mistaken for a live brokerage account. `is_priced` is false
+        # either way - SIMULATED is not LIVE - so nothing becomes visible that
+        # was not.
         portfolio = portfolios.primary_for(
-            conn, portfolios.for_client(client_id), simulated=True)
-        for position in positions:
-            holdings.record(conn, portfolio, simulated=True, **position)
-        created[client_id] = {"agent": agent["name"], "positions": len(positions),
+            conn, portfolios.for_client(client_id), simulated=True,
+            provider_type=portfolios.PROVIDER_SIMULATED,
+            data_mode=portfolios.MODE_SIMULATED)
+        if portfolio["provider_type"] != portfolios.PROVIDER_SIMULATED:
+            # `primary_for` returns an existing portfolio as it stands, so a
+            # client who already has a real one does not get it relabelled as
+            # simulated behind their back. That is the right behaviour and this
+            # is its consequence: seeding cannot proceed, and says so, rather
+            # than failing later on a provider that has no `seed`.
+            raise SeedRefused(
+                f"{client_id!r} already has a {portfolio['provider_type']} portfolio. "
+                "Refusing to seed demo data into it - a real portfolio must not be "
+                "relabelled as simulated, and simulated positions must not be added "
+                "to somebody's real one.")
+        provider = portfolio_providers.for_portfolio(portfolio)
+        count = provider.seed(conn, portfolio)
+        created[client_id] = {"agent": agent["name"], "positions": count,
                               "portfolio": portfolio["portfolio_id"]}
     return {"stage": stage, "clients": created, "password": DEMO_PASSWORD}
 
@@ -296,15 +307,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"--- {client_id} (represented by "
                       f"{agent['name'] if agent else 'nobody'}) ---")
                 portfolio = portfolios.primary_for(conn, portfolios.for_client(client_id))
+                provider = portfolio_providers.for_portfolio(portfolio)
                 print(f"  portfolio {portfolio['portfolio_id']} "
-                      f"({portfolio['data_mode']}, priced: "
+                      f"via {provider.name} ({portfolio['data_mode']}, priced: "
                       f"{portfolios.is_priced(portfolio)})")
-                for row in holdings.listing(conn, portfolio):
-                    cost = ("unknown" if row["average_cost"] is None
-                            else f"{row['average_cost']:.2f}")
-                    print(f"  {row['symbol']:<6} {row['quantity']:>8.0f} @ {cost} "
-                          f"({row['asset_class']})")
-                report = holdings.concentration(conn, portfolio)
+                positions = provider.get_holdings(conn, portfolio)
+                for row in positions:
+                    cost = ("unknown" if row.average_cost is None
+                            else f"{row.average_cost:.2f}")
+                    print(f"  {row.symbol:<9} {row.quantity:>8.0f} @ {cost} "
+                          f"({row.asset_class})")
+                try:
+                    balances = provider.get_balances(conn, portfolio)
+                    print(f"  cash {balances['cash']:.2f} {balances['currency']} "
+                          f"(simulated)")
+                except portfolio_providers.ProviderCapabilityUnavailable as unavailable:
+                    print(f"  cash: {unavailable}")
+                report = holdings.concentration(positions)
                 print(f"  positions {report['positions']}, cost {report['known_cost']}, "
                       f"top three {report['top_three_pct']}%")
                 if report.get("missing_cost_note"):

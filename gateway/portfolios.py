@@ -353,7 +353,9 @@ def listing(conn: Database, owner) -> list[dict]:
 
 
 def primary_for(conn: Database, owner, *, display_name: str | None = None,
-                simulated: bool = False) -> dict:
+                simulated: bool = False,
+                provider_type: str = PROVIDER_MANUAL,
+                data_mode: str = MODE_MANUAL) -> dict:
     """This owner's primary portfolio, created on first use (§3.8).
 
     §5.1 allows one owner many portfolios and most have exactly one. Requiring
@@ -362,14 +364,23 @@ def primary_for(conn: Database, owner, *, display_name: str | None = None,
     this decides only who names it.
 
     Oldest-first when several exist, so the answer does not change under a caller
-    who created a second one."""
+    who created a second one.
+
+    `provider_type` and `data_mode` default to MANUAL because that is what a
+    client speaking to their representative produces, and it is the only thing
+    ordinary use creates. They are arguments rather than constants because a
+    seeder building a SIMULATED portfolio needs to say so at creation (§6.2) -
+    **and only at creation**: they describe where a portfolio's rows come from,
+    so changing them later would relabel data that is already there. An existing
+    portfolio is returned as it stands and these are ignored, which is the
+    behaviour to keep."""
     owner = _require_owner(owner)
     for portfolio in listing(conn, owner):
         if portfolio["portfolio_type"] == TYPE_PRIMARY:
             return portfolio
     return create(conn, owner, display_name=display_name or DEFAULT_DISPLAY_NAME,
-                  portfolio_type=TYPE_PRIMARY, provider_type=PROVIDER_MANUAL,
-                  data_mode=MODE_MANUAL, simulated=simulated)
+                  portfolio_type=TYPE_PRIMARY, provider_type=provider_type,
+                  data_mode=data_mode, simulated=simulated)
 
 
 def archive(conn: Database, portfolio_id: str, owner) -> dict:
@@ -382,6 +393,27 @@ def archive(conn: Database, portfolio_id: str, owner) -> dict:
         "UPDATE portfolios SET status = ?, updated_at = ? WHERE portfolio_id = ?",
         (STATUS_ARCHIVED, now, portfolio["portfolio_id"]))
     return {**portfolio, "status": STATUS_ARCHIVED, "updated_at": now}
+
+
+def mark_synced(conn: Database, portfolio_id: str, owner, *, at: str | None = None) -> dict:
+    """Record that this portfolio's data was actually fetched, just now.
+
+    Called only by a provider whose `refresh` succeeded (TQ-45b). Addendum 44 §17
+    is the whole reason it is a separate function rather than a line inside
+    `refresh`: *"mark it stale, do not silently claim it is current."* A
+    `last_synced_at` that moved on a **failed** sync would be worse than the NULL
+    it replaced - a NULL says "never synced", which is true, while a fresh
+    timestamp asserts a freshness nothing has.
+
+    Goes through `resolve` first, like `archive`, so it refuses for exactly the
+    reasons a read does. A sync is a write about somebody's money, and there is
+    no version of it that should skip the ownership comparison."""
+    portfolio = resolve(conn, portfolio_id, owner)
+    stamp = at or now_iso()
+    conn.execute(
+        "UPDATE portfolios SET last_synced_at = ?, updated_at = ? WHERE portfolio_id = ?",
+        (stamp, stamp, portfolio["portfolio_id"]))
+    return {**portfolio, "last_synced_at": stamp, "updated_at": stamp}
 
 
 def is_priced(portfolio: dict) -> bool:

@@ -489,7 +489,7 @@ conversation* — genuinely MANUAL data inside a SIMULATED portfolio. See §11 Q
 
 ---
 
-## 11. Open questions — Q1 and Q4 decided 2026-08-26 (TQ-45a)
+## 11. Open questions — all decided 2026-08-26 (Q1, Q4 in TQ-45a; Q2, Q3, Q5 in TQ-45b)
 
 Q1 and Q4 shape 45a and were decided before its code. **Q2, Q3 and Q5 belong to
 45b** and are left open below, deliberately: Q3 and Q5 need the provider in front
@@ -547,19 +547,54 @@ What is left is a column that is always `NULL`, with no producer and no consumer
 the first thing that will know a currency, and it can add the column in the same
 increment that first populates it.
 
-### Q2 — Does a `SIMULATED` portfolio get simulated prices? **Still open; 45b.**
+### Q2 — Does a `SIMULATED` portfolio get simulated prices? **Decided: no.**
 
-Leaning unchanged and firm: **no**. Recorded here only to note it was not
-quietly settled by 45a — nothing in this increment touches `is_priced`, which is
-still one line.
+As leaned, and firmly. `is_priced()` stays one line and `LIVE`-only. Widening it
+to "LIVE, or SIMULATED-and-labelled" makes it two branches, and the second branch
+is where the mistake eventually lives — labels are lost in screenshots, a branch
+is not lost in code.
 
-### Q3 — `data_mode` for demo clients. **Still open; 45b.**
+**A cash balance is not a price**, and this is the distinction that keeps the rule
+narrow rather than making it awkward. `is_priced` governs *market-derived* values
+— what a position is worth now, gain, loss, performance — all of which need a
+price this system does not have. Cash is a quantity somebody holds, not a
+valuation of anything, so `get_balances` on a simulated portfolio does not touch
+the rule. §6.1 asks for a client with "cash plus equities", and that is the only
+reason a balance exists here at all.
 
-Needs the provider. 45a leaves demo clients `MANUAL`/`MANUAL`, unchanged.
+### Q3 — `data_mode` for demo clients. **Decided: `SIMULATED` / `SIMULATED`, per §6.2.**
 
-### Q5 — Does `ManualPortfolioProvider` earn its place? **Still open; 45b.**
+They are simulated; §6.2 is explicit; and 45a already confirmed `is_priced` is
+false either way, so nothing becomes visible that was not.
 
-Genuinely undecidable until the interface is written.
+**The consequence worth stating before it is built:** the simulated provider must
+**seed** its positions into `portfolio_holdings` and read them back like any other
+provider — it must *not* generate them on every read. If it generated, a holding a
+demo client stated in conversation would be invisible, which is exactly the data
+§96 exists to preserve. The provider decides where the initial rows came from and
+how they are labelled; it does not decide where they live.
+
+So the two facts stay separate, because they answer different questions:
+
+- the **portfolio's** `data_mode` says what kind of source stocked it;
+- the **row's** `simulated` flag says whether that row is demo data to be cleared.
+
+They are allowed to differ, and they do: a holding stated in conversation by a
+demo client is an unflagged row inside a `SIMULATED` portfolio. That is the §96
+rule — clearing works by client, not by row flag — arriving one layer down.
+
+### Q5 — Does `ManualPortfolioProvider` earn its place? **Decided: yes.**
+
+Without it the client-stated path is the special case every other provider gets
+compared against, which is precisely how an interface ends up shaped like its
+first implementation (§2).
+
+It also turned out to be the only reason the capability declaration in §3.4 is
+testable at all: `ManualPortfolioProvider` genuinely cannot answer `get_balances`
+or `refresh` — nobody told this system the client's cash, and there is nothing to
+refresh *from* — while `SimulatedPortfolioProvider` genuinely can. Two providers
+that differ in what they can answer is what makes `supports()` a contract rather
+than a decoration.
 
 
 ## 12. Risks

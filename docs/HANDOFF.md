@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-45a complete)
+# Handoff — checkpoint 2026-08-26 (TQ-45 complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2247 passed, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2298 passed, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -25,14 +25,14 @@ Then read, in order:
 1. **This file** — to the end.
 2. [`docs/README.md`](README.md) → "Picking up mid-project" — the map.
 3. [`docs/TASK_QUEUE.md`](TASK_QUEUE.md) — the head block says what is next.
-4. [`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md)
-   — the next task, fully specified.
+4. [`docs/TASK_QUEUE.md`](TASK_QUEUE.md) TQ-46 — the next task. **It has no
+   specification yet**; see §7.
 
 ---
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2247 passing**. Nothing
+`master` plus this checkpoint, clean and pushed. Suite **2298 passing**. Nothing
 running; no orphaned processes.
 
 **Two processes, two databases.**
@@ -59,6 +59,9 @@ running; no orphaned processes.
 - **Portfolios are owned entities** (§99). `portfolios.resolve()` is the one
   function that answers "whose data is this?", and a tripwire test fails if any
   other module queries the table.
+- **Holdings arrive through a provider** (§101). `gateway/portfolio_providers.py`
+  is the one interface; its data-reaching methods take a *resolved portfolio*,
+  never an id.
 
 **The operator's studio through the Gateway** is the *same file*
 (`backend/console/index.html`), proxied — not a second console.
@@ -81,18 +84,21 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | — | TQ-44 specification + previous handoff | #44 |
 | §99 | **TQ-44** portfolios as owned entities + the guard | #46 |
 | — | TQ-45 specified; two collisions named before anybody hit them | #47 |
-| §100 | **TQ-45a** the canonical holding shape | this branch |
+| §100 | **TQ-45a** the canonical holding shape | #48 |
+| §101 | **TQ-45b** the provider abstraction + its conformance suite | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
 logged into a running Gateway and each saw only their own.
 
-**TQ-45a final status: COMPLETE.** Holdings are `symbol` / `quantity` /
-`average_cost` / `as_of`, and `asset_class` speaks the house vocabulary.
-Both migration paths verified against genuinely old databases. Running it found a
-defect no test saw — see §100 and item 6 below. Nothing outstanding.
+**TQ-45 final status: COMPLETE.** 45a (§100) made holdings `symbol` /
+`quantity` / `average_cost` / `as_of` with the house `asset_class` vocabulary.
+45b (§101) put `PortfolioProvider` between the analyzer and wherever holdings
+come from, with a conformance suite two providers satisfy, and rebuilt the demo
+clients on §6.1's diversity. All five of the spec's open questions are decided
+and recorded in its §11. Nothing outstanding.
 
-**TQ-45b is next and is specified but not built.**
+**TQ-46 is next and has no specification yet.**
 
 ---
 
@@ -132,10 +138,23 @@ Each cost something to learn. Reversing one silently would undo real work.
    already refused that substitution once — two models of one fact. Do not
    reintroduce them, and do not copy the list.
    `implemented_asset_classes` is **not** a limit on what a client may hold.
-9. **`resolve()` is the only way to a portfolio, and holdings take a resolved
-   portfolio rather than an id.** A second by-id retrieval path is the failure
-   mode to watch for — it will not look like a bypass, it will look like a
-   convenience. One was nearly written during TQ-44 itself (§99).
+9. **`resolve()` is the only way to a portfolio; holdings and providers take a
+   resolved portfolio, never an id.** A second by-id retrieval path is the
+   failure mode to watch for — it will not look like a bypass, it will look like
+   a convenience. One was nearly written during TQ-44 itself (§99), and
+   addendum 44 §7's own `get_holdings(account_ref)` is another, declined in
+   TQ-45b's spec §3.2. `test_no_provider_method_accepts_a_bare_id` scans **every
+   public method** for an id-shaped parameter; it was widened after a mutation
+   run showed the fixed-list version missing exactly that case.
+10. **A provider says what it cannot do** (§101). `get_balances` and `refresh`
+    have no honest answer for a manual portfolio, so they raise
+    `ProviderCapabilityUnavailable` carrying a sentence the client can hear.
+    Never return `{}` or a zero: those are answers, and the true answer is an
+    explanation.
+11. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+    priced (spec §11 Q2). A cash balance is not a price — it is a quantity
+    somebody holds, not a valuation — which is why `get_balances` may exist
+    without widening the rule.
 
 ---
 
@@ -143,9 +162,8 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-45b** — `PortfolioProvider` + conformance suite + demo rebuild | **SPECIFIED — next** |
-| TQ-45a — the canonical holding shape | **DONE** §100 |
-| TQ-46 — superuser ownership domain; retire the ownerless retrieval | queued |
+| **TQ-46** — superuser ownership domain; retire the ownerless retrieval | **next — needs a spec** |
+| TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
 | TQ-47 — Superuser Portfolio tab | queued |
 | TQ-48 — snapshots, provenance, audit logging | queued |
 | TQ-49 — Schwab boundary, live disabled | queued |
@@ -160,7 +178,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-None blocks TQ-45b.
+None blocks TQ-46.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -205,30 +223,25 @@ None blocks TQ-45b.
 
 ## 7. Exactly what to do next
 
-**Implement TQ-45b**, following
-[`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md).
-45a is done (§100); 45b is the rest of that spec.
+**TQ-46 — the Superuser portfolio as its own ownership domain.** Its queue entry
+is written; **there is no implementation spec yet**, so the first step is writing
+one the way TQ-44's and TQ-45's were written. Both are the model to follow, and
+deciding their open questions before coding is the part that paid off twice.
 
-1. Read the spec end to end. **§3.2 is the load-bearing decision**: the provider
-   takes a *resolved portfolio*, not an `account_ref`. Addendum 44 §7's
-   conceptual interface is `get_holdings(account_ref)`, and a public function
-   taking a bare reference string is the second by-id retrieval path TQ-44 exists
-   to prevent — one layer below where the tripwire looks. It would not read as a
-   bypass; it would read as implementing the specification.
-2. **Decide §11's Q2, Q3 and Q5 and record them.** Q1 and Q4 were decided for
-   45a and are recorded there. Q2 — whether a labelled simulated portfolio may
-   show simulated prices — is flagged twice on purpose; the leaning is firmly no,
-   because `is_priced()` is one line and widening it makes it two.
-3. `git checkout -b <name>`.
-4. **Write the conformance suite before the second provider exists.** That is the
-   point of the increment (§15.4): a contract with one implementation is a
-   description of that implementation. The concrete guard is in §12 Risk 1 —
-   while writing each test, ask whether a provider that must make a network call
-   could satisfy it. If it needs a local database, the test is wrong.
-5. Full suite, then §14's live check — and note **step 3**, which is new: ask the
-   agent for a cash balance and listen to how it refuses. It is the first time
-   this system declines something because a *provider* cannot answer rather than
-   because a skill is unbuilt.
+What TQ-46 inherits, already decided and built:
+
+1. **`SUPERUSER` is a separate owner domain, not a skeleton key** (§99). The
+   guard already refuses a superuser reaching a client's portfolio, and a test
+   asserts it from both directions. TQ-46 gives the operator portfolios of their
+   *own*; it must not add a branch to `resolve`.
+2. **`app/tools/portfolio.py` still has no owner argument** — addendum 44 §16.7
+   says to remove that global behaviour, and this is the entry that owns it.
+   Currently unreachable from the Gateway.
+3. **A provider interface exists** (§101), so the operator's portfolio has an
+   obvious shape to arrive in rather than needing a new one.
+
+Then: `git checkout -b <name>`, one increment, full suite green, a
+`SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.
 
 ## 8. Working conventions
 

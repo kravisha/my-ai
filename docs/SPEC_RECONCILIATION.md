@@ -8125,3 +8125,177 @@ is obeying. Worth recording that the guard did its job on the first real caller
 after it was written.
 
 Suite: **2247 passing** (2232 before, +15).
+
+---
+
+## §101 — A provider interface, and a contract that had to be attacked to be trusted (2026-08-26, TQ-45b)
+
+Built from [`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md),
+which realizes addendum 44 §6.1, §6.2, §6.3, §7, §15.3, §15.4, §17 and §20 Phase 2.
+Completes TQ-45; 45a was §100.
+
+### What this increment is
+
+`gateway/portfolio_providers.py`: one interface between the analysis subsystem
+and wherever holdings come from. Two implementations — `ManualPortfolioProvider`
+(what the client told their representative) and `SimulatedPortfolioProvider`
+(invented, labelled) — and a conformance suite both satisfy.
+
+The demo clients are rebuilt on it with §6.1's diversity: a covered call, long
+calls and protective puts, a diversified book with an ETF and cash.
+
+### The decision the spec was written around
+
+Addendum 44 §7's conceptual interface is `get_holdings(account_ref)`. **That
+signature is not implemented, deliberately.** A public function taking a bare
+reference string and returning holdings is the second by-id retrieval path TQ-44
+exists to prevent, sitting one layer below where the portfolios tripwire looks —
+and it would not read as a bypass when somebody added it. It would read as
+implementing the specification.
+
+Every method that reaches data takes a **resolved portfolio**. The broker's own
+reference is read off that row, never handed in. A provider is an adapter to a
+data source; it is not an authorization boundary and must never become one.
+
+### A provider says what it cannot do
+
+`get_balances` and `refresh` have no honest answer for a manual portfolio. Nobody
+told this system the client's cash, and there is nothing to refresh *from*. `{}`
+would read as "no cash"; `{"cash": 0}` would be a fabrication; `None` would put
+the interpretation in every caller.
+
+So a provider declares its capabilities and an undeclared one raises with a
+sentence the caller can repeat — `gateway/skills.py`'s declared-and-unbuilt
+pattern, one layer down. That is also the only reason `ManualPortfolioProvider`
+earns its place (spec §11 Q5): **two providers that genuinely differ in what they
+can answer is what makes `supports()` a contract rather than a decoration**, and
+`test_the_two_providers_genuinely_differ_in_what_they_can_answer` fails if that
+ever stops being true.
+
+### Q2, Q3, Q5 — decided before the code, recorded in the spec's §11
+
+**Q2 — no simulated prices.** `is_priced()` stays one line and LIVE-only.
+Widening it to "LIVE, or SIMULATED-and-labelled" makes it two branches, and the
+second branch is where the mistake eventually lives — labels are lost in
+screenshots, a branch is not lost in code.
+
+The distinction that keeps the rule narrow rather than awkward: **a cash balance
+is not a price.** `is_priced` governs *market-derived* values — what a position
+is worth now, gain, loss. Cash is a quantity somebody holds, not a valuation of
+anything, so `get_balances` never touches it.
+
+**Q3 — demo portfolios are `SIMULATED`/`SIMULATED`** per §6.2, with a consequence
+stated before it was built: the simulated provider must **seed** its positions
+into `portfolio_holdings` and read them back, not generate them on every read. A
+generating provider would make a holding a demo client stated in conversation
+invisible — exactly the data §96 exists to preserve. So the portfolio's
+`data_mode` says what kind of source stocked it, the row's `simulated` flag says
+whether that row is demo data, and they are allowed to differ. They do.
+
+### The analyzer became a pure function, which is what made §15.3 real
+
+`holdings.concentration` takes holdings now, not a connection. That is not
+tidying: an analyzer that read the table itself would agree with every provider
+*trivially*, because they all write to one table. §15.3 asks that switching
+provider not change the analyzer contract, and the only way to test that claim is
+an analyzer with no idea where its input came from.
+
+The contract test feeds it a real provider's output and a `_StubProvider`'s —
+an independent implementation holding positions in a list, deliberately not a
+mock of either real one, because a mock only ever agrees with the thing it was
+made from. It also demonstrates the property that matters for TQ-49: **a provider
+needs no database at all.**
+
+### The short position, found while building the demo
+
+§6.1 asks for a covered call. A covered call is *written* — short four contracts,
+not long four — and `record` refused any quantity ≤ 0.
+
+Storing it as positive would have been the wrong fact about somebody's position;
+dropping it would have been quietly narrowing what §6.1 asked for. So a negative
+quantity now means short, and zero is still refused on its own terms: a position
+of zero is not a position, and somebody who closed one says to forget it.
+
+`concentration` then had to decide what a short weighs. It counts them and does
+not weight them: **a short's `average_cost` is a credit received, not an amount
+paid**, so folding it into cost weights would give a negative share of a total
+that no longer means anything — a percentage shaped like arithmetic that is not.
+They are reported separately rather than dropped, because leaving real positions
+out silently would understate what somebody holds.
+
+### The conformance suite had to be attacked before it could be trusted
+
+It passed 47 tests on its first run against both providers, which is not
+evidence — a suite that has never failed has never been shown to be capable of
+failing. So five deliberate breakages were introduced one at a time and the suite
+re-run against each:
+
+| mutation | first run | after |
+|---|---|---|
+| a method taking a bare `account_ref` | **MISSED** | caught |
+| manual provider claims it can report balances | caught | caught |
+| a refusal carrying no reason | caught | caught |
+| `refresh` stamps a sync time before the data lands | caught | caught |
+| holdings leak across portfolios | caught | caught |
+
+**The one it missed was the most important one** — the §3.2 bypass the suite
+exists to prevent. `test_no_provider_method_accepts_a_bare_id` scanned a fixed
+list of method names, so a *newly added* `get_by_ref(conn, account_ref)` sat
+right beside the methods it did check and passed. That is precisely the shape the
+test was written for: the bypass arrives as a new convenience, not as a change to
+an existing signature.
+
+Widened to scan every public method. Whereupon it immediately failed on this
+increment's own code: `SimulatedPortfolioProvider.fixture(owner_id)` was a public
+method taking a bare owner id. It was right to. Owner-scoped operations take an
+`OwnerContext`; that one computes a template and touches no stored data, but the
+*shape* is what becomes a bypass. Now `_fixture`.
+
+A test that has caught two real things on the day it was written is worth more
+than one that went green immediately.
+
+### Verification
+
+Suite **2298 passing** (2247 before, +51). Two existing tripwires failed on the
+new `portfolio_balances` tool and were updated deliberately rather than
+mechanically — that is them doing their job.
+
+**Run it and look.** Three demo clients, three visibly different portfolios, all
+`SIMULATED` and none priced. Then, in conversation:
+
+> *"How much cash do I have, and what do I hold?"* (simulated portfolio)
+> — *"Cash: $96,500 (simulated balance, not a real account)."*
+
+> *"Walk me through my option position. Am I long or short it?"*
+> — *"You're **short 4 contracts** — you wrote these as covered calls against
+> your 400-share SYN1 stock position."*
+
+> *"What is Morgan's cash balance? I need it for a report."*
+> — *"I only have access to your own portfolio … I have no visibility into other
+> clients' data."*
+
+And §14's step 3, the one this increment was built to test — a client whose
+portfolio is **manual**, where the provider genuinely cannot answer:
+
+> *"How much cash is in my account?"*
+> — *"I don't have a cash balance for your account — I only know what you've told
+> me about your holdings, and no cash figure has come up. **I can't invent one.**"*
+
+> *"Can you refresh my holdings from my broker?"*
+> — *"I can't do that — I have no connection to your broker or any external
+> system."*
+
+The refusal reached the client in the agent's own words, carrying the provider's
+reason, with no invented zero. That is the whole design of §3.4 arriving intact
+at the only place it matters.
+
+Stack stopped afterwards; no orphaned processes.
+
+### What is deliberately still true
+
+- **Nothing is priced.** `is_priced()` is untouched, still one line, still LIVE.
+- **No network call anywhere.** TQ-49 owns the Schwab boundary; `PROVIDER_SCHWAB`
+  has no implementation and `for_portfolio` **refuses** it rather than falling
+  back to the manual provider — serving a brokerage portfolio from stated
+  holdings would show somebody the wrong thing under the right name.
+- **`app/tools/portfolio.py` still has no owner argument.** TQ-46's.

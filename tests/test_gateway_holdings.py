@@ -15,7 +15,17 @@ real positions would present synthetic output as real.
 
 import pytest
 
-from gateway import client_agent, demo_clients, holdings, portfolios, roles, tools
+from gateway import (client_agent, demo_clients, holdings, portfolio_providers,
+                     portfolios, roles, tools)
+
+
+def _positions(conn, portfolio):
+    """This portfolio's holdings, through its provider (TQ-45b).
+
+    The analyzer takes holdings rather than a connection now, which is what makes
+    "switching provider does not change analyzer contract" testable rather than
+    tautological - so the tests reach them the way the tools do."""
+    return portfolio_providers.for_portfolio(portfolio).get_holdings(conn, portfolio)
 
 
 def _pf(conn, client_id):
@@ -146,13 +156,45 @@ def test_a_cost_basis_is_optional_because_people_do_not_always_know_it(gateway_c
     assert recorded["average_cost"] is None
 
 
-@pytest.mark.parametrize("bad", [0, -5, "not a number", ""])
-def test_an_unusable_share_count_is_refused_rather_than_coerced(gateway_conn, bad):
+@pytest.mark.parametrize("bad", [0, "not a number", "", None])
+def test_an_unusable_quantity_is_refused_rather_than_coerced(gateway_conn, bad):
     """Silently storing zero because the number would not parse is worse than
-    saying the number would not parse."""
+    saying the number would not parse.
+
+    Zero is refused on its own terms: a position of zero is not a position, and
+    somebody who has closed one says to forget it."""
     avery = _pf(gateway_conn, "avery")
     with pytest.raises(holdings.HoldingRefused):
         holdings.record(gateway_conn, avery, symbol="SYN1", quantity=bad)
+
+
+def test_a_negative_quantity_is_a_short_position(gateway_conn):
+    """§101. Addendum 44 §6.1 asks for a covered call, and a covered call is
+    *written* - short four contracts, not long four. Storing it as positive would
+    have been the wrong fact about somebody's position."""
+    avery = _pf(gateway_conn, "avery")
+    recorded = holdings.record(gateway_conn, avery, symbol="SYN1C50", quantity=-4,
+                               average_cost=1.85, asset_class="stock_option")
+    assert recorded["quantity"] == -4
+
+
+def test_a_short_position_is_counted_but_not_weighted(gateway_conn):
+    """A short's average cost is a credit received, not an amount paid. Folding
+    it into cost weights would give a negative share of a total that no longer
+    means anything - a percentage shaped like arithmetic that is not."""
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, symbol="SYN1", quantity=100, average_cost=10)
+    holdings.record(gateway_conn, avery, symbol="SYN1C50", quantity=-4, average_cost=1.85,
+                    asset_class="stock_option")
+
+    report = holdings.concentration(_positions(gateway_conn, avery))
+
+    assert report["positions"] == 2, "a short position is still a position"
+    assert [w["symbol"] for w in report["weights"]] == ["SYN1"]
+    assert report["known_cost"] == 1000.0, "the short does not reduce the cost total"
+    assert [s["symbol"] for s in report["short_positions"]] == ["SYN1C50"]
+    assert "not weighted" in report["short_note"]
+    assert all((w["weight_pct"] or 0) >= 0 for w in report["weights"])
 
 
 def test_a_blank_ticker_is_refused(gateway_conn):
@@ -212,7 +254,7 @@ def test_weights_are_computed_from_stated_cost(gateway_conn):
     holdings.record(gateway_conn, avery, symbol="SYN1", quantity=100, average_cost=30)   # 3000
     holdings.record(gateway_conn, avery, symbol="SYN2", quantity=100, average_cost=10)   # 1000
 
-    report = holdings.concentration(gateway_conn, avery)
+    report = holdings.concentration(_positions(gateway_conn, avery))
 
     assert report["positions"] == 2
     assert report["known_cost"] == 4000
@@ -225,7 +267,7 @@ def test_concentration_reports_the_top_three(gateway_conn):
     avery = _pf(gateway_conn, "avery")
     for i, cost in enumerate([50, 30, 15, 5], start=1):
         holdings.record(gateway_conn, avery, symbol=f"SYN{i}", quantity=1, average_cost=cost)
-    assert holdings.concentration(gateway_conn, avery)["top_three_pct"] == 95.0
+    assert holdings.concentration(_positions(gateway_conn, avery))["top_three_pct"] == 95.0
 
 
 def test_nothing_is_ever_valued(gateway_conn):
@@ -234,7 +276,7 @@ def test_nothing_is_ever_valued(gateway_conn):
     output as real - what §95 refused for trade ideas, one field over."""
     avery = _pf(gateway_conn, "avery")
     holdings.record(gateway_conn, avery, symbol="SYN1", quantity=100, average_cost=30)
-    report = holdings.concentration(gateway_conn, avery)
+    report = holdings.concentration(_positions(gateway_conn, avery))
 
     assert report["priced"] is False
     assert "simulated" in report["priced_note"]
@@ -247,7 +289,7 @@ def test_the_absence_of_a_price_is_stated_rather_than_left_to_be_noticed(gateway
     its cost basis."""
     avery = _pf(gateway_conn, "avery")
     holdings.record(gateway_conn, avery, symbol="SYN1", quantity=1, average_cost=1)
-    assert holdings.concentration(gateway_conn, avery)["priced_note"]
+    assert holdings.concentration(_positions(gateway_conn, avery))["priced_note"]
 
 
 def test_a_holding_without_a_cost_basis_is_counted_but_not_weighted(gateway_conn):
@@ -257,7 +299,7 @@ def test_a_holding_without_a_cost_basis_is_counted_but_not_weighted(gateway_conn
     holdings.record(gateway_conn, avery, symbol="SYN1", quantity=100, average_cost=30)
     holdings.record(gateway_conn, avery, symbol="SYN6", quantity=75)
 
-    report = holdings.concentration(gateway_conn, avery)
+    report = holdings.concentration(_positions(gateway_conn, avery))
 
     assert report["positions"] == 2
     assert [w["symbol"] for w in report["weights"]] == ["SYN1"]
@@ -267,7 +309,7 @@ def test_a_holding_without_a_cost_basis_is_counted_but_not_weighted(gateway_conn
 
 def test_an_empty_portfolio_says_so(gateway_conn):
     nobody = _pf(gateway_conn, "nobody")
-    report = holdings.concentration(gateway_conn, nobody)
+    report = holdings.concentration(_positions(gateway_conn, nobody))
     assert report["positions"] == 0
     assert report["note"]
 
@@ -331,9 +373,10 @@ def test_seeding_creates_clients_with_agents_and_holdings(gateway_conn, monkeypa
     outcome = demo_clients.seed(gateway_conn)
 
     assert set(outcome["clients"]) == set(demo_clients.DEMO_CLIENTS)
-    for client_id, positions in demo_clients.DEMO_CLIENTS.items():
+    for client_id in demo_clients.DEMO_CLIENTS:
+        expected = portfolio_providers.SIMULATED_PORTFOLIOS[client_id]["positions"]
         portfolio = _pf(gateway_conn, client_id)
-        assert len(holdings.listing(gateway_conn, portfolio)) == len(positions)
+        assert len(holdings.listing(gateway_conn, portfolio)) == len(expected)
         assert client_agent.load(gateway_conn, client_id) is not None
         # Seeded through the ordinary path, so each demo client owns their
         # positions the same way a real one does (TQ-44).
@@ -386,8 +429,8 @@ def test_outstanding_is_how_you_know_rather_than_hope(gateway_conn, monkeypatch,
 def test_the_demo_portfolios_hold_synthetic_symbols_only(gateway_conn):
     """A demo portfolio of real companies is one screenshot away from being read
     as advice about them."""
-    for positions in demo_clients.DEMO_CLIENTS.values():
-        for position in positions:
+    for fixture in portfolio_providers.SIMULATED_PORTFOLIOS.values():
+        for position in fixture["positions"]:
             assert position["symbol"].startswith("SYN"), (
                 f"{position['symbol']} is not one of this system's synthetic symbols")
 
@@ -396,15 +439,17 @@ def test_the_demo_data_exercises_the_awkward_paths(gateway_conn, monkeypatch, tm
     """Demo data that only shows the happy case is a screenshot, not a
     demonstration: one client is concentrated and one is missing a cost basis,
     so the report has something true and uncomfortable to say."""
-    avery = _pf(gateway_conn, "avery")
-    morgan = _pf(gateway_conn, "morgan")
     _pre_alpha(monkeypatch, tmp_path)
     demo_clients.seed(gateway_conn)
+    # After seeding, so these resolve the simulated portfolios the demo built
+    # rather than creating manual ones in front of them.
+    avery = _pf(gateway_conn, "avery")
+    morgan = _pf(gateway_conn, "morgan")
 
-    concentrated = holdings.concentration(gateway_conn, avery)
+    concentrated = holdings.concentration(_positions(gateway_conn, avery))
     assert concentrated["top_three_pct"] > 90
 
-    incomplete = holdings.concentration(gateway_conn, morgan)
+    incomplete = holdings.concentration(_positions(gateway_conn, morgan))
     assert incomplete["missing_average_cost"]
 
 
