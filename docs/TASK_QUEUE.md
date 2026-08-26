@@ -55,7 +55,8 @@ holds the queue, not the record.
 > **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
 > **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
 > and the §15.5 regression is permanent. Next is **TQ-45** (the provider abstraction, which
-> also carries the holding-field rename TQ-44 deliberately deferred), then TQ-46 (the
+> also carries the holding-field rename TQ-44 deliberately deferred, and is now **specified** —
+> `docs/specs/TQ-45_portfolio_provider_abstraction.md`), then TQ-46 (the
 > Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots, provenance, audit), TQ-49
 > (the Schwab boundary). TQ-50 is blocked on owner action.
 >
@@ -676,7 +677,14 @@ Superuser portfolio itself (TQ-46), and `app/tools/portfolio.py`'s missing owner
 
 ### TQ-45 — The PortfolioProvider abstraction, and its conformance suite
 
-**NEED (GREEN) · QUEUED · depends on TQ-44 · addendum 44 §7, §6.3, §15.3, §15.4, §20 Phase 2**
+**NEED (GREEN) · SPECIFIED — next · depends on TQ-44 (done, §99) · addendum 44 §7, §6.3, §15.3,
+§15.4, §20 Phase 2 · spec: `docs/specs/TQ-45_portfolio_provider_abstraction.md`**
+
+A full implementation specification is written. It splits the work into **45a** (the canonical
+holding shape — the field rename and the `asset_class` vocabulary) and **45b** (the provider,
+the conformance suite and the demo rebuild), in that order, so the provider is written against
+the final holding shape once rather than twice. Five open questions are recorded with leanings
+and should be decided before any code, the way TQ-44's three were.
 
 `PortfolioProvider` with `list_accounts` / `get_account` / `get_holdings` / `get_balances` /
 `get_positions` / `refresh` / `health_check`, returning canonical internal objects rather than
