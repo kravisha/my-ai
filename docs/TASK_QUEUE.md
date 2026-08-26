@@ -889,6 +889,23 @@ them on the server side."*
 The replacement for what TQ-72 removes, and addendum 9 §2's lifecycle made real: request →
 fetch → analyse → report → retain nothing.
 
+**The shape is sharper than "the client supplies portfolio information"** (§115). What crosses the
+boundary inbound is a **source name and credentials — a pointer and a key, not a portfolio.** The
+agent queries the external sources itself, one or more, and consolidates. That makes the agent an
+**outbound caller**, which no agent here is today: Explorer, Speculator and Analysis read a database
+the organization filled. The seam where the simulation engine answers that call has to exist in the
+agent's design from the first line, rather than being introduced when somebody wants to test it.
+
+**The unit of retention is the session, not the request.** Discard is triggered by the client
+disconnecting, so a multi-turn session may legitimately hold a consolidated portfolio in memory
+across several questions. There is a *lifetime* to manage, not merely an absence of writes.
+
+**State the guarantee as "this system retains nothing", never as "your data exists nowhere."** An
+external reasoning model may retain what it was sent, and that is somewhere this system cannot
+delete. The consent flow is the only control on it (TQ-46 §11 Q2, measured), and claiming the
+stronger guarantee would be the overclaim §110 §4.3 refused about the Gateway, in a domain where it
+matters more.
+
 **The open question this entry owns, and it is a design decision rather than a detail: what does
 the encryption defend against?** TLS already protects the wire. Envelope encryption on top of it
 protects against the server's own logs, crash dumps and disk — which is exactly the threat this
@@ -929,6 +946,43 @@ Blocked in practice on the same thing TQ-49/TQ-50 are — there is no external s
 until the owner has broker API access — so the buildable half is the envelope, the request shape,
 the reconciliation across sources, and the analysis over supplied holdings, which
 `holdings.concentration` already does.
+
+### TQ-77 — The simulated exchange, and simulated clients arriving through the Gateway
+
+**NEED (GREEN) · QUEUED · depends on TQ-73's agent seam · owner direction 2026-08-27
+(`SPEC_RECONCILIATION.md` §115) · addendum 25, addendum 34, `simulation/harness.py`**
+
+Owner direction: *"The simulation engine simulates all external calls the agent makes and also the
+task that is assigned to the agent. This task is assigned to the agent through the gateway and when
+the system sees that what is happening is the simulation phase, it will behave accordingly using
+the simulation engine to mimic client requests and also provide the portfolio to the agents through
+simulated exchanges."*
+
+Two substitutions, both **at the boundary and never inside the agent**:
+
+1. **Inbound** — a simulated client requests analysis *through the Gateway*, with a source name and
+   credentials, and closes the session with satisfaction or disappointment.
+2. **Outbound** — a simulated exchange answers the agent's query for portfolio data.
+
+**The agent must not be able to tell.** That is the whole property, and it is why §115 corrected
+§114: there is one code path, and what changes is what answers the call. `simulation/harness.py`
+already states the philosophy — *"It does not import agents, stub providers, or drive the pipeline…
+Isolation is the database, not a flag"* — and this extends it one boundary further out.
+
+What it lands on rather than invents:
+
+- **`run_mode` is already a closed vocabulary** (`simulation`, `historical`, `live`) and
+  `backend/missions.py` already refuses anything but `simulation`, enforced rather than documented
+  (addendum 25). The "simulation phase" has a name here already.
+- **The harness already runs the real organization** in an isolated database and chooses only the
+  environment it comes up in.
+- **The three imaginary clients already exist** with deliberately awkward portfolios (§101,
+  addendum 44 §6.1) — a covered call, a concentration, a missing cost basis.
+
+The one thing to get right and easy to get wrong: **how the system knows it is in the simulation
+phase must not be a value the agent reads.** An agent that can branch on it is an agent whose
+training and production behaviour can diverge, which is the property this entry exists to
+guarantee. The harness's answer — the environment, not a flag in a row — is the precedent.
 
 ### TQ-75 — A real market data source, because the store has none
 
@@ -1003,10 +1057,16 @@ What this increment owes:
   **§111 applies to training too** — an exercise that stored portfolios would train agents on a
   workflow this system does not have, and every habit formed would be one that is wrong in
   production and was rewarded in training.
-- **Grading dimensions that fit the subject.** Did it reconcile two sources into one position? Did
-  it identify the concentration? Did it refuse to price what it could not price, and say so, rather
-  than approximating? The last is the one worth grading hardest, because it is the behaviour the
-  whole domain depends on and the easiest to lose under pressure to produce an answer.
+- **Grading is the client's verdict, and the owner supplied it** (§115): the session ends with the
+  client expressing *satisfaction or disappointment*. In simulation the simulated client supplies
+  it, which is what makes the curriculum gradeable at all. Build the grading around that rather
+  than inventing dimensions from the output — it is a better signal than anything derivable, and
+  it is the one production will actually have.
+  Derived dimensions still earn their place *underneath* it, to explain a verdict rather than
+  replace it: did it reconcile two sources into one position, did it identify the concentration,
+  did it refuse to price what it could not price and say so rather than approximating. The last is
+  worth weighting hardest — it is the behaviour the whole domain depends on and the first thing
+  lost under pressure to produce an answer.
 - **The imaginary clients already exist.** `backend/portfolio_providers.SIMULATED_PORTFOLIOS` holds
   three with deliberately awkward portfolios — a covered call, a concentrated position, a missing
   cost basis (§101, addendum 44 §6.1). They were built as demo data to delete before going live;

@@ -10007,3 +10007,145 @@ That distinction is TQ-76's to draw, and it must be drawn deliberately: the
 lazy version, widening `outstanding()` to ignore anything flagged as training,
 would re-create §100's finding exactly — a clean report that is not true, which
 is the one a pre-launch checklist believes.
+
+---
+
+## §115 — The analyst's session, and a correction about how training stays honest (2026-08-27)
+
+Owner direction, 2026-08-27, correcting §114 and specifying the workflow:
+
+> *"The portfolio analyst agent does work only when tasked. The request has to
+> come from the client. The portfolio is provided as an external source and all
+> that is provided is source name and credentials. The agent has to query the
+> data from external sources and obtain the portfolio from there. After obtaining
+> one or more portfolios, the agent does what is requested and returns the report
+> back to the user while saving nothing permanently and deleting everything once
+> the client disconnects… Client accesses the system only through the gateway…
+> After services are provided the client expresses satisfaction or disappointment
+> and ends the session and after that all client data is discarded by the
+> system."*
+>
+> *"The simulation engine simulates all external calls the agent makes and also
+> the task that is assigned to the agent. This task is assigned to the agent
+> through the gateway and when the system sees that what is happening is the
+> simulation phase, it will behave accordingly using the simulation engine to
+> mimic client requests and also provide the portfolio to the agents through
+> simulated exchanges."*
+
+### The correction, and it is about the difference between discipline and structure
+
+§114 said:
+
+> *"An exercise that stores portfolios trains agents on a workflow this system
+> does not have… every habit it forms is a habit that is wrong in production and
+> was rewarded in training. The exercise is the production workflow with invented
+> inputs, which is what makes it training rather than theatre."*
+
+The conclusion was right and **the reasoning was wrong in a way worth recording**,
+because the wrong version would have produced worse code.
+
+It treated "training must not diverge from production" as a **rule to be
+maintained** — something a future increment could break by adding a convenient
+store, and therefore something needing a guard. Under the owner's design that
+divergence is **structurally impossible**: the agent has exactly one code path.
+It is tasked through the Gateway and it queries an external source, in both
+modes. What changes between training and production is not the agent, and not the
+workflow — it is **what answers the call**.
+
+The simulation substitutes **at the boundary**, not inside the process. So there
+is no training-shaped workflow for a habit to form against, because there is no
+second workflow at all.
+
+**This project already knew that, and I reached for the weaker version anyway.**
+`simulation/harness.py` states the philosophy in its first paragraph:
+
+> *"The harness starts `backend.main:app` exactly the way an operator does. It
+> does not import agents, stub providers, or drive the pipeline: the Controller
+> spawns real OS processes… and the harness only chooses the environment they
+> come up in."*
+
+and one line later, the sentence that is the whole lesson: **"Isolation is the
+database, not a flag."** I proposed to guard by discipline a property the
+architecture already guarantees by construction — and discipline decays while
+structure does not. §99's single gate and §110's tripwires are the same argument,
+made twice already in this repository.
+
+### The workflow, recorded
+
+1. **The analyst works only when tasked**, and the task originates with a client.
+   There is no idle analyst reaching for portfolios to look at.
+2. **The client supplies a source name and credentials — not a portfolio.** That
+   is a sharper statement than §111's "the client supplies portfolio
+   information": what crosses the boundary inbound is a *pointer and a key*, and
+   the holdings themselves are pulled by the agent from the external system.
+3. **The agent queries the external sources itself**, one or more, and
+   consolidates.
+4. It does the requested work and returns a report.
+5. **The session ends when the client says so**, with an expression of
+   satisfaction or disappointment.
+6. **Everything is discarded on disconnect.** Client data is never retained.
+7. **The client reaches the system only through the Gateway** — which is §109's
+   division holding: the Gateway is the door, and it is the only door.
+
+### Three facts this adds that were not in §111 or §112
+
+**The unit of retention is the session, not the request.** §111 said "nothing is
+stored"; this says when the discarding happens and what triggers it — the client
+disconnecting. A multi-turn session may legitimately hold a consolidated
+portfolio in memory across several questions, which is a different design from
+re-fetching per question, and it means there is a *lifetime* to manage rather
+than merely an absence of writes.
+
+**Satisfaction or disappointment closes the session, and it is a grading
+signal.** §114 observed that `grades`' dimensions are discovery-shaped —
+relevance, novelty, evidence quality — and wondered what portfolio analysis
+should be graded on. **The owner has supplied the answer and it is better than
+anything derivable from the output**: the client says whether it was any good. In
+simulation the simulated client supplies it, which is what makes the curriculum
+gradeable at all. TQ-76 should build its grading around this rather than
+inventing dimensions.
+
+**The agent makes outbound calls, which no agent here does today.** Explorer,
+Speculator and Analysis read a database the organization filled. A Portfolio
+Analyst reaches *out*, with somebody else's credentials, to a system this project
+does not control. That is a new capability shape and it is where the simulation
+engine intercepts — *"simulates all external calls the agent makes"* — so the
+seam has to exist in the agent's design from the first line rather than being
+introduced when somebody wants to test it.
+
+### What this lands on, and it is more than expected
+
+- **`run_mode` already exists** as a closed vocabulary — `simulation`,
+  `historical`, `live` — and `backend/missions.py` already *refuses* anything but
+  `simulation`, enforced rather than documented (addendum 25). The "simulation
+  phase" the owner describes has a name here already.
+- **`simulation/harness.py` already runs the real organization** in an isolated
+  database, choosing only the environment. Extending it to answer an agent's
+  outbound broker call is the same idea one boundary further out.
+- **`simulation/pricing.py` is already a Black-Scholes kernel**, shared with
+  `backend/arbitrage.py` so *"the two modules never duplicate the discounting
+  math"*. §113's greeks *"calculated locally"* do not need a new pricing engine;
+  they need the one that is there, and the house rule that there is only one of
+  it.
+
+### The part of "discard everything" that needs an honest answer
+
+Deleting in-process state on disconnect is straightforward. **Deleting what has
+already left the process is not**, and the boundary deserves stating before
+anybody claims the guarantee:
+
+- **An external reasoning model may retain what it was sent.** If a consolidated
+  portfolio is forwarded to one, the client's data is now somewhere this system
+  cannot delete it. That is precisely what `app/tools/portfolio.py`'s consent
+  flow exists to gate, and TQ-46 §11 Q2 already established that **it is the only
+  control**, because no `LOCAL_ONLY` field survives sanitisation to make §108's
+  `PATH_REFUSED` fire.
+- **Logs, crash dumps and swap** are the same problem one level down, and are why
+  §111 flagged that every durable writer owes the audit `routing_decisions`
+  already passed.
+
+None of that weakens the design. It means the guarantee is **"this system retains
+nothing"**, which is true and worth having, rather than *"your data exists
+nowhere after you disconnect"*, which this system cannot promise on behalf of a
+model provider. Writing the second one down would be the overclaim §110 §4.3
+refused about the Gateway, arriving in a domain where it matters more.
