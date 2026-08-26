@@ -93,6 +93,8 @@ class SimulatedClient:
     def owner(self) -> portfolios.OwnerContext:
         return portfolios.for_client(self.client_id)
 
+    asked_for: str | None = None
+
     def request_analysis(self, conn, requested: str = "concentration") -> str:
         """Ask for the analysis. **The same call the Gateway route will make.**
 
@@ -102,6 +104,7 @@ class SimulatedClient:
         queue, the claim, the analyst, the delivery, the collection - is the real
         path, so what an exercise does not yet exercise is one function call and
         a socket."""
+        self.asked_for = requested
         self.request_id = analysis_requests.submit(
             conn, session_id=self.session_id, owner=self.owner(),
             sources=self.sources, requested=requested)
@@ -131,6 +134,20 @@ class SimulatedClient:
             return self._verdict(complaints)
 
         report = answer.get("result") or {}
+
+        answered = report.get("requested")
+        if self.asked_for and answered and answered != self.asked_for:
+            # The failure a refusal protects against, and the one that leaves a
+            # client happy and wrong: they asked for a stress test, got a
+            # concentration report, and nothing in it says it is not what they
+            # asked for.
+            complaints.append(Complaint(
+                "answered_a_different_question",
+                f"I asked for {self.asked_for!r} and this is {answered!r}.",
+                "§108's discipline applied to analysis: substituting something "
+                "achievable answers a question nobody put, and a refusal would have "
+                "been the better answer"))
+
         named = {source["name"] for source in self.sources}
         reported = set(report.get("sources") or ())
         failed = {failure["source"] for failure in report.get("failed_sources") or ()}

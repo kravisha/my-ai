@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1433,6 +1433,11 @@ def init_schema(conn: Database) -> None:
     # retains nothing, and for the credential problem it deliberately does not
     # solve.
     conn.executescript(analysis_requests.SCHEMA)
+    # What the organization trains on, and how each exercise went (TQ-76,
+    # addendum 36). Kept, unlike anything about a real client: these are the
+    # organization's own learning about imaginary clients, and the results carry
+    # complaint codes rather than the positions those complaints quote.
+    conn.executescript(curriculum.SCHEMA)
     # `portfolios` and `portfolio_holdings` are deliberately absent, and their
     # absence is a tested property rather than an omission (TQ-72, §111).
     #
@@ -1573,7 +1578,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
-         analysis_requests.SCHEMA)
+         analysis_requests.SCHEMA, curriculum.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
