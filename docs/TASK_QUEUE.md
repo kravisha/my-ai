@@ -77,12 +77,13 @@ holds the queue, not the record.
 > suite (§107), TQ-59 the deterministic check and escalation decision (§108). `routing` now stands
 > on the `seeded_leaderboard` rung.
 >
-> **TQ-52 is unblocked (2026-08-26).** It was held on one owner answer — what "Inkling" is — and
-> the owner has given it: **Inkling Labs' local model**. The survey may now go and read that
-> vendor's own material for the artifact, licence and runtime; it still may not assume them, and
-> substitution stays refused. TQ-57, TQ-58, TQ-60 … TQ-68 queue behind the survey rather than
-> behind the question. Hardware is measured (§102): 8 GB VRAM, 16.5 GB RAM, 365 GB free disk — a
-> pool of six is feasible on disk and sequential in VRAM.
+> **TQ-52's blocking question is answered (2026-08-27).** It was held on what "Inkling" is; the
+> owner named it and, once this machine had internet access, it was measured. **Inkling is Thinking
+> Machines Lab's open-weights model: 975B parameters, 41B active, Apache 2.0 — and its smallest
+> known build is 226 GB at 1-bit.** Against 8 GB VRAM and 16.5 GB RAM (§102) it is out of reach by
+> about an order of magnitude, so it is recorded as **out, with the reason**, and the pool is
+> Llama + DeepSeek + Qwen/Mistral/Gemma at 7–8B. A finding, not a substitution. What remains of
+> TQ-52 is the survey itself; TQ-57, TQ-58, TQ-60 … TQ-68 queue behind that.
 >
 > Also open: **TQ-07** (consumer-gated), **TQ-20** and **TQ-21** (owner actions), **TQ-28**
 > (the isolation guard), and the deferred animated presenter.
@@ -1408,16 +1409,46 @@ VRAM; a 70B-class model does not, at any quantization. Disk is ample for a pool 
 not ample for two resident at once, which makes §15's challenger comparisons **sequential**. That
 is a latency cost, not a blocker, and the plan should say so rather than discover it.
 
-**"Inkling" — answered by the owner, 2026-08-26: it is Inkling Labs' local model.** That is the
-fact this entry was blocked on and it is recorded as the owner gave it, which unblocks the survey
-and the lineage behind it (TQ-57, TQ-58, TQ-60 … TQ-68).
+**"Inkling" — answered by the owner 2026-08-26, and then measured 2026-08-27 once this machine had
+internet access.** The name was the fact this entry was blocked on; the survey was still owed the
+artifact, the licence and the runtime, from published material rather than from a name.
 
-What it unblocks is the *looking*, not the conclusion. The survey still owes the same three facts
-for Inkling that it owes every other candidate — **the actual artifact, its licence, and its
-runtime** — plus the parameter count and the quantization that fits 8 GB of VRAM, and it must
-obtain them from Inkling Labs' own published material rather than from a name. Nothing about this
-system may depend on it until those are written down in `docs/local_model_candidates.yaml`
-alongside every other candidate's.
+**Found, and it does not run here.**
+
+| | |
+|---|---|
+| what it is | **Inkling**, Thinking Machines Lab — an open-weights model |
+| size | **975B total, 41B active per token** (MoE: 6 of 256 experts plus 2 shared, 66 layers) |
+| licence | **Apache 2.0** — permissive, no obstacle |
+| runtimes | SGLang, vLLM, Transformers, Ollama, LM Studio; llama.cpp **only via unmerged PR #25731** |
+| smallest known build | **226 GB**, at 1-bit quantization |
+
+Against this machine's measured hardware (§102): **8 GB VRAM, 16.5 GB system RAM, 365 GB free
+disk.**
+
+The 226 GB build *fits on the disk* with about 139 GB to spare, and that is the only sense in which
+it fits. Running it means holding weights in 24.5 GB of combined VRAM and RAM, so roughly nine
+tenths of every token's weight reads would come off disk — and that is at **1-bit**, where quality
+is degraded to the point that "it ran" would not mean "it answered". The MoE routing helps compute
+and not storage: 41B active per token still selects those experts from all 975B, which have to be
+somewhere reachable.
+
+**So the finding is a finding, not a substitution** — which is what this entry insisted on when the
+answer was still unknown. Inkling is real, properly licensed, and out of reach of this hardware by
+roughly an order of magnitude. The initial pool is **Llama + DeepSeek + Qwen/Mistral/Gemma at
+7–8B**, which §102 already established fits in 8 GB of VRAM at 4-bit, and Inkling is recorded as
+out with the reason stated rather than quietly dropped.
+
+Nothing about this system may depend on any of them until the survey writes them all down in
+`docs/local_model_candidates.yaml` with the same three facts each. **That survey is now the whole
+of the remaining work here** — the blocking question is answered.
+
+Two things worth carrying into it. **A model that needs an unmerged PR is not a runtime this
+project has**, and that applies to any candidate, not only this one — the honest column is "runtime
+available today", not "runtime announced". And **§108's rule is live and unchanged**: a `LOCAL_ONLY`
+task with no local model is refused, never escalated. Finding that the headline candidate does not
+fit does not soften that; it is the reason the rule was written to be true today rather than after
+a download.
 
 Two failure modes stay refused, and they are why this paragraph is longer than the answer:
 **substitution** — if what turns up is not an obtainable open-weight local model, the pool is
