@@ -36,3 +36,10 @@ backup.key
 # The model-spend ledger (app/model_budget.py): live local state, one row per
 # UTC day, shared by every process that calls the model.
 model_spend.db
+# The model performance registry (app/model_performance.py, TQ-54): measured
+# outcomes per model per task category, machine-written after every task. It is
+# deliberately not committed - that is the whole reason it is a database rather
+# than a section of docs/model_registry.yaml, which holds the hand-authored half.
+model_performance.db
+model_performance.db-wal
+model_performance.db-shm

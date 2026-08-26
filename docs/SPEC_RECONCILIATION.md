@@ -8673,3 +8673,124 @@ down.
 built because §42 says start with exactly these eight.
 
 Suite: **2332 passing** (2301 before, +31).
+
+---
+
+## §105 — The competition, as data (2026-08-26, TQ-54)
+
+Third increment of the addendum 45 lineage. `app/model_performance.py`: §8's
+registry, §42's eight leaderboards, §12's seeding, §10's penalties and rewards,
+§11's task-specific rankings, §13's impermanence.
+
+Still no model calls. The routing marker advances from `none_single_model` to
+`seeded_leaderboard`.
+
+### Storage follows the ledger that already solved this
+
+`app/model_budget.py` had the same problem four increments ago: a population of
+separate processes, each with its own provider, needing one shared account of
+something. Its answer — a SQLite file whose path resolves from the environment at
+call time — is copied here rather than re-argued, down to the deferred `yaml`
+import for a dev-only dependency (`backend/continuity.py`'s convention for
+`cryptography`).
+
+### The seed and the evidence stay decomposable, permanently
+
+The mistake worth designing against: one `score` column blending the guess with
+the measurement. §12 wants empirical data to dominate the seed *eventually*,
+which is impossible once nobody can take the number apart.
+
+So the seed is written once, never updated, and the composite is derived on read:
+
+    score = (SEED_PRIOR_SAMPLES · seed + n · measured) / (SEED_PRIOR_SAMPLES + n)
+
+The seed is worth exactly five observations. At n=0 the score *is* the seed; by
+n=50 the seed is 9% of it; it never quite vanishes and never has to be deleted.
+**Nobody decides when evidence takes over — arithmetic does**, which is what §13
+needs when it says the system must not be trapped by the original human guess.
+`confidence` is the same ratio read from the other side.
+
+Deriving on read rather than storing has a second benefit: retuning
+`SEED_PRIOR_SAMPLES` changes every score immediately, without rewriting history.
+
+### §11 is structural, not policy
+
+`record_outcome` writes a row keyed by `(model_id, task_category)`, and there is
+no statement in it that reaches another category. A model that fails at long
+context keeps its coding rank because nothing in the function *could* take it
+away — not because a rule says not to.
+
+### The hole in §103's ladder, found by falling in it
+
+TQ-51 built a routing ladder where each rung declares `enforced`, precisely so
+that advancing the marker to a rung with no assertion would fail loudly.
+
+**Then this increment set `enforced: true` on `seeded_leaderboard` and moved the
+marker before writing that rung's tripwire — and the suite went green.**
+
+`enforced` was a flag in a YAML file. Nothing tied it to the existence of a test,
+so it recorded an intention and read as a fact. The ladder was built to prevent
+exactly this and did not, because its author was the one it needed to stop.
+
+Fixed by making the claim checkable: `tests/test_model_registry.py` now declares
+`ENFORCED_STAGES` beside the tests that implement it, and
+`test_enforced_is_a_fact_about_this_file_rather_than_a_claim` fails if the YAML
+claims a rung this file does not assert — or asserts one the YAML calls
+unenforced. A flag is not a tripwire; a flag the tests have to agree with is.
+
+The mutation run confirms it: advancing `competitive` to `enforced: true` now
+fails.
+
+### Where the seed ordering lives, and why that changed mid-increment
+
+The plan was for the runtime database to hold everything. Writing the rung's
+tripwire made that impossible: **CI has no database**, so a check that read one
+would assert nothing, and `seeded_leaderboard` would have been unenforceable in
+the only place enforcement matters.
+
+So the hand-authored *ordering* moved into `docs/model_registry.yaml` as
+`seed_ordering`, and only the measurements stay in the database. That sharpens
+§103's split rather than contradicting it — the line was always **human decisions
+in the committed file, machine writes in the database**, and an initial ordering
+is a human decision. `seed_from_registry()` is the one point where the two touch,
+and it is directional: measurements never flow back into git.
+
+### What is deliberately not scored
+
+§8 lists `cost_score` and `resource_efficiency_score`. Nothing produces either —
+local cost needs TQ-57's hardware monitoring, external cost needs §37's model,
+which is TQ-65's. Columns for them would be always-NULL columns, which is
+machinery with no user, and a zero would be a measurement nobody made. A test
+asserts their absence. The increment that first measures one adds it.
+
+`model_performance.db` is gitignored, in three lines added for it — caught
+because a bare `git status` showed it untracked before the first `git add -A`,
+which is the kind of thing that otherwise ships as a committed database.
+
+### Verified by running it, and by attacking it
+
+**Run:** seeded from the real `docs/model_registry.yaml` — eight leaderboards,
+one model, every entry at exactly neutral with confidence 0.0 and status
+`SEEDED`. The registry claims nothing it has not measured, which for a
+single-model system is the only honest thing it can say.
+
+Then a competition, watched rather than asserted: three models seeded
+`alpha > beta > gamma`, `gamma` given twelve good outcomes at
+`CODING_AND_DEBUGGING` and `alpha` twelve failures. Final order at coding:
+**gamma (0.77), beta (0.50), alpha (-0.51)** — the model seeded *last* leading,
+the model seeded *first* below zero, and `LONG_CONTEXT_AND_MEMORY` untouched at
+the original seeded order. §13 and §11 in one run.
+
+A negative composite is deliberate and unbounded below: penalties are
+subtractive, so a model can be worse than useless, and clamping at zero would
+make "wrong answer every time" indistinguishable from "slightly slow every time".
+
+**Attack:** eight mutations, eight caught — the seed being edited by an outcome;
+the seed never decaying; an unscored success counting as a win; an unknown
+failure scoring as no penalty; re-seeding overwriting evidence; every failure
+weighing the same; a configured model missing from a leaderboard; and the marker
+advancing to an unenforced rung.
+
+Suite: **2371 passing, 1 skipped** (2332 before, +39). The skip is
+`none_single_model`'s tripwire, correctly standing down now that a later rung
+governs.
