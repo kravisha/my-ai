@@ -895,13 +895,36 @@ holds business logic. The portfolio subsystem was on the wrong side of that line
 first — building a `SUPERUSER` domain into `gateway.db` and moving it a week later is the mistake
 TQ-44 refused to make with the entity and its guard. TQ-69 is done, and this is next.
 
-**Read its spec §11 Q4 before starting.** TQ-69 flagged the question this increment cannot proceed
-without: *which id owns the SUPERUSER portfolio*. Only two callers can assert an owner — the
-Gateway, which knows a Gateway subject, and `/chat`, which knows a backend `username` — and they
-are different identity populations (TQ-70). Pick one, store the choice, and test it: with two owner
-domains and two candidate ids, **the wrong pairing is not refused, it returns an empty portfolio**.
-§15.5's regression covers a client receiving the operator's; nothing yet covers the operator
-silently receiving nobody's.
+**All four §11 questions are decided and recorded (2026-08-26).**
+
+**Q4 — answered by the owner:** *"Krish is the superuser of this system… the architect… the owner…
+the creator. The system serves Krish primarily. The system also has other clients… However, they
+are just clients. The clients pay for service."* So the SUPERUSER portfolio is owned by the
+**backend `username`** — Krish is explicitly not in the clients population, and
+`gateway/clients.py` is the registry of external paying clients.
+
+**The finding that came with it:** both candidate stores currently spell the operator identically
+(`GATEWAY_SUPER_USER=krish`, and `krish` in `users.json`), so the two possible answers **coincide
+today by accident of naming**. Either choice would appear to work, and the difference would surface
+only on a rename, a second operator, or two `.env` files — at which point the operator's portfolio
+becomes **empty rather than erroring**. The increment removes the ambiguity rather than maintaining
+the coincidence: **exactly one caller may assert `SUPERUSER`, and it is the backend.** TQ-47's tab
+is in the console, which is backend-side, so both consumers already are.
+
+**Q2 — confirmed by measurement, and the leaning was wrong.** The operator's portfolio is *not*
+`LOCAL_ONLY`: only `account_id` is, and `sanitize_portfolio_rows` strips it before anything is
+forwarded, so the rows that reach a model carry no `LOCAL_ONLY` field and §108's `PATH_REFUSED`
+never fires. **The consent prompt is the only control, not a redundant one** — deleting it as
+duplicated would have left nothing. Marking the portfolio `LOCAL_ONLY` to make §108 apply is
+refused: with no local model, that would take `/chat`'s only tool permanently out of service.
+
+**Q3 — two capabilities**, declared and checked where the surface actually is (backend-side, per
+Q4) rather than in `gateway/roles.py` as §6's file table guessed before TQ-69 landed. A capability
+nothing checks is machinery with no user, which is the same rule that keeps the other five
+unbuilt.
+
+**Q1 — reading B** (decided earlier): keep the capability, remove the ownerlessness. No consent
+machinery is deleted.
 
 **Q1 is decided: reading B** — keep the capability, remove the ownerlessness. The spec called B
 expensive because the backend cannot reach `gateway.db`; under the corrected architecture that

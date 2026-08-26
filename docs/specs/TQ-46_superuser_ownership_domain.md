@@ -378,12 +378,65 @@ the honest answer is §108's**, which already exists — a portfolio marked
 than a consent prompt. But confirm the operator's portfolio *is* marked
 `LOCAL_ONLY`, rather than assuming it.
 
+**Decided 2026-08-26: keep the consent flow. The leaning was wrong on its
+premise, and the instruction to confirm rather than assume is what caught it.**
+
+The operator's portfolio is **not** `LOCAL_ONLY`, and it never has been. Measured
+rather than reasoned about:
+
+| field | `PORTFOLIO_FIELD_CLASSES` |
+|---|---|
+| `ticker`, `shares`, `purchase_price`, `purchase_date` | `SERVICE_SHAREABLE` |
+| `account_id` | `LOCAL_ONLY` |
+
+One field is `LOCAL_ONLY`, and `privacy_filter.sanitize_portfolio_rows` strips it
+**before anything is forwarded** — deliberately, as an unconditional rule rather
+than a trust decision. So the rows that actually reach a reasoning model carry
+**no `LOCAL_ONLY` field at all**, `task_signature.privacy_floor_for()` over them
+returns `None`, and §108's `PATH_REFUSED` never fires.
+
+That inverts the leaning. The consent prompt is not a weaker duplicate of a
+stronger guarantee — **it is the only control on forwarding the operator's
+holdings externally**, and §108 does not cover it. Deleting it as redundant, which
+is what the leaning would eventually have licensed, would have removed the control
+and left nothing.
+
+**And the reflex fix is refused.** Marking the superuser portfolio `LOCAL_ONLY` to
+make §108 apply would be a one-line change with a consequence nobody asked for:
+there is no local model on this machine (§108, live today), so *every* superuser
+portfolio task would be refused and `/chat`'s only tool would be permanently out
+of service. A classification chosen to make a guarantee fire, which then disables
+the feature it was guarding, is worse than the honest arrangement.
+
+So: the classification stands, the consent flow stays and keeps its consumer
+(Q1's reading B), and **whether the operator's own holdings should be local-only
+is the owner's call, not a detail of this increment.** It is worth asking once
+there is a local model to make it survivable — which is TQ-52's lineage, not
+this one.
+
 **Q3 — Two capabilities or seven?** §10 lists seven. This spec adds the two the
 increment needs. The other five have no consumer: `PORTFOLIO_VIEW_OWN` duplicates
 `CAP_HOLDINGS`, `..._MANAGE_CONNECTION` is TQ-49's, `..._VIEW_SIMULATION` is
 already covered by the `simulated` flag. **Leaning: two now**, the rest when
 something needs them — the standing rule that machinery with no user does not get
 built.
+
+**Decided 2026-08-26: two, and the standing rule applies to *these* two as
+well.**
+
+The other five stay unbuilt for the reason given. What Q4's answer adds is that
+the same test has to be applied to the two being kept: a capability is only real
+where something checks it, and Q4 moves the surface that would check them
+backend-side. `gateway/roles.py` capabilities gate **Gateway tools**; if this
+increment adds no Gateway tool for the superuser portfolio — and under Q4 it does
+not — then declaring them there would be machinery with no user, which is
+precisely what this question refuses for the other five.
+
+So the two names §10 asks for are declared and checked **where the surface is**,
+not where the spec's §6 file table guessed it would be. §6 was written before
+TQ-69 landed; that is a correction of a premise, not of the requirement. The
+requirement is §5.3's: **an explicit capability that is checked, never a role
+inferred to mean "and therefore everything".**
 
 **Q4 — Which id owns the SUPERUSER portfolio?** *Flagged here by TQ-69 (its §10
 Q3, decided 2026-08-26 to flag rather than settle), and it is load-bearing for
@@ -418,6 +471,71 @@ Note this interacts with Q1's decided reading B: an owned backend equivalent of
 `retrieve_portfolio` reads *the migrated SUPERUSER portfolio*, so if the migration
 stamped one id and `/chat` asserts the other, reading B delivers an empty tool
 result rather than an error, on the increment's headline path.
+
+**Decided 2026-08-26 by the owner: the SUPERUSER portfolio is owned by the
+backend `username` — the `krish` id in `users.json`.**
+
+Owner's words: *"Krish is the superuser of this system. Krish is the architect…
+the owner… the creator. The system serves Krish primarily. The system also has
+other clients… They will be external clients… However, they are just clients. The
+clients pay for service."*
+
+That settles the structural question and not merely the string. **Krish is
+explicitly not in the clients population.** `gateway/clients.py`'s table is the
+registry of external, paying clients — the people the owner distinguished
+themselves from. The backend's `users.json` is the system's own principal.
+`owner_id` is therefore the backend username, and `for_superuser()` takes it from
+`Depends(get_current_user)` — the value TQ-69 §3 found already resolved at
+`/chat` and thrown away.
+
+### The finding that makes this urgent rather than tidy
+
+Both candidate stores currently spell the operator identically:
+
+```
+GATEWAY_SUPER_USER=krish     # the Gateway's operator credential
+users.json: ['krish']        # the backend user /chat authenticates
+```
+
+**So the two possible answers to Q4 coincide today, by accident of naming.** That
+is the worst possible shape for this question. Whichever id an implementation
+stamped, it would appear to work; the difference would surface only when somebody
+renamed one, added a second operator, or ran the two processes from different
+`.env` files — at which point the operator's portfolio silently becomes **empty
+rather than erroring**, which is the failure mode this question was flagged for.
+
+**The increment must remove the ambiguity, not maintain the coincidence.** A
+comment saying "keep these in sync" is not a mechanism.
+
+### How: one asserting caller, not two kept in agreement
+
+The way to make the coincidence irrelevant is to have only one caller able to
+assert `SUPERUSER`, and that falls out of the architecture rather than being
+imposed on it:
+
+- **The backend asserts it.** `/chat` already resolves the username; TQ-47's
+  Superuser Portfolio tab is *"a dedicated tab in the console"*, and the console is
+  the backend's own surface (`/console`), which the Gateway already proxies as the
+  studio under `CAP_STUDIO`. Both consumers are backend-side.
+- **The Gateway does not.** It gets no superuser-portfolio tool in this increment,
+  so there is no second identity to map and nothing to keep in sync. The operator
+  reaching their own portfolio through the *client* door is also exactly the
+  ambiguity §3 and §4.4 warn about, arriving one layer lower.
+
+This makes `GATEWAY_SUPER_USER` what §109 says it is — **authentication, how Krish
+reaches the system from outside** — and never an ownership claim. The two values
+being equal today becomes a coincidence that no longer matters, rather than an
+invariant nobody is enforcing.
+
+### What §7 owes because of this
+
+The test with the opposite shape to §15.5's, named in the question: **the operator
+must not silently receive nobody's portfolio.** An empty result where the
+operator's own holdings should be is a failure that reads as a working system, and
+it is the specific thing a wrong answer here produces. `resolve()` returning
+"not yours" is indistinguishable from "no such portfolio" by design (addendum 44
+§9.3) — correct, and precisely why this needs its own regression rather than
+relying on somebody noticing.
 
 ---
 
