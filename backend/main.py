@@ -505,6 +505,35 @@ def require_gateway(username: str = Depends(get_current_user)) -> str:
     return username
 
 
+def panel_db():
+    """A short-lived connection per request, deliberately *not* the Controller's.
+
+    Two reasons, one forced and one chosen. Forced: sqlite3 connections are
+    bound to the thread that opened them, and FastAPI runs sync handlers in a
+    worker threadpool, so reusing the Controller's connection raises
+    ProgrammingError at request time - an error no import check catches, only a
+    real request does.
+
+    Chosen: even with that solved, a request should not share the handle the
+    Controller uses to execute lifecycle actions. The database is in WAL mode,
+    so additional readers are safe and concurrent, and this way a slow query can
+    never stall the directive poll loop.
+
+    **Named for the control panel and no longer only its.** It is now every
+    route's per-request connection - the panel's, the portfolio surface's
+    (TQ-69), and `/chat`'s since TQ-46 gave the portfolio tool an owner and
+    therefore a database. The name is kept rather than churned because every
+    test override in the suite targets it by name, and one dependency that
+    everything reaches through is worth more than an accurate label: it is the
+    single place a test can point the whole application at its own file, so
+    there is nothing to remember and nowhere to forget."""
+    conn = fi_db.get_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -1077,7 +1106,8 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest, username: str = Depends(get_current_user)):
+def chat(request: ChatRequest, conn=Depends(panel_db),
+         username: str = Depends(get_current_user)):
     """The client sends its full message history on every call (including
     the newest user turn it wants answered) - the server holds no
     conversation state between requests, matching vibe-agent's /chat.
@@ -1122,7 +1152,7 @@ def chat(request: ChatRequest, username: str = Depends(get_current_user)):
         if request.consent_answer in ("always", "never") and request.consent_key:
             preferences.set(request.consent_key, request.consent_answer)
         result = execute_tool(
-            pending_block["name"], permissions, preferences, audit_log,
+            pending_block["name"], conn, username, permissions, preferences, audit_log,
             allow_once=(request.consent_answer == "once"),
         )
         messages.append({
@@ -1156,7 +1186,8 @@ def chat(request: ChatRequest, username: str = Depends(get_current_user)):
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            result = execute_tool(block.name, permissions, preferences, audit_log)
+            result = execute_tool(
+                block.name, conn, username, permissions, preferences, audit_log)
             if result.get("status") == "needs_consent":
                 paused = result
                 break
@@ -1262,27 +1293,6 @@ def get_client_transcript(username: str, admin: str = Depends(require_admin)):
 # Nothing here mutates. Lifecycle actions belong to the Controller alone
 # (addendum 11 §15), so they are a separate, audited increment rather than
 # something the observability layer quietly acquires.
-
-
-def panel_db():
-    """A short-lived read connection per request, deliberately *not*
-    conn.
-
-    Two reasons, one forced and one chosen. Forced: sqlite3 connections are
-    bound to the thread that opened them, and FastAPI runs sync handlers in a
-    worker threadpool, so reusing the Controller's connection raises
-    ProgrammingError at request time - an error no import check catches, only a
-    real request does.
-
-    Chosen: even with that solved, the panel should not share the handle the
-    Controller uses to execute lifecycle actions. The database is in WAL mode,
-    so additional readers are safe and concurrent, and this way a slow panel
-    query can never stall the directive poll loop."""
-    conn = fi_db.get_connection()
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _parse_json_field(value, default=None):

@@ -305,7 +305,11 @@ async def login(request: LoginRequest, http_request: Request, conn=Depends(gatew
     # `clients.register` refuses to create the collision in the first place, so
     # this ordering is a second line rather than the only one.
     role = auth.identify(request.username, request.password)
-    subject = request.username.strip().lower() if role else None
+    # The configured identity, not the string that was typed (TQ-46). The
+    # operator may log in as `superuser` or under their own name, and both are
+    # the same person - so both must produce the same subject, or they would own
+    # two of everything and see one.
+    subject = auth.subject_for(role, request.username) if role else None
     if role is None:
         client_id = clients.authenticate(conn, request.username, request.password)
         if client_id is not None:

@@ -58,6 +58,32 @@ ROLE_CREDENTIAL_ENV: dict[str, tuple[str, str]] = {
     roles.ROLE_INTERNAL: ("GATEWAY_INTERNAL_USER", "GATEWAY_INTERNAL_PASSWORD_HASH"),
 }
 
+# A fixed name the operator may log in under, whatever they are actually called
+# (owner direction, 2026-08-26).
+#
+# ## It is a pseudo-id, not a second account
+#
+# The operator has one identity. `GATEWAY_SUPER_USER` names it at this door and
+# `users.json` names it at the backend's, and **those being the same string is
+# intentional design rather than a coincidence** - one person, two doors. This
+# alias is a third way of typing it, and it resolves to the same identity as the
+# other two.
+#
+# That is the whole reason `subject_for` exists below. The alias must never
+# become a *separate* owner: a session issued under the literal `superuser` and a
+# session issued under `krish` have to carry the same subject, or the operator
+# would own two portfolios and see one of them - the failure mode TQ-46 §11 Q4
+# describes, where the wrong pairing is not refused but silently empty.
+#
+# ## Why have it at all
+#
+# The operator's real name is deployment configuration. A door that only opens to
+# it means the login page cannot say what to type, and every deployment answers
+# differently. `superuser` is the same word everywhere and reveals nothing: it
+# names a *role*, which the login page already tells you exists, and it still
+# needs the operator's password.
+SUPERUSER_ALIAS = "superuser"
+
 DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60
 
 NOT_CONFIGURED_MESSAGE = (
@@ -117,6 +143,46 @@ def configured_roles() -> list[str]:
             if role in ROLE_CREDENTIAL_ENV and all(credential_for(role))]
 
 
+def _names_for(role: str, configured: str) -> set[str]:
+    """Every name this role's credential answers to, lowercased.
+
+    Exactly one extra name, for exactly one role: the operator answers to
+    `SUPERUSER_ALIAS` as well as to whatever they are configured as. The internal
+    role gets no alias, because nothing asked for one and a login name that
+    exists for symmetry is a login name nobody audits."""
+    names = {configured.lower()}
+    if role == roles.ROLE_OPERATOR:
+        names.add(SUPERUSER_ALIAS)
+    return names
+
+
+def subject_for(role: str, username: str) -> str:
+    """The identity a role login is recorded under - **the configured name, never
+    the string that was typed.**
+
+    This is the rule `gateway/main.py` already applies to clients, stated for
+    roles: *"The subject is what `clients.authenticate` resolved, never the string
+    the caller typed - a typed name is a claim, and the registry is what turns it
+    into an identity"* (addendum 44 §9.2). For an environment role the
+    environment is the registry.
+
+    It is what makes `SUPERUSER_ALIAS` a pseudo-id rather than a second account.
+    Logging in as `superuser` and logging in as `krish` produce **one subject**,
+    so they resume the same conversation, hold the same session, and - once TQ-46
+    lands - own the same portfolio. Recording the typed string instead would have
+    produced two operators who could not see each other's data, and neither would
+    have looked broken.
+
+    Falls back to the supplied name only for a role with no configured
+    credential, which `identify` cannot return in the first place; the fallback
+    exists so this function has no way to return an empty subject."""
+    if role in ROLE_CREDENTIAL_ENV:
+        configured, _ = credential_for(role)
+        if configured:
+            return configured.strip().lower()
+    return (username or "").strip().lower()
+
+
 def identify(username: str, password: str) -> str | None:
     """The **environment-configured** role this credential belongs to, or None.
 
@@ -138,7 +204,7 @@ def identify(username: str, password: str) -> str | None:
         name, digest = credential_for(role)
         if name is None or digest is None:
             continue
-        if supplied != name.lower():
+        if supplied not in _names_for(role, name):
             continue
         try:
             if bcrypt.checkpw((password or "").encode("utf-8"), digest.encode("utf-8")):

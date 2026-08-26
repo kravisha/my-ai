@@ -488,44 +488,59 @@ themselves from. The backend's `users.json` is the system's own principal.
 `Depends(get_current_user)` — the value TQ-69 §3 found already resolved at
 `/chat` and thrown away.
 
-### The finding that makes this urgent rather than tidy
+### One person, two doors — corrected 2026-08-26
 
-Both candidate stores currently spell the operator identically:
+Both stores spell the operator identically:
 
 ```
 GATEWAY_SUPER_USER=krish     # the Gateway's operator credential
 users.json: ['krish']        # the backend user /chat authenticates
 ```
 
-**So the two possible answers to Q4 coincide today, by accident of naming.** That
-is the worst possible shape for this question. Whichever id an implementation
-stamped, it would appear to work; the difference would surface only when somebody
-renamed one, added a second operator, or ran the two processes from different
-`.env` files — at which point the operator's portfolio silently becomes **empty
-rather than erroring**, which is the failure mode this question was flagged for.
+This was first recorded here as a **coincidence** — an accident of naming that the
+increment should remove by picking one asserting caller. **The owner corrected
+that premise the same day, and the correction is kept rather than quietly
+overwritten**, because the wrong version is instructive: an identical string
+arrived at from two independent places is exactly what a coincidence looks like
+from the inside, and reasoning from that appearance produced a design that would
+have worked while describing the system incorrectly.
 
-**The increment must remove the ambiguity, not maintain the coincidence.** A
-comment saying "keep these in sync" is not a mechanism.
+Owner direction: *"to use the same ID for gateway and also operate the system UI
+as superuser is intentional design. The system should allow a special login
+called superuser for the gateway and use it as a pseudo ID for krish. If anyone
+logs into the gateway as superuser then the gateway shows the whole UI as the COO
+app interface that runs on startup."*
 
-### How: one asserting caller, not two kept in agreement
+So there is **one operator identity, reachable through two doors**. The job is
+not to pick a winner between two ids; it is to make the sameness something the
+system *holds* rather than something a deployment happens to get right.
 
-The way to make the coincidence irrelevant is to have only one caller able to
-assert `SUPERUSER`, and that falls out of the architecture rather than being
-imposed on it:
+### How: the sameness is a mechanism, not a convention
 
-- **The backend asserts it.** `/chat` already resolves the username; TQ-47's
-  Superuser Portfolio tab is *"a dedicated tab in the console"*, and the console is
-  the backend's own surface (`/console`), which the Gateway already proxies as the
-  studio under `CAP_STUDIO`. Both consumers are backend-side.
-- **The Gateway does not.** It gets no superuser-portfolio tool in this increment,
-  so there is no second identity to map and nothing to keep in sync. The operator
-  reaching their own portfolio through the *client* door is also exactly the
-  ambiguity §3 and §4.4 warn about, arriving one layer lower.
+- **`gateway/auth.SUPERUSER_ALIAS`** — a fixed `superuser` login the operator may
+  use whatever they are configured as. A pseudo-id, not a second account.
+- **`gateway/auth.subject_for`** — a role login is recorded under the *configured*
+  name, never the string that was typed. That is the rule `gateway/main.py`
+  already applied to clients (*"a typed name is a claim"*, addendum 44 §9.2),
+  stated for roles. It is what makes the alias a pseudo-id: `superuser` and
+  `krish` produce **one subject**.
+- **`normalise` has one implementation** (TQ-69), so the two sides cannot
+  disagree over case either.
 
-This makes `GATEWAY_SUPER_USER` what §109 says it is — **authentication, how Krish
-reaches the system from outside** — and never an ownership claim. The two values
-being equal today becomes a coincidence that no longer matters, rather than an
-invariant nobody is enforcing.
+A comment saying "keep these in sync" would not have been a mechanism. These are.
+
+### What still holds from the first version
+
+**Only the backend asserts `SUPERUSER` ownership.** `/chat` is there, and TQ-47's
+tab is *"a dedicated tab in the console"* — this system's own surface, which the
+Gateway already proxies as the studio under `CAP_STUDIO`. The Gateway gets no
+superuser-portfolio *tool*, and that is now for a better reason than distrust of
+its identity: the operator reaching their own portfolio through the **client**
+door is the ambiguity §3 and §4.4 warn about, arriving one layer lower.
+
+And the failure mode is unchanged. A mismatch between the id the migration
+stamped and the id a caller asserts is **not refused** — it is an empty portfolio
+and a working-looking system.
 
 ### What §7 owes because of this
 

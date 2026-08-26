@@ -254,12 +254,45 @@ def for_client(client_id: str) -> OwnerContext:
     return OwnerContext(OWNER_CLIENT, client_id)
 
 
-def for_superuser(operator_id: str = "operator") -> OwnerContext:
+def for_superuser(operator_id: str) -> OwnerContext:
     """The operator's own owner domain - not a master key over the client one.
 
     A superuser context reaches superuser-owned portfolios through the same
     comparison a client uses, and reaches no client's. See §3.3, and the test
-    named for §15.5."""
+    named for §15.5.
+
+    ## Which "Superuser" this is (TQ-46 §4.2, §97)
+
+    Three near-synonyms exist in this codebase and they are **not** the same
+    person:
+
+    - the **Server Superuser** (`app/server_auth.py`), whose credential starts
+      the workforce;
+    - the **Gateway Super User** (`gateway/auth.py`, `GATEWAY_SUPER_USER`), the
+      operator's credential at the door; and
+    - **`ROLE_OPERATOR`** (`gateway/roles.py`), the role a Gateway session is
+      issued under.
+
+    `OWNER_SUPERUSER` is **none of those three**. It is the system's own
+    principal - the backend user in `users.json`, the account `/chat` resolves
+    with `Depends(get_current_user)` - decided by the owner on 2026-08-26 (TQ-46
+    §11 Q4). The first two are credentials, which is authentication; this is
+    ownership, which is authorization, and §109 put those in different processes
+    on purpose.
+
+    Three near-synonyms drifting is how somebody eventually grants the wrong one
+    a portfolio, so the sentence lives here, next to the constant, rather than in
+    a specification somebody would have to know to go and read.
+
+    ## The id is required, and used to be `"operator"`
+
+    A default was the wrong shape for the same reason `for_client` never had one:
+    it puts a literal where a resolved identity belongs, and a literal cannot be
+    wrong in a way anybody notices. It would also have been *nearly right* here -
+    `GATEWAY_SUPER_USER` and the backend username both happen to read `krish`
+    today - and a value that is nearly right is the one that survives review and
+    fails later, when somebody renames one of them and the operator's portfolio
+    silently becomes empty rather than erroring."""
     return OwnerContext(OWNER_SUPERUSER, operator_id)
 
 
@@ -466,6 +499,40 @@ def mark_synced(conn: Database, portfolio_id: str, owner, *, at: str | None = No
         "UPDATE portfolios SET last_synced_at = ?, updated_at = ? WHERE portfolio_id = ?",
         (stamp, stamp, portfolio["portfolio_id"]))
     return {**portfolio, "last_synced_at": stamp, "updated_at": stamp}
+
+
+def record_source(conn: Database, portfolio_id: str, owner, ref: str) -> dict:
+    """Record where this portfolio's rows were loaded from, once (TQ-46).
+
+    `provider_account_ref` is "the source's own reference" - a broker account
+    number for a brokerage portfolio, and for the operator's it is the
+    spreadsheet the holdings were migrated out of. Using the field for exactly
+    what it means is what lets TQ-46's migration be idempotent **without a new
+    mechanism**: a portfolio that already names a source has already been
+    migrated, so a second run finds nothing to do.
+
+    That matters more than a flag would. Re-running the migration would re-upsert
+    every spreadsheet row - overwriting edits the operator had made to those
+    symbols, and resurrecting the ones they had deleted. "Idempotent" here is not
+    tidiness, it is not undoing somebody's corrections.
+
+    **Set once and refused afterwards.** A source that could be changed would let
+    a second migration point the same portfolio at a different file, which is a
+    portfolio quietly becoming a different portfolio. Goes through `resolve`
+    first, like `archive` and `mark_synced`, because it is a write about
+    somebody's money."""
+    portfolio = resolve(conn, portfolio_id, owner)
+    if portfolio["provider_account_ref"]:
+        raise UnknownVocabulary(
+            f"portfolio {portfolio['portfolio_id']!r} already names a source "
+            f"({portfolio['provider_account_ref']!r}); refusing to point it at "
+            f"{ref!r} instead. A portfolio that changed source would be a different "
+            "portfolio wearing the same id.")
+    now = now_iso()
+    conn.execute(
+        "UPDATE portfolios SET provider_account_ref = ?, updated_at = ? "
+        "WHERE portfolio_id = ?", (ref, now, portfolio["portfolio_id"]))
+    return {**portfolio, "provider_account_ref": ref, "updated_at": now}
 
 
 def is_priced(portfolio: dict) -> bool:

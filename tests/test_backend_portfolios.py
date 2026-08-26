@@ -49,7 +49,7 @@ def test_a_client_cannot_resolve_another_clients_portfolio(portfolio_conn):
 def test_a_client_cannot_resolve_a_superuser_portfolio(portfolio_conn):
     """SUPERUSER is a separate owner domain, and the separation runs both ways:
     §3.3 stops the operator reaching a client, and this stops the reverse."""
-    operator = portfolios.for_superuser()
+    operator = portfolios.for_superuser("krish")
     theirs = portfolios.create(portfolio_conn, operator, display_name="House")
 
     with pytest.raises(portfolios.NotAuthorized):
@@ -68,7 +68,7 @@ def test_a_superuser_cannot_resolve_a_clients_portfolio(portfolio_conn):
     theirs = portfolios.create(portfolio_conn, avery, display_name="Portfolio")
 
     with pytest.raises(portfolios.NotAuthorized):
-        portfolios.resolve(portfolio_conn, theirs["portfolio_id"], portfolios.for_superuser())
+        portfolios.resolve(portfolio_conn, theirs["portfolio_id"], portfolios.for_superuser("krish"))
 
 
 def test_a_guessed_id_does_not_bypass_authorization(portfolio_conn):
@@ -122,7 +122,7 @@ def test_listing_returns_only_this_owners_portfolios(portfolio_conn):
     morgan = portfolios.for_client("morgan")
     portfolios.create(portfolio_conn, avery, display_name="A")
     portfolios.create(portfolio_conn, morgan, display_name="M")
-    portfolios.create(portfolio_conn, portfolios.for_superuser(), display_name="House")
+    portfolios.create(portfolio_conn, portfolios.for_superuser("krish"), display_name="House")
 
     assert [p["display_name"] for p in portfolios.listing(portfolio_conn, avery)] == ["A"]
     assert [p["display_name"] for p in portfolios.listing(portfolio_conn, morgan)] == ["M"]
@@ -165,7 +165,7 @@ def test_a_client_cannot_receive_the_superuser_portfolio_when_it_is_the_only_one
 
     So: a SUPERUSER portfolio as the only row in the table, and a client context
     must resolve nothing and list nothing."""
-    operator = portfolios.for_superuser()
+    operator = portfolios.for_superuser("krish")
     only_row = portfolios.create(portfolio_conn, operator, display_name="House")
     assert portfolio_conn.fetchone("SELECT COUNT(*) AS n FROM portfolios")["n"] == 1
 
@@ -185,7 +185,7 @@ def test_a_client_cannot_receive_the_superuser_portfolio_when_it_is_the_only_one
 def test_primary_for_creates_rather_than_adopting_the_only_portfolio(portfolio_conn):
     """The same leak one layer up. `primary_for` creates on first use (§3.8), and
     the failure mode is that it finds the superuser's and calls it the client's."""
-    operator = portfolios.for_superuser()
+    operator = portfolios.for_superuser("krish")
     house = portfolios.create(portfolio_conn, operator, display_name="House")
 
     mine = portfolios.primary_for(portfolio_conn, portfolios.for_client("avery"))
@@ -303,7 +303,7 @@ def test_an_unreadable_owner_type_matches_nobody(portfolio_conn):
     portfolio_conn.execute("UPDATE portfolios SET owner_type = 'ADMIN' WHERE portfolio_id = ?",
                          (created["portfolio_id"],))
 
-    for owner in (avery, portfolios.for_superuser(), portfolios.for_superuser("admin")):
+    for owner in (avery, portfolios.for_superuser("krish"), portfolios.for_superuser("admin")):
         with pytest.raises(portfolios.NotAuthorized):
             portfolios.resolve(portfolio_conn, created["portfolio_id"], owner)
 

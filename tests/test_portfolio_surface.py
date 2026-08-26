@@ -57,7 +57,7 @@ def test_a_client_cannot_receive_the_superuser_portfolio_when_it_is_the_only_one
     in `test_backend_portfolios.py` - that one proves the guard refuses, this one
     proves the *Gateway cannot get round it*, because the Gateway no longer holds
     the table and the answer comes back from a process that checked."""
-    operator = portfolios.for_superuser()
+    operator = portfolios.for_superuser("krish")
     only_row = portfolios.create(portfolio_conn, operator, display_name="House")
     assert portfolio_conn.fetchone("SELECT COUNT(*) AS n FROM portfolios")["n"] == 1
 

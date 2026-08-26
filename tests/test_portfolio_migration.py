@@ -323,7 +323,7 @@ def _seeded_gateway(tmp_path):
     conn = _gateway_database(tmp_path)
     avery = portfolios.for_client("avery")
     morgan = portfolios.for_client("morgan")
-    operator = portfolios.for_superuser()
+    operator = portfolios.for_superuser("krish")
 
     a = portfolios.primary_for(conn, avery)
     holdings.record(conn, a, symbol="SYN1", quantity=100, average_cost=10.5,

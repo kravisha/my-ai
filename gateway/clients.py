@@ -164,10 +164,16 @@ def _reserved_names() -> set[str]:
     Registering a client called the same thing as the operator would create a
     genuine ambiguity at the login route, and the safe resolution of an
     ambiguity about *who somebody is* is to refuse it at creation rather than to
-    pick a winner at authentication."""
+    pick a winner at authentication.
+
+    `auth.SUPERUSER_ALIAS` is reserved unconditionally, not only when a
+    credential is configured. It is a fixed word rather than a deployment's
+    choice, so a client registered under it on an unconfigured Gateway would sit
+    there waiting to collide the moment the operator credential was set - which
+    is the same ambiguity, arriving later and harder to explain."""
     from gateway import auth
 
-    reserved = set()
+    reserved = {auth.SUPERUSER_ALIAS}
     for user_env, _ in auth.ROLE_CREDENTIAL_ENV.values():
         import os
 
