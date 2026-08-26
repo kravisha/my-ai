@@ -99,6 +99,20 @@ Every canonical document carries the same **Conflict Rule**: do not silently pre
 stop, resolve, and record the resolution. [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) is where
 those resolutions live, because the addenda themselves are marked do-not-edit.
 
+**When a new addendum covers a subject an existing canonical addendum already covers, reconcile it
+against that addendum — not against the build.** Learned the expensive way (§111): addendum 44
+specified stored client portfolios, addendum 9 specifies that the client *supplies* portfolio
+information per request and the analyst returns a report, and the two cannot both be true. §97's
+assimilation of addendum 44 was careful and went criterion by criterion — **against the code**,
+which agreed with it. Three increments were then built on the unadjudicated side, moved wholesale in
+a fourth, and extended in a fifth, before the owner restated addendum 9's model and the conflict
+surfaced.
+
+A new specification agreeing with the current implementation says nothing about whether it agrees
+with the specification that implementation was supposed to be following. So the first question at
+intake is *which existing addendum already covers this subject*, and the answer goes in the
+reconciliation record whether or not it found a conflict.
+
 ## Verbatim versus maintained
 
 A distinction worth knowing before editing anything.

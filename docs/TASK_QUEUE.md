@@ -839,6 +839,72 @@ green for the wrong reason, and an import tripwire that matched one spelling and
 ordinary one. That is the fourth scanner in this project to be wrong while the module it guarded
 was right (§101, §104, §107).
 
+### TQ-72 — Unwind server-side portfolio custody
+
+**NEED (ORANGE) · QUEUED — next · owner direction 2026-08-26 (`SPEC_RECONCILIATION.md` §111) ·
+reverses the storage half of §96, §99, §100, §101, §110**
+
+Owner direction: *"The portfolios don't live in this system… the system only processes portfolios
+for clients… and holds no information of the portfolios in the system."*
+
+Remove the custody. `portfolios` and `portfolio_holdings`, the storage half of
+`backend/portfolios.py` and `backend/holdings.py`, §110's migration and `/portfolios` surface, and
+most of `gateway/portfolio_client.py`.
+
+**Nothing has to be extracted first, and that was checked rather than assumed** (§111):
+`financial_intelligence.db` carries neither table, `gateway.db` does not exist on this machine, and
+the only rows that ever existed were demo data in scratch copies. This is a code reversal, not a
+client-data extraction — which is timing rather than care.
+
+**What survives is most of it**, because most of it was never storage. `holdings.concentration` is
+already a pure function over supplied positions — §101 made it take *holdings, not a connection*,
+and that decision now pays for itself. The canonical holding shape, `PortfolioProvider`,
+`is_priced`, the asset-class vocabulary and the consent flow all stand.
+
+Three things must not be lost while the tables go:
+
+- **Isolation does not disappear, it moves.** `resolve()` answered "whose stored row is this?", and
+  with no stored rows that question goes — but addendum 44 §9.4's does not: **an agent retaining
+  one client's portfolio context while serving another.** Isolation becomes a property of a
+  request's lifetime rather than of a table, and §15.5's regression needs rewriting in that shape
+  rather than deleting.
+- **"Never stored" must be enforced, not intended.** A rule that lives only in prose is one a
+  future increment breaks while adding a helpful cache. It needs what `is_priced` and the ownership
+  guard got: a scan that fails.
+- **Every durable writer owes the audit §106 already passed.** TQ-69 §10 Q1 confirmed
+  `routing_decisions` holds no client content; under this architecture that stops being a happy
+  finding and becomes a requirement. The audit log, transcripts, status events and anything logging
+  a tool result owe the same check.
+
+### TQ-73 — The credential envelope and the stateless fetch/analyse pipeline
+
+**NEED (ORANGE) · QUEUED · depends on TQ-72 · owner direction 2026-08-26 (§111) · addendum 9 §2,
+§3, §5**
+
+Owner direction: *"The system fetches the portfolios from external systems using client credentials
+and the client credentials is stored on the client side and is passed to the server as encrypted
+json data and system uses this info to fetch the portfolio data, processes them but never stores
+them on the server side."*
+
+The replacement for what TQ-72 removes, and addendum 9 §2's lifecycle made real: request →
+fetch → analyse → report → retain nothing.
+
+**The open question this entry owns, and it is a design decision rather than a detail: what does
+the encryption defend against?** TLS already protects the wire. Envelope encryption on top of it
+protects against the server's own logs, crash dumps and disk — which is exactly the threat this
+architecture cares about — but only if the key is not sitting beside the payload. Answer that
+before writing the format.
+
+**And state the guarantee accurately.** The server must decrypt the credentials to call the broker,
+so they exist in its memory in plaintext at fetch time. The property held is **never persisted**,
+which is real and worth having. It is not *never seen*, and writing it down the strong way would be
+the error §110 §4.3 refused when it declined to claim the portfolio move defended against a
+compromised Gateway.
+
+Blocked in practice on the same thing TQ-49/TQ-50 are — there is no external system to fetch from
+until the owner has broker API access — so the buildable half is the envelope, the request shape,
+and the analysis over supplied holdings, which `holdings.concentration` already does.
+
 ### TQ-70 — Three identity populations, and whether any two of them are one
 
 **NEED (YELLOW) · QUEUED · raised by TQ-69 (spec §10 Q2, decided 2026-08-26) · addendum 16 §7,
@@ -886,9 +952,26 @@ the question was asked.
 
 ### TQ-46 — The Superuser portfolio as its own ownership domain
 
-**NEED (YELLOW) · SPECIFIED — next · UNBLOCKED 2026-08-26 by TQ-69 (§110) · depends on TQ-44
-(done), TQ-45 (done), TQ-69 (done) · addendum 44 §4, §10, §16, §21.4, §21.6 ·
-spec: `docs/specs/TQ-46_superuser_ownership_domain.md`**
+**NEED (YELLOW) · PAUSED 2026-08-26 — premise changed by owner direction (§111) · partially
+built on branch `tq-46-superuser-ownership-domain` · depends on TQ-72 · addendum 44 §4, §10, §16,
+§21.4, §21.6 · spec: `docs/specs/TQ-46_superuser_ownership_domain.md`**
+
+**Paused, not abandoned.** Its ownerless-retrieval fix (§16.7) is still wanted and still correct:
+`retrieve_portfolio` had no owner, and the two-layer consent model around it is the only control on
+forwarding holdings to an external model (its §11 Q2, measured). What changed underneath it is
+where the holdings come from — §111 says the system stores none, so migrating
+`data/portfolio.xlsx` *into* a table is now the wrong direction.
+
+**One question it inherits and cannot answer alone:** the owner said portfolios are the *clients'*
+property and the system analyses their *external* portfolios. Krish is not a client. Whether the
+operator's own portfolio is also fetched-not-stored, or stays a local file read on demand, decides
+whether this increment has a subject at all.
+
+The work already on the branch that survives regardless: the owner argument on `retrieve_portfolio`
+and `execute_tool`, `for_superuser` requiring a resolved id, the `superuser` pseudo-login and
+`subject_for` making it one identity rather than two, and the isolation test that could not be
+written before — a fully granted, fully consented second account still cannot reach the first's
+holdings.
 
 **Was blocked by owner direction** (§109): the Gateway authenticates, the backend authorizes and
 holds business logic. The portfolio subsystem was on the wrong side of that line, so TQ-69 moved it

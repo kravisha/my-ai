@@ -9452,3 +9452,156 @@ financial records, so it gets its own entry rather than continuing to happen
 quietly.
 
 **No exposure changes.** §50's preconditions stand.
+
+---
+
+## §111 — Owner direction: portfolios are the client's property and are never stored here (2026-08-26)
+
+Owner direction, 2026-08-26:
+
+> *"The portfolios don't live in this system. The portfolios are the personal
+> property of the clients. The system only processes portfolios for clients and
+> does portfolio analysis for clients for their external portfolios and holds no
+> information of the portfolios in the system."*
+
+and, on the mechanism:
+
+> *"The system fetches the portfolios from external systems using client
+> credentials and the client credentials is stored on the client side and is
+> passed to the server as encrypted json data and system uses this info to fetch
+> the portfolio data, processes them but never stores them on the server side."*
+
+**This reverses the storage half of §96, §99, §100, §101 and §110.** It is the
+largest direction change this project has had, and it arrived at the cheapest
+possible moment — see "nothing was stored" below.
+
+### The conflict was older than the code, and nobody surfaced it
+
+This is not the owner changing their mind about a specification the
+implementation had followed correctly. **Two supplied specifications
+contradicted each other, and the contradiction was never adjudicated.**
+
+Addendum 9 — *canonical*, and it supersedes addenda 2–4 — describes exactly what
+the owner has now restated:
+
+> §2.1 *"A client explicitly requests portfolio analysis **and supplies portfolio
+> information**."*
+> §2.4 *"The Portfolio Analyst combines the **supplied** portfolio information
+> into a unified analytical view."*
+> §2.6–2.7 *"It returns a client-facing report. The on-demand process may exit."*
+
+Nothing in addendum 9 stores anything. The lifecycle is request → analyse →
+report → exit.
+
+Addendum 44 (2026-08-26) then specified the opposite: *"Every client must have
+their own portfolio and holdings"*, *"The Superuser portfolio must be **stored**
+and handled separately"*, §3.5's portfolio snapshots *"so analysis can be
+reproduced"*, §4.2's *"Separate storage path"*, and a data model of tables.
+
+**§97 assimilated addendum 44 and checked it against §96's already-built code —
+never against addendum 9.** That is the miss. Every canonical document in this
+project carries the same Conflict Rule, and addendum 9 §7 states it plainly:
+
+> *"Do not silently override an existing requirement when a new statement appears
+> to conflict with it. If two requirements cannot both be true, stop
+> implementation at that decision point and request clarification."*
+
+Three increments were then built on the unadjudicated side of it (§99, §100,
+§101), moved wholesale in a fourth (§110), and extended in a fifth (TQ-46, in
+progress).
+
+**The lesson is specific, and it is not "read more carefully".** §97's check was
+thorough — it went criterion by criterion through addendum 44 §21 and found five
+already satisfied. It compared the new specification against **the code**, and
+concluded they agreed. What it never did was compare the new specification
+against **the older specification on the same subject**. A new spec agreeing with
+the current implementation says nothing about whether it agrees with the spec
+that implementation was supposed to be following.
+
+So the rule this project needed, and now has: **when a new addendum covers a
+subject an existing canonical addendum already covers, the reconciliation is
+against the addendum, not against the build.** `docs/README.md`'s assimilation
+step gets that sentence.
+
+### Nothing was stored, and that is luck rather than judgment
+
+Checked before anything else, because the answer decides whether this is a code
+change or a client-data extraction:
+
+- `financial_intelligence.db` — **no `portfolios` or `portfolio_holdings`
+  tables.** The live database predates §110's schema addition and the backend has
+  not been started against it since.
+- `gateway.db` — **does not exist on this machine.**
+- The only rows that ever existed were demo data, in scratch copies made for
+  §110's verification, discarded with the worktree.
+
+So no real client financial data has to be found and removed. That is the cheapest
+moment this direction could possibly have arrived, and it is worth being plain
+that it is *timing*, not care: had the owner said this a month later, the same
+correction would have been a data-extraction exercise across two databases and
+four archive tables.
+
+### What the architecture becomes
+
+The server is a **stateless processor**, not a custodian:
+
+1. The client holds their own broker credentials, **on the client side**.
+2. A request carries them to the server as encrypted JSON.
+3. The server uses them to fetch the portfolio from the external system.
+4. It analyses, returns a report, and **retains nothing**.
+
+Three consequences follow immediately, and each is a rule rather than a
+preference:
+
+**The ownership guard's job changes shape.** `portfolios.resolve()` answered
+"whose stored row is this?" There are no stored rows, so that question disappears
+— and the risk it managed does not. It moves to addendum 44 §9.4's case, which is
+now *the* security property: **an agent retaining one client's portfolio context
+while serving another.** Isolation stops being a property of a table and becomes
+a property of a request's lifetime.
+
+**§106's log holding no client content stops being incidental.** TQ-69 §10 Q1
+confirmed by measurement that `routing_decisions` carries no symbol, quantity,
+owner id or free-text payload, and left it in `app/` on that basis. Under this
+architecture that is no longer a happy finding — it is a **requirement**, and the
+same audit is owed by every other durable writer: the audit log, transcripts,
+status events, and anything that logs a tool result.
+
+**"Never stored" has to be enforced, not intended.** A rule that lives only in
+prose is one a future increment breaks while adding a helpful cache. It needs the
+same treatment `is_priced` and the ownership guard got: a scan that fails.
+
+### What survives, and it is more than expected
+
+The work is not lost, because most of it was never storage:
+
+- **`holdings.concentration` is already the right shape.** §101 deliberately made
+  it take *holdings, not a connection* — *"an analyzer that read the table itself
+  would agree with every provider trivially"* — so it is a pure function over
+  supplied positions. That is addendum 9 §3 exactly, and it needs no change.
+- **The canonical holding shape** (§100) is the shape of what a client supplies.
+- **`PortfolioProvider`** (§101) was built so the source could change without the
+  analyser changing. The source is changing.
+- **`is_priced`**, the asset-class vocabulary, the privacy classification and the
+  consent flow all stand.
+
+What goes is the custody: two tables, the storage half of `backend/portfolios.py`
+and `backend/holdings.py`, §110's migration and HTTP surface, and most of
+`gateway/portfolio_client.py`.
+
+### Stated so nobody overclaims it
+
+**"Encrypted JSON" does not mean the server never sees the credentials.** The
+server must decrypt them to call the broker, so they exist in server memory in
+plaintext at fetch time. The property this design actually holds is *never
+persisted*, which is a real and worthwhile guarantee — and it is a different
+guarantee from *never seen*. Writing it down the strong way would be the same
+error §110 §4.3 refused when it declined to claim the portfolio move defended
+against a compromised Gateway.
+
+What the encryption buys is worth stating precisely rather than assumed, and it
+is an open question recorded here rather than answered: **against whom?** TLS
+already protects the wire. Envelope encryption on top of it protects against the
+server's *own* logs, crash dumps and disk — which is exactly the threat this
+architecture cares about — but only if the key is not sitting beside the payload.
+That is a design decision, not a detail, and it is TQ-73's.
