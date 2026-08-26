@@ -8561,3 +8561,115 @@ thing to look at, and the mutation run is the honest substitute rather than a
 green suite standing in as evidence.
 
 Suite: **2301 passing** (2298 before, +3).
+
+---
+
+## §104 — The vocabulary routing decides on (2026-08-26, TQ-53)
+
+Second increment of the addendum 45 lineage. `app/task_signature.py` and its
+tests: §20's fifteen-field task signature, §42's eight task categories, §21's
+six complexity levels, §36's four privacy levels.
+
+**Nothing here calls a model, ranks one, or chooses one** — and a test asserts
+that, because a vocabulary that quietly acquires a routing opinion would make
+TQ-54, TQ-59 and TQ-60 arguments about code that already chose.
+
+It went before TQ-52 because it is the only entry in this lineage needing no
+hardware, no downloads and no answers from anybody, while TQ-52 waits on what
+"Inkling" is.
+
+### Four fields already had words in this codebase
+
+The interesting part of the increment, and it came from looking rather than from
+the spec. Four of §20's fifteen fields name facts this project had already named:
+
+| §20 field | what already existed | disposition |
+|---|---|---|
+| `agent_role` | `fi_db.ROLE_CHARTERS` | validate against it; a role this system cannot charter is not one a task may claim |
+| `error_cost` | `model_registry.yaml`'s `criticality` | **same fact, one vocabulary** — tied by a test |
+| `latency_sensitivity` | the registry's free-text `latency_tolerance` | closed vocabulary defined here; the registry's prose is a **recorded divergence**, not reconciled yet |
+| `privacy_level` | `DataClass.LOCAL_ONLY` | **different facts sharing one name** — see below |
+
+The rule applied is §100's, which is itself §70's: adopt the house vocabulary
+where one exists, adopt the spec's where none does. So `complexity` and the eight
+categories keep addendum 45's own labels in its own casing, and `error_cost` takes
+the registry's lower-case `low`/`medium`/`high` rather than inventing a parallel
+scale for a question already being asked.
+
+`test_error_cost_and_registry_criticality_are_one_vocabulary` reads the registry
+and fails if either side drifts. That is the mechanical version of a rule that
+would otherwise be a comment somebody stops reading.
+
+**The divergence not fixed:** `latency_tolerance` in `model_registry.yaml` is
+free text — `"minutes (measured ~2min/call, §42)"`, `"interactive"`, `"seconds
+(UQI_TIMEOUT_SECONDS is 60s; worst observed 24s)"`. It carries measurements
+inside the prose, which is *more* information than a closed vocabulary holds, so
+converting it would lose something. Recorded for TQ-60, which is the increment
+that first has to read it as a routing input rather than as documentation.
+
+### The name collision worth reading twice
+
+`PRIVACY_LOCAL_ONLY` and `app.data_classification.DataClass.LOCAL_ONLY` are
+**different facts wearing the same name**, and this is the kind of thing that
+gets confused a year later by somebody reasonable.
+
+- `DataClass.LOCAL_ONLY` classifies a **field**: this value never leaves the
+  process, stripped by `privacy_filter` on the way out.
+- `PRIVACY_LOCAL_ONLY` classifies a **task**: this work may not be sent to an
+  external model.
+
+They are joined by a derivation that runs **one way only**: a task whose inputs
+carry a `LOCAL_ONLY` field is a `LOCAL_ONLY` task. The reverse does not hold —
+plenty of work stays home for reasons that have nothing to do with field
+classification.
+
+`privacy_floor_for()` makes that derivation mechanical, because §36's rule —
+*"sensitive data should never be sent externally merely because the external
+model ranks higher"* — is worth exactly what its enforcement is worth. It is
+tested against `PORTFOLIO_FIELD_CLASSES`, real data rather than an invented
+example: `account_id` is `LOCAL_ONLY`, so any task carrying a portfolio row is a
+local-only task, and no leaderboard can override that.
+
+### Two decisions about absence
+
+**`privacy_level` is required, not defaulted.** A task whose privacy nobody
+stated must not acquire `EXTERNAL_ALLOWED` for free — that would be the quietest
+possible way to break §36, and the mutation run confirms the test catches it.
+
+**`context_length` is `None` when unestimated, never `0`.** Zero claims an empty
+context, which is a different and false statement from "nobody measured it". The
+same distinction §100 drew for `asset_class`, where `unknown` became a member of
+the vocabulary rather than an absence — `novelty`, `ambiguity` and
+`latency_sensitivity` follow that pattern here.
+
+What `unknown` *means for routing* is deliberately not decided. This module says
+what a task is; TQ-59 and TQ-60 say what to do about it. Keeping that line is
+what makes the module safe to build before the things that consume it.
+
+### Verified by attacking it
+
+Six mutations, six caught: a ninth category slipped in; privacy acquiring a
+default; an unknown stored field silently ignored; `error_cost` drifting from the
+registry's `criticality`; the module acquiring a routing opinion; an unestimated
+context becoming zero.
+
+One test failed on its own prose first, which is worth recording because it is
+the second time a source scanner in this project has been too crude:
+`test_this_module_names_no_model_and_ranks_nothing` split the source on triple
+quotes and caught the word *"ranked"* inside a docstring quoting §36. The module
+was right and the scanner was wrong. It now strips docstrings with `ast` and
+checks only executable code — the same correction §101's signature scan needed
+when it turned out to be scanning a fixed list of names.
+
+### Deliberately not built
+
+No classifier. Nothing decides *which* category a given task is — that requires
+either a rule set or a model, and §17 says the escalation decision is itself an
+intelligent task with its own leaderboard. Building a hand-written classifier now
+would be the "seeded ranking nobody revisits" failure §13 warns about, one layer
+down.
+
+`CREATIVE_GENERATION` exists and is expected to carry no traffic (§102). It is
+built because §42 says start with exactly these eight.
+
+Suite: **2332 passing** (2301 before, +31).

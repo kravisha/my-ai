@@ -67,7 +67,10 @@ holds the queue, not the record.
 > ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
 > status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
 > **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers.
+> hardware answers. **TQ-53 is done** (§104) — the task signature, the eight categories and the
+> complexity and privacy vocabularies, with four collisions against existing house vocabularies
+> resolved. Next is **TQ-54** (the registry and leaderboards, which also advances the routing
+> marker) or **TQ-52**, still waiting on what "Inkling" is.
 >
 > Two findings from assimilation that shape the order, both in §102: the GPU is **8 GB**, which
 > makes a pool of six feasible on disk and sequential in VRAM; and **"Inkling"**, named as an
@@ -886,7 +889,8 @@ is in or out.
 
 ### TQ-53 — Task Signature, task categories, and the complexity vocabulary
 
-**NEED (GREEN) · QUEUED · depends on TQ-51 · addendum 45 §20, §21, §42, §45 Phase A**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §104) · depends on TQ-51 (done) ·
+addendum 45 §20, §21, §42, §45 Phase A**
 
 The vocabulary everything else keys off, and buildable today with no model behind it.
 
@@ -902,10 +906,20 @@ financial intelligence system.** It is built because §42 says start with exactl
 it is expected to carry no traffic. If it still has none when TQ-62 has evidence, merging it is
 the review §42 anticipates.
 
+**Done** (§104), as `app/task_signature.py`. Four of §20's fifteen fields turned out to name facts
+this codebase already had words for: `agent_role` is `ROLE_CHARTERS`, `error_cost` is the
+registry's `criticality` (**one vocabulary**, tied by a test), `latency_sensitivity` diverges from
+the registry's free-text `latency_tolerance` (**recorded, not reconciled** — the prose carries
+measurements a closed vocabulary would lose, so TQ-60 owns it), and `privacy_level`'s `LOCAL_ONLY`
+shares a name with `DataClass.LOCAL_ONLY` while meaning something different — a *task* constraint
+versus a *field* classification, joined by a one-way derivation `privacy_floor_for()` now makes
+mechanical. Privacy is **required rather than defaulted**, and nothing in the module ranks or names
+a model — asserted, not trusted. Mutation-tested six ways, six caught.
+
 ### TQ-54 — Model Performance Registry and the eight leaderboards, seeded provisional
 
-**NEED (GREEN) · QUEUED · depends on TQ-51, TQ-53 · addendum 45 §8, §9, §10, §11, §12, §13,
-§45 Phase A + C**
+**NEED (GREEN) · QUEUED — next · depends on TQ-51 (done), TQ-53 (done) · addendum 45 §8, §9,
+§10, §11, §12, §13, §45 Phase A + C**
 
 The competition, as data. §8's fields, per model per task category, with §12's initial ordering
 seeded by hand and **marked `SEEDED` / `PROVISIONAL`** — the same discipline
