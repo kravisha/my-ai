@@ -131,15 +131,16 @@ def test_an_unusable_client_id_is_refused(gateway_conn, bad):
 def test_a_suspended_client_cannot_log_in_but_keeps_their_data(gateway_conn):
     """Suspension is not deletion. Somebody who cannot log in today may still
     own holdings that must not evaporate."""
-    from gateway import holdings
+    from gateway import holdings, portfolios
 
     _, password = clients.register(gateway_conn, "alice")
-    holdings.record(gateway_conn, "alice", ticker="SYN1", shares=10, cost_basis=5)
+    alice = portfolios.primary_for(gateway_conn, portfolios.for_client("alice"))
+    holdings.record(gateway_conn, alice, ticker="SYN1", shares=10, cost_basis=5)
 
     clients.set_status(gateway_conn, "alice", clients.STATUS_SUSPENDED)
 
     assert clients.authenticate(gateway_conn, "alice", password) is None
-    assert len(holdings.listing(gateway_conn, "alice")) == 1
+    assert len(holdings.listing(gateway_conn, alice)) == 1
 
     clients.set_status(gateway_conn, "alice", clients.STATUS_ACTIVE)
     assert clients.authenticate(gateway_conn, "alice", password) == "alice"
@@ -200,15 +201,16 @@ def test_an_unknown_user_and_a_wrong_password_are_the_same_answer(gateway_conn):
 def test_removing_a_login_keeps_the_holdings(gateway_conn):
     """Deleting somebody's financial records as a side effect of revoking a
     login is not a decision this function is entitled to make."""
-    from gateway import holdings
+    from gateway import holdings, portfolios
 
     clients.register(gateway_conn, "alice")
-    holdings.record(gateway_conn, "alice", ticker="SYN1", shares=10, cost_basis=5)
+    alice = portfolios.primary_for(gateway_conn, portfolios.for_client("alice"))
+    holdings.record(gateway_conn, alice, ticker="SYN1", shares=10, cost_basis=5)
 
     assert clients.remove(gateway_conn, "alice") is True
 
     assert clients.get(gateway_conn, "alice") is None
-    assert len(holdings.listing(gateway_conn, "alice")) == 1
+    assert len(holdings.listing(gateway_conn, alice)) == 1
 
 
 def test_removing_somebody_who_is_not_there_says_so(gateway_conn):

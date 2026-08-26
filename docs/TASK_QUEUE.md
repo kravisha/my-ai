@@ -52,10 +52,12 @@ holds the queue, not the record.
 > **TQ-42** (client-owned holdings, §96) is done, which built the first real client skill.
 >
 > **Current focus: the portfolio subsystem** (addendum 44, assimilated 2026-08-26, §97) —
-> **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart), then
-> TQ-45 (the provider abstraction), TQ-46 (the Superuser ownership domain), TQ-47 (its tab),
-> TQ-48 (snapshots, provenance, audit), TQ-49 (the Schwab boundary). TQ-50 is blocked on owner
-> action.
+> **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
+> **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
+> and the §15.5 regression is permanent. Next is **TQ-45** (the provider abstraction, which
+> also carries the holding-field rename TQ-44 deliberately deferred), then TQ-46 (the
+> Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots, provenance, audit), TQ-49
+> (the Schwab boundary). TQ-50 is blocked on owner action.
 >
 > **TQ-43** (per-client Gateway credentials, §98) is **done** — it was the precondition under
 > most of that, and the demo now seeds three clients who each log in as themselves.
@@ -637,32 +639,40 @@ only today, with real skills to come. Both recorded in §92.
 
 ### TQ-44 — Portfolios as owned entities, with the guard that makes them safe
 
-**NEED (GREEN) · PLANNED — not implemented · addendum 44 §3, §5, §9, §12, §15.1, §15.5,
-§20 Phase 1+3 · `SPEC_RECONCILIATION.md` §97 · spec: `docs/specs/TQ-44_portfolio_ownership_and_isolation.md`**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §99) · addendum 44 §3, §5, §9, §12,
+§15.1, §15.5, §20 Phase 1+3 · spec: `docs/specs/TQ-44_portfolio_ownership_and_isolation.md`**
 
-A full implementation specification is written and is detailed enough to build from without further
-design work — objective, design decisions, files, dependencies, security implications, required
-tests, acceptance criteria, and three genuinely open questions worth deciding first.
+Phase 1 and Phase 3 together, and they were one entry on purpose. Holdings were keyed directly by
+client, so there was no portfolio id to guess; introducing a `Portfolio` entity introduces the
+guessable handle §5.2 spends four bullets on. The entity and the ownership guard therefore landed
+in the same increment — an entity shipped a week before its guard is a week of exactly the
+exposure this specification exists to prevent.
 
-Phase 1 and Phase 3 together, and they are one entry on purpose. Today holdings are keyed
-directly by client, so there is no portfolio id to guess; introducing a `Portfolio` entity
-introduces the guessable handle §5.2 spends four bullets on. The entity and the ownership guard
-must therefore land in the same increment — an entity shipped a week before its guard is a week
-of exactly the exposure this specification exists to prevent.
+Built: `gateway/portfolios.py` (the `portfolios` table, `OwnerContext`, and `resolve()` — the one
+gate), holdings re-keyed from `client_id` to `portfolio_id` with `asset_class`, and the migration.
+`client_id` was removed rather than kept beside `portfolio_id`: two sources of truth for ownership
+can disagree, and the one that disagrees quietly hands somebody the wrong positions.
 
-Scope: `portfolios` (owner_type, owner_id, portfolio_type, provider_type, data_mode, status,
-timestamps), holdings re-keyed to `portfolio_id` and gaining `asset_class` (EQUITY/OPTION
-minimum, extensible), one client to many portfolios (§5.1), and every retrieval requiring an
-owner context resolved server-side (§9.1, §9.2). Errors reveal nothing about what exists (§9.3):
-"not authorized or resource unavailable" and no more.
+The spec's three open questions were decided before any code and are recorded in its §10 — the
+migration lives in `gateway/store.init_schema` because `backend/migrations.py` would have announced
+a backup that did not contain `gateway.db`; `client_holdings` is renamed rather than dropped, which
+doubles as the idempotency mechanism; migrated rows get the literal `UNKNOWN` asset class, because
+`EQUITY` would be a guess.
 
-Carries §15.1's isolation tests and **§15.5's permanent regression test** — that a client-facing
-Gateway request can never receive the Superuser portfolio merely because it is the only one
-stored. The conversation half of that concern is already permanent from §93; this is its
-portfolio half.
+**No superuser branch** (§5.3): one ownership comparison, both owner domains through it, tested from
+both sides. §15.5's permanent regression exists —
+`test_a_client_cannot_receive_the_superuser_portfolio_when_it_is_the_only_one` — reproducing §93's
+conversation leak in portfolio form.
 
-Migration: existing `client_holdings` rows become MANUAL-provider portfolios owned by their
-current client. Nothing is orphaned and nothing changes owner.
+Migration verified against a copy of a genuinely pre-TQ-44 database, seeded by the old code from a
+worktree at `74f8fbe`: 11 holdings across 4 clients, 11 after, no orphans, no owner changed.
+
+Two clients then logged into a running Gateway and each saw only their own portfolio. Asked in
+conversation for another client's holdings, the representative refused; asked for market value, it
+refused and said why. Suite 2232.
+
+Left deliberately for the entries that own them: the holding field rename (TQ-45, spec §3.9), the
+Superuser portfolio itself (TQ-46), and `app/tools/portfolio.py`'s missing owner argument (TQ-46).
 
 ### TQ-45 — The PortfolioProvider abstraction, and its conformance suite
 

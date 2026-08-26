@@ -15,7 +15,17 @@ real positions would present synthetic output as real.
 
 import pytest
 
-from gateway import client_agent, demo_clients, holdings, roles, tools
+from gateway import client_agent, demo_clients, holdings, portfolios, roles, tools
+
+
+def _pf(conn, client_id):
+    """This client's own portfolio, through the gate (TQ-44).
+
+    Holdings are no longer keyed by client id: they hang off a portfolio, and a
+    portfolio is reached only through `portfolios.resolve` - which `primary_for`
+    goes through. So every call below carries the ownership check with it, which
+    is exactly the property these tests are about."""
+    return portfolios.primary_for(conn, portfolios.for_client(client_id))
 
 
 # --- isolation, which is the whole reason this may exist --------------------------
@@ -23,44 +33,59 @@ from gateway import client_agent, demo_clients, holdings, roles, tools
 
 def test_one_client_cannot_see_another_s_positions(gateway_conn):
     """The property §93 established for conversations, applied to money."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=10)
-    holdings.record(gateway_conn, "morgan", ticker="SYN2", shares=5, cost_basis=200)
+    avery = _pf(gateway_conn, "avery")
+    morgan = _pf(gateway_conn, "morgan")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=10)
+    holdings.record(gateway_conn, morgan, ticker="SYN2", shares=5, cost_basis=200)
 
-    assert [h["ticker"] for h in holdings.listing(gateway_conn, "avery")] == ["SYN1"]
-    assert [h["ticker"] for h in holdings.listing(gateway_conn, "morgan")] == ["SYN2"]
-    assert holdings.one(gateway_conn, "avery", "SYN2") is None
+    assert [h["ticker"] for h in holdings.listing(gateway_conn, avery)] == ["SYN1"]
+    assert [h["ticker"] for h in holdings.listing(gateway_conn, morgan)] == ["SYN2"]
+    assert holdings.one(gateway_conn, avery, "SYN2") is None
 
 
 def test_forgetting_reaches_only_your_own(gateway_conn):
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=10)
-    holdings.record(gateway_conn, "morgan", ticker="SYN1", shares=7, cost_basis=11)
+    avery = _pf(gateway_conn, "avery")
+    morgan = _pf(gateway_conn, "morgan")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=10)
+    holdings.record(gateway_conn, morgan, ticker="SYN1", shares=7, cost_basis=11)
 
-    assert holdings.forget(gateway_conn, "avery", "SYN1") is True
+    assert holdings.forget(gateway_conn, avery, "SYN1") is True
 
-    assert holdings.listing(gateway_conn, "avery") == []
-    assert len(holdings.listing(gateway_conn, "morgan")) == 1
+    assert holdings.listing(gateway_conn, avery) == []
+    assert len(holdings.listing(gateway_conn, morgan)) == 1
 
 
 def test_forget_all_is_also_per_client(gateway_conn):
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=1, cost_basis=1)
-    holdings.record(gateway_conn, "morgan", ticker="SYN2", shares=1, cost_basis=1)
+    avery = _pf(gateway_conn, "avery")
+    morgan = _pf(gateway_conn, "morgan")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=1, cost_basis=1)
+    holdings.record(gateway_conn, morgan, ticker="SYN2", shares=1, cost_basis=1)
 
-    assert holdings.forget_all(gateway_conn, "avery") == 1
-    assert len(holdings.listing(gateway_conn, "morgan")) == 1
+    assert holdings.forget_all(gateway_conn, avery) == 1
+    assert len(holdings.listing(gateway_conn, morgan)) == 1
 
 
 def test_a_holding_has_to_belong_to_somebody(gateway_conn):
-    """No default owner. A blank client id would become a shared bucket, which
-    is the shape of the bug this whole area exists downstream of."""
-    for nobody in ("", "   ", None):
-        with pytest.raises(holdings.HoldingRefused):
+    """No default owner. A blank owner would become a shared bucket, which is the
+    shape of the bug this whole area exists downstream of.
+
+    Since TQ-44 the refusal happens one layer earlier and harder: holdings take a
+    *resolved portfolio*, so there is no argument here that could be blank. A
+    client id, blank or not, is not something this function accepts at all."""
+    for nobody in ("", "   ", None, "avery"):
+        with pytest.raises(TypeError):
             holdings.record(gateway_conn, nobody, ticker="SYN1", shares=1)
+
+    for nobody in ("", "   ", None):
+        with pytest.raises(portfolios.UnknownVocabulary):
+            portfolios.for_client(nobody)
 
 
 def test_the_tools_take_the_subject_from_the_session_not_the_arguments(gateway_conn):
     """The model is never asked whose holdings to read, so "read somebody
     else's" is not a call it can construct."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=10)
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=10)
 
     # Even naming another client in the arguments changes nothing.
     result = tools.execute(gateway_conn, "list_holdings",
@@ -94,7 +119,8 @@ def test_holdings_tools_are_refused_to_a_role_without_the_capability(gateway_con
 
 
 def test_a_holding_is_recorded_as_stated(gateway_conn):
-    recorded = holdings.record(gateway_conn, "avery", ticker="syn1", shares=100,
+    avery = _pf(gateway_conn, "avery")
+    recorded = holdings.record(gateway_conn, avery, ticker="syn1", shares=100,
                                cost_basis=42.5, acquired_on="2024-03-11")
     assert recorded["ticker"] == "SYN1", "tickers are normalised, not stored as typed"
     assert recorded["shares"] == 100
@@ -105,16 +131,18 @@ def test_a_holding_is_recorded_as_stated(gateway_conn):
 def test_stating_a_holding_twice_is_a_correction_not_a_second_position(gateway_conn):
     """A representative who accumulated both would be reporting a position its
     owner never held."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=10)
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=150, cost_basis=11)
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=10)
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=150, cost_basis=11)
 
-    rows = holdings.listing(gateway_conn, "avery")
+    rows = holdings.listing(gateway_conn, avery)
     assert len(rows) == 1
     assert rows[0]["shares"] == 150
 
 
 def test_a_cost_basis_is_optional_because_people_do_not_always_know_it(gateway_conn):
-    recorded = holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100)
+    avery = _pf(gateway_conn, "avery")
+    recorded = holdings.record(gateway_conn, avery, ticker="SYN1", shares=100)
     assert recorded["cost_basis"] is None
 
 
@@ -122,13 +150,15 @@ def test_a_cost_basis_is_optional_because_people_do_not_always_know_it(gateway_c
 def test_an_unusable_share_count_is_refused_rather_than_coerced(gateway_conn, bad):
     """Silently storing zero because the number would not parse is worse than
     saying the number would not parse."""
+    avery = _pf(gateway_conn, "avery")
     with pytest.raises(holdings.HoldingRefused):
-        holdings.record(gateway_conn, "avery", ticker="SYN1", shares=bad)
+        holdings.record(gateway_conn, avery, ticker="SYN1", shares=bad)
 
 
 def test_a_blank_ticker_is_refused(gateway_conn):
+    avery = _pf(gateway_conn, "avery")
     with pytest.raises(holdings.HoldingRefused):
-        holdings.record(gateway_conn, "avery", ticker="   ", shares=1)
+        holdings.record(gateway_conn, avery, ticker="   ", shares=1)
 
 
 def test_an_unknown_ticker_is_accepted(gateway_conn):
@@ -136,27 +166,30 @@ def test_an_unknown_ticker_is_accepted(gateway_conn):
     a client may hold something this system has never heard of, and refusing it
     would be refusing a fact about their money because our reference data is
     incomplete."""
-    recorded = holdings.record(gateway_conn, "avery", ticker="NOTINOURUNIVERSE",
+    avery = _pf(gateway_conn, "avery")
+    recorded = holdings.record(gateway_conn, avery, ticker="NOTINOURUNIVERSE",
                                shares=1, cost_basis=1)
     assert recorded["ticker"] == "NOTINOURUNIVERSE"
 
 
 def test_there_is_a_ceiling_on_positions(gateway_conn, monkeypatch):
+    avery = _pf(gateway_conn, "avery")
     monkeypatch.setattr(holdings, "MAX_POSITIONS", 3)
     for i in range(3):
-        holdings.record(gateway_conn, "avery", ticker=f"SYN{i}", shares=1, cost_basis=1)
+        holdings.record(gateway_conn, avery, ticker=f"SYN{i}", shares=1, cost_basis=1)
     with pytest.raises(holdings.HoldingRefused, match="book of record"):
-        holdings.record(gateway_conn, "avery", ticker="SYN9", shares=1, cost_basis=1)
+        holdings.record(gateway_conn, avery, ticker="SYN9", shares=1, cost_basis=1)
 
 
 def test_correcting_a_holding_at_the_ceiling_is_still_allowed(gateway_conn, monkeypatch):
     """The ceiling counts *other* positions, so somebody at the limit can still
     fix one. A limit that blocked corrections would freeze a portfolio at
     whatever it last said."""
+    avery = _pf(gateway_conn, "avery")
     monkeypatch.setattr(holdings, "MAX_POSITIONS", 3)
     for i in range(3):
-        holdings.record(gateway_conn, "avery", ticker=f"SYN{i}", shares=1, cost_basis=1)
-    corrected = holdings.record(gateway_conn, "avery", ticker="SYN1", shares=99, cost_basis=1)
+        holdings.record(gateway_conn, avery, ticker=f"SYN{i}", shares=1, cost_basis=1)
+    corrected = holdings.record(gateway_conn, avery, ticker="SYN1", shares=99, cost_basis=1)
     assert corrected["shares"] == 99
 
 
@@ -166,7 +199,7 @@ def test_there_is_no_account_column(gateway_conn):
     is ours, so the field does not exist - and a field that does not exist
     cannot be leaked by a reader who forgets to sanitize."""
     columns = {row["name"] for row in
-               gateway_conn.fetchall("PRAGMA table_info(client_holdings)")}
+               gateway_conn.fetchall("PRAGMA table_info(portfolio_holdings)")}
     for forbidden in ("account_id", "account", "account_number"):
         assert forbidden not in columns
 
@@ -175,10 +208,11 @@ def test_there_is_no_account_column(gateway_conn):
 
 
 def test_weights_are_computed_from_stated_cost(gateway_conn):
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=30)   # 3000
-    holdings.record(gateway_conn, "avery", ticker="SYN2", shares=100, cost_basis=10)   # 1000
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=30)   # 3000
+    holdings.record(gateway_conn, avery, ticker="SYN2", shares=100, cost_basis=10)   # 1000
 
-    report = holdings.concentration(gateway_conn, "avery")
+    report = holdings.concentration(gateway_conn, avery)
 
     assert report["positions"] == 2
     assert report["known_cost"] == 4000
@@ -188,17 +222,19 @@ def test_weights_are_computed_from_stated_cost(gateway_conn):
 
 
 def test_concentration_reports_the_top_three(gateway_conn):
+    avery = _pf(gateway_conn, "avery")
     for i, cost in enumerate([50, 30, 15, 5], start=1):
-        holdings.record(gateway_conn, "avery", ticker=f"SYN{i}", shares=1, cost_basis=cost)
-    assert holdings.concentration(gateway_conn, "avery")["top_three_pct"] == 95.0
+        holdings.record(gateway_conn, avery, ticker=f"SYN{i}", shares=1, cost_basis=cost)
+    assert holdings.concentration(gateway_conn, avery)["top_three_pct"] == 95.0
 
 
 def test_nothing_is_ever_valued(gateway_conn):
     """The line §96 will not cross. Every price this organization can produce is
     simulated; applying one to a client's real positions would present synthetic
     output as real - what §95 refused for trade ideas, one field over."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=30)
-    report = holdings.concentration(gateway_conn, "avery")
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=30)
+    report = holdings.concentration(gateway_conn, avery)
 
     assert report["priced"] is False
     assert "simulated" in report["priced_note"]
@@ -209,17 +245,19 @@ def test_nothing_is_ever_valued(gateway_conn):
 def test_the_absence_of_a_price_is_stated_rather_than_left_to_be_noticed(gateway_conn):
     """A report that simply omitted market value would read as a portfolio worth
     its cost basis."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=1, cost_basis=1)
-    assert holdings.concentration(gateway_conn, "avery")["priced_note"]
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=1, cost_basis=1)
+    assert holdings.concentration(gateway_conn, avery)["priced_note"]
 
 
 def test_a_holding_without_a_cost_basis_is_counted_but_not_weighted(gateway_conn):
     """Counted, because they own it. Not weighted, because weighting it would
     need a number nobody has."""
-    holdings.record(gateway_conn, "avery", ticker="SYN1", shares=100, cost_basis=30)
-    holdings.record(gateway_conn, "avery", ticker="SYN6", shares=75)
+    avery = _pf(gateway_conn, "avery")
+    holdings.record(gateway_conn, avery, ticker="SYN1", shares=100, cost_basis=30)
+    holdings.record(gateway_conn, avery, ticker="SYN6", shares=75)
 
-    report = holdings.concentration(gateway_conn, "avery")
+    report = holdings.concentration(gateway_conn, avery)
 
     assert report["positions"] == 2
     assert [w["ticker"] for w in report["weights"]] == ["SYN1"]
@@ -228,7 +266,8 @@ def test_a_holding_without_a_cost_basis_is_counted_but_not_weighted(gateway_conn
 
 
 def test_an_empty_portfolio_says_so(gateway_conn):
-    report = holdings.concentration(gateway_conn, "nobody")
+    nobody = _pf(gateway_conn, "nobody")
+    report = holdings.concentration(gateway_conn, nobody)
     assert report["positions"] == 0
     assert report["note"]
 
@@ -273,7 +312,7 @@ def test_demo_clients_are_refused_in_production(gateway_conn, monkeypatch, tmp_p
     _production(monkeypatch, tmp_path)
     with pytest.raises(demo_clients.SeedRefused, match="PRODUCTION"):
         demo_clients.seed(gateway_conn)
-    assert holdings.simulated_client_ids(gateway_conn) == []
+    assert portfolios.simulated_client_ids(gateway_conn) == []
 
 
 def test_demo_clients_are_refused_when_the_stage_cannot_be_read(gateway_conn, monkeypatch,
@@ -293,8 +332,13 @@ def test_seeding_creates_clients_with_agents_and_holdings(gateway_conn, monkeypa
 
     assert set(outcome["clients"]) == set(demo_clients.DEMO_CLIENTS)
     for client_id, positions in demo_clients.DEMO_CLIENTS.items():
-        assert len(holdings.listing(gateway_conn, client_id)) == len(positions)
+        portfolio = _pf(gateway_conn, client_id)
+        assert len(holdings.listing(gateway_conn, portfolio)) == len(positions)
         assert client_agent.load(gateway_conn, client_id) is not None
+        # Seeded through the ordinary path, so each demo client owns their
+        # positions the same way a real one does (TQ-44).
+        assert portfolio["owner_id"] == client_id
+        assert portfolio["simulated"] is True
 
 
 def test_every_demo_row_is_flagged_simulated(gateway_conn, monkeypatch, tmp_path):
@@ -304,9 +348,9 @@ def test_every_demo_row_is_flagged_simulated(gateway_conn, monkeypatch, tmp_path
     _pre_alpha(monkeypatch, tmp_path)
     demo_clients.seed(gateway_conn)
 
-    unflagged = gateway_conn.fetchall("SELECT ticker FROM client_holdings WHERE simulated = 0")
+    unflagged = gateway_conn.fetchall("SELECT ticker FROM portfolio_holdings WHERE simulated = 0")
     assert unflagged == []
-    assert set(holdings.simulated_client_ids(gateway_conn)) == set(demo_clients.DEMO_CLIENTS)
+    assert set(portfolios.simulated_client_ids(gateway_conn)) == set(demo_clients.DEMO_CLIENTS)
 
 
 def test_clearing_removes_every_simulated_row_and_nothing_else(gateway_conn, monkeypatch,
@@ -314,13 +358,14 @@ def test_clearing_removes_every_simulated_row_and_nothing_else(gateway_conn, mon
     _pre_alpha(monkeypatch, tmp_path)
     demo_clients.seed(gateway_conn)
     # A real client, recorded the ordinary way.
-    holdings.record(gateway_conn, "real-person", ticker="SYN1", shares=10, cost_basis=5)
+    real_person = _pf(gateway_conn, "real-person")
+    holdings.record(gateway_conn, real_person, ticker="SYN1", shares=10, cost_basis=5)
     client_agent.ensure(gateway_conn, "real-person")
 
     demo_clients.clear(gateway_conn)
 
-    assert holdings.simulated_client_ids(gateway_conn) == []
-    assert len(holdings.listing(gateway_conn, "real-person")) == 1
+    assert portfolios.simulated_client_ids(gateway_conn) == []
+    assert len(holdings.listing(gateway_conn, real_person)) == 1
     assert client_agent.load(gateway_conn, "real-person") is not None
 
 
@@ -351,13 +396,15 @@ def test_the_demo_data_exercises_the_awkward_paths(gateway_conn, monkeypatch, tm
     """Demo data that only shows the happy case is a screenshot, not a
     demonstration: one client is concentrated and one is missing a cost basis,
     so the report has something true and uncomfortable to say."""
+    avery = _pf(gateway_conn, "avery")
+    morgan = _pf(gateway_conn, "morgan")
     _pre_alpha(monkeypatch, tmp_path)
     demo_clients.seed(gateway_conn)
 
-    concentrated = holdings.concentration(gateway_conn, "avery")
+    concentrated = holdings.concentration(gateway_conn, avery)
     assert concentrated["top_three_pct"] > 90
 
-    incomplete = holdings.concentration(gateway_conn, "morgan")
+    incomplete = holdings.concentration(gateway_conn, morgan)
     assert incomplete["missing_cost_basis"]
 
 
@@ -372,13 +419,14 @@ def test_clearing_removes_holdings_a_demo_client_stated_in_conversation(gateway_
     client is demo data, whatever route it arrived by."""
     _pre_alpha(monkeypatch, tmp_path)
     demo_clients.seed(gateway_conn)
+    customer = _pf(gateway_conn, "customer")
 
     # Exactly what the live session did: a holding stated in conversation.
-    stated = holdings.record(gateway_conn, "customer", ticker="SYN5", shares=80,
+    stated = holdings.record(gateway_conn, customer, ticker="SYN5", shares=80,
                              cost_basis=179.40)
-    assert stated["simulated"] == 0, "a stated holding is not demo data by flag"
+    assert stated["simulated"] is False, "a stated holding is not demo data by flag"
 
     demo_clients.clear(gateway_conn)
 
-    assert holdings.listing(gateway_conn, "customer") == []
+    assert holdings.listing(gateway_conn, customer) == []
     assert demo_clients.outstanding(gateway_conn)["clean"] is True

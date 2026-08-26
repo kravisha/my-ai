@@ -48,7 +48,7 @@ shown once by `python -m gateway.clients add`.
 
 from __future__ import annotations
 
-from gateway import client_agent, clients, holdings
+from gateway import client_agent, clients, holdings, portfolios
 from backend.db import Database
 
 # Development stages only. Same list and same reasoning as
@@ -121,9 +121,16 @@ def seed(conn: Database) -> dict:
         agent = client_agent.ensure(conn, client_id)
         conn.execute("UPDATE client_agents SET simulated = 1 WHERE client_id = ?",
                      (client_id,))
+        # Through the same gate the client's own representative uses (TQ-44), so
+        # the demo exercises the real path rather than a seeding shortcut beside
+        # it. A seeder that wrote holdings directly would be the one caller whose
+        # ownership was never checked.
+        portfolio = portfolios.primary_for(
+            conn, portfolios.for_client(client_id), simulated=True)
         for position in positions:
-            holdings.record(conn, client_id, simulated=True, **position)
-        created[client_id] = {"agent": agent["name"], "positions": len(positions)}
+            holdings.record(conn, portfolio, simulated=True, **position)
+        created[client_id] = {"agent": agent["name"], "positions": len(positions),
+                              "portfolio": portfolio["portfolio_id"]}
     return {"stage": stage, "clients": created, "password": DEMO_PASSWORD}
 
 
@@ -138,7 +145,7 @@ def simulated_clients(conn: Database) -> list[str]:
         "SELECT client_id FROM client_agents WHERE simulated = 1")}
     ids |= {r["client_id"] for r in conn.fetchall(
         "SELECT client_id FROM clients WHERE simulated = 1")}
-    ids |= set(holdings.simulated_client_ids(conn))
+    ids |= set(portfolios.simulated_client_ids(conn))
     return sorted(ids)
 
 
@@ -160,17 +167,38 @@ def clear(conn: Database) -> dict:
     added by hand is cleared too, and a real client is never touched."""
     targets = simulated_clients(conn)
     if not targets:
-        return {"clients_removed": 0, "holdings_removed": 0, "agents_removed": 0}
+        return {"clients_removed": 0, "holdings_removed": 0, "agents_removed": 0,
+                "portfolios_removed": 0, "legacy_removed": 0}
+
+    holdings_removed = 0
+    portfolios_removed = 0
+    for client_id in targets:
+        owner = portfolios.for_client(client_id)
+        # `owned`, not `listing`: an archived demo portfolio is still demo data,
+        # and a listing that showed only active ones would leave it behind with
+        # its holdings intact. Both are owner-scoped queries, so each portfolio
+        # here is already proven to belong to this client.
+        for portfolio in portfolios.owned(conn, owner):
+            holdings_removed += holdings.forget_all(conn, portfolio)
+        portfolios_removed += portfolios.purge_owner(conn, owner)
 
     placeholders = ",".join("?" * len(targets))
-    holdings_removed = conn.execute_returning_rowcount(
-        f"DELETE FROM client_holdings WHERE client_id IN ({placeholders})", tuple(targets))
     agents_removed = conn.execute_returning_rowcount(
         f"DELETE FROM client_agents WHERE client_id IN ({placeholders})", tuple(targets))
     logins_removed = conn.execute_returning_rowcount(
         f"DELETE FROM clients WHERE client_id IN ({placeholders})", tuple(targets))
+    # The pre-TQ-44 table, kept for diagnosis (spec §10 Q2) - but keeping a copy
+    # for diagnosis is not a reason to keep simulated *customers*. If demo rows
+    # survived there, `gateway.db` would still hold demo data after a clear, and
+    # "clean before live exposure" would quietly stop being true.
+    legacy_removed = 0
+    if holdings._table_exists(conn, holdings.LEGACY_ARCHIVE):
+        legacy_removed = conn.execute_returning_rowcount(
+            f"DELETE FROM {holdings.LEGACY_ARCHIVE} WHERE client_id IN ({placeholders})",
+            tuple(targets))
     return {"clients_removed": len(targets), "holdings_removed": holdings_removed,
-            "agents_removed": agents_removed, "logins_removed": logins_removed}
+            "agents_removed": agents_removed, "logins_removed": logins_removed,
+            "portfolios_removed": portfolios_removed, "legacy_removed": legacy_removed}
 
 
 def outstanding(conn: Database) -> dict:
@@ -238,14 +266,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if report["clean"] else 1
 
         if args.command == "show":
-            for client_id in holdings.simulated_client_ids(conn) or []:
+            for client_id in portfolios.simulated_client_ids(conn) or []:
                 agent = client_agent.load(conn, client_id)
                 print(f"--- {client_id} (represented by "
                       f"{agent['name'] if agent else 'nobody'}) ---")
-                for row in holdings.listing(conn, client_id):
+                portfolio = portfolios.primary_for(conn, portfolios.for_client(client_id))
+                print(f"  portfolio {portfolio['portfolio_id']} "
+                      f"({portfolio['data_mode']}, priced: "
+                      f"{portfolios.is_priced(portfolio)})")
+                for row in holdings.listing(conn, portfolio):
                     cost = "unknown" if row["cost_basis"] is None else f"{row['cost_basis']:.2f}"
                     print(f"  {row['ticker']:<6} {row['shares']:>8.0f} shares @ {cost}")
-                report = holdings.concentration(conn, client_id)
+                report = holdings.concentration(conn, portfolio)
                 print(f"  positions {report['positions']}, cost {report['known_cost']}, "
                       f"top three {report['top_three_pct']}%")
                 if report.get("missing_cost_note"):

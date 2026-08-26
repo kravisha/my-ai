@@ -366,23 +366,76 @@ This is a security task wearing a data-model hat.
 
 ---
 
-## 10. Open questions and risks
+## 10. Open questions — decided 2026-08-26
 
-**Q1 — Where does the migration live?** `backend/migrations.py` (§89) is the
-project's pipeline but registers *backend* stores; this is the Gateway database.
-Options: (a) a one-time function in `gateway/store.init_schema`, consistent with
-its existing `_apply_additive_migrations`; (b) extend §89 to Gateway stores.
-**Leaning (a)**; genuinely undecided, worth ten minutes first.
+All three were settled before implementation began, by looking at the code rather
+than by reasoning from the spec alone. Recorded here so they are not silently
+re-litigated; the reasoning is the part worth keeping.
 
-**Q2 — Drop or keep `client_holdings`?** Dropping is clean; renaming to
-`client_holdings_legacy` preserves data, matches §16.1 ("mark it as legacy") and
-§22's preserve-for-diagnosis habit, but leaves a lingering table. **Leaning
-rename**, dropping in a later increment once confidence is established.
+### Q1 — Where does the migration live? **Decided: (a), `gateway/store.init_schema`.**
 
-**Q3 — `asset_class` for migrated rows.** They have none. `EQUITY` is a guess and
-this project does not fabricate. **Leaning `NULL`/`"unknown"** per addendum 42
-§11's vocabulary. Confirm how `concentration` should treat unknown-class
-holdings.
+The leaning was (a) and looking confirmed it, for a reason stronger than
+consistency: **`backend/migrations.py` cannot honestly back up `gateway.db`.**
+
+Its runner takes one connection, and step 2 of §23's ordering calls
+`_pre_upgrade_backup()` → `continuity.create_backup(provider)`, which snapshots
+the *backend's* continuity domain. Registering a Gateway store there would make
+the pipeline announce "backed up before migrating" while the file being migrated
+was not in the backup — a false safety claim at exactly the moment §23's ordering
+is supposed to be true. Both registered stores (`workspace`, `coo_identity`) read
+and write their version columns in `financial_intelligence.db`, and the CLI opens
+that database.
+
+`gateway/store.py` already owns `_apply_additive_migrations` for precisely this
+category of change, and runs it from `init_schema` on every start. This migration
+goes beside it.
+
+Extending §89 to Gateway stores is real work — a second connection domain and a
+Gateway backup provider — and it is **not** a subtask of TQ-44. If a second
+Gateway migration ever arrives, that is the moment it earns its own queue entry;
+one migration does not justify building a second pipeline.
+
+The safety §89 would have supplied is not skipped, it is supplied locally: the
+whole migration runs inside `Database.transaction`, so a failure leaves nothing
+applied, and it verifies its own counts before renaming anything (§6.4).
+
+### Q2 — Drop or keep `client_holdings`? **Decided: rename to `client_holdings_legacy`.**
+
+As leaned, matching §16.1 and §22's preserve-for-diagnosis habit. Two additions
+that came out of building it:
+
+- **The rename is also the idempotency mechanism.** Once `client_holdings` is
+  gone the migration has nothing to find, so §6.6 falls out of the design rather
+  than needing a version flag. A database where *both* tables exist is an
+  aborted run: the migration refuses rather than clobbering the legacy copy.
+- **`demo_clients.clear()` must reach the legacy table too.** Otherwise demo
+  holdings survive there and constraint "`gateway.db` must be clean before any
+  live exposure" quietly stops being true. Preserving data for diagnosis is not
+  a reason to preserve *simulated customers*.
+
+### Q3 — `asset_class` for migrated rows. **Decided: the literal `UNKNOWN`, not `NULL`, and never `EQUITY`.**
+
+`EQUITY` would be a fabrication — the rows genuinely do not say. That much was
+already settled by the standing rule.
+
+The refinement is storing `"UNKNOWN"` explicitly rather than `NULL`. It joins the
+closed vocabulary (`EQUITY`, `OPTION`, `UNKNOWN`), so the fail-closed read check
+in §3.6 covers it uniformly and no reader has to remember that a missing value
+means anything in particular. "We do not know" becomes a recorded fact instead of
+an absence, which is the same distinction `needs_reconstruction` draws elsewhere.
+
+**How `concentration` treats it: it does not read `asset_class` at all.** Weights
+are by stated cost basis regardless of class, so an unknown class costs nothing
+today. That is a fact about the current report, not a decision to skip — a
+class-aware view is TQ-45's, where the provider defines what a holding is.
+
+Holdings recorded conversationally also get `UNKNOWN`: the client said "400
+shares", and inferring an asset class from the word "shares" is the same
+fabrication one step smaller.
+
+---
+
+## 10a. Risks
 
 **Risk 1 — scope creep into TQ-45.** The provider abstraction is adjacent and
 tempting. §3.9 records why the naming churn is budgeted separately.
@@ -392,7 +445,6 @@ tempting. §3.9 records why the naming churn is budgeted separately.
 **Risk 3 — `resolve()` bypass.** The single-gate property is only as strong as
 review. A source-scan tripwire is cheap insurance (§7).
 
----
 
 ## 11. Out of scope
 
