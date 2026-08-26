@@ -1,120 +1,77 @@
 """Where holdings come from, behind one interface (TASK_QUEUE TQ-45b,
-docs/SPEC_RECONCILIATION.md §101).
+docs/SPEC_RECONCILIATION.md §101; **reshaped from readers into fetchers by
+TQ-72, §111**).
 
-Source: addendum 44 §6.1, §6.2, §6.3, §7, §15.3, §15.4, §17, §20 Phase 2.
+## What changed, and what did not
 
-## The problem this exists for
+§101 built this so that the *source* of a portfolio could change without the
+analyser changing:
 
-Holdings had exactly one source: the client said what they hold and
-`holdings.record` wrote it down (§96). Honest, no leak surface — and the only
-shape the code could imagine. A brokerage account arrives as a different thing
-entirely: accounts, balances, a sync time, a provider that can be *down*, and
-none of those had anywhere to live.
+> *"§6.3 asks that simulation implement the same interface a brokerage provider
+> will, so the switch is an adapter rather than a rewrite."*
 
-§6.3 asks that simulation implement the same interface a brokerage provider will,
-so the switch is an adapter rather than a rewrite.
+The source has now changed, in the largest way available: **there is no local
+store to read.** Owner direction (§111, §115) — the client supplies a source name
+and credentials, the agent fetches from the external system, analyses, and
+retains nothing.
 
-## The trap, and the countermeasure
+So the interface was built for exactly this and it still had to move, because
+every method took two things it can no longer have: a database connection, and a
+*resolved portfolio row*. Both were the store. What survives untouched is the
+part that mattered — the capability declaration, the refusals with reasons, the
+canonical `Holding`, and the rule that a provider is an adapter and **never an
+authorization boundary**.
 
-The trap is building the interface around the one implementation that exists.
-§15.4 is the answer and it is why `tests/test_portfolio_provider_contract.py` was
-written before the second provider: **a contract with a single implementation is
-a description of that implementation.** The suite is what turns it into a
-contract, and writing it early is what stops `SchwabPortfolioProvider` from
-discovering next month that the "interface" encoded three assumptions only a
-local database could satisfy.
+## A provider takes a source, not a portfolio
 
-The concrete guard, applied to every test in that suite: could a provider that
-must make a network call satisfy this? If it needs a local database, the test is
-wrong.
+The old signature was `get_holdings(conn, portfolio)` where `portfolio` was a row
+proving `portfolios.resolve()` had run. There is no row. A provider now takes a
+`Source` — what the client named, and where it points.
 
-## The gate stays in front of the provider
-
-Addendum 44 §7's conceptual interface is `get_holdings(account_ref)`. **That
-signature is not implemented here, deliberately** (spec §3.2).
-
-A public function that takes a bare reference string and returns holdings is the
-second by-id retrieval path TQ-44 exists to prevent, one layer below where
-`test_nothing_outside_portfolios_queries_the_portfolios_table` looks. It would not
-read as a bypass when somebody added it — it would read as implementing the
-specification.
-
-So every method that reaches data takes a **resolved portfolio**: a dict that came
-back from `portfolios.resolve()`, carrying the proof that the ownership
-comparison ran. The broker's own reference is read from that row
-(`provider_account_ref`), never handed in by a caller.
-
-A provider is an adapter to a data source. **It is not an authorization boundary
-and must never become one.**
-
-`list_accounts(owner)` keeps its owner-scoped shape, because it takes no id and
-so cannot be tricked into returning somebody else's — the same property that lets
-`portfolios.owned()` exist safely beside `resolve()`.
+**This is deliberately the minimum that removes the store, not the finished
+shape.** TQ-73 owns the request: credentials, several sources per client,
+consolidation across them, and the session that holds the result. Designing that
+here would be designing it without its requirements. What is settled now is the
+*direction* — a provider fetches rather than reads — and the signatures move once
+more when TQ-73 knows what a credential looks like.
 
 ## A provider says what it cannot do
 
-`get_balances` and `refresh` have no honest answer for a MANUAL portfolio. Nobody
-told this system how much cash the client holds, and there is nothing to refresh
-*from* — the source is a person who spoke last Tuesday.
+Unchanged from §101, and the reason it earns its place is unchanged too:
+`get_balances` and `refresh` have no honest answer for a source that is a
+supplied list of positions. `{}` would read as "no cash", `{"cash": 0}` would be
+a fabrication, and `None` puts the interpretation in every caller. So a provider
+declares its capabilities and an undeclared one raises **with a reason a caller
+can repeat aloud**.
 
-`{}` would read as "no cash". `{"cash": 0}` would be a fabrication. `None` puts
-the interpretation in every caller. So a provider declares its capabilities and an
-undeclared one raises `ProviderCapabilityUnavailable` **with a reason a caller can
-repeat aloud** — the same shape `gateway/skills.py` uses for a declared-and-unbuilt
-skill, one layer down. The answer to "why can't you tell me my cash balance?" is a
-sentence, not a blank field.
+That is also the only reason two implementations exist here rather than one (§101
+spec §11 Q5): **two providers that genuinely differ in what they can answer is
+what makes `supports()` a contract rather than a decoration.**
 
-That is also the only reason `ManualPortfolioProvider` earns its place (spec §11
-Q5): two providers that genuinely differ in what they can answer is what makes
-`supports()` a contract rather than a decoration.
+## Nothing here is priced, and nothing is retained
 
-## Freshness is never invented
+`Holding` carries no `market_price` and no `market_value`, which is now a
+statement about architecture rather than about caution: §113 puts prices in the
+market data store, fetched at analysis time and joined to positions there. A
+position and its price arrive from different places and are combined for the
+length of a request.
 
-§17: if the broker is unavailable, retain the snapshot, **mark it stale, do not
-silently claim it is current.** So `refresh` stamps `last_synced_at` only when
-data was actually fetched; a failure leaves the old value alone and reports the
-failure; and a provider that cannot refresh raises rather than stamping the time
-somebody asked. A `last_synced_at` that moves on a failed sync is worse than a
-NULL one — NULL says "never synced", which is true.
-
-## Nothing here is priced
-
-`portfolios.is_priced()` is untouched and still one line: `LIVE` only. A
-`SIMULATED` portfolio is not priced (spec §11 Q2), because widening that rule to
-"LIVE, or SIMULATED-and-labelled" makes it two branches and the second is where
-the mistake eventually lives.
-
-**A cash balance is not a price**, which is what keeps the rule narrow rather than
-awkward. `is_priced` governs *market-derived* values — what a position is worth
-now, gain, loss, performance. Cash is a quantity somebody holds, not a valuation
-of anything.
-
-## The simulated provider generates; it does not read the organization
-
-`SimulatedPortfolioProvider` must not reach into `financial_intelligence.db`.
-That is the §95 invariant — no skill a client can invoke may read organization
-data — and naming a symbol is not the same as querying the organization's
-database for one. Its positions come from a table in this file.
-
-It **seeds** those positions into `portfolio_holdings` and reads them back like
-any other provider, rather than generating them on every read (spec §11 Q3). If
-it generated, a holding a demo client stated in conversation would be invisible —
-exactly the data §96 exists to preserve. A provider decides where rows came from
-and how they are labelled; it does not decide where they live.
+And nothing a provider returns is written anywhere. There is no `seed`, because
+seeding wrote rows; the simulated provider *returns* its fixtures now, which is
+what a simulated exchange does (§115, TQ-77).
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
-from backend.db import Database, now_iso
 from backend import holdings, portfolios
 
 # --- capabilities ------------------------------------------------------------------
 #
-# Closed vocabulary, fail-closed on an unknown one, matching backend/portfolios.py.
+# Closed vocabulary, fail-closed on an unknown one.
 
 CAP_HOLDINGS = "holdings"
 CAP_ACCOUNTS = "accounts"
@@ -132,8 +89,7 @@ class ProviderCapabilityUnavailable(NotImplementedError):
 
 
 class ProviderRefused(RuntimeError):
-    """Data a provider will not accept (§17): malformed, quarantined rather than
-    stored, with whatever was already there left alone."""
+    """Data a provider will not accept, or a source it cannot serve."""
 
 
 class UnknownCapability(ValueError):
@@ -145,12 +101,12 @@ class UnknownCapability(ValueError):
 class Holding:
     """One position, in the canonical shape (addendum 44 §3.4, TQ-45a).
 
-    Frozen because it is what a provider returned, not a working variable - the
+    Frozen because it is what a source returned, not a working variable - the
     same reasoning `OwnerContext` is frozen for.
 
-    Deliberately carries no `market_price` or `market_value`. Every price this
-    organization produces is simulated, and a field existing is not permission to
-    fill it in."""
+    Deliberately carries no `market_price` or `market_value`. Positions come from
+    a broker and prices come from the market data store (§113); a value is
+    computed by joining them at analysis time, not by a source asserting one."""
 
     symbol: str
     quantity: float
@@ -163,16 +119,56 @@ class Holding:
 
     @classmethod
     def from_row(cls, row: dict) -> "Holding":
+        """Build one from a mapping a source produced.
+
+        Validated rather than trusted: a source is somebody else's system, and
+        `holdings.clean_symbol` / `clean_asset_class` / `quantity` are the same
+        checks that used to run on the way into the table. They run on the way
+        *in from a fetch* now, which is the same boundary one step earlier."""
         return cls(
-            symbol=row["symbol"],
-            quantity=row["quantity"],
-            average_cost=row["average_cost"],
-            asset_class=row["asset_class"],
-            as_of=row["as_of"],
+            symbol=holdings.clean_symbol(row["symbol"]),
+            quantity=holdings.quantity(row["quantity"]),
+            average_cost=holdings.positive(
+                row.get("average_cost"), "an average cost", required=False),
+            asset_class=holdings.clean_asset_class(row.get("asset_class")),
+            as_of=row.get("as_of") or "",
             note=row.get("note"),
             acquired_on=row.get("acquired_on"),
             simulated=bool(row.get("simulated")),
         )
+
+
+@dataclass(frozen=True)
+class Source:
+    """What the client named, and where it points (§115).
+
+    > *"The portfolio is provided as an external source and all that is provided
+    > is source name and credentials."*
+
+    **Provisional, and TQ-73 finalises it.** There is no credential field yet
+    because there is nothing to authenticate against and no envelope to carry one
+    in; adding an always-empty one now would be the machinery-with-no-user this
+    project refuses. What is here is what removing the store required: which
+    provider serves this source, what it is called, and what it points at.
+
+    `positions` exists for the one provider whose source *is* the positions - a
+    manually maintained list that arrives with the request rather than being
+    fetched. It is empty for every fetching provider."""
+
+    provider_type: str
+    name: str
+    reference: str | None = None
+    data_mode: str = portfolios.MODE_SIMULATED
+    simulated: bool = True
+    owner_hint: str | None = None
+    positions: tuple = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        portfolios.check_vocabulary(
+            self.provider_type, portfolios.PROVIDER_TYPES, "provider type")
+        portfolios.check_vocabulary(self.data_mode, portfolios.DATA_MODES, "data mode")
+        if not (self.name or "").strip():
+            raise portfolios.UnknownVocabulary("a source needs a name")
 
 
 class PortfolioProvider(Protocol):
@@ -181,18 +177,22 @@ class PortfolioProvider(Protocol):
 
     A Protocol rather than an ABC, following `app/model_provider.ModelProvider`
     and `backend/reference_data.SourceAdapter`: conformance is demonstrated by
-    passing `PortfolioProviderContract`, not by inheriting."""
+    passing `PortfolioProviderContract`, not by inheriting.
+
+    **A provider is an adapter to a data source. It is not an authorization
+    boundary and must never become one** - unchanged from §101, and more
+    important now that there is no table behind it to be the boundary instead.
+    Who a fetch is for is decided before a provider is chosen."""
 
     name: str
     provider_type: str
 
     def supports(self, capability: str) -> bool: ...
-    def list_accounts(self, conn: Database, owner) -> list[dict]: ...
-    def get_account(self, conn: Database, portfolio: dict) -> dict: ...
-    def get_holdings(self, conn: Database, portfolio: dict) -> list[Holding]: ...
-    def get_balances(self, conn: Database, portfolio: dict) -> dict: ...
-    def get_positions(self, conn: Database, portfolio: dict) -> list[Holding]: ...
-    def refresh(self, conn: Database, portfolio: dict) -> dict: ...
+    def get_account(self, source: Source) -> dict: ...
+    def get_holdings(self, source: Source) -> list[Holding]: ...
+    def get_balances(self, source: Source) -> dict: ...
+    def get_positions(self, source: Source) -> list[Holding]: ...
+    def refresh(self, source: Source) -> dict: ...
     def health_check(self) -> dict: ...
 
 
@@ -204,13 +204,14 @@ def _check_capability(capability: str) -> str:
 
 
 class _BaseProvider:
-    """The parts every provider shares: capability declaration, the refusals, and
-    reading the holdings table for a portfolio that has been through the gate.
+    """Capability declaration and the refusals - the parts every provider shares
+    now that none of them shares a table.
 
-    Shared by inheritance here only because both implementations happen to store
-    rows in the same place. A provider that fetches over a network implements the
-    Protocol directly and shares none of this - which is the case the conformance
-    suite is written for."""
+    What it deliberately no longer shares is *how holdings are obtained*. That
+    was the whole of the old base class and it was only shareable because both
+    implementations read the same rows. A provider that fetches over a network
+    implements the Protocol and shares none of this, which is the case the
+    conformance suite was written for and is now the ordinary case."""
 
     name = "base"
     provider_type = ""
@@ -228,48 +229,44 @@ class _BaseProvider:
                 self.refusals.get(capability)
                 or f"{self.name} cannot answer {capability!r}, and will not guess.")
 
-    def list_accounts(self, conn: Database, owner) -> list[dict]:
-        self._require(CAP_ACCOUNTS)
-        # Owner-scoped in the query and takes no id, so there is no id it could
-        # be tricked into returning (spec §3.2).
-        return [self._account(p) for p in portfolios.listing(conn, owner)
-                if p["provider_type"] == self.provider_type]
+    def _check_source(self, source: Source) -> Source:
+        if not isinstance(source, Source):
+            raise TypeError(
+                "a provider fetches from a Source, not from an id or a name. "
+                "Build one from what the client supplied.")
+        if source.provider_type != self.provider_type:
+            raise ProviderRefused(
+                f"{self.name} cannot serve a {source.provider_type!r} source; refusing "
+                "rather than fetching from a different place than it claims.")
+        return source
 
-    def get_account(self, conn: Database, portfolio: dict) -> dict:
+    def get_account(self, source: Source) -> dict:
         self._require(CAP_ACCOUNTS)
-        return self._account(portfolio)
-
-    def _account(self, portfolio: dict) -> dict:
+        source = self._check_source(source)
         return {
-            "portfolio_id": portfolio["portfolio_id"],
-            "display_name": portfolio["display_name"],
-            "provider_type": portfolio["provider_type"],
-            "data_mode": portfolio["data_mode"],
-            # The broker's own reference, read off the resolved row rather than
-            # accepted from a caller.
-            "provider_account_ref": portfolio.get("provider_account_ref"),
-            "last_synced_at": portfolio.get("last_synced_at"),
-            # Named on every account, so a caller never has to remember which
-            # data modes are priced (portfolios.is_priced is the one rule).
-            "priced": portfolios.is_priced(portfolio),
-            "simulated": bool(portfolio.get("simulated")),
+            "name": source.name,
+            "provider_type": source.provider_type,
+            "data_mode": source.data_mode,
+            # The source's own reference - a broker account number, a file path -
+            # read off the source the client named rather than invented here.
+            "reference": source.reference,
+            # Named on every account so a caller never has to remember which data
+            # modes are priced. Still `portfolios.is_priced`, which §113 has put
+            # on notice: the rule moves to the price's provenance when TQ-75
+            # gives it one to read.
+            "priced": portfolios.is_priced({"data_mode": source.data_mode}),
+            "simulated": bool(source.simulated),
         }
 
-    def get_holdings(self, conn: Database, portfolio: dict) -> list[Holding]:
-        self._require(CAP_HOLDINGS)
-        # `holdings.listing` refuses anything but a resolved portfolio, so the
-        # ownership comparison has already run by the time a row is read.
-        return [Holding.from_row(row) for row in holdings.listing(conn, portfolio)]
-
-    def get_positions(self, conn: Database, portfolio: dict) -> list[Holding]:
+    def get_positions(self, source: Source) -> list[Holding]:
         self._require(CAP_POSITIONS)
-        return self.get_holdings(conn, portfolio)
+        return self.get_holdings(source)
 
-    def get_balances(self, conn: Database, portfolio: dict) -> dict:
+    def get_balances(self, source: Source) -> dict:
         self._require(CAP_BALANCES)
         raise NotImplementedError  # pragma: no cover - a supporting provider overrides
 
-    def refresh(self, conn: Database, portfolio: dict) -> dict:
+    def refresh(self, source: Source) -> dict:
         self._require(CAP_REFRESH)
         raise NotImplementedError  # pragma: no cover - a supporting provider overrides
 
@@ -278,42 +275,55 @@ class _BaseProvider:
 
 
 class ManualPortfolioProvider(_BaseProvider):
-    """What the client told their representative (§96).
+    """A source somebody maintains by hand, whose positions arrive with the
+    request rather than being fetched.
 
-    Not a stopgap and not a null object. It is the honest description of the
-    source that exists today, and having it means the client-stated path goes
-    through the same interface as everything else rather than being the special
-    case everything else is compared against (spec §11 Q5).
+    §96's version of this was "what the client told their representative", which
+    §115 retired: a client now names a source and supplies credentials rather
+    than dictating positions. What remains genuinely manual is a source with no
+    API behind it - a spreadsheet the operator keeps, an export somebody pastes -
+    and for those the positions *are* the source.
 
     It cannot refresh and cannot report balances, and says so in sentences rather
-    than returning empty ones. Those two refusals are the first real test of
-    whether the capability declaration works."""
+    than returning empty ones. Those two refusals are still the only real test of
+    whether the capability declaration works, which is why this provider exists
+    beside the simulated one."""
 
     name = "manual"
     provider_type = portfolios.PROVIDER_MANUAL
     capabilities = (CAP_HOLDINGS, CAP_ACCOUNTS, CAP_POSITIONS)
     refusals = {
         CAP_BALANCES: (
-            "I only know what you have told me about, and you have not told me "
-            "about any cash. I could not give you a balance without inventing one."
+            "This source is a list of positions and nothing else - there is no cash "
+            "figure in it. I could not give you a balance without inventing one."
         ),
         CAP_REFRESH: (
-            "There is nothing for me to refresh from - these holdings are what you "
-            "told me, so they change when you tell me they have changed."
+            "There is nothing for me to refresh from - this source is maintained by "
+            "hand, so it changes when whoever keeps it changes it."
         ),
     }
+
+    def get_holdings(self, source: Source) -> list[Holding]:
+        self._require(CAP_HOLDINGS)
+        source = self._check_source(source)
+        return [Holding.from_row(dict(row)) for row in source.positions]
 
 
 # The simulated portfolios (§6.1), with the diversity that section asks for.
 #
-# Deterministic and written down rather than generated at random, so the demo is
-# reproducible and a test can assert against it.
+# Deterministic and written down rather than generated at random, so an exercise
+# is reproducible and a test can assert against it.
+#
+# **These are training fixtures now** (§114), not demo data awaiting deletion.
+# They were built under §96's rule - "use the simulated client data for now and
+# remove it later before live" - and the owner's reframing changed what they are:
+# imaginary clients the Department of Education practises on, which do not get
+# deleted. The `simulated` flag still marks them; what changed is the policy the
+# flag implies, which is TQ-76's to draw.
 #
 # Synthetic symbols from this system's own universe, never real tickers - a demo
 # portfolio of real companies is one screenshot away from being read as advice
-# about them. Named here rather than read from `financial_intelligence.db`: the
-# §95 invariant is about reaching organization *data*, and naming a symbol is not
-# querying for one.
+# about them.
 SIMULATED_PORTFOLIOS: dict[str, dict] = {
     # §6.1's Client 001: large-cap equities plus one covered call.
     "customer": {
@@ -350,7 +360,7 @@ SIMULATED_PORTFOLIOS: dict[str, dict] = {
     },
     # §6.1's Client 003: diversified, cash plus equities. Deliberately missing a
     # cost basis on one line, so the "counted but not weighted" path is exercised
-    # by real demo data rather than only by a test.
+    # by real fixture data rather than only by a test.
     "morgan": {
         "cash": 96_500.00,
         "positions": [
@@ -366,45 +376,52 @@ SIMULATED_PORTFOLIOS: dict[str, dict] = {
     },
 }
 
-# What an owner with no written-down fixture gets. The provider stays usable for
-# any owner - which matters for the conformance suite, since a contract that only
+# What a source with no written-down fixture gets. The provider stays usable for
+# any name - which matters for the conformance suite, since a contract that only
 # works for three hard-coded names is not one.
 _GENERIC_SYMBOLS = ("SYN1", "SYN2", "SYN3", "SYN4", "SYN5")
 
+# Fixtures carry no timestamp of their own, so one is stamped on the way out.
+# Fixed rather than "now": a fixture that changed its `as_of` on every read would
+# make an exercise unreproducible, and §115's simulated exchange has to be able
+# to answer the same question twice the same way.
+FIXTURE_AS_OF = "2026-01-01T00:00:00+00:00"
+
 
 class SimulatedPortfolioProvider(_BaseProvider):
-    """Invented positions, labelled as invented (§6.1, §6.2).
+    """An invented source, labelled as invented (§6.1, §6.2).
 
     Answers more of the interface than the manual provider does, and that
-    asymmetry is the point: it can refresh (it can regenerate what it invented)
-    and it knows a cash balance (it invented one), where the manual provider
-    honestly cannot.
+    asymmetry is the point: it can refresh (it can re-answer) and it knows a cash
+    balance (it invented one), where the manual provider honestly cannot.
+
+    **It returns rather than seeds.** The old version wrote its fixtures into
+    `portfolio_holdings` and read them back, which was right while a store
+    existed and is exactly the custody §111 removed. A simulated *exchange*
+    answers a query; it does not fill somebody's database first.
 
     It does **not** produce a price, a market value or a gain. §6.2 says
-    simulated data must never appear as live brokerage data, and the mechanism
-    that guarantees it is `portfolios.is_priced` - which is false here because
-    `data_mode` is SIMULATED, not LIVE."""
+    simulated data must never appear as live brokerage data, and the mechanism is
+    that a `SIMULATED` source is not `LIVE`."""
 
     name = "simulated"
     provider_type = portfolios.PROVIDER_SIMULATED
     capabilities = (CAP_HOLDINGS, CAP_ACCOUNTS, CAP_POSITIONS, CAP_BALANCES, CAP_REFRESH)
 
-    def _fixture(self, owner_id: str) -> dict:
-        """This owner's invented portfolio. Deterministic for any owner, written
-        down for the three §6.1 names.
+    def _fixture(self, name: str) -> dict:
+        """This source's invented portfolio. Deterministic for any name, written
+        down for the three §6.1 ones.
 
         Private, and made private by its own contract test: the id-shape scan in
         `test_no_provider_method_accepts_a_bare_id` flagged it on the first run
-        after that scan was widened to every public method. It was right to. A
-        *public* provider method taking a bare `owner_id` is the shape that
-        becomes a bypass, even when - as here - it only computes a template and
-        touches no stored data. Owner-scoped operations take an `OwnerContext`;
-        this is an implementation detail and now looks like one."""
-        if owner_id in SIMULATED_PORTFOLIOS:
-            return SIMULATED_PORTFOLIOS[owner_id]
+        after that scan was widened to every public method, and it was right to.
+        A *public* provider method taking a bare name is the shape that becomes a
+        bypass."""
+        if name in SIMULATED_PORTFOLIOS:
+            return SIMULATED_PORTFOLIOS[name]
         # Stable across runs and platforms - `hash()` is salted per process and
-        # would make the same demo different tomorrow.
-        digest = hashlib.sha256(owner_id.encode("utf-8")).digest()
+        # would make the same exercise different tomorrow.
+        digest = hashlib.sha256(name.encode("utf-8")).digest()
         count = 2 + digest[0] % 3
         return {
             "cash": round(1_000 + digest[1] * 37.5, 2),
@@ -417,22 +434,14 @@ class SimulatedPortfolioProvider(_BaseProvider):
             ],
         }
 
-    def seed(self, conn: Database, portfolio: dict, *, simulated: bool = True) -> int:
-        """Write the invented positions into the holdings table.
+    def get_holdings(self, source: Source) -> list[Holding]:
+        self._require(CAP_HOLDINGS)
+        source = self._check_source(source)
+        fixture = self._fixture(source.owner_hint or source.name)
+        return [Holding.from_row({**position, "as_of": FIXTURE_AS_OF, "simulated": True})
+                for position in fixture["positions"]]
 
-        Seeded rather than generated on read (spec §11 Q3). A provider that
-        generated on every read would make a holding the client stated in
-        conversation invisible, which is the data §96 exists to preserve.
-
-        Through `holdings.record`, so the demo goes down the same path a real
-        client's statement does - a seeder with its own INSERT would be the one
-        writer whose validation nobody checked."""
-        fixture = self._fixture(portfolio["owner_id"])
-        for position in fixture["positions"]:
-            holdings.record(conn, portfolio, simulated=simulated, **position)
-        return len(fixture["positions"])
-
-    def get_balances(self, conn: Database, portfolio: dict) -> dict:
+    def get_balances(self, source: Source) -> dict:
         """Cash, and nothing derived from a price.
 
         A balance is not a valuation: it is a quantity somebody holds, so it does
@@ -440,28 +449,29 @@ class SimulatedPortfolioProvider(_BaseProvider):
         caller reading a number off this dict is told in the same breath that
         nothing here is market-derived."""
         self._require(CAP_BALANCES)
-        fixture = self._fixture(portfolio["owner_id"])
+        source = self._check_source(source)
+        fixture = self._fixture(source.owner_hint or source.name)
         return {
             "cash": fixture["cash"],
             "currency": "USD",
             "simulated": True,
-            "priced": portfolios.is_priced(portfolio),
+            "priced": portfolios.is_priced({"data_mode": source.data_mode}),
             "note": ("This is a simulated cash balance, not a real account. It is not a "
-                     "valuation of anything - this system has no market prices."),
+                     "valuation of anything."),
         }
 
-    def refresh(self, conn: Database, portfolio: dict) -> dict:
-        """Re-seed from the fixture and record that data really was fetched.
+    def refresh(self, source: Source) -> dict:
+        """Answer again, and say how many positions came back.
 
-        `mark_synced` runs only after the rows land, per §17. If seeding raised,
-        `last_synced_at` keeps whatever it had - a timestamp that moved on a
-        failed sync would assert a freshness nothing has."""
+        There is no `last_synced_at` to stamp any more, and its absence is the
+        §17 rule holding rather than being dropped: *mark it stale, do not
+        silently claim it is current.* Nothing is retained, so nothing can go
+        stale, and a freshness claim about stored data would be a claim about
+        data that does not exist."""
         self._require(CAP_REFRESH)
-        owner = portfolios.for_client(portfolio["owner_id"])
-        count = self.seed(conn, portfolio)
-        synced = portfolios.mark_synced(conn, portfolio["portfolio_id"], owner)
-        return {"refreshed": True, "holdings": count,
-                "last_synced_at": synced["last_synced_at"], "simulated": True}
+        source = self._check_source(source)
+        held = self.get_holdings(source)
+        return {"refreshed": True, "holdings": len(held), "simulated": True}
 
     def health_check(self) -> dict:
         return {"healthy": True,
@@ -471,32 +481,30 @@ class SimulatedPortfolioProvider(_BaseProvider):
 _PROVIDERS: dict[str, PortfolioProvider] = {
     portfolios.PROVIDER_MANUAL: ManualPortfolioProvider(),
     portfolios.PROVIDER_SIMULATED: SimulatedPortfolioProvider(),
-    # PROVIDER_SCHWAB is deliberately absent until TQ-49. `for_portfolio` raises
-    # for it rather than falling back, which is the honest behaviour: a Schwab
-    # portfolio in this build is one nothing can read, and pretending otherwise
-    # by serving it from the manual provider would show somebody their stated
-    # holdings where they asked for their brokerage account.
+    # PROVIDER_SCHWAB is deliberately absent until TQ-49/TQ-50. `for_source`
+    # raises for it rather than falling back, which is the honest behaviour: a
+    # Schwab source in this build is one nothing can fetch, and pretending
+    # otherwise by serving it from another provider would show somebody the wrong
+    # account.
 }
 
 
-def for_portfolio(portfolio: dict) -> PortfolioProvider:
-    """The provider that stocks this portfolio.
+def for_source(source: Source) -> PortfolioProvider:
+    """The provider that serves this source.
 
-    Raises on an unknown or unbuilt provider type rather than falling back to the
-    manual one - the same fail-closed rule `portfolios._interpret` applies to
-    every other vocabulary. A portfolio whose provider this build does not
-    recognise is not one whose holdings it may present."""
-    if not isinstance(portfolio, dict):
+    Raises on an unknown or unbuilt provider type rather than falling back - the
+    same fail-closed rule every other vocabulary here works under. A source whose
+    provider this build does not recognise is not one whose holdings it may
+    present."""
+    if not isinstance(source, Source):
         raise TypeError(
-            "a provider is chosen from a resolved portfolio, not from an id or a "
-            "provider name. Use portfolios.resolve() first.")
-    provider_type = portfolio.get("provider_type")
-    if provider_type not in _PROVIDERS:
+            "a provider is chosen from a Source, not from an id or a provider name.")
+    if source.provider_type not in _PROVIDERS:
         raise ProviderRefused(
-            f"no provider is built for {provider_type!r}. Known are "
-            f"{sorted(_PROVIDERS)}; refusing rather than serving this portfolio "
-            "from a different source than it claims.")
-    return _PROVIDERS[provider_type]
+            f"no provider is built for {source.provider_type!r}. Known are "
+            f"{sorted(_PROVIDERS)}; refusing rather than serving this source from a "
+            "different place than it claims.")
+    return _PROVIDERS[source.provider_type]
 
 
 def health() -> dict:

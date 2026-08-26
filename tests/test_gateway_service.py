@@ -389,19 +389,17 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "jarvis_status",
         "jarvis_agent",
         "technology_review",
-        # TQ-41: the operator holds every capability, so the holdings tools are
-        # offered here too. They read the caller's own stated holdings and
-        # cannot name anybody else's - see tests/test_gateway_holdings.py.
-        "record_holding",
-        "list_holdings",
-        "forget_holding",
-        "analyse_holdings",
-        # TQ-45b. Built, and built honestly: for a source that has no cash
-        # figure it refuses with a sentence the agent can repeat rather than
-        # reporting zero. That is what makes it a tool for something that *is*
-        # built - the answer "I cannot know that, and here is why" is an
-        # answer, where a fabricated zero would not be.
-        "portfolio_balances",
+        # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
+        # them because §96 answered "where do a client's holdings come from" with
+        # *the client tells you, and you remember*; §115 retired both halves, so
+        # they describe a system that no longer exists.
+        #
+        # They are **withdrawn rather than left refusing**, and that is the point
+        # this assertion is really making. `gateway/skills.py`'s
+        # declared-and-unbuilt pattern is right when a capability is specified
+        # and not yet built; offering `record_holding` as "coming soon" would
+        # promise a tool this system has decided not to have, and the assistant
+        # would keep reaching for it.
     }, "the assistant must not be handed a tool for something that is not built"
 
     assert not any(

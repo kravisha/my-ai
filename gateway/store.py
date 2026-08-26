@@ -101,44 +101,43 @@ def init_schema(conn: Database) -> None:
     # before its rows are copied to the backend - a database still at the old
     # shape has to reach the current one before it can be moved, or the move
     # carries columns that mean something different.
-    _refuse_unmigrated_portfolios(conn)
+    _archive_any_portfolio_tables(conn)
 
 
-UNMIGRATED_PORTFOLIOS = (
-    "this gateway.db still holds a 'portfolios' table, which means TQ-69's move to the "
-    "backend has not been run against it. Refusing to start.\n\n"
-    "Run it (against copies first):\n"
-    "    python -m backend.portfolio_migration\n\n"
-    "Starting anyway would be worse than this refusal. The Gateway no longer reads that "
-    "table - it asks the backend - so every client would be given a brand-new empty "
-    "portfolio while their real one sat here unreachable. They would then record holdings "
-    "into the new one, and a migration run afterwards would restore the old portfolio as "
-    "the older 'primary', quietly hiding everything recorded in between. Two portfolios "
-    "for one person in two databases is exactly what TQ-44 exists to prevent."
-)
+PORTFOLIO_ARCHIVES = ("portfolios", "portfolio_holdings")
 
 
-def _refuse_unmigrated_portfolios(conn: Database) -> None:
-    """Fail closed on a database that predates TQ-69 (§110).
+def _archive_any_portfolio_tables(conn: Database) -> list[str]:
+    """Rename away any portfolio table an older build left here (TQ-72, §111).
 
-    A one-time condition with a one-line fix, and it is a refusal rather than a
-    warning because the failure it prevents does not look like a failure. An
-    un-migrated client is not shown an error; they are shown an **empty
-    portfolio**, which reads as a working system with nothing in it - the same
-    shape as §100's clean-report-that-was-not-true, arriving from the other
-    direction.
+    TQ-69 moved these to the backend and this function refused to start without
+    a migration. §111 then removed them from the backend too - the system stores
+    no portfolio at all - so there is nowhere to migrate *to*, and refusing to
+    start would strand a database with no fix available.
 
-    Checked on the live table only. `portfolios_pre69` is the archive a completed
-    migration leaves behind, and finding it here is the normal, migrated state."""
-    if conn.fetchone(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'portfolios'"
-    ) is not None:
-        raise UnmigratedGatewayDatabase(UNMIGRATED_PORTFOLIOS)
-
-
-class UnmigratedGatewayDatabase(RuntimeError):
-    """This gateway.db has not had TQ-69's move run against it, and starting
-    would silently give every client an empty portfolio."""
+    Renamed rather than dropped, following `client_holdings_legacy` and
+    `portfolio_holdings_pre45`, and for a sharper reason than habit: these rows
+    are **client financial records**, and this build has just decided it should
+    never have held them. Deleting them silently on startup would be this system
+    destroying somebody's data to tidy up after its own architectural mistake.
+    They are renamed, reported, and TQ-71 disposes of them deliberately."""
+    archived = []
+    for table in PORTFOLIO_ARCHIVES:
+        if conn.fetchone(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ) is None:
+            continue
+        target = f"{table}_pre72"
+        if conn.fetchone(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (target,)
+        ) is not None:
+            # An earlier pass already archived one. Leave both alone rather than
+            # overwriting an archive - that is a person's decision, not a
+            # startup step's.
+            continue
+        conn.execute(f"ALTER TABLE {table} RENAME TO {target}")
+        archived.append(target)
+    return archived
 
 
 # Columns added after a database already existed. Additive only, matching the

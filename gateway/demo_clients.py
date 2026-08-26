@@ -1,107 +1,96 @@
-"""Simulated clients and holdings, for seeing the thing work (TQ-42,
-docs/SPEC_RECONCILIATION.md §96).
+"""The imaginary clients — training fixtures, and the logins that let you walk
+into them (TASK_QUEUE TQ-42, docs/SPEC_RECONCILIATION.md §96; **reframed by
+§114, custody removed by TQ-72/§111**).
 
-Owner direction, 2026-08-26: *"simulate some clients and client holdings"*, and
-*"use the simulated client data for now and remove it later before live"*.
+## What these are now
 
-The second half is the one that shapes this file. Demo data that is merely
-*intended* to be removed is demo data that ships, because by the time anybody
-looks for it nobody is certain which rows it was. So:
+They were *demo data awaiting deletion*. Owner direction, 2026-08-26 (§96):
+*"use the simulated client data for now and remove it later before live"*, and
+this file was built around the second half of that sentence.
 
-**Every simulated row is flagged, not named.** `portfolio_holdings.simulated` and
-`client_agents.simulated` carry it, so a demo client is identifiable rather than
-guessed at from a naming convention somebody may have departed from.
+§114 changed what they are:
 
-**Clearing works by client, not by flag.** Talking to a demo client's agent
-records holdings through the ordinary tool, which does not mark them simulated —
-correctly, since the client did state them. Deleting only flagged rows left
-those behind, orphaned to a customer who no longer existed. Anything owned by a
-demo client is demo data, whatever route it arrived by.
+> *"If only holds simulated data, that means the whole process is a simulation.
+> Agents are being trained and we need simulation exercises for simulated
+> requests for portfolio analysis from imaginary clients as part of training."*
 
-**Seeding refuses outside a development stage.** The same gate, and the same
-reasoning, as `backend/migrations.py`'s destructive hatches (§89): a convenience
-that outlives its stage stops being a convenience. It fails closed when the
-lifecycle stage cannot be read, because "I could not tell what stage this is"
-must not resolve to "go ahead and invent some customers".
+They are **training fixtures**. They do not get deleted, because the curriculum
+needs them next year as much as it does today.
 
-**There is a check that says whether any remains.** `outstanding()` is what a
-pre-launch checklist calls, and what a test asserts — the difference between a
-promise to clean up and a way to know.
+## Two opposite policies wore one flag, and they have been separated
 
-## Two databases, one seeder (TQ-69, §110)
+That reframing collided with the reason this file exists. `simulated` marked two
+different things:
 
-The demo straddles the boundary owner direction drew on 2026-08-26, and it is
-the clearest illustration of it. A demo client is **three things**: a login and a
-representative, which are authentication and stay in `gateway.db`; and a
-portfolio with positions, which is business logic and now lives behind the
-backend.
+- **contamination** — simulated data that must be gone before a real client
+  exists; and
+- **fixtures** — imaginary clients the Department of Education practises on,
+  which must still be there in a year.
 
-So this file writes the first two directly and reaches the third **over HTTP,
-through the same client the client's own agent uses**. It does not open
-`financial_intelligence.db`. That is not ceremony: a seeder with its own private
-route to the data would be the one writer whose ownership was never checked, and
-the demo exists to show the real path working rather than a shortcut beside it.
+`outstanding()` used to ask *"is any simulated client data present?"* and call
+any of it unclean. Under §114 the honest question is **"is there simulated data
+outside the training environment?"**, and the lazy way to get there — widening
+the check to ignore anything tagged training — would recreate §100's finding
+exactly: a clean report that is not true, which is the one a pre-launch checklist
+believes.
 
-It follows that **`seed`, `clear`, `show` and `status` all need the backend
-running**, and `status` is the one where that matters. It reports whether any
-simulated data is outstanding, which is what a pre-launch checklist believes -
-so when it cannot ask, it says so and reports **not clean**. §100 caught a clean
-report that was not true once already; "I could not check" must never round down
-to "there is nothing there".
+So the split is drawn where it can be checked rather than asserted. A **login**
+is contamination: a credential that can reach this system from outside is real
+whatever it is labelled, and one left behind before launch is a way in. A
+**portfolio fixture** is not, and cannot be: since §111 there is nowhere for a
+portfolio to be stored, so `SIMULATED_PORTFOLIOS` is a constant in
+`backend/portfolio_providers.py` that no client can log into.
 
-## What these clients are
+`outstanding()` therefore reports on **logins and representatives**, which is
+what it can see and what actually matters, and says so rather than implying it
+checked everything.
 
-Names here; positions in `backend/portfolio_providers.SIMULATED_PORTFOLIOS`,
-because a simulated portfolio is stocked by the simulated provider (TQ-45b). They
-hold this system's own synthetic symbols rather than real tickers - a demo
-portfolio of real companies is one screenshot away from being read as advice
-about them.
+## What seeding does now
 
-Addendum 44 §6.1 asks for real diversity between them, and they now have it:
-large-cap plus a covered call, growth plus long calls and a protective put, and
-diversified with cash. That is not decoration - it is what makes the demo show
-`asset_class` doing something, and one client's concentration genuinely
-uncomfortable.
+It creates the logins and the representatives, and stops. It used to also create
+a portfolio and seed positions into it; there is no portfolio to create (§111),
+and the positions are a constant the simulated provider returns when asked.
 
-All three can log in, each as themselves. That stopped being a gap when TQ-43
-gave clients a registry (§98) — before it they shared one credential and
-therefore one subject, so the demo could show isolation in the data and not at
-the door. Seeding now registers each client with a generated password, printed
-once, so the isolation can be *walked into* rather than only asserted.
+So the demo is *walk-into-able* exactly as before — three clients, three
+passwords, three agents — and the portfolios arrive the way a real one will: by
+being fetched when somebody asks for an analysis, not by sitting in a table
+waiting.
 
-The passwords are fixed for demo clients and only for them, because a
-demonstration you cannot log into twice is not one. `DEMO_PASSWORD` is not a
-secret and is not a pattern for real clients, whose passwords are generated and
-shown once by `python -m gateway.clients add`.
+## Seeding still refuses outside a development stage
+
+Unchanged, and the reasoning is unchanged: the same gate as
+`backend/migrations.py`'s destructive hatches (§89), failing closed when the
+lifecycle stage cannot be read, because *"I could not tell what stage this is"*
+must not resolve to *"go ahead and invent some customers"*.
+
+That matters more rather than less now that the fixtures are permanent. Fixtures
+that live forever are fixtures nobody re-examines, and the gate is what keeps
+"forever" meaning "in the training environment" rather than "everywhere".
 """
 
 from __future__ import annotations
 
-from gateway import client_agent, clients, portfolio_client
 from backend.db import Database
+from gateway import client_agent, clients
 
 # Development stages only. Same list and same reasoning as
 # backend/migrations.DESTRUCTIVE_STAGES.
 SEEDABLE_STAGES = ("PRE_ALPHA", "ALPHA")
 
-# Synthetic symbols from this system's own universe, never real tickers: a demo
-# portfolio of real companies is one screenshot away from being read as advice
-# about them.
-# Fixed, and only for demo clients: a demonstration you cannot log into twice is
+# Fixed, and only for these clients: a demonstration you cannot log into twice is
 # not one. Real clients get a generated password shown once (gateway/clients.py);
-# this is a convenience for data that is going to be deleted.
+# this is a convenience for accounts that exist to be practised on.
 DEMO_PASSWORD = "demo-client-password"
 
-# Who the demo clients are. Their *positions* live in
-# backend/portfolio_providers.SIMULATED_PORTFOLIOS, because a simulated portfolio
-# is stocked by the simulated provider (TQ-45b) - keeping a second copy here
-# would be two descriptions of one demo, and the one that drifts is the one
-# nobody is looking at.
+# Who the imaginary clients are. Their *positions* live in
+# `backend/portfolio_providers.SIMULATED_PORTFOLIOS`, because a simulated source
+# is answered by the simulated provider - keeping a second copy here would be two
+# descriptions of one fixture, and the one that drifts is the one nobody looks at.
 DEMO_CLIENTS: tuple[str, ...] = ("customer", "avery", "morgan")
 
 
 class SeedRefused(RuntimeError):
-    """Demo data was asked for somewhere it must not exist."""
+    """Imaginary clients were asked for somewhere they must not exist."""
 
 
 def _require_development_stage() -> str:
@@ -111,26 +100,25 @@ def _require_development_stage() -> str:
         stage = boot_config.load().lifecycle_stage
     except Exception as exc:  # noqa: BLE001
         raise SeedRefused(
-            f"refusing to seed demo clients: the boot configuration could not be read "
-            f"({exc}), so the lifecycle stage is unknown."
+            f"refusing to seed imaginary clients: the boot configuration could not be "
+            f"read ({exc}), so the lifecycle stage is unknown."
         ) from exc
     if stage not in SEEDABLE_STAGES:
         raise SeedRefused(
-            f"refusing to seed demo clients at lifecycle stage {stage}. Simulated "
-            f"customers are a development convenience; allowed stages are "
-            f"{', '.join(SEEDABLE_STAGES)}."
+            f"refusing to seed imaginary clients at lifecycle stage {stage}. They are a "
+            f"training convenience; allowed stages are {', '.join(SEEDABLE_STAGES)}."
         )
     return stage
 
 
-def seed(conn: Database, client=None) -> dict:
-    """Create the demo clients and their holdings, all flagged simulated.
+def seed(conn: Database) -> dict:
+    """Create the imaginary clients' logins and representatives.
 
-    `conn` is the Gateway's database - logins and representatives. `client` is
-    the backend's portfolio surface, defaulting to the shared one; the portfolios
-    and positions go there (TQ-69, §110)."""
+    No portfolio is created and no position is written. There is nowhere to write
+    one (§111), and there does not need to be: the positions are a constant the
+    simulated provider returns when an analysis asks for them, which is how a
+    real client's will arrive too."""
     stage = _require_development_stage()
-    client = client or portfolio_client.service()
     created = {}
     for client_id in DEMO_CLIENTS:
         if clients.get(conn, client_id) is None:
@@ -139,127 +127,67 @@ def seed(conn: Database, client=None) -> dict:
         agent = client_agent.ensure(conn, client_id)
         conn.execute("UPDATE client_agents SET simulated = 1 WHERE client_id = ?",
                      (client_id,))
-        # Through the same gate the client's own representative uses (TQ-44), so
-        # the demo exercises the real path rather than a seeding shortcut beside
-        # it. A seeder that wrote holdings directly would be the one caller whose
-        # ownership was never checked.
-        #
-        # SIMULATED rather than MANUAL (§6.2, spec §11 Q3): these positions were
-        # invented, and saying so in the row is what stops simulated data from
-        # ever being mistaken for a live brokerage account. `is_priced` is false
-        # either way - SIMULATED is not LIVE - so nothing becomes visible that
-        # was not.
-        portfolio = client.primary(
-            client_id, simulated=True,
-            provider_type=portfolio_client.PROVIDER_SIMULATED,
-            data_mode=portfolio_client.MODE_SIMULATED)
-        if portfolio["provider_type"] != portfolio_client.PROVIDER_SIMULATED:
-            # `primary_for` returns an existing portfolio as it stands, so a
-            # client who already has a real one does not get it relabelled as
-            # simulated behind their back. That is the right behaviour and this
-            # is its consequence: seeding cannot proceed, and says so, rather
-            # than failing later on a provider that has no `seed`.
-            raise SeedRefused(
-                f"{client_id!r} already has a {portfolio['provider_type']} portfolio. "
-                "Refusing to seed demo data into it - a real portfolio must not be "
-                "relabelled as simulated, and simulated positions must not be added "
-                "to somebody's real one.")
-        # `refresh`, not a seeding call of its own: the simulated provider's
-        # refresh *is* "re-seed from the fixture and record that data really was
-        # fetched", and it is the method the interface actually has. A dedicated
-        # seed route would be a second write path into somebody's positions,
-        # reachable only by this file, which is the shape TQ-44 exists to refuse.
-        refreshed = client.refresh(client_id, portfolio["portfolio_id"])
-        created[client_id] = {"agent": agent["name"], "positions": refreshed["holdings"],
-                              "portfolio": portfolio["portfolio_id"]}
+        created[client_id] = {"agent": agent["name"]}
     return {"stage": stage, "clients": created, "password": DEMO_PASSWORD}
 
 
-def simulated_clients(conn: Database, client=None) -> list[str]:
-    """Every client this system considers demo data, from both sides of the
-    boundary.
+def simulated_clients(conn: Database) -> list[str]:
+    """Every simulated client *login* this Gateway holds.
 
-    The union of three flags, because they can disagree in ways that matter: a
-    holding recorded *during* a demo session arrives through the ordinary tool
-    and is not flagged, since the client genuinely stated it - it is still demo
-    data, and it belongs to a demo client.
+    Both flags, because they can disagree: a representative created for a client
+    whose registration was removed by hand is still a simulated agent, and the
+    union catches it.
 
-    The third source now lives in the backend (TQ-69, §110), and it is the one
-    that catches the case the other two cannot: a simulated portfolio whose
-    client registration has already been deleted. That is not hypothetical
-    tidiness - §100's finding was a demo holding surviving in a table nobody was
-    looking at while the report said everything was clean.
-
-    **Raises `portfolio_client.BackendUnavailable` when the backend cannot be
-    asked**, rather than returning the two flags it can see. A short answer here
-    would be a *shorter list of demo clients*, which is precisely the shape of
-    "everything is clean" that must never be produced by not looking."""
-    client = client or portfolio_client.service()
+    The third source this used to consult - portfolios flagged simulated - is
+    gone with the portfolios (§111). Its absence costs nothing, and that is
+    checkable rather than hopeful: it existed to catch a simulated portfolio
+    whose client registration had been deleted, and there are no stored
+    portfolios for such a row to be."""
     ids = {r["client_id"] for r in conn.fetchall(
         "SELECT client_id FROM client_agents WHERE simulated = 1")}
     ids |= {r["client_id"] for r in conn.fetchall(
         "SELECT client_id FROM clients WHERE simulated = 1")}
-    ids |= set(client.simulated()["client_ids"])
     return sorted(ids)
 
 
-def clear(conn: Database, client=None) -> dict:
-    """Remove every simulated client, and everything belonging to them.
+def clear(conn: Database) -> dict:
+    """Remove every simulated client login and representative.
 
-    This is the half of the owner's instruction that matters — "remove it later
-    before live".
+    This is the half of the owner's original instruction that survives §114 -
+    *"remove it later before live"* - narrowed to the thing it was always really
+    about. **A login is a way in.** A credential that can reach this system from
+    outside is real whatever it is labelled, and one left behind at launch is an
+    open door.
 
-    Removal is **by client, not by row flag**, and that distinction was found by
-    looking rather than by reasoning. Talking to a demo client's agent records
-    holdings through the ordinary tool, which does not mark them simulated -
-    correctly, because the client did state them. Deleting only flagged rows
-    left those behind: an orphaned position belonging to a customer who no
-    longer existed. Anything owned by a demo client is demo data, whatever route
-    it arrived by.
-
-    Still driven by the flags rather than by `DEMO_CLIENTS`, so a demo client
-    added by hand is cleared too, and a real client is never touched."""
-    client = client or portfolio_client.service()
-    targets = simulated_clients(conn, client)
+    The portfolio fixtures are not cleared and cannot be: they are a constant in
+    `backend/portfolio_providers.py`, not data. Clearing the logins is what stops
+    anybody logging in as one of them."""
+    targets = simulated_clients(conn)
     if not targets:
-        return {"clients_removed": 0, "holdings_removed": 0, "agents_removed": 0,
-                "portfolios_removed": 0, "legacy_removed": 0}
-
-    holdings_removed = 0
-    portfolios_removed = 0
-    # Gathered *before* the portfolios are purged, because the retired holdings
-    # archives are keyed by portfolio id and there is no way back to them
-    # afterwards. The purge route returns the ids it removed, which is why it
-    # returns them at all.
-    demo_portfolio_ids: list[str] = []
-    for client_id in targets:
-        purged = client.purge(client_id)
-        demo_portfolio_ids.extend(purged["portfolio_ids"])
-        holdings_removed += purged["holdings_removed"]
-        portfolios_removed += purged["portfolios_removed"]
+        return {"clients_removed": 0, "agents_removed": 0, "logins_removed": 0,
+                "legacy_removed": 0}
 
     placeholders = ",".join("?" * len(targets))
     agents_removed = conn.execute_returning_rowcount(
         f"DELETE FROM client_agents WHERE client_id IN ({placeholders})", tuple(targets))
     logins_removed = conn.execute_returning_rowcount(
         f"DELETE FROM clients WHERE client_id IN ({placeholders})", tuple(targets))
-    return {"clients_removed": len(targets), "holdings_removed": holdings_removed,
-            "agents_removed": agents_removed, "logins_removed": logins_removed,
-            "portfolios_removed": portfolios_removed,
-            "legacy_removed": _clear_archives(conn, targets, demo_portfolio_ids)}
+    return {"clients_removed": len(targets), "agents_removed": agents_removed,
+            "logins_removed": logins_removed,
+            "legacy_removed": _clear_archives(conn, targets)}
 
 
-# The retired holdings tables, and which key each one is under. They are all in
-# gateway.db - they are that database's own history, renamed rather than dropped
-# as each migration ran, and TQ-69 moved the *live* tables without disturbing
-# them (§110).
+# The retired holdings tables, all of them in gateway.db - that database's own
+# history, renamed rather than dropped as each migration ran (§99, §100, §110),
+# plus `*_pre72` if this build archived a portfolio table an older one left here.
 #
-# A list rather than three hand-written blocks, because the count keeps growing
-# and the failure mode is a new archive that nobody adds a clearing step for -
-# which is exactly how §100's finding happened.
+# A list rather than hand-written blocks, because the count keeps growing and the
+# failure mode is a new archive nobody adds a clearing step for - which is
+# exactly how §100's finding happened.
 _ARCHIVES_BY_CLIENT = ("client_holdings_legacy",)
-_ARCHIVES_BY_PORTFOLIO = ("portfolio_holdings_pre45", "portfolio_holdings_pre69")
-_PORTFOLIO_ARCHIVES = ("portfolios_pre69",)
+_ARCHIVES_BY_PORTFOLIO = ("portfolio_holdings_pre45", "portfolio_holdings_pre69",
+                          "portfolio_holdings_pre72", "portfolios_pre69",
+                          "portfolios_pre72")
 
 
 def _table_exists(conn: Database, name: str) -> bool:
@@ -268,70 +196,76 @@ def _table_exists(conn: Database, name: str) -> bool:
         (name,)) is not None
 
 
-def _clear_archives(conn: Database, client_ids: list[str],
-                    portfolio_ids: list[str]) -> int:
-    """Remove demo rows from every retired holdings table.
+def _clear_archives(conn: Database, client_ids: list[str]) -> int:
+    """Remove simulated rows from every retired holdings table.
 
-    Keeping a copy for diagnosis (TQ-44 spec §10 Q2) is not a reason to keep
-    simulated *customers*. Found by looking rather than by reasoning: after the
-    TQ-45a rename, `clear()` emptied the live table and `outstanding()` reported
-    "No simulated client data is present" while ten demo holdings sat in
+    Keeping a copy for diagnosis is not a reason to keep simulated *customers*.
+    Found by looking rather than by reasoning (§100): after the TQ-45a rename,
+    `clear()` emptied the live table and `outstanding()` reported "No simulated
+    client data is present" while ten demo holdings sat in
     `portfolio_holdings_pre45`. A clean report that is not true is worse than no
     report, because it is the one a pre-launch checklist believes.
 
-    The archives are keyed differently, which is the whole reason this is easy to
-    get half-right: the pre-TQ-44 table is keyed by *client*, the pre-TQ-45 and
-    pre-TQ-69 ones by *portfolio* - so the portfolio ids have to be collected
-    before the portfolios are purged, and after TQ-69 they come back from the
-    purge itself rather than from a local query."""
+    The portfolio-keyed archives can no longer be reached by client id, because
+    the live table that mapped one to the other is gone. **They are reported as
+    unreachable rather than silently skipped** - TQ-71 disposes of them
+    deliberately, and a checklist should know they are there."""
     removed = 0
     for table in _ARCHIVES_BY_CLIENT:
-        removed += _delete_from(conn, table, "client_id", client_ids)
-    for table in _ARCHIVES_BY_PORTFOLIO + _PORTFOLIO_ARCHIVES:
-        removed += _delete_from(conn, table, "portfolio_id", portfolio_ids)
+        if client_ids and _table_exists(conn, table):
+            placeholders = ",".join("?" * len(client_ids))
+            removed += conn.execute_returning_rowcount(
+                f"DELETE FROM {table} WHERE client_id IN ({placeholders})",
+                tuple(client_ids))
     return removed
 
 
-def _delete_from(conn: Database, table: str, column: str, keys: list[str]) -> int:
-    if not keys or not _table_exists(conn, table):
-        return 0
-    placeholders = ",".join("?" * len(keys))
-    return conn.execute_returning_rowcount(
-        f"DELETE FROM {table} WHERE {column} IN ({placeholders})", tuple(keys))
+def unreachable_archives(conn: Database) -> list[str]:
+    """Retired tables holding client financial records that this build can no
+    longer clear selectively.
+
+    They are keyed by `portfolio_id`, and the live table that mapped a portfolio
+    to its owner is gone (§111). So "delete this client's archived rows" is a
+    question nothing here can answer any more.
+
+    Reported rather than ignored. A pre-launch check that could not see them
+    would be exactly §100's clean-report-that-is-not-true, and dropping them
+    automatically would be this system destroying client financial records to
+    tidy up after its own architectural change. TQ-71 disposes of them
+    deliberately."""
+    return [t for t in _ARCHIVES_BY_PORTFOLIO if _table_exists(conn, t)]
 
 
-def outstanding(conn: Database, client=None) -> dict:
-    """Whether any simulated client data is still present.
+def outstanding(conn: Database) -> dict:
+    """Whether any simulated client can still log in.
 
     The difference between intending to clean up and being able to check. A
     pre-launch step calls this; so does a test.
 
-    **When the backend cannot be reached it reports `clean: False`**, with a note
-    saying it could not check rather than a note saying there is nothing there.
-    That is not caution for its own sake: the demo portfolios now live behind the
-    backend (TQ-69, §110), so an unreachable backend means this function can see
-    two of the three places demo data hides. §100's finding was exactly this
-    shape - `outstanding()` reported "No simulated client data is present" while
-    ten demo holdings sat in a table it was not looking at - and the lesson was
-    that a clean report which is not true is worse than no report, because it is
-    the one a pre-launch checklist believes."""
-    try:
-        present = simulated_clients(conn, client)
-    except portfolio_client.BackendUnavailable as unreachable:
-        return {
-            "clean": False,
-            "checked": False,
-            "simulated_clients": None,
-            "note": (f"I could not check whether simulated client data is present: "
-                     f"{unreachable} Treat this as unclean until it can be checked."),
-        }
+    **It reports on logins and representatives, and says so.** §114 made the
+    portfolio fixtures permanent training data rather than contamination, and
+    §111 removed the stored portfolios entirely - so this checks the thing that
+    is both checkable and dangerous: whether a credential exists that can reach
+    this system from outside."""
+    present = simulated_clients(conn)
+    archives = unreachable_archives(conn)
+    notes = []
+    if present:
+        notes.append(f"{len(present)} simulated client login(s) still present: "
+                     f"{', '.join(present)}. Clear before going live.")
+    else:
+        notes.append("No simulated client logins are present.")
+    if archives:
+        notes.append(
+            f"{len(archives)} retired holdings table(s) remain and cannot be cleared by "
+            f"client: {', '.join(archives)}. They hold client financial records from "
+            "before this system stopped storing portfolios; TQ-71 disposes of them.")
     return {
-        "clean": not present,
-        "checked": True,
+        "clean": not present and not archives,
+        "checked": "logins and representatives",
         "simulated_clients": present,
-        "note": ("No simulated client data is present." if not present else
-                 f"{len(present)} simulated client(s) still present: "
-                 f"{', '.join(present)}. Clear before going live."),
+        "unreachable_archives": archives,
+        "note": " ".join(notes),
     }
 
 
@@ -346,73 +280,66 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="python -m gateway.demo_clients",
-        description="Simulated clients and holdings for development (TQ-42, §96).")
+        description="Imaginary clients for training (TQ-42, §96; §114).")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("seed", help="create the demo clients and their holdings")
-    sub.add_parser("clear", help="remove every simulated client and holding")
-    sub.add_parser("status", help="report whether any simulated data is present")
-    sub.add_parser("show", help="print each demo client's holdings and concentration")
+    sub.add_parser("seed", help="create the imaginary clients and their representatives")
+    sub.add_parser("clear", help="remove every simulated client login")
+    sub.add_parser("status", help="report whether any simulated login is present")
+    sub.add_parser("show", help="print each imaginary client's fixture portfolio")
     args = parser.parse_args(argv)
 
     conn = store.get_connection()
     store.init_schema(conn)
-    client = portfolio_client.service()
     try:
         if args.command == "seed":
             try:
-                outcome = seed(conn, client)
+                outcome = seed(conn)
             except SeedRefused as refusal:
                 print(f"refused: {refusal}")
                 return 1
             print(f"seeded at stage {outcome['stage']}:")
             for client_id, detail in outcome["clients"].items():
-                print(f"  {client_id}: {detail['positions']} position(s), "
-                      f"represented by {detail['agent']}")
+                print(f"  {client_id}: represented by {detail['agent']}")
             print(f"all of them log in with the password: {outcome['password']}")
+            print("their portfolios are fixtures, fetched when an analysis asks for "
+                  "them - nothing was written.")
             return 0
 
         if args.command == "clear":
-            outcome = clear(conn, client)
+            outcome = clear(conn)
             print(f"removed {outcome['clients_removed']} client(s): "
-                  f"{outcome['holdings_removed']} holding(s), "
                   f"{outcome['agents_removed']} agent(s), "
                   f"{outcome['logins_removed']} login(s)")
-            print(outstanding(conn, client)["note"])
+            print(outstanding(conn)["note"])
             return 0
 
         if args.command == "status":
-            report = outstanding(conn, client)
+            report = outstanding(conn)
             print(report["note"])
             return 0 if report["clean"] else 1
 
         if args.command == "show":
-            # Everything printed here comes back over HTTP from the backend
-            # (TQ-69, §110), including the concentration report - which is
-            # computed there rather than here for the reason it was always
-            # computed rather than narrated: a plausible-looking percentage about
-            # somebody's money is worse than none, and there should be exactly
-            # one implementation of the arithmetic.
-            for client_id in client.simulated()["client_ids"] or []:
+            # Read straight from the fixtures. Nothing is fetched and nothing is
+            # stored - this prints what the simulated provider would answer.
+            from backend import holdings, portfolio_providers
+
+            for client_id in DEMO_CLIENTS:
                 agent = client_agent.load(conn, client_id)
                 print(f"--- {client_id} (represented by "
                       f"{agent['name'] if agent else 'nobody'}) ---")
-                portfolio = client.primary(client_id)
-                account = client.account(client_id, portfolio["portfolio_id"])
-                print(f"  portfolio {portfolio['portfolio_id']} "
-                      f"via {account['provider']} ({portfolio['data_mode']}, priced: "
-                      f"{account['account']['priced']})")
-                for row in client.holdings(client_id, portfolio["portfolio_id"]):
-                    cost = ("unknown" if row["average_cost"] is None
-                            else f"{row['average_cost']:.2f}")
-                    print(f"  {row['symbol']:<9} {row['quantity']:>8.0f} @ {cost} "
-                          f"({row['asset_class']})")
-                try:
-                    balances = client.balances(client_id, portfolio["portfolio_id"])
-                    print(f"  cash {balances['cash']:.2f} {balances['currency']} "
-                          f"(simulated)")
-                except portfolio_client.CapabilityUnavailable as unavailable:
-                    print(f"  cash: {unavailable}")
-                report = client.analysis(client_id, portfolio["portfolio_id"])
+                source = portfolio_providers.Source(
+                    provider_type=portfolio_providers.portfolios.PROVIDER_SIMULATED,
+                    name=f"{client_id}-simulated", owner_hint=client_id)
+                provider = portfolio_providers.for_source(source)
+                positions = provider.get_holdings(source)
+                for row in positions:
+                    cost = ("unknown" if row.average_cost is None
+                            else f"{row.average_cost:.2f}")
+                    print(f"  {row.symbol:<9} {row.quantity:>8.0f} @ {cost} "
+                          f"({row.asset_class})")
+                balances = provider.get_balances(source)
+                print(f"  cash {balances['cash']:.2f} {balances['currency']} (simulated)")
+                report = holdings.concentration(positions)
                 print(f"  positions {report['positions']}, cost {report['known_cost']}, "
                       f"top three {report['top_three_pct']}%")
                 if report.get("missing_cost_note"):
@@ -420,13 +347,6 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         raise AssertionError(f"unhandled command {args.command!r}")  # pragma: no cover
-    except portfolio_client.BackendUnavailable as unreachable:
-        # Every command here needs the backend, because the portfolios are behind
-        # it now. Reported as a refusal with a non-zero exit code rather than a
-        # traceback - and `status` in particular must never exit 0 when it could
-        # not check, since that is what a pre-launch script reads.
-        print(f"cannot reach the backend: {unreachable}")
-        return 1
     finally:
         conn.close()
 

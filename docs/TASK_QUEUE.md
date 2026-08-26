@@ -842,8 +842,29 @@ was right (§101, §104, §107).
 
 ### TQ-72 — Unwind server-side portfolio custody
 
-**NEED (ORANGE) · QUEUED — next · owner direction 2026-08-26 (`SPEC_RECONCILIATION.md` §111) ·
-reverses the storage half of §96, §99, §100, §101, §110**
+**NEED (ORANGE) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §116) · owner direction 2026-08-26
+(§111) · reversed the storage half of §96, §99, §100, §101, §110**
+
+**Done.** Suite 2525 → **2407 passing, 8 skipped** — about 120 tests over a table that no longer
+exists, replaced by roughly 60 denser ones. Mutation-tested nine ways, nine caught by the test
+written for each.
+
+`holdings.concentration` needed **no edit at all**: §101 built it to take *holdings, not a
+connection*, so a contract test could not pass trivially, and that decision turned out to be what
+made the analysis portable across the removal of the entire storage layer. The provider contract
+survived for the same reason — the tests that had to go were exactly the ones its own guard
+(*"could a provider that must make a network call satisfy this?"*) would have caught.
+
+**A defect surfaced while repointing `retrieve_portfolio`.** It read one file for every account,
+recorded in `test_multi_user_isolation.py` as *"a single shared file by design"*. It was not a
+design; it was the ownerless retrieval wearing a second hat, and a fully-granted second account
+read the first's positions with no code wrong anywhere. The source path is now derived from the
+authenticated username with **no fallback to a shared location** — a fallback is how one account
+reads another's file the day their own is missing.
+
+**`require_gateway` was deleted one increment after being built**, and deliberately: it existed to
+make an *asserted owner* safe to accept, and no route accepts one now. A gate with nothing behind
+it is worse than none, because the next person to add a route sees it and assumes it applies.
 
 Owner direction: *"The portfolios don't live in this system… the system only processes portfolios
 for clients… and holds no information of the portfolios in the system."*

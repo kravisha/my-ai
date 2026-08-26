@@ -10149,3 +10149,142 @@ nothing"**, which is true and worth having, rather than *"your data exists
 nowhere after you disconnect"*, which this system cannot promise on behalf of a
 model provider. Writing the second one down would be the overclaim §110 §4.3
 refused about the Gateway, arriving in a domain where it matters more.
+
+---
+
+## §116 — The custody, unwound (2026-08-27, TQ-72)
+
+§111 decided it; this removed it. `portfolios` and `portfolio_holdings`, the
+ownership guard's storage half, §110's migration and `/portfolios` surface, and
+the Gateway's HTTP client for them are gone.
+
+Suite **2525 → 2407 passing, 8 skipped**. A smaller number, and the right
+direction: about 120 tests over a table that no longer exists were replaced by
+roughly 60 denser ones, of which the important ones are new.
+
+### What survived, and the decision that let it
+
+`holdings.concentration` needed **no edit at all**. §101 built it to take
+*holdings, not a connection*, and wrote down why:
+
+> *"an analyzer that read the table itself would agree with every provider
+> trivially, because they all write to the same table. This one has no idea where
+> its input came from, so feeding it two providers' output and comparing is an
+> actual test."*
+
+That was done to keep a contract honest. Its unplanned payoff is that the
+analysis survived the removal of the entire storage layer untouched — where a
+version reading the database would have needed rewriting from scratch. **A
+decision made to keep a test meaningful turned out to be the one that made the
+architecture portable**, which is worth noticing because the two goals looked
+unrelated at the time.
+
+The same applies one level up. The provider contract (§101) was written before a
+second provider existed, against a guard: *"could a provider that must make a
+network call satisfy this? If it needs a local database, the test is wrong."*
+TQ-72 removed the local database, and the tests that had to be deleted were
+exactly the ones that guard would have caught if it had been applied more
+strictly — `last_synced_at` stamped on a stored row, `list_accounts` reading an
+owner's rows. **Everything written to the guard survived.** Insurance that was
+bought and then claimed.
+
+### Providers became fetchers, and the shape is deliberately unfinished
+
+A provider took `(conn, portfolio)` where `portfolio` was a row proving
+`resolve()` had run. There is no row. It takes a `Source` now — what the client
+named and where it points.
+
+`Source` carries no credential field, and that is not an oversight. There is
+nothing to authenticate against and no envelope to carry one in, so an
+always-empty field would be the machinery-with-no-user this project refuses.
+TQ-73 finalises the shape when it knows what a credential looks like. What is
+settled is the *direction*: a provider fetches rather than reads.
+
+`SimulatedPortfolioProvider` lost its `seed`. It used to write fixtures into
+`portfolio_holdings` and read them back, which was the custody in miniature. **A
+simulated exchange answers a query; it does not fill somebody's database first**
+(§115).
+
+### `require_gateway` went, and that is worth stating
+
+TQ-69 built it, one increment ago, and it was right then. It existed to make one
+thing safe: accepting an **asserted owner** from a caller. No route accepts one
+now.
+
+An authorization check with nothing behind it is worse than none, because the
+next person to add a route sees a gate and assumes it applies. So it is deleted
+along with `app/gateway_auth.py`, and TQ-73 decides what its surface needs
+against what that surface actually accepts.
+
+### The defect found while removing things
+
+`retrieve_portfolio` had to be repointed, and repointing it exposed something
+that had been true since §96 and was recorded as deliberate.
+
+It read `RESOURCE_PATHS["portfolio"]` — **one file, every account**. This was
+written down in `tests/test_multi_user_isolation.py` as a design choice:
+
+> *"portfolio.xlsx stays a single shared file by design - only governance state
+> is per-user"*
+
+It was not a design. It was the ownerless retrieval wearing a second hat: a
+fully-granted second account read the first account's positions, and no code was
+wrong anywhere. TQ-46 gave the *function* an owner and left this untouched,
+because the function's owner and the source's owner looked like the same fix.
+They were not.
+
+The source path is now derived from the authenticated username and is never an
+argument, so "read the other account's file" is not a call that can be
+constructed. **There is deliberately no fallback to a shared location** — a
+fallback is how one account ends up reading another's file the day their own is
+missing, which is the least likely moment for anybody to be watching.
+
+### The tripwire had to be re-aimed, and this is the third time
+
+§110's scan asserted that nothing outside `portfolios.py` *queried* the table.
+Correct while a table existed. It would have gone on passing forever now while
+saying nothing, because the danger moved: what must not happen is a table being
+**created** — by anybody, including `portfolios.py`.
+
+That is the same failure as §105's `enforced` flag and §110's import scan: a
+check aimed where the risk used to be. Three times now, which is enough to state
+as a rule rather than a coincidence — **when an increment moves what is
+dangerous, re-aim every tripwire pointed at the old danger, and treat a tripwire
+that cannot fail as a tripwire that is gone.**
+
+The new ones guard the *absence*: nothing declares the tables, nothing writes to
+them, neither database contains them, and no module offers a `save_holdings`.
+That last one is read from function names rather than SQL, because the second way
+a store comes back is not a table — it is a helper that writes to a file or a
+cache, added by somebody being helpful, and it would look like a performance fix
+rather than a violation.
+
+### Mutation-tested nine ways, nine caught by the test written for each
+
+Attribution enforced this time rather than assumed, after TQ-69's round one
+credited three catches to whichever test ran first: a store returning as a cache,
+a position written down, a `save_holdings` appearing, `fi_db` creating the tables
+again, the source path going back to shared, a missing source answering emptily,
+the audit log recording positions rather than a count, a provider growing a
+by-reference read, and the consent prompt dropped as redundant.
+
+The last is the one worth keeping: TQ-46 §11 Q2 established that the consent
+prompt is the **only** control on the operator's positions leaving the machine,
+because nothing reaching a model carries a `LOCAL_ONLY` classification and §108's
+`PATH_REFUSED` never fires. Removing it during a large deletion would have looked
+like tidying.
+
+### What is left, and what it is not
+
+The retired archives — `client_holdings_legacy`, `portfolio_holdings_pre45`, the
+`*_pre69` pair and now `*_pre72` — still exist in any `gateway.db` that has them.
+They hold **client financial records from before this system decided it should
+not hold any**, and they are renamed rather than dropped on sight. Deleting them
+automatically at startup would be this system destroying somebody's data to tidy
+up after its own architectural mistake; TQ-71 disposes of them deliberately.
+
+`demo_clients.outstanding()` reports them as *unreachable* rather than ignoring
+them: they are keyed by portfolio id and the table that mapped a portfolio to its
+owner is gone, so "clear this client's archived rows" is a question nothing can
+answer any more. Saying so is the §100 rule holding — a check that could not see
+them would be the clean report that is not true.

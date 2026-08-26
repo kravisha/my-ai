@@ -272,31 +272,35 @@ def test_a_session_cannot_be_issued_for_a_role_that_does_not_exist(gateway_conn)
 # --- the half that would have been the breach ---------------------------------------------
 
 
-def test_a_client_is_offered_only_its_own_holdings(three_roles):
-    """The personal agent, as specified: "clients usually interact with a
-    personal representative agent rather than seeing the entire organization"
-    (43 §15).
+def test_a_client_is_offered_no_portfolio_tool_in_this_build(gateway_conn):
+    """This asserted `== []` until TQ-41, then a set of five holdings tools, and
+    now `== []` again — which is not going backwards.
 
-    This asserted `== []` until TQ-41, and the prediction it carried came true
-    exactly: the client gained a real skill, and it arrived as its own
-    capability and its own TOOL_CAPABILITY entries rather than by widening what
-    `converse` means. What must not change is the second half - the reach into
-    the *organization* is still nothing at all, which is what the negative
-    assertion below holds and why it is written as a denylist of the dangerous
-    tools rather than only as an allowlist of the safe ones."""
+    TQ-41 gave a client the holdings tools because §96 answered "where do a
+    client's holdings come from" with *the client tells you, and you remember*.
+    §111 and §115 retired both halves: a client names an external source and
+    supplies credentials, and nothing is remembered. So the five tools were
+    withdrawn rather than left refusing (TQ-72), because their *shape* is wrong,
+    not just their implementation — declaring `record_holding` as "coming soon"
+    would promise a tool this system has decided not to have.
+
+    **`CAP_HOLDINGS` is deliberately still declared** with nothing mapped to it.
+    The capability and the role matrix around it were decided carefully in §92
+    and are still right; what is gone is this build's answer to them. TQ-73's
+    analysis tools map to it, and that decision does not get made twice."""
+    from gateway import tools
+
     offered = {tool["name"] for tool in tools.for_role(roles.ROLE_CLIENT)}
-    # TQ-45b adds `portfolio_balances` under the *same* capability, which is the
-    # pattern this test exists to protect: a new client-facing tool arrives as
-    # its own TOOL_CAPABILITY entry over the client's own data, never by
-    # widening what `converse` means.
-    assert offered == {"record_holding", "list_holdings", "forget_holding",
-                       "analyse_holdings", "portfolio_balances"}
-    for organizational in ("read_repository_file", "list_repository_files",
-                           "publish_document", "jarvis_status", "jarvis_agent",
-                           "technology_review", "list_scoreboard_items",
-                           "file_scoreboard_item"):
-        assert organizational not in offered, (
-            f"a client is being offered {organizational!r}, which reads the organization")
+    assert offered == set(), (
+        f"a client is offered {offered}; this build has no portfolio tool to give")
+
+    # The capability survives the tools that used it.
+    assert roles.CAP_HOLDINGS in roles.CAPABILITIES
+    assert roles.allows(roles.ROLE_CLIENT, roles.CAP_HOLDINGS)
+    assert not any(required == roles.CAP_HOLDINGS
+                   for required in tools.TOOL_CAPABILITY.values()), (
+        "a tool claims CAP_HOLDINGS again - if TQ-73 has landed, this test is the "
+        "one to update deliberately")
 
 
 def test_every_tool_a_client_can_reach_takes_its_subject_from_the_session(three_roles):

@@ -128,24 +128,19 @@ def test_an_unusable_client_id_is_refused(gateway_conn, bad):
         clients.register(gateway_conn, bad)
 
 
-def test_a_suspended_client_cannot_log_in_but_keeps_their_data(gateway_conn, portfolio_conn):
-    """Suspension is not deletion. Somebody who cannot log in today may still
-    own holdings that must not evaporate.
+def test_a_suspended_client_cannot_log_in_but_is_not_deleted(gateway_conn):
+    """Suspension is not deletion.
 
-    Two connections since TQ-69 (§110), and the split is the point of the
-    increment: the login is authentication and lives in gateway.db, the holdings
-    are business logic and live behind the backend. Suspending one must not
-    touch the other, and now they are not even in the same file."""
-    from backend import holdings, portfolios
-
+    This used to also assert that the client's stored holdings survived. There
+    are none to survive (§111) - a client's positions live at their own external
+    sources, so suspending a login cannot touch them by construction rather than
+    by care. The registration surviving is what is left to check, and it is the
+    part that was ever this module's."""
     _, password = clients.register(gateway_conn, "alice")
-    alice = portfolios.primary_for(portfolio_conn, portfolios.for_client("alice"))
-    holdings.record(portfolio_conn, alice, symbol="SYN1", quantity=10, average_cost=5)
 
     clients.set_status(gateway_conn, "alice", clients.STATUS_SUSPENDED)
-
     assert clients.authenticate(gateway_conn, "alice", password) is None
-    assert len(holdings.listing(portfolio_conn, alice)) == 1
+    assert clients.get(gateway_conn, "alice") is not None, "suspension deleted the client"
 
     clients.set_status(gateway_conn, "alice", clients.STATUS_ACTIVE)
     assert clients.authenticate(gateway_conn, "alice", password) == "alice"
@@ -203,19 +198,20 @@ def test_an_unknown_user_and_a_wrong_password_are_the_same_answer(gateway_conn):
 # --- removing a login is not removing a person --------------------------------------
 
 
-def test_removing_a_login_keeps_the_holdings(gateway_conn, portfolio_conn):
-    """Deleting somebody's financial records as a side effect of revoking a
-    login is not a decision this function is entitled to make."""
-    from backend import holdings, portfolios
+def test_removing_a_login_touches_nothing_but_the_login(gateway_conn):
+    """Deleting somebody's financial records as a side effect of revoking a login
+    is not a decision this function is entitled to make - and since §111 it is
+    not a decision anything here *could* make, because there are no records to
+    delete. The client's positions are at their own external sources.
 
+    What remains checkable is that removal is scoped to the registry."""
     clients.register(gateway_conn, "alice")
-    alice = portfolios.primary_for(portfolio_conn, portfolios.for_client("alice"))
-    holdings.record(portfolio_conn, alice, symbol="SYN1", quantity=10, average_cost=5)
+    clients.register(gateway_conn, "bob")
 
     assert clients.remove(gateway_conn, "alice") is True
 
     assert clients.get(gateway_conn, "alice") is None
-    assert len(holdings.listing(portfolio_conn, alice)) == 1
+    assert clients.get(gateway_conn, "bob") is not None
 
 
 def test_removing_somebody_who_is_not_there_says_so(gateway_conn):
@@ -241,43 +237,40 @@ def _pre_alpha(monkeypatch, tmp_path):
     monkeypatch.setenv(boot_config.PATH_ENV, str(config))
 
 
-def test_every_demo_client_can_log_in_as_itself(gateway_conn, portfolios_client,
-                                                monkeypatch, tmp_path):
+def test_every_demo_client_can_log_in_as_itself(gateway_conn, monkeypatch, tmp_path):
     """The gap TQ-42's demo recorded and TQ-43 closes: three clients, three
     logins, three subjects. The isolation can now be walked into rather than
     only asserted."""
     from gateway import demo_clients
 
     _pre_alpha(monkeypatch, tmp_path)
-    demo_clients.seed(gateway_conn, portfolios_client)
+    demo_clients.seed(gateway_conn)
 
     for client_id in demo_clients.DEMO_CLIENTS:
         assert clients.authenticate(
             gateway_conn, client_id, demo_clients.DEMO_PASSWORD) == client_id
 
 
-def test_demo_logins_are_flagged_and_cleared_with_the_rest(gateway_conn, portfolios_client,
-                                                           monkeypatch, tmp_path):
+def test_demo_logins_are_flagged_and_cleared_with_the_rest(gateway_conn, monkeypatch, tmp_path):
     from gateway import demo_clients
 
     _pre_alpha(monkeypatch, tmp_path)
-    demo_clients.seed(gateway_conn, portfolios_client)
+    demo_clients.seed(gateway_conn)
     assert len(clients.listing(gateway_conn)) == len(demo_clients.DEMO_CLIENTS)
 
-    demo_clients.clear(gateway_conn, portfolios_client)
+    demo_clients.clear(gateway_conn)
 
     assert clients.listing(gateway_conn) == []
-    assert demo_clients.outstanding(gateway_conn, portfolios_client)["clean"] is True
+    assert demo_clients.outstanding(gateway_conn)["clean"] is True
 
 
-def test_clearing_demo_data_leaves_a_real_client_alone(gateway_conn, portfolios_client,
-                                                       monkeypatch, tmp_path):
+def test_clearing_demo_data_leaves_a_real_client_alone(gateway_conn, monkeypatch, tmp_path):
     from gateway import demo_clients
 
     _pre_alpha(monkeypatch, tmp_path)
-    demo_clients.seed(gateway_conn, portfolios_client)
+    demo_clients.seed(gateway_conn)
     _, password = clients.register(gateway_conn, "real-person")
 
-    demo_clients.clear(gateway_conn, portfolios_client)
+    demo_clients.clear(gateway_conn)
 
     assert clients.authenticate(gateway_conn, "real-person", password) == "real-person"

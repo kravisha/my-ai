@@ -15,7 +15,7 @@ for the consent prompt - see the docstring on chat() below.
 import asyncio
 import json
 import os
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,7 +24,6 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app import admin_auth
-from app import gateway_auth
 from app import server_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
@@ -36,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, holdings, metadata_engine, missions, portfolio_providers, portfolios, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
+from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -479,32 +478,6 @@ def require_admin(username: str = Depends(get_current_user)) -> str:
     return username
 
 
-def require_gateway(username: str = Depends(get_current_user)) -> str:
-    """Gate for the on-behalf-of portfolio surface (TQ-69, spec §4.4, §9.3).
-
-    Every route below `/portfolios` accepts an **asserted owner** - the Gateway
-    saying which client it is acting for. That is safe only because exactly one
-    caller may say it, and this is the check that makes "exactly one" true.
-
-    **Not optional, and not the same gate as `require_admin`.** A surface that
-    accepted an asserted subject from anyone would be worse than no surface: it
-    would let any authenticated backend user read any client's portfolio just by
-    naming them. The two gates name the same account today - the Gateway's
-    backend user has to be an admin to read `/admin` - and they answer different
-    questions, so they stay separate. Folding them together would mean adding an
-    operator to `MY_AI_ADMIN_USERS` silently granted them every client's
-    holdings.
-
-    Two distinct refusals, following `require_admin`, because they need different
-    fixes: no Gateway account is configured at all, versus this account is not
-    it."""
-    if gateway_auth.gateway_username() is None:
-        raise HTTPException(status_code=403, detail=gateway_auth.NO_GATEWAY_CONFIGURED)
-    if not gateway_auth.is_gateway(username):
-        raise HTTPException(status_code=403, detail=gateway_auth.NOT_THE_GATEWAY)
-    return username
-
-
 def panel_db():
     """A short-lived connection per request, deliberately *not* the Controller's.
 
@@ -519,11 +492,9 @@ def panel_db():
     so additional readers are safe and concurrent, and this way a slow query can
     never stall the directive poll loop.
 
-    **Named for the control panel and no longer only its.** It is now every
-    route's per-request connection - the panel's, the portfolio surface's
-    (TQ-69), and `/chat`'s since TQ-46 gave the portfolio tool an owner and
-    therefore a database. The name is kept rather than churned because every
-    test override in the suite targets it by name, and one dependency that
+    **Named for the control panel and no longer only its.** It is every route's
+    per-request connection now. The name is kept rather than churned because
+    every test override in the suite targets it by name, and one dependency that
     everything reaches through is worth more than an accurate label: it is the
     single place a test can point the whole application at its own file, so
     there is nothing to remember and nowhere to forget."""
@@ -1909,288 +1880,49 @@ def evaluate_mission_route(mission_id: str, conn=Depends(panel_db), admin: str =
     return result
 
 
-# --- Portfolios, on behalf of an owner (TQ-69, docs/SPEC_RECONCILIATION.md
-# §110) -------------------------------------------------------------------
+# --- Portfolios: the custody surface is gone (TQ-72, §111) -------------------------
 #
-# Owner direction, 2026-08-26 (§109): the Gateway authenticates, the backend
-# authorizes and holds business logic. This is that surface. The portfolio
-# subsystem moved out of gateway.db and into this process, and the Gateway now
-# reaches it here the way gateway/jarvis.py already reaches /admin.
+# TQ-69 built ten routes here - resolve, listing, primary, holdings, balances,
+# analysis, refresh, purge - every one owner-scoped and behind `require_gateway`.
+# They were a good surface over the wrong idea.
 #
-# **A new surface rather than more of /admin, and the shape says why.** /admin is
-# the operator's read-only window onto the organization's own state; these calls
-# act *for a client*. Every one of them takes the owner explicitly, and every one
-# authorizes it - there is deliberately no route that returns portfolio data
-# without an owner, which is addendum 44 §16.7's rule applied to a surface before
-# it can be broken rather than after. `test_no_portfolio_route_is_ownerless`
-# scans for it.
+# Owner direction, 2026-08-26: *"The portfolios don't live in this system. The
+# portfolios are the personal property of the clients."* There is nothing to
+# resolve, list, purge or refresh, so the routes are removed rather than left
+# answering emptily.
 #
-# `require_gateway` is what makes an asserted owner safe to accept at all. It is
-# not optional and it is not `require_admin`; see its docstring.
+# **`require_gateway` went with them**, which is worth stating rather than
+# leaving to be noticed. It existed to make one specific thing safe: accepting an
+# *asserted owner* from a caller. No route accepts one now, so a gate on
+# asserting owners guards nothing - and an authorization check with nothing
+# behind it is worse than none, because the next person to add a route sees a
+# gate and assumes it applies. `app/gateway_auth.py` is deleted for the same
+# reason. TQ-73 builds the analysis surface, and whatever gate that needs gets
+# decided against what it actually accepts.
 #
-# Nothing here re-implements the guard. Each route resolves an OwnerContext and
-# hands it to backend/portfolios.py, which is the same single ownership
-# comparison it always was - the point of the move is that a Gateway request now
-# passes it *as well as* the Gateway's own route gate, not that there is a second
-# copy of it.
-
-
-class OwnerRequest(BaseModel):
-    """The asserted owner, on every write. Required, with no defaults: a missing
-    owner must be a 422 from the framework rather than something a handler could
-    resolve helpfully."""
-
-    owner_type: str
-    owner_id: str
-
-
-class ResolveRequest(OwnerRequest):
-    portfolio_id: str
-
-
-class PrimaryPortfolioRequest(OwnerRequest):
-    """`primary_for`'s arguments. `provider_type` and `data_mode` are here
-    because a seeder building a SIMULATED portfolio has to say so *at creation* -
-    they describe where a portfolio's rows come from, so setting them later would
-    relabel data that is already there (§101). An existing portfolio is returned
-    as it stands and they are ignored, which is the behaviour to keep."""
-
-    display_name: str | None = None
-    simulated: bool = False
-    provider_type: str = portfolios.PROVIDER_MANUAL
-    data_mode: str = portfolios.MODE_MANUAL
-
-
-class RecordHoldingRequest(OwnerRequest):
-    symbol: str
-    quantity: float
-    average_cost: float | None = None
-    asset_class: str | None = None
-    acquired_on: str | None = None
-    note: str | None = None
-    simulated: bool = False
-
-
-@contextmanager
-def _portfolio_refusals():
-    """Translate the subsystem's refusals into status codes, in one place.
-
-    One place, because the mapping is part of the security story rather than
-    plumbing. In particular **every `NotAuthorized` becomes the same 403 with the
-    same body**, whatever caused it - absent, foreign, or archived - because
-    addendum 44 §9.3 is about what a caller can tell apart, and a status code is
-    something a caller can tell apart. There is one string and nothing formatted
-    into it.
-
-    409 for a capability a provider does not have, separately from 400 for data
-    it refused, because those are different answers to the caller: one is "I
-    cannot tell you that, and here is why", the other is "what you sent will not
-    do". The Gateway repeats both to the client, so they must not be merged into
-    a single unhelpful error."""
-    try:
-        yield
-    except portfolios.NotAuthorized:
-        raise HTTPException(status_code=403, detail=portfolios.REFUSAL)
-    except portfolio_providers.ProviderCapabilityUnavailable as unavailable:
-        raise HTTPException(status_code=409, detail=str(unavailable))
-    except (holdings.HoldingRefused, portfolios.UnknownVocabulary,
-            portfolio_providers.ProviderRefused,
-            portfolio_providers.UnknownCapability) as refusal:
-        raise HTTPException(status_code=400, detail=str(refusal))
-
-
-def _owner(owner_type: str, owner_id: str) -> portfolios.OwnerContext:
-    """An owner context from what the Gateway asserted.
-
-    This is the one place a caller-supplied string becomes an `OwnerContext`, and
-    it is safe here for a reason that does not generalise: the caller has already
-    proved it is the Gateway (`require_gateway`), and the Gateway is the
-    authenticator. Addendum 44 §9.2's "a client_id received from the front end is
-    not sufficient proof of ownership" still holds exactly as written - the phone
-    cannot reach this, and never could."""
-    with _portfolio_refusals():
-        return portfolios.OwnerContext(owner_type, owner_id)
-
-
-def _resolved(conn, portfolio_id: str, owner_type: str, owner_id: str) -> dict:
-    with _portfolio_refusals():
-        return portfolios.resolve(conn, portfolio_id, _owner(owner_type, owner_id))
-
-
-@app.get("/portfolios")
-def list_portfolios(owner_type: str, owner_id: str, conn=Depends(panel_db),
-                    gateway: str = Depends(require_gateway)):
-    """This owner's active portfolios, and only ever this owner's.
-
-    Owner-scoped in the query and takes no id, which is what lets it exist beside
-    `resolve` rather than being a second way around it - there is no id it could
-    be tricked into returning."""
-    with _portfolio_refusals():
-        return {"portfolios": portfolios.listing(conn, _owner(owner_type, owner_id))}
-
-
-@app.post("/portfolios/resolve")
-def resolve_portfolio(request: ResolveRequest, conn=Depends(panel_db),
-                      gateway: str = Depends(require_gateway)):
-    """**The one gate**, over HTTP. A POST rather than a GET on
-    `/portfolios/{id}` deliberately: the id is what is being adjudicated, and a
-    path parameter reads like a resource that exists until the check says
-    otherwise. It also keeps portfolio ids out of URLs, which is where they get
-    logged."""
-    return {"portfolio": _resolved(conn, request.portfolio_id, request.owner_type,
-                                   request.owner_id)}
-
-
-@app.post("/portfolios/primary")
-def primary_portfolio(request: PrimaryPortfolioRequest, conn=Depends(panel_db),
-                      gateway: str = Depends(require_gateway)):
-    """This owner's primary portfolio, created on first use (§3.8)."""
-    with _portfolio_refusals():
-        return {"portfolio": portfolios.primary_for(
-            conn, _owner(request.owner_type, request.owner_id),
-            display_name=request.display_name, simulated=request.simulated,
-            provider_type=request.provider_type, data_mode=request.data_mode)}
-
-
-@app.get("/portfolios/{portfolio_id}/account")
-def portfolio_account(portfolio_id: str, owner_type: str, owner_id: str,
-                      conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """What this portfolio is, through its provider - including `priced`, which
-    is named on every account so a caller never has to remember which data modes
-    are priced."""
-    portfolio = _resolved(conn, portfolio_id, owner_type, owner_id)
-    with _portfolio_refusals():
-        provider = portfolio_providers.for_portfolio(portfolio)
-        return {"account": provider.get_account(conn, portfolio),
-                "provider": provider.name}
-
-
-@app.get("/portfolios/{portfolio_id}/holdings")
-def list_holdings(portfolio_id: str, owner_type: str, owner_id: str,
-                  conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """Read through the provider (TQ-45b), so the answer is the same whether
-    these holdings were stated in conversation, invented for a demo, or one day
-    fetched from a broker."""
-    portfolio = _resolved(conn, portfolio_id, owner_type, owner_id)
-    with _portfolio_refusals():
-        provider = portfolio_providers.for_portfolio(portfolio)
-        return {"holdings": [vars(h) for h in provider.get_holdings(conn, portfolio)]}
-
-
-@app.post("/portfolios/{portfolio_id}/holdings")
-def record_holding(portfolio_id: str, request: RecordHoldingRequest,
-                   conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """Record what a client says they hold, replacing any earlier statement about
-    the same symbol.
-
-    Writes do **not** go through the provider, and that asymmetry is deliberate
-    (§101): this is the client telling their representative something, which is
-    not a provider's job."""
-    portfolio = _resolved(conn, portfolio_id, request.owner_type, request.owner_id)
-    with _portfolio_refusals():
-        return {"recorded": holdings.record(
-            conn, portfolio, symbol=request.symbol, quantity=request.quantity,
-            average_cost=request.average_cost, asset_class=request.asset_class,
-            acquired_on=request.acquired_on, note=request.note,
-            simulated=request.simulated)}
-
-
-@app.delete("/portfolios/{portfolio_id}/holdings/{symbol}")
-def forget_holding(portfolio_id: str, symbol: str, owner_type: str, owner_id: str,
-                   conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """Remove one holding, because the client asked. It is their data."""
-    portfolio = _resolved(conn, portfolio_id, owner_type, owner_id)
-    with _portfolio_refusals():
-        return {"forgotten": holdings.forget(conn, portfolio, symbol)}
-
-
-@app.get("/portfolios/{portfolio_id}/balances")
-def portfolio_balances(portfolio_id: str, owner_type: str, owner_id: str,
-                       conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """Cash, when the source has any. A provider that cannot say answers 409 with
-    a sentence the client can be told, rather than `{}` - which would read as "no
-    cash" - or a zero, which would be a fabrication."""
-    portfolio = _resolved(conn, portfolio_id, owner_type, owner_id)
-    with _portfolio_refusals():
-        provider = portfolio_providers.for_portfolio(portfolio)
-        return {"balances": provider.get_balances(conn, portfolio)}
-
-
-@app.get("/portfolios/{portfolio_id}/analysis")
-def portfolio_analysis(portfolio_id: str, owner_type: str, owner_id: str,
-                       conn=Depends(panel_db), gateway: str = Depends(require_gateway)):
-    """Weights and concentration, computed here rather than described to a model.
-
-    Backend-side because `holdings.concentration` moved with the rest of the
-    subsystem, and that is the right place for it for a second reason: a model
-    asked to percentage-weight a portfolio produces something *shaped* like
-    arithmetic, and somebody's money is the last place a plausible-looking number
-    belongs. The Gateway hands the result to the model as a computed fact."""
-    portfolio = _resolved(conn, portfolio_id, owner_type, owner_id)
-    with _portfolio_refusals():
-        provider = portfolio_providers.for_portfolio(portfolio)
-        return {"analysis": holdings.concentration(provider.get_holdings(conn, portfolio))}
-
-
-@app.post("/portfolios/{portfolio_id}/refresh")
-def refresh_portfolio(portfolio_id: str, request: OwnerRequest, conn=Depends(panel_db),
-                      gateway: str = Depends(require_gateway)):
-    """Fetch this portfolio's data from its source, and stamp `last_synced_at`
-    **only if data actually arrived** (addendum 44 §17). A provider that cannot
-    refresh answers 409 rather than stamping the time somebody asked."""
-    portfolio = _resolved(conn, portfolio_id, request.owner_type, request.owner_id)
-    with _portfolio_refusals():
-        provider = portfolio_providers.for_portfolio(portfolio)
-        return {"refreshed": provider.refresh(conn, portfolio)}
-
-
-@app.post("/portfolios/purge")
-def purge_portfolios(request: OwnerRequest, conn=Depends(panel_db),
-                     gateway: str = Depends(require_gateway)):
-    """Remove everything this owner has. For demo clearing (§96), which is the
-    only caller that should ever want it.
-
-    Owner-scoped like everything else here: there is no "delete by id" that skips
-    knowing whose it was. Archived portfolios go too - `owned`, not `listing` -
-    because an archived demo portfolio is still demo data, and a clear that left
-    it behind with its holdings intact is the §100 finding happening again."""
-    owner = _owner(request.owner_type, request.owner_id)
-    with _portfolio_refusals():
-        removed_holdings = 0
-        portfolio_ids = []
-        for portfolio in portfolios.owned(conn, owner):
-            portfolio_ids.append(portfolio["portfolio_id"])
-            removed_holdings += holdings.forget_all(conn, portfolio)
-        return {"portfolios_removed": portfolios.purge_owner(conn, owner),
-                "holdings_removed": removed_holdings,
-                "portfolio_ids": portfolio_ids}
-
-
-# Demo-data hygiene, which is the operator's question and not a client's, so it
-# is on /admin behind require_admin rather than on the on-behalf-of surface.
-#
-# It is here rather than beside the routes above precisely *because* it is not
-# owner-scoped. Putting a route that answers "which portfolios are simulated"
-# under /portfolios would be the one exception to "every route takes an owner",
-# and a surface with one exception is a surface whose rule nobody can state.
-#
-# It returns ids and counts and no positions: enough for
-# `gateway/demo_clients.py` to know whether anything is outstanding and which
-# archives to clear, and not enough to be a way of reading somebody's holdings.
+# What did not go: `holdings.concentration`, the canonical `Holding`, the
+# provider interface and the asset-class vocabulary. None of them was storage.
 
 
 @app.get("/admin/portfolios/simulated")
-def simulated_portfolios(conn=Depends(panel_db), admin: str = Depends(require_admin)):
-    """What a pre-launch checklist calls (§96): is any simulated client data
-    still present?
+def simulated_portfolios(admin: str = Depends(require_admin)):
+    """Demo-data hygiene, answering from what the system can still see (§111).
 
-    The difference between intending to clean up and being able to know. §100 is
-    why it reports from the flag rather than from a naming convention - a clean
-    report that is not true is worse than no report, because it is the one a
-    checklist believes."""
+    It used to count rows in `portfolios` and `portfolio_holdings`. There are no
+    such tables, so there are no stored simulated portfolios to find - which is a
+    stronger answer than the one it used to give, and must not be mistaken for a
+    clean bill of health for the whole system.
+
+    §114 is why the distinction matters. The imaginary clients are **training
+    fixtures now**, held in `backend/portfolio_providers.SIMULATED_PORTFOLIOS`
+    rather than in a table, and they are not contamination to be cleared. What a
+    pre-launch check still needs to know is whether any *client registration*
+    flagged simulated remains - which lives in `gateway.db` and is
+    `gateway/demo_clients.py`'s question, not this route's."""
     return {
-        "client_ids": portfolios.simulated_client_ids(conn),
-        "portfolio_ids": portfolios.simulated_portfolio_ids(conn),
-        "holdings": conn.fetchone(
-            "SELECT COUNT(*) AS n FROM portfolio_holdings WHERE simulated = 1")["n"],
+        "portfolio_rows": 0,
+        "note": ("This system stores no portfolios (SPEC_RECONCILIATION §111), so there "
+                 "are none to report. The imaginary clients used for training are "
+                 "fixtures in backend/portfolio_providers.py, not stored data. For "
+                 "simulated client registrations, ask the Gateway."),
     }

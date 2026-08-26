@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, coo_identity, holdings, identifiers, iteration, migrations, missions, novelty, observations, portfolios, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import competency, compliance, coo_identity, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1400,17 +1400,19 @@ def init_schema(conn: Database) -> None:
     # than by the pipeline itself so that the table recording a failed migration
     # cannot be the thing that is missing when one fails.
     conn.executescript(migrations.SCHEMA)
-    # Client portfolios and their holdings (TQ-69, §110). Moved here from
-    # gateway.db by owner direction (§109): this is the process that does
-    # authorization, and the ownership guard in backend/portfolios.py is
-    # authorization. Same reason as every module above - that module must not
-    # import fi_db back, so init_schema is the only place that can wire it in.
+    # `portfolios` and `portfolio_holdings` are deliberately absent, and their
+    # absence is a tested property rather than an omission (TQ-72, §111).
     #
-    # Portfolios before holdings, and not only out of tidiness: holdings are
-    # keyed by portfolio_id, and ownership is reached by joining through
-    # `portfolios` - which means through `portfolios.resolve`, the one gate.
-    conn.executescript(portfolios.SCHEMA)
-    conn.executescript(holdings.SCHEMA)
+    # Owner direction, 2026-08-26: *"The portfolios don't live in this system.
+    # The portfolios are the personal property of the clients… holds no
+    # information of the portfolios in the system."* TQ-69 moved those tables
+    # here from gateway.db; §111 removed them from both. Positions are fetched
+    # from the client's own external sources for the life of a session and
+    # discarded when they disconnect.
+    #
+    # Creating them again would be worse than useless: a table nothing writes to
+    # and any future reader might is a second source of truth for whose money
+    # this is, which is exactly what a system that stores nothing must not grow.
     apply_additive_migrations(conn)
     _seed_static_metadata(conn)
 
@@ -1537,8 +1539,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
-         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA, portfolios.SCHEMA,
-         holdings.SCHEMA)
+         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

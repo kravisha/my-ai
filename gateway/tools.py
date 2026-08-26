@@ -36,7 +36,7 @@ truthful value.
 
 from backend.db import Database
 from gateway import roles
-from gateway import (jarvis, portfolio_client, repositories, scoreboard, technology)
+from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -270,81 +270,24 @@ TECHNOLOGY_TOOLS = [
 TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS
 
 
-# The client's own holdings (TQ-42, §96). Subject-scoped by construction: every
-# function behind these takes the client id from the session, never from an
-# argument the model could supply - so there is no shape of tool call that
-# reaches another client's positions.
-HOLDINGS_TOOLS = [
-    {
-        "name": "record_holding",
-        "description": (
-            "Record what the client says they hold. Use this when they tell you about a "
-            "position. Recording the same symbol again replaces the earlier statement, "
-            "because that is a correction rather than a second position. Never invent a "
-            "holding, and never record one they have not stated."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "symbol": {"type": "string", "description": "The symbol, as they said it."},
-                "quantity": {"type": "number", "description": "How many shares or contracts."},
-                "average_cost": {
-                    "type": "number",
-                    "description": "Price paid per share, if they said. Omit if they did not - "
-                                   "do not guess, and do not use a market price.",
-                },
-                "asset_class": {
-                    "type": "string",
-                    "description": "What kind of instrument, if they made it clear - for "
-                                   "example stock, stock_option, etf. Omit if they did not "
-                                   "say; 'shares' alone does not settle it.",
-                },
-                "acquired_on": {"type": "string", "description": "When acquired, if stated."},
-                "note": {"type": "string", "description": "Anything they added about it."},
-            },
-            "required": ["symbol", "quantity"],
-        },
-    },
-    {
-        "name": "list_holdings",
-        "description": "Everything this client has told you they hold.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "forget_holding",
-        "description": (
-            "Remove one holding, because the client asked you to. It is their data."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"symbol": {"type": "string"}},
-            "required": ["symbol"],
-        },
-    },
-    {
-        "name": "portfolio_balances",
-        "description": (
-            "The cash balance on this portfolio, when its source has one. Many do not: "
-            "holdings a client told you about carry no cash figure, and this will say so "
-            "in words you can repeat. Never estimate a balance, and never report zero "
-            "because none was available."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "analyse_holdings",
-        "description": (
-            "Weights and concentration across what the client has told you they hold, "
-            "computed from their stated cost basis. Use this rather than working "
-            "percentages out yourself. It reports no market value, gain or loss, because "
-            "this system has no real prices - say so if asked, rather than estimating."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-]
-
-TOOLS = TOOLS + HOLDINGS_TOOLS
-
+# The client's holdings tools are withdrawn (TQ-72, §111, §115).
+#
+# There were five - record, list, forget, balances, analyse - and they were built
+# on §96's answer to "where do a client's holdings come from": *the client tells
+# you, and you remember.* Owner direction retired both halves of that sentence.
+# The client does not dictate positions (they name a source and supply
+# credentials), and nothing is remembered (§115: fetched per session, discarded
+# on disconnect).
+#
+# So they are **removed rather than left refusing**. `gateway/skills.py`'s
+# declared-and-unbuilt pattern is right when a capability is specified and not
+# yet built; it is wrong here, because the shape changes. Declaring
+# `record_holding` as "coming soon" would be promising a tool this system has
+# decided not to have, and a client agent offered it would keep trying.
+#
+# What replaces them is TQ-73's: one request that names sources, and an analysis
+# that comes back. It is deliberately not sketched here - a tool schema written
+# before the pipeline exists is a guess that later has to be honoured.
 
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
 
@@ -374,15 +317,12 @@ TOOL_CAPABILITY = {
     "jarvis_status": roles.CAP_SYSTEM_STATUS,
     "jarvis_agent": roles.CAP_SYSTEM_STATUS,
     "technology_review": roles.CAP_TECHNOLOGY_READ,
-    "record_holding": roles.CAP_HOLDINGS,
-    "list_holdings": roles.CAP_HOLDINGS,
-    "forget_holding": roles.CAP_HOLDINGS,
-    "analyse_holdings": roles.CAP_HOLDINGS,
-    # Its own entry rather than a widening of anything (§95): a balance is the
-    # client's own portfolio data, so it sits under the same capability the other
-    # holdings tools do - but it is listed, because an unmapped tool is refused
-    # for everybody and that is the property worth keeping.
-    "portfolio_balances": roles.CAP_HOLDINGS,
+    # `CAP_HOLDINGS` itself is deliberately left declared in gateway/roles.py
+    # with no tool mapped to it (TQ-72). The capability is real and the role
+    # matrix around it is correct; what is gone is this build's answer to it.
+    # Removing the capability as well would mean re-deciding who may reach
+    # holdings when TQ-73 rebuilds the tools, and that decision was made
+    # carefully in §92 and should not be made twice.
 }
 
 
@@ -414,7 +354,7 @@ def permitted(role: str, name: str) -> bool:
 
 
 def execute(conn: Database, name: str, arguments: dict, *, role: str,
-            subject: str | None = None, portfolios_client=None) -> dict:
+            subject: str | None = None) -> dict:
     """Runs one tool call. Returns `{"error": ...}` rather than raising, for every
     failure the model could plausibly cause.
 
@@ -428,12 +368,12 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
     client's positions - the model cannot name a client because it is never
     asked to.
 
-    `portfolios_client` is an injection point for tests and nothing else: the
-    holdings tools reach the backend over HTTP now (TQ-69, §110), and the tests
-    that matter wire this to the **real backend application** rather than to a
-    description of it. Production passes nothing and gets
-    `portfolio_client.service()`, which is one client per process so a
-    conversation does not pay for a fresh bcrypt login per tool call."""
+`subject` currently reaches no tool - the holdings tools that used it were
+    withdrawn with the portfolio store (TQ-72, §111). It stays in the signature
+    because TQ-73's analysis tools need exactly the same property, and the
+    property is the interesting part: **the subject comes from the session and
+    never from an argument the model supplied**, so there is no shape of tool
+    call that acts for somebody else."""
     if not permitted(role, name):
         # Refused as data, like every other tool failure, so the model can tell
         # the user plainly instead of the turn collapsing.
@@ -515,69 +455,6 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
 
         if name == "jarvis_agent":
             return jarvis.JarvisClient().agent(str(arguments["identity"]))
-
-        if name in ("record_holding", "list_holdings", "forget_holding",
-                    "analyse_holdings", "portfolio_balances"):
-            if not (subject or "").strip():
-                # Refused rather than defaulted. A holdings tool without a
-                # subject has no owner for the data, and picking one would be
-                # the whole bug this feature exists downstream of.
-                return {"error": "I cannot reach holdings without knowing whose they are."}
-            try:
-                # Over HTTP to the backend since TQ-69 (§110), and *nothing here
-                # touches `conn`*. The portfolio subsystem is behind the process
-                # that does authorization, so a client asking their
-                # representative for their holdings now passes a backend
-                # ownership check as well as the Gateway's route gate - two
-                # checks where there was one, which is the point of the move.
-                #
-                # The caller's own portfolio, from the session subject and never
-                # from an argument (TQ-44). There is no argument here that names
-                # a portfolio, so there is no shape of tool call that reaches
-                # somebody else's positions - and the backend would refuse it
-                # even if there were.
-                client = portfolios_client or portfolio_client.service()
-                portfolio = client.primary(subject)
-                portfolio_id = portfolio["portfolio_id"]
-                if name == "record_holding":
-                    return {"recorded": client.record(
-                        subject, portfolio_id,
-                        symbol=arguments["symbol"], quantity=arguments["quantity"],
-                        average_cost=arguments.get("average_cost"),
-                        asset_class=arguments.get("asset_class"),
-                        acquired_on=arguments.get("acquired_on"),
-                        note=arguments.get("note"))}
-                if name == "list_holdings":
-                    return {"holdings": client.holdings(subject, portfolio_id)}
-                if name == "forget_holding":
-                    removed = client.forget(subject, portfolio_id, str(arguments["symbol"]))
-                    return {"forgotten": removed,
-                            "note": None if removed else "You had not told me about that one."}
-                if name == "portfolio_balances":
-                    return {"balances": client.balances(subject, portfolio_id)}
-                return {"analysis": client.analysis(subject, portfolio_id)}
-            except portfolio_client.BackendUnavailable as unreachable:
-                # §4.5, and the failure path most likely to go untested. The
-                # Gateway keeps **no cache of anybody's holdings**, so there is
-                # nothing to fall back to and that is deliberate: showing
-                # somebody last week's positions as though they were current is
-                # worse than showing them nothing. The message names the backend
-                # rather than saying "no holdings", because those are different
-                # facts and only one of them is true.
-                return {"error": str(unreachable), "unavailable": True}
-            except portfolio_client.CapabilityUnavailable as unavailable:
-                # A refusal with a reason, handed to the model as the reason
-                # (spec §3.4). An empty dict or a zero would be an answer; this
-                # is an explanation, and it is phrased to be repeated aloud.
-                return {"error": str(unavailable), "unavailable": True}
-            except portfolio_client.PortfolioRefused as refusal:
-                return {"error": str(refusal)}
-            except portfolio_client.NotAuthorized as refusal:
-                # The one refusal, in the backend's own words rather than
-                # elaborated on. A tool result that explained *why* would put the
-                # distinction §9.3 removes back into the model's context, where
-                # it would be said out loud to the caller.
-                return {"error": str(refusal)}
 
         if name == "technology_review":
             report = technology.review()
