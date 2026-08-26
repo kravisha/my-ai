@@ -36,7 +36,7 @@ truthful value.
 
 from backend.db import Database
 from gateway import roles
-from gateway import holdings, jarvis, repositories, scoreboard, technology
+from gateway import holdings, jarvis, portfolios, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -496,22 +496,35 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                 # the whole bug this feature exists downstream of.
                 return {"error": "I cannot reach holdings without knowing whose they are."}
             try:
+                # The caller's own portfolio, resolved from the session subject
+                # and never from an argument (TQ-44). `primary_for` goes through
+                # `resolve`, so by the time `holdings` sees a portfolio the
+                # ownership comparison has already run - there is no shape of
+                # tool call that reaches somebody else's positions, because
+                # there is no argument here that names a portfolio.
+                portfolio = portfolios.primary_for(conn, portfolios.for_client(subject))
                 if name == "record_holding":
                     return {"recorded": holdings.record(
-                        conn, subject,
+                        conn, portfolio,
                         ticker=arguments["ticker"], shares=arguments["shares"],
                         cost_basis=arguments.get("cost_basis"),
                         acquired_on=arguments.get("acquired_on"),
                         note=arguments.get("note"))}
                 if name == "list_holdings":
-                    return {"holdings": holdings.listing(conn, subject)}
+                    return {"holdings": holdings.listing(conn, portfolio)}
                 if name == "forget_holding":
-                    removed = holdings.forget(conn, subject, str(arguments["ticker"]))
+                    removed = holdings.forget(conn, portfolio, str(arguments["ticker"]))
                     return {"forgotten": removed,
                             "note": None if removed else "You had not told me about that one."}
-                return {"analysis": holdings.concentration(conn, subject)}
+                return {"analysis": holdings.concentration(conn, portfolio)}
             except holdings.HoldingRefused as refusal:
                 return {"error": str(refusal)}
+            except portfolios.NotAuthorized:
+                # The one refusal, passed through with its own words rather than
+                # elaborated on. A tool result that explained *why* would put the
+                # distinction §9.3 removes back into the model's context, where
+                # it would be said out loud to the caller.
+                return {"error": portfolios.REFUSAL}
 
         if name == "technology_review":
             report = technology.review()

@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
-from gateway import client_agent, clients, holdings, roles
+from gateway import client_agent, clients, holdings, portfolios, roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -76,9 +76,18 @@ def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
     scoreboard.init_schema(conn)
     conn.executescript(client_agent.SCHEMA)
+    # Portfolios before holdings: holdings are keyed by portfolio_id, and the
+    # migration below needs somewhere to put the portfolios it creates (TQ-44).
+    conn.executescript(portfolios.SCHEMA)
     conn.executescript(holdings.SCHEMA)
     conn.executescript(clients.SCHEMA)
     _apply_additive_migrations(conn)
+    # Pre-TQ-44 holdings, moved into owned portfolios. Here rather than in
+    # backend/migrations.py because that pipeline backs up the backend's
+    # continuity domain, not gateway.db - see gateway/holdings.py and spec §10
+    # Q1. A no-op once it has run: it renames the legacy table away, so a second
+    # call finds nothing to do.
+    holdings.migrate_client_holdings(conn)
 
 
 # Columns added after a database already existed. Additive only, matching the
