@@ -28,7 +28,7 @@ import inspect
 
 import pytest
 
-from gateway import holdings, portfolio_providers, portfolios
+from backend import holdings, portfolio_providers, portfolios
 
 
 # The interface addendum 44 §7 names. Asserted as *present*; the id-shape check
@@ -48,7 +48,7 @@ class PortfolioProviderContract:
         raise NotImplementedError("supply the provider under test")
 
     @pytest.fixture
-    def seeded(self, gateway_conn, provider):
+    def seeded(self, portfolio_conn, provider):
         """`(conn, portfolio)` with at least two positions in it, stocked
         however this provider stocks things."""
         raise NotImplementedError("supply a portfolio this provider can read")
@@ -90,7 +90,7 @@ class PortfolioProviderContract:
     # --- ownership ----------------------------------------------------------------
 
     def test_a_provider_returns_only_this_portfolios_holdings(self, seeded, provider,
-                                                              gateway_conn):
+                                                              portfolio_conn):
         """TQ-44's property, asserted at this layer too. A provider is an adapter,
         not an authorization boundary - but an adapter that leaked across
         portfolios would defeat the boundary above it."""
@@ -344,12 +344,12 @@ class TestManualProviderContract(PortfolioProviderContract):
             {"provider_type": portfolios.PROVIDER_MANUAL})
 
     @pytest.fixture
-    def seeded(self, gateway_conn, provider):
-        portfolio = portfolios.primary_for(gateway_conn, portfolios.for_client("avery"))
-        holdings.record(gateway_conn, portfolio, symbol="SYN1", quantity=100,
+    def seeded(self, portfolio_conn, provider):
+        portfolio = portfolios.primary_for(portfolio_conn, portfolios.for_client("avery"))
+        holdings.record(portfolio_conn, portfolio, symbol="SYN1", quantity=100,
                         average_cost=10, asset_class="stock")
-        holdings.record(gateway_conn, portfolio, symbol="SYN2", quantity=5)
-        return gateway_conn, portfolio
+        holdings.record(portfolio_conn, portfolio, symbol="SYN2", quantity=5)
+        return portfolio_conn, portfolio
 
 
 class TestSimulatedProviderContract(PortfolioProviderContract):
@@ -361,13 +361,13 @@ class TestSimulatedProviderContract(PortfolioProviderContract):
             {"provider_type": portfolios.PROVIDER_SIMULATED})
 
     @pytest.fixture
-    def seeded(self, gateway_conn, provider):
+    def seeded(self, portfolio_conn, provider):
         portfolio = portfolios.primary_for(
-            gateway_conn, portfolios.for_client("avery"), simulated=True,
+            portfolio_conn, portfolios.for_client("avery"), simulated=True,
             provider_type=portfolios.PROVIDER_SIMULATED,
             data_mode=portfolios.MODE_SIMULATED)
-        provider.seed(gateway_conn, portfolio)
-        return gateway_conn, portfolio
+        provider.seed(portfolio_conn, portfolio)
+        return portfolio_conn, portfolio
 
 
 def test_the_two_providers_genuinely_differ_in_what_they_can_answer():

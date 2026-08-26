@@ -131,7 +131,7 @@ DETERMINISTIC_CAPABILITIES: tuple[DeterministicCapability, ...] = (
     DeterministicCapability(
         operation="portfolio_concentration",
         summary="weights and concentration across a client's holdings, by stated cost",
-        code_ref="gateway/holdings.py::concentration",
+        code_ref="backend/holdings.py::concentration",
         why_reliable=(
             "It is arithmetic over numbers the client supplied. A model asked to "
             "percentage-weight a portfolio produces something shaped like arithmetic, "

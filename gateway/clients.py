@@ -63,6 +63,13 @@ import secrets
 import bcrypt
 
 from backend.db import Database, now_iso
+# The **only** thing any Gateway module takes from the backend's portfolio
+# subsystem, and it is a rule rather than a capability: one normalisation of an
+# owner id, shared so it cannot drift into two (TQ-69, §110). Importing the
+# module opens no database and reaches no data - `tests/test_gateway_service.py`
+# has a tripwire that fails if any other Gateway module names it at all, and one
+# that fails if this file uses more of it than `normalise`.
+from backend import portfolios
 
 SCHEMA_VERSION = 1
 
@@ -126,8 +133,19 @@ def normalise(raw: str) -> str:
     Lowercased and trimmed, because a login handle that differs only by case is
     two identities to the database and one to the person typing it - and two
     identities means two sets of holdings, which is the failure this whole area
-    exists to prevent."""
-    return (raw or "").strip().lower()
+    exists to prevent.
+
+    **Delegated rather than implemented** since TQ-69 (§110). The rule now has to
+    hold across two processes: this module decides what a client is called, and
+    `backend/portfolios.py` decides whether two owner strings are the same
+    person. A copy here that drifted from that one would make the same client two
+    owners - and no ownership comparison could detect it, because both
+    comparisons would be correct, about different people.
+
+    Kept as a function here rather than deleted, because "the canonical form of a
+    client id" is a real question this module's callers ask; the answer just is
+    not this module's to give any more."""
+    return portfolios.normalise(raw)
 
 
 def _validate_id(raw: str) -> str:

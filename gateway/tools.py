@@ -36,8 +36,7 @@ truthful value.
 
 from backend.db import Database
 from gateway import roles
-from gateway import (holdings, jarvis, portfolio_providers, portfolios, repositories,
-                     scoreboard, technology)
+from gateway import (jarvis, portfolio_client, repositories, scoreboard, technology)
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -415,7 +414,7 @@ def permitted(role: str, name: str) -> bool:
 
 
 def execute(conn: Database, name: str, arguments: dict, *, role: str,
-            subject: str | None = None) -> dict:
+            subject: str | None = None, portfolios_client=None) -> dict:
     """Runs one tool call. Returns `{"error": ...}` rather than raising, for every
     failure the model could plausibly cause.
 
@@ -427,7 +426,14 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
     client id (TQ-42, §96). It comes from the session and never from an argument
     the model supplied, so there is no shape of tool call that reads another
     client's positions - the model cannot name a client because it is never
-    asked to."""
+    asked to.
+
+    `portfolios_client` is an injection point for tests and nothing else: the
+    holdings tools reach the backend over HTTP now (TQ-69, §110), and the tests
+    that matter wire this to the **real backend application** rather than to a
+    description of it. Production passes nothing and gets
+    `portfolio_client.service()`, which is one client per process so a
+    conversation does not pay for a fresh bcrypt login per tool call."""
     if not permitted(role, name):
         # Refused as data, like every other tool failure, so the model can tell
         # the user plainly instead of the turn collapsing.
@@ -518,53 +524,60 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                 # the whole bug this feature exists downstream of.
                 return {"error": "I cannot reach holdings without knowing whose they are."}
             try:
-                # The caller's own portfolio, resolved from the session subject
-                # and never from an argument (TQ-44). `primary_for` goes through
-                # `resolve`, so by the time `holdings` sees a portfolio the
-                # ownership comparison has already run - there is no shape of
-                # tool call that reaches somebody else's positions, because
-                # there is no argument here that names a portfolio.
-                portfolio = portfolios.primary_for(conn, portfolios.for_client(subject))
-                # Reads go through the provider (TQ-45b), so the agent works the
-                # same way whether these holdings were stated in conversation,
-                # invented for a demo, or one day fetched from a broker. Writes
-                # do not: `record_holding` is the client telling their
-                # representative something, which is not a provider's job.
-                provider = portfolio_providers.for_portfolio(portfolio)
+                # Over HTTP to the backend since TQ-69 (§110), and *nothing here
+                # touches `conn`*. The portfolio subsystem is behind the process
+                # that does authorization, so a client asking their
+                # representative for their holdings now passes a backend
+                # ownership check as well as the Gateway's route gate - two
+                # checks where there was one, which is the point of the move.
+                #
+                # The caller's own portfolio, from the session subject and never
+                # from an argument (TQ-44). There is no argument here that names
+                # a portfolio, so there is no shape of tool call that reaches
+                # somebody else's positions - and the backend would refuse it
+                # even if there were.
+                client = portfolios_client or portfolio_client.service()
+                portfolio = client.primary(subject)
+                portfolio_id = portfolio["portfolio_id"]
                 if name == "record_holding":
-                    return {"recorded": holdings.record(
-                        conn, portfolio,
+                    return {"recorded": client.record(
+                        subject, portfolio_id,
                         symbol=arguments["symbol"], quantity=arguments["quantity"],
                         average_cost=arguments.get("average_cost"),
                         asset_class=arguments.get("asset_class"),
                         acquired_on=arguments.get("acquired_on"),
                         note=arguments.get("note"))}
                 if name == "list_holdings":
-                    return {"holdings": [vars(h) for h
-                                         in provider.get_holdings(conn, portfolio)]}
+                    return {"holdings": client.holdings(subject, portfolio_id)}
                 if name == "forget_holding":
-                    removed = holdings.forget(conn, portfolio, str(arguments["symbol"]))
+                    removed = client.forget(subject, portfolio_id, str(arguments["symbol"]))
                     return {"forgotten": removed,
                             "note": None if removed else "You had not told me about that one."}
                 if name == "portfolio_balances":
-                    return {"balances": provider.get_balances(conn, portfolio)}
-                return {"analysis": holdings.concentration(
-                    provider.get_holdings(conn, portfolio))}
-            except holdings.HoldingRefused as refusal:
-                return {"error": str(refusal)}
-            except portfolio_providers.ProviderCapabilityUnavailable as unavailable:
+                    return {"balances": client.balances(subject, portfolio_id)}
+                return {"analysis": client.analysis(subject, portfolio_id)}
+            except portfolio_client.BackendUnavailable as unreachable:
+                # §4.5, and the failure path most likely to go untested. The
+                # Gateway keeps **no cache of anybody's holdings**, so there is
+                # nothing to fall back to and that is deliberate: showing
+                # somebody last week's positions as though they were current is
+                # worse than showing them nothing. The message names the backend
+                # rather than saying "no holdings", because those are different
+                # facts and only one of them is true.
+                return {"error": str(unreachable), "unavailable": True}
+            except portfolio_client.CapabilityUnavailable as unavailable:
                 # A refusal with a reason, handed to the model as the reason
                 # (spec §3.4). An empty dict or a zero would be an answer; this
                 # is an explanation, and it is phrased to be repeated aloud.
                 return {"error": str(unavailable), "unavailable": True}
-            except portfolio_providers.ProviderRefused as refusal:
+            except portfolio_client.PortfolioRefused as refusal:
                 return {"error": str(refusal)}
-            except portfolios.NotAuthorized:
-                # The one refusal, passed through with its own words rather than
+            except portfolio_client.NotAuthorized as refusal:
+                # The one refusal, in the backend's own words rather than
                 # elaborated on. A tool result that explained *why* would put the
                 # distinction §9.3 removes back into the model's context, where
                 # it would be said out loud to the caller.
-                return {"error": portfolios.REFUSAL}
+                return {"error": str(refusal)}
 
         if name == "technology_review":
             report = technology.review()

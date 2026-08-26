@@ -1,7 +1,38 @@
 """Portfolios as owned entities, and the guard that makes owning one mean
-something (TASK_QUEUE TQ-44, docs/SPEC_RECONCILIATION.md §99).
+something (TASK_QUEUE TQ-44, docs/SPEC_RECONCILIATION.md §99; moved here by
+TQ-69, §110).
 
 Source: addendum 44 §2, §3.3, §5, §9, §12, §15.1, §15.5.
+
+## Why this is in `backend/` and not `gateway/`
+
+It was written at the Gateway, and owner direction on 2026-08-26 (§109) says why
+it does not belong there: *"Gateway is for establishing identity — Gateway only
+does authentication. Back end does authorization and all business logic."*
+Everything below this line is authorization. It is now in the process specified
+to do it, and the Gateway reaches it over HTTP the way `gateway/jarvis.py`
+already reaches `/admin`.
+
+Nothing about the guard changed in the move, and that is the claim worth
+checking rather than trusting: `resolve()` is the same function, with the same
+ordering, the same single ownership comparison and the same one refusal. What
+changed is that a Gateway request for a client's holdings now passes **this**
+check as well as the Gateway's own route gate — two checks where there was one,
+which is the entire point of the move (spec §9.1).
+
+## `owner_id` is opaque here, deliberately (spec §4.2)
+
+This module compares owner strings; it does not know what they name. A Gateway
+client, the operator, and whatever TQ-70 decides identity should look like are
+all the same thing to `_owned_by`: a pair of strings that either matches or does
+not.
+
+That is what keeps the trust boundary honest and small. The Gateway
+authenticates somebody and asserts a subject; this process authorizes *that
+subject* against *that portfolio*. It does not defend against a compromised
+Gateway, which can assert any owner it likes — spec §4.3 says so at length
+rather than implying otherwise — and it does defend against a buggy one, which
+is the failure this project has actually had twice (§93, §106).
 
 ## Why the entity and the guard are one file
 
@@ -19,7 +50,7 @@ was written to prevent. Splitting this file would be splitting that.
 
 Every read of portfolio-scoped data goes through it. One place answers "whose
 data is this?", so there is one place to audit and one place a mistake can be.
-The tripwire in tests/test_gateway_portfolios.py fails if any other module
+The tripwire in tests/test_backend_portfolios.py fails if any other module
 queries the `portfolios` table directly, because the single-gate property is
 worth exactly as much as the discipline that maintains it.
 
@@ -75,7 +106,6 @@ import secrets
 from dataclasses import dataclass
 
 from backend.db import Database, now_iso
-from gateway import clients
 
 SCHEMA_VERSION = 1
 
@@ -114,6 +144,28 @@ STATUSES = (STATUS_ACTIVE, STATUS_ARCHIVED)
 # foreign and archived must be indistinguishable, so there is one string and no
 # formatting into it.
 REFUSAL = "Not authorized or resource unavailable."
+
+
+def normalise(raw: str) -> str:
+    """The canonical form of an owner id, and **the only implementation of it**
+    (TQ-69).
+
+    Lowercased and trimmed, because an identifier that differs only by case is
+    two identities to the database and one to the person typing it - and two
+    identities means two sets of holdings, which is the failure this whole area
+    exists to prevent.
+
+    It lives here rather than in `gateway/clients.py`, where it was written,
+    because this module is now the one that decides whether two owner strings are
+    the same person. `gateway.clients.normalise` imports this one rather than
+    keeping a copy: a second normalisation that could disagree would let the same
+    client be two owners, which no ownership comparison can detect - both
+    comparisons would be correct, about different people.
+
+    Deliberately unaware of what an owner id *means* (spec §4.2). This
+    lowercases and trims a string; it does not know whether that string is a
+    Gateway client, an operator, or something TQ-70 has not invented yet."""
+    return (raw or "").strip().lower()
 
 # What a portfolio is called when nobody named it (§3.8). Deliberately dull: it
 # is the client's own portfolio, shown to the client, and a generated name would
@@ -191,11 +243,11 @@ class OwnerContext:
                 f"unknown owner type {self.owner_type!r}; known are {list(OWNER_TYPES)}")
         if not isinstance(self.owner_id, str) or not self.owner_id.strip():
             raise UnknownVocabulary("an owner context needs an owner id")
-        # Normalised through the client registry's own function rather than a
-        # second copy of strip-and-lowercase. Two normalisations that could
-        # disagree are two identities for one person, which is the failure this
-        # whole area exists to prevent (gateway/clients.normalise).
-        object.__setattr__(self, "owner_id", clients.normalise(self.owner_id))
+        # One normalisation, defined above and imported by the Gateway's client
+        # registry rather than copied there. Two that could disagree are two
+        # identities for one person, which is the failure this whole area exists
+        # to prevent.
+        object.__setattr__(self, "owner_id", normalise(self.owner_id))
 
 
 def for_client(client_id: str) -> OwnerContext:
