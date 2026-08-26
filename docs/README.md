@@ -28,14 +28,34 @@ in this order. They are maintained for exactly this purpose.
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Newest `§` sections at the end. Every increment records what was built, what was decided, and what was found by running it. |
 | [`specs/`](specs/) | Implementation specifications for queued-but-unbuilt work, detailed enough to build from without further design. |
 
+### Where each kind of answer lives
+
+If you are looking for one specific thing rather than reading in:
+
+| Looking for | Go to |
+|---|---|
+| **Current architecture** | the orientation paragraph below, then `HANDOFF.md` §2 |
+| **Active specifications** | "Active specifications" in this file; the files in [`specs/`](specs/) |
+| **Completed work** | `SPEC_RECONCILIATION.md`, newest `§` last — one section per increment |
+| **Task queue status** | `TASK_QUEUE.md`; its head block is the current focus |
+| **Open issues and known defects** | `HANDOFF.md` §6 |
+| **Design decisions that must not be reversed** | `HANDOFF.md` §4 — the constraints list |
+| **Security and isolation rules** | `HANDOFF.md` §4 items on ownership, privacy, capability gating, and the Gateway boundary; then §99, §104, §108, §109 |
+| **Pending integrations** | `TASK_QUEUE.md` TQ-49/TQ-50 (Schwab, owner-blocked), TQ-52/TQ-57 (local models, owner-blocked) |
+| **What to do next** | `HANDOFF.md` §7 — one named task with its reasoning |
+
 **Quick orientation, in one paragraph.** Two processes: the *backend*
 (`backend/main.py`, the organization — agents, the COO Kumbhakarnan, the simulated market, the
-studio at `/console`) and the *Gateway* (`gateway/main.py`, the door — authenticated, role-scoped,
-the only thing intended to face outward). They own separate databases and talk over HTTP. The
-Gateway has three roles (operator, internal, client); every route and every model tool declares a
-capability, and a tripwire test fails if one does not. Client data — conversations, representative
-identity, holdings, credentials — is keyed to a `subject` resolved from the session and never from
-anything a caller sent.
+studio at `/console`) and the *Gateway* (`gateway/main.py`, the door — the only thing intended to
+face outward). They own separate databases and talk over HTTP. **Owner direction 2026-08-26 (§109):
+the Gateway establishes identity and does authentication only; the backend does authorization and
+all business logic.** The Gateway has three roles (operator, internal, client); every route and
+every model tool declares a capability, and a tripwire test fails if one does not — route-level
+gating stays at the Gateway and is not the drift §109 names. Client data — conversations,
+representative identity, holdings, credentials — is keyed to a `subject` resolved from the session
+and never from anything a caller sent. A third area, added 2026-08-26, is the routing subsystem in
+`app/` (`task_signature`, `model_performance`, `routing_decisions`, `local_ai`, `capability`),
+imported by both processes; it has infrastructure but **no local model behind it yet**.
 
 ## Active specifications
 

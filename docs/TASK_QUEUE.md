@@ -51,43 +51,34 @@ holds the queue, not the record.
 >
 > **TQ-42** (client-owned holdings, §96) is done, which built the first real client skill.
 >
-> **Current focus: the portfolio subsystem** (addendum 44, assimilated 2026-08-26, §97) —
-> **TQ-44** (portfolios as owned entities *and* the guard, which must not ship apart) is
-> **done** (§99): every portfolio has an explicit owner, `resolve()` is the only way to one,
-> and the §15.5 regression is permanent. **TQ-45 is done** — 45a the canonical holding shape
-> (§100), 45b the provider abstraction and its conformance suite (§101). Remaining in that
-> lineage: TQ-46 (the Superuser ownership domain), TQ-47 (its tab), TQ-48 (snapshots,
-> provenance, audit), TQ-49 (the Schwab boundary). TQ-50 is blocked on owner action.
+> **Current focus (checkpoint 2026-08-26): TQ-69**, moving the portfolio subsystem behind the
+> backend. Specified, unblocked, and it **blocks TQ-46**.
 >
-> **New lineage: local intelligence and competitive model routing** (addendum 45, assimilated
-> 2026-08-26, §102) — **TQ-51 … TQ-68**. Owner-supplied and explicitly superseding the earlier
-> local-model routing specification. It starts at **TQ-51**, which unpins
-> `routing: none_single_model` — the tripwire §64 planted for exactly this moment, firing on the
-> first real step of the lineage that needed it. **TQ-51 is done** (§103): the pin is now a
-> ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
-> status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
-> **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers. **TQ-59 is done** (§108) — the deterministic-first check and the
-> escalation decision, including the live refusal of `LOCAL_ONLY` work with no local model.
-> **TQ-56 is done** (§107) — the interface local intelligence will arrive
-> behind, with nothing behind it yet. **TQ-55 is done** (§106) — every routing decision is logged from the
-> first one, and it already detects §36 privacy misrouting. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
-> provisional, and `routing` now stands on the `seeded_leaderboard` rung. **TQ-53 is done**
-> (§104) — the task signature, the eight categories and the
-> complexity and privacy vocabularies, with four collisions against existing house vocabularies
-> resolved. Next is **TQ-54** (the registry and leaderboards, which also advances the routing
-> marker) or **TQ-52**, still waiting on what "Inkling" is.
+> This block states the *present*. The increment-by-increment narration it used to carry is in
+> `SPEC_RECONCILIATION.md` §99–§109, which is where history belongs.
 >
-> Two findings from assimilation that shape the order, both in §102: the GPU is **8 GB**, which
-> makes a pool of six feasible on disk and sequential in VRAM; and **"Inkling"**, named as an
-> initial candidate, is not identifiable as an open-weight local model — TQ-52 has to answer what
-> it is before anything depends on it.
+> **Addendum 44 (portfolio subsystem, §97).** TQ-44 done (§99) — every portfolio has an explicit
+> owner, `resolve()` is the only way to one, and the §15.5 regression is permanent. TQ-45 done —
+> 45a the canonical holding shape (§100), 45b the provider abstraction and its conformance suite
+> (§101). **TQ-46 is specified and blocked on TQ-69**; TQ-47, TQ-48 and TQ-49 follow it. TQ-50 is
+> blocked on owner action.
 >
-> **Owner decision wanted**: whether this lineage or the remaining addendum 44 entries (TQ-46
-> onward) is worked first. They are independent.
+> **Owner direction 2026-08-26 (§109): the Gateway authenticates; the backend authorizes and holds
+> business logic.** The portfolio subsystem is on the wrong side of that line, which is what TQ-69
+> corrects. Route-level capability gating stays at the Gateway and is not the drift.
 >
-> **TQ-43** (per-client Gateway credentials, §98) is **done** — it was the precondition under
-> most of that, and the demo now seeds three clients who each log in as themselves.
+> **Addendum 45 (local intelligence and competitive model routing, §102).** Six increments built
+> and **no local model behind any of them**: TQ-51 the routing ladder (§103), TQ-53 the task
+> signature and vocabularies (§104), TQ-54 the Model Performance Registry and eight leaderboards
+> (§105), TQ-55 the routing decision record (§106), TQ-56 `LocalAIService` and its conformance
+> suite (§107), TQ-59 the deterministic check and escalation decision (§108). `routing` now stands
+> on the `seeded_leaderboard` rung.
+>
+> **That lineage is blocked at TQ-52 on one owner answer: what "Inkling" is.** Addendum 45 §47
+> requires it as an initial local candidate and it is not identifiable as an open-weight local
+> model; it has deliberately **not** been substituted with something similarly named. TQ-57,
+> TQ-58, TQ-60 … TQ-68 all queue behind it. Hardware is measured (§102): 8 GB VRAM, 16.5 GB RAM,
+> 365 GB free disk — a pool of six is feasible on disk and sequential in VRAM.
 >
 > Also open: **TQ-07** (consumer-gated), **TQ-20** and **TQ-21** (owner actions), **TQ-28**
 > (the isolation guard), and the deferred animated presenter.
