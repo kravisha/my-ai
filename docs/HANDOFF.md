@@ -25,7 +25,8 @@ Then read, in order:
 1. **This file** — to the end.
 2. [`docs/README.md`](README.md) → "Picking up mid-project" — the map.
 3. [`docs/TASK_QUEUE.md`](TASK_QUEUE.md) — the head block says what is next.
-4. [`docs/specs/`](specs/) — TQ-45 has no spec yet; see §7 below.
+4. [`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md)
+   — the next task, fully specified.
 
 ---
 
@@ -133,7 +134,7 @@ Each cost something to learn. Reversing one silently would undo real work.
 
 | Task | Status |
 |---|---|
-| **TQ-45** — `PortfolioProvider` abstraction + conformance suite | **next — needs a spec** |
+| **TQ-45** — `PortfolioProvider` abstraction + conformance suite | **SPECIFIED — next** |
 | TQ-46 — superuser ownership domain; retire the ownerless retrieval | queued |
 | TQ-47 — Superuser Portfolio tab | queued |
 | TQ-48 — snapshots, provenance, audit logging | queued |
@@ -182,25 +183,27 @@ None blocks TQ-45.
 
 ## 7. Exactly what to do next
 
-**TQ-45 — the `PortfolioProvider` abstraction and its conformance suite.** Its
-queue entry is written; **there is no implementation spec yet**, so the first
-step is writing one the way TQ-44's was written (that spec is the model to
-follow, and deciding its open questions before coding is the part that paid off).
+**Implement TQ-45a**, following
+[`docs/specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md).
 
-Two things TQ-44 deliberately handed forward:
+The spec splits the work in two on purpose (§3.1): **45a** is the canonical
+holding shape — the field rename and the `asset_class` vocabulary — and **45b**
+is the provider, its conformance suite and the demo rebuild. 45a first, so the
+provider is written against the final holding shape once.
 
-1. **The holding field rename.** `ticker`/`shares`/`cost_basis` →
-   `symbol`/`quantity`/`average_cost` (addendum 44 §3.4). Budgeted here because
-   the canonical holding shape is *what a provider returns*, and doing it in
-   TQ-44 meant touching the tool schemas and both test files twice.
-   `average_cost` is the better name — unambiguously per-share.
-2. **`asset_class` is `UNKNOWN` everywhere today**, honestly so: the old rows do
-   not say and the conversational tool does not ask. A provider is the first
-   thing that could know, so decide there how a class-aware view treats
-   `UNKNOWN` — `concentration` currently ignores the field entirely.
-
-Then: `git checkout -b <name>`, one increment, full suite green, a
-`SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.
+1. Read the spec end to end. §3.2 (the provider takes a resolved portfolio, not
+   an `account_ref`) and §11 (five open questions) matter most.
+2. **Decide the five open questions in §11 and record the decisions**, the way
+   TQ-44's three were decided before any code. Q1 (which `asset_class`
+   vocabulary) and Q2 (whether a simulated portfolio gets simulated prices) are
+   the two that change the shape of the work.
+3. `git checkout -b <name>` — 45a and 45b are separate branches, PRs and §records.
+4. §10 names two collisions found while specifying: `asset_class` has two
+   vocabularies and §70 already ruled on that kind of substitution, and demo
+   portfolios are `MANUAL` where addendum 44 §6.2 says `SIMULATED`. Neither is a
+   defect in shipped behaviour; both have to be resolved here.
+5. Full suite, then §14's live check — and note step 3 of it, which is new: ask
+   the agent for a cash balance and listen to how it refuses.
 
 ---
 
