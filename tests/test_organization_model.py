@@ -73,11 +73,33 @@ def test_spawn_paths_agree_with_coo(roles):
     The Controller is the running server, so a COO that tried to respawn it would
     ask the Controller to launch an agents/controller.py that deliberately does
     not exist. That invariant is guarded in tests/test_controller.py; this
-    catches it from the other side, as a modelling error rather than a crash."""
+    catches it from the other side, as a modelling error rather than a crash.
+
+    **`spawned_by_coo` means "in the baseline workforce", not "COO can spawn
+    it".** Those were the same thing until TQ-79 added an on-demand role, and
+    this test is how the difference surfaced: `portfolio_analyst` is spawned by
+    COO like every other subprocess and is *not* baseline, because it is created
+    when a client asks and produces nothing when nobody has (§115). A baseline
+    analyst would sit idle forever waiting for work that arrives from outside
+    the organization rather than from inside it."""
     declared_spawned = {role_id for role_id, role in roles.items() if role["spawned_by_coo"]}
     assert declared_spawned == set(coo.BASELINE_ROLES), (
         f"model says COO spawns {sorted(declared_spawned)}, BASELINE_ROLES says {sorted(coo.BASELINE_ROLES)}"
     )
+
+
+def test_an_on_demand_role_is_not_in_the_baseline_workforce(roles):
+    """The other side of the distinction above, so that neither can drift.
+
+    An on-demand role added to `BASELINE_ROLES` would be started at every server
+    boot and would idle forever - and nothing else in the model would object,
+    because "COO spawns it" would still be true."""
+    on_demand = {role_id for role_id, role in roles.items() if role.get("on_demand")}
+    assert on_demand, "the model no longer describes any on-demand role"
+    overlap = on_demand & set(coo.BASELINE_ROLES)
+    assert not overlap, (
+        f"{sorted(overlap)} are on-demand but in the baseline workforce; they would be "
+        "started at boot and idle forever")
 
 
 def test_controller_is_in_process_and_reports_to_nobody(roles):

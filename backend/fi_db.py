@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import competency, compliance, coo_identity, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -321,6 +321,32 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["evidence integration", "uncertainty", "peer classification", "grading"],
         "work_mechanism": "discovery_reports queue, polled",
+    },
+    "portfolio_analyst": {
+        "agent_type": "on_demand",
+        "description": (
+            "Consolidated analysis of a client's external portfolios, on request. "
+            "The only role that works for a client rather than for the organization."
+        ),
+        "responsibilities": [
+            "Fetch positions from every source a client named",
+            "Reconcile them into one view, combining what is one position and refusing to combine what is not",
+            "Perform the requested analysis and return a client-facing report",
+            "Retain nothing: positions live for one cycle and the report until it is collected",
+        ],
+        "allowed": [
+            "Return a partial view when a source is unreachable, saying so",
+            "Report that two sources disagree rather than choosing between them",
+            "Produce nothing at all when no client has asked",
+        ],
+        "not_allowed": [
+            "Work unasked - it is tasked by a client and idle otherwise",
+            "Write a position anywhere, including a cache",
+            "Value a position; prices come from the market data store, not from a source",
+            "Execute any trade - the system has no execution capability at all",
+        ],
+        "competencies": ["reconciliation across sources", "concentration", "partial-answer honesty"],
+        "work_mechanism": "portfolio_analysis_requests queue, filled by a client through the Gateway",
     },
     "dummy": {
         "agent_type": "test",
@@ -1400,6 +1426,13 @@ def init_schema(conn: Database) -> None:
     # than by the pipeline itself so that the table recording a failed migration
     # cannot be the thing that is missing when one fails.
     conn.executescript(migrations.SCHEMA)
+    # Portfolio analysis requests (TQ-79). A **transport, not a store**: rows are
+    # messages with a consumer and a deadline, deleted on collection, on
+    # disconnect, and on expiry. See backend/analysis_requests.py for why an
+    # agent architecture built on a shared database can serve a system that
+    # retains nothing, and for the credential problem it deliberately does not
+    # solve.
+    conn.executescript(analysis_requests.SCHEMA)
     # `portfolios` and `portfolio_holdings` are deliberately absent, and their
     # absence is a tested property rather than an omission (TQ-72, §111).
     #
@@ -1539,7 +1572,8 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     for table, columns in _declared_columns(
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
-         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA)
+         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
+         analysis_requests.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

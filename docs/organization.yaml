@@ -61,6 +61,27 @@ roles:
     spawned_by_coo: true
     watched_by: coo
 
+  # The only role that works for a client rather than for the organization
+  # (TQ-79, addendum 9 §2). On-demand: it is tasked by a client through the
+  # Gateway and produces nothing when nobody has asked, which is why it is
+  # `on_demand` rather than `judgment` - a quiet cycle here means idle, not
+  # unhealthy, and anything watching it has to know the difference.
+  - id: portfolio_analyst
+    status: implemented
+    agent_type: on_demand
+    reports_to: coo
+    process: subprocess
+    # Spawned by COO like every other subprocess, but **not part of the baseline
+    # workforce**. Those were the same thing until this role existed, and
+    # `spawned_by_coo` was carrying both meanings.
+    #
+    # It is created when a client asks and produces nothing when nobody has
+    # (§115). A baseline analyst would sit idle forever waiting for work that
+    # arrives from outside the organization rather than from inside it.
+    spawned_by_coo: false
+    on_demand: true
+    watched_by: coo
+
   - id: dummy
     status: implemented
     agent_type: reference
