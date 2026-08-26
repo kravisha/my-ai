@@ -38,6 +38,16 @@ REGISTRY_PATH = REPO / "docs" / "model_registry.yaml"
 # the only files allowed to touch the provider without a profile.
 _INTERFACE_MODULES = {"app/model_gateway.py", "app/model_provider.py", "app/model_budget.py"}
 
+# The rungs of `routing_stages` this file actually asserts.
+#
+# It exists because §103's ladder had a hole its author walked straight into
+# (§105): `enforced` is a flag in a YAML file, so setting it to true without
+# writing the assertion is exactly the silent pass the ladder was built to
+# prevent. Declaring the enforced set *here*, next to the tests, and requiring
+# the YAML to match it, makes `enforced: true` a statement about code that
+# exists rather than an intention.
+ENFORCED_STAGES = {"none_single_model", "seeded_leaderboard"}
+
 
 @pytest.fixture(scope="module")
 def registry():
@@ -89,6 +99,61 @@ def test_an_unenforced_rung_refuses_to_be_stood_on(registry, stages):
         f"({stage['earned_by']} earns it). Build the assertion in that increment "
         "before moving the marker - an unenforced rung is a silent pass."
     )
+
+
+def test_enforced_is_a_fact_about_this_file_rather_than_a_claim(stages):
+    """The hole §103 left, closed in §105 by the increment that fell in it.
+
+    `enforced` lives in a YAML file, so nothing stopped somebody - the author,
+    as it turned out - from setting it true and moving the marker without ever
+    writing the rung's assertion. The suite went green and the discipline was
+    gone, which is precisely the failure the ladder exists to prevent.
+
+    So the enforced set is declared beside the tests that implement it, and the
+    YAML has to agree. A rung claiming enforcement this file does not provide
+    fails here; so does a rung this file asserts but the YAML calls unenforced."""
+    claimed = {name for name, stage in stages.items() if stage["enforced"]}
+    assert claimed == ENFORCED_STAGES, (
+        f"routing_stages claims to enforce {sorted(claimed)} but "
+        f"tests/test_model_registry.py implements {sorted(ENFORCED_STAGES)}. "
+        "Write the rung's assertion and add it to ENFORCED_STAGES, or set "
+        "enforced: false - a flag is not a tripwire."
+    )
+
+
+def test_the_seeded_leaderboard_rung(registry, models):
+    """The `seeded_leaderboard` rung's own tripwire (TQ-54, §105).
+
+    What the rung demands: every configured model has a seeded entry on every
+    one of the eight leaderboards. A configured model no routing decision can
+    reach is the failure it exists to catch - and it is checkable here, from
+    committed metadata, precisely because §105 put the hand-authored seed
+    *ordering* in this file and left only the measurements in the database. A
+    tripwire that read the runtime database would assert nothing in CI, which
+    has no database."""
+    if registry["routing"] != "seeded_leaderboard":
+        pytest.skip("a different rung governs; its own tripwire applies")
+
+    from app.task_signature import TASK_CATEGORIES
+
+    ordering = registry["seed_ordering"]
+    assert set(ordering) == set(TASK_CATEGORIES), (
+        f"seed_ordering covers {sorted(ordering)}; the eight leaderboards are "
+        f"{sorted(TASK_CATEGORIES)}"
+    )
+
+    configured = {m["id"] for m in models.values() if m["status"] == "configured"}
+    for category, ordered in ordering.items():
+        assert ordered, f"{category} has an empty seed ordering"
+        assert len(set(ordered)) == len(ordered), f"{category} seeds a model twice"
+        missing = configured - set(ordered)
+        assert not missing, (
+            f"configured model(s) {sorted(missing)} have no seeded entry on "
+            f"{category} - nothing could route to them there")
+        unknown = set(ordered) - set(models)
+        assert not unknown, (
+            f"{category} seeds {sorted(unknown)}, which the registry does not list. "
+            "Register the model before ranking it.")
 
 
 def test_each_rung_says_what_it_demands(stages):

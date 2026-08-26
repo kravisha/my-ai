@@ -55,7 +55,7 @@
 # with a queue entry behind it, never a tidy-up.
 
 version: 1
-routing: none_single_model
+routing: seeded_leaderboard
 
 # The ladder (addendum 45 §12, §13, §45 Phase C+F). Each rung names the queue
 # entry that earns it and what its tripwire demands. `enforced: false` means the
@@ -71,7 +71,7 @@ routing_stages:
 
   - stage: seeded_leaderboard
     earned_by: TQ-54
-    enforced: false
+    enforced: true
     requires: >
       Every configured model has a seeded entry on every task-category
       leaderboard, and every seeded score is marked SEEDED/PROVISIONAL
@@ -124,6 +124,36 @@ models:
       - rate_limits
       - availability_history
     benchmark_date: null
+
+# The hand-authored provisional ordering each task leaderboard starts from
+# (addendum 45 §12, TQ-54, SPEC_RECONCILIATION §105).
+#
+# It lives here, in the committed file, for the reason §103 gave for splitting
+# the two registries by **writer**: an initial ordering is a human decision, and
+# the measurements that supersede it are machine-written. Putting the ordering in
+# the runtime database would also make the `seeded_leaderboard` rung uncheckable -
+# CI has no database, so a tripwire that read one would assert nothing.
+#
+# `app/model_performance.seed_from_registry()` reads this; the scores it derives
+# and everything measured afterwards live in model_performance.db, never here.
+#
+# Every entry is PROVISIONAL by construction (§12): the seed is worth
+# SEED_PRIOR_SAMPLES observations and decays automatically as real outcomes
+# arrive. Nobody decides when evidence takes over - arithmetic does.
+#
+# One model appears today because one model is configured. That is not a claim
+# that it is good at these eight things; a single-model ordering carries no
+# information and is scored at exact neutral to say so. When TQ-57 and TQ-58 add
+# local candidates, they enter here as an ordering somebody chose and defended.
+seed_ordering:
+  GENERAL_REASONING_AND_PLANNING: [claude-sonnet-5]
+  CODING_AND_DEBUGGING: [claude-sonnet-5]
+  LONG_CONTEXT_AND_MEMORY: [claude-sonnet-5]
+  CLASSIFICATION_AND_ROUTING: [claude-sonnet-5]
+  FINANCIAL_AND_ANALYTICAL_REASONING: [claude-sonnet-5]
+  SUMMARIZATION_AND_KNOWLEDGE_EXTRACTION: [claude-sonnet-5]
+  CREATIVE_GENERATION: [claude-sonnet-5]
+  CAPABILITY_AND_ESCALATION_DECISION: [claude-sonnet-5]
 
 # One profile per code location that reaches the model. `code_ref` is the
 # consuming module (the test scans for undeclared consumers); `role` is the

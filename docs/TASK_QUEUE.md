@@ -67,7 +67,9 @@ holds the queue, not the record.
 > ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
 > status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
 > **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers. **TQ-53 is done** (§104) — the task signature, the eight categories and the
+> hardware answers. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
+> provisional, and `routing` now stands on the `seeded_leaderboard` rung. **TQ-53 is done**
+> (§104) — the task signature, the eight categories and the
 > complexity and privacy vocabularies, with four collisions against existing house vocabularies
 > resolved. Next is **TQ-54** (the registry and leaderboards, which also advances the routing
 > marker) or **TQ-52**, still waiting on what "Inkling" is.
@@ -918,8 +920,8 @@ a model — asserted, not trusted. Mutation-tested six ways, six caught.
 
 ### TQ-54 — Model Performance Registry and the eight leaderboards, seeded provisional
 
-**NEED (GREEN) · QUEUED — next · depends on TQ-51 (done), TQ-53 (done) · addendum 45 §8, §9,
-§10, §11, §12, §13, §45 Phase A + C**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §105) · depends on TQ-51 (done),
+TQ-53 (done) · addendum 45 §8, §9, §10, §11, §12, §13, §45 Phase A + C**
 
 The competition, as data. §8's fields, per model per task category, with §12's initial ordering
 seeded by hand and **marked `SEEDED` / `PROVISIONAL`** — the same discipline
@@ -940,15 +942,25 @@ number nobody can interpret later.
 
 No model calls. The registry is real; the data in it is honestly labelled as a guess.
 
-**This entry also owns advancing the routing marker** (§103). `docs/model_registry.yaml`
-carries a `routing_stages` ladder, and `seeded_leaderboard` is the rung TQ-54 earns: build that
-rung's tripwire — every configured model has a seeded entry on every leaderboard — set
-`enforced: true` on it, and only then move `routing`. The suite refuses to stand on an
-unenforced rung, so doing it in the other order fails loudly and says so.
+**Done** (§105), as `app/model_performance.py` — storage following `app/model_budget.py`'s
+shared-ledger pattern. The seed is stored once and the composite derived on read, so §12's
+"empirical data should dominate the initial seed" happens by arithmetic rather than by anybody
+deciding; §11 is structural, since `record_outcome` has no statement that reaches another
+category's row. `routing` is now `seeded_leaderboard`.
+
+Two things came out of building it. The **hand-authored seed ordering moved into
+`docs/model_registry.yaml`** as `seed_ordering`, because the rung's tripwire has to run in CI and
+CI has no database — which sharpens §103's split rather than contradicting it: human decisions in
+the committed file, machine writes in the database. And **§103's ladder had a hole its author fell
+into**: `enforced: true` was set and the marker moved before the rung's assertion existed, and the
+suite went green. A flag in a YAML file recorded an intention and read as a fact. Now
+`ENFORCED_STAGES` is declared beside the tests that implement it and the YAML must agree.
+Mutation-tested eight ways, eight caught.
 
 ### TQ-55 — The Routing Decision Record
 
-**NEED (GREEN) · QUEUED · depends on TQ-53 · addendum 45 §26, §32, §45 Phase A**
+**NEED (GREEN) · QUEUED — next · depends on TQ-53 (done) · addendum 45 §26, §32,
+§45 Phase A**
 
 §26's fields, written from the first routing decision onward rather than added once there is
 traffic worth analysing — a log that starts late is a log with a hole in it exactly where the
