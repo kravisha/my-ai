@@ -110,11 +110,11 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from backend.db import Database, now_iso
-from gateway import holdings, portfolios
+from backend import holdings, portfolios
 
 # --- capabilities ------------------------------------------------------------------
 #
-# Closed vocabulary, fail-closed on an unknown one, matching gateway/portfolios.py.
+# Closed vocabulary, fail-closed on an unknown one, matching backend/portfolios.py.
 
 CAP_HOLDINGS = "holdings"
 CAP_ACCOUNTS = "accounts"

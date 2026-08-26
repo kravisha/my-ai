@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.db import Database
-from gateway import client_agent, clients, holdings, portfolios, roles
+from gateway import client_agent, clients, roles
 from gateway import scoreboard
 
 DB_PATH = Path(os.environ.get("GATEWAY_DB_PATH") or (Path(__file__).resolve().parent.parent / "gateway.db"))
@@ -76,23 +76,69 @@ def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
     scoreboard.init_schema(conn)
     conn.executescript(client_agent.SCHEMA)
-    # Portfolios before holdings: holdings are keyed by portfolio_id, and the
-    # migration below needs somewhere to put the portfolios it creates (TQ-44).
-    conn.executescript(portfolios.SCHEMA)
-    conn.executescript(holdings.SCHEMA)
     conn.executescript(clients.SCHEMA)
     _apply_additive_migrations(conn)
-    # Pre-TQ-44 holdings, moved into owned portfolios. Here rather than in
-    # backend/migrations.py because that pipeline backs up the backend's
-    # continuity domain, not gateway.db - see gateway/holdings.py and spec §10
-    # Q1. A no-op once it has run: it renames the legacy table away, so a second
-    # call finds nothing to do.
-    holdings.migrate_client_holdings(conn)
-    # The field rename to addendum 44 §3.4's names (TQ-45a). Fires only on a
-    # database that ran TQ-44 but not this one; detected by the old column still
-    # being present rather than by a version number that could disagree with the
-    # table it describes.
-    holdings.migrate_holding_field_names(conn)
+    # `portfolios` and `portfolio_holdings` are deliberately absent (TQ-69,
+    # §110), and their absence is a tested property rather than an omission -
+    # `test_the_gateway_holds_no_portfolio_table` asserts this function creates
+    # neither.
+    #
+    # Owner direction, 2026-08-26 (§109): the Gateway authenticates; the backend
+    # authorizes and holds business logic. Those two tables carry the ownership
+    # guard that authorizes every read of them, so they are business logic, and
+    # they now live in financial_intelligence.db where backend/fi_db.init_schema
+    # creates them. The Gateway reaches them over HTTP through
+    # gateway/portfolio_client.py.
+    #
+    # Creating them here again would be worse than useless: it would produce a
+    # second, empty portfolios table that nothing writes to and any future reader
+    # might. Two sources of truth for whose money this is, which is the failure
+    # TQ-44 existed to prevent (spec Risk 2).
+    #
+    # The two pre-TQ-69 migrations that used to run here (TQ-44's move into owned
+    # portfolios and TQ-45a's field rename) have not been deleted. They now run
+    # from backend/portfolio_migration.py, against this database, immediately
+    # before its rows are copied to the backend - a database still at the old
+    # shape has to reach the current one before it can be moved, or the move
+    # carries columns that mean something different.
+    _refuse_unmigrated_portfolios(conn)
+
+
+UNMIGRATED_PORTFOLIOS = (
+    "this gateway.db still holds a 'portfolios' table, which means TQ-69's move to the "
+    "backend has not been run against it. Refusing to start.\n\n"
+    "Run it (against copies first):\n"
+    "    python -m backend.portfolio_migration\n\n"
+    "Starting anyway would be worse than this refusal. The Gateway no longer reads that "
+    "table - it asks the backend - so every client would be given a brand-new empty "
+    "portfolio while their real one sat here unreachable. They would then record holdings "
+    "into the new one, and a migration run afterwards would restore the old portfolio as "
+    "the older 'primary', quietly hiding everything recorded in between. Two portfolios "
+    "for one person in two databases is exactly what TQ-44 exists to prevent."
+)
+
+
+def _refuse_unmigrated_portfolios(conn: Database) -> None:
+    """Fail closed on a database that predates TQ-69 (§110).
+
+    A one-time condition with a one-line fix, and it is a refusal rather than a
+    warning because the failure it prevents does not look like a failure. An
+    un-migrated client is not shown an error; they are shown an **empty
+    portfolio**, which reads as a working system with nothing in it - the same
+    shape as §100's clean-report-that-was-not-true, arriving from the other
+    direction.
+
+    Checked on the live table only. `portfolios_pre69` is the archive a completed
+    migration leaves behind, and finding it here is the normal, migrated state."""
+    if conn.fetchone(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'portfolios'"
+    ) is not None:
+        raise UnmigratedGatewayDatabase(UNMIGRATED_PORTFOLIOS)
+
+
+class UnmigratedGatewayDatabase(RuntimeError):
+    """This gateway.db has not had TQ-69's move run against it, and starting
+    would silently give every client an empty portfolio."""
 
 
 # Columns added after a database already existed. Additive only, matching the

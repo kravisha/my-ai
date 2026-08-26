@@ -100,7 +100,7 @@ from __future__ import annotations
 
 from backend.db import Database, now_iso
 from backend.reference_data import ASSET_CLASSES as _HOUSE_ASSET_CLASSES
-from gateway import portfolios
+from backend import portfolios
 
 SCHEMA_VERSION = 2
 
@@ -459,13 +459,23 @@ def concentration(positions) -> dict:
 #
 # The dangerous part of TQ-44: it moves real client holdings between tables.
 #
-# It lives here, called from gateway/store.init_schema, rather than in
-# backend/migrations.py. That pipeline's step 2 backs up the *backend's*
-# continuity domain, so registering a Gateway store would have it announce
-# "backed up before migrating" while the file being migrated was not in the
-# backup - a false safety claim at the exact moment §23's ordering is supposed to
-# be true. The safety is supplied locally instead: one transaction, and counts
-# verified before anything is renamed.
+# It used to be called from gateway/store.init_schema. Since TQ-69 (§110) it is
+# called from backend/portfolio_migration.py instead, and it is called against
+# the **source** database - the Gateway's - as the first two steps of the move
+# into this one. Both migrations reshape a database that is on its way here; they
+# have to run before it is copied, because a copy of the wrong shape is a
+# migration that changed what somebody's holdings mean.
+#
+# The safety is still supplied locally rather than by backend/migrations.py: one
+# transaction, and counts verified before anything is renamed. That pipeline's
+# step 2 backs up the backend's continuity domain, and gateway.db is not in it -
+# registering a Gateway store there would announce "backed up before migrating"
+# about a file the backup does not contain, which is a false safety claim at the
+# exact moment §23's ordering is supposed to be true.
+#
+# These two take a connection, and always did. Nothing about them assumes which
+# file it points at, which is what makes running them from the other side of the
+# move a relocation of the *call* rather than a rewrite of the migration.
 
 LEGACY_TABLE = "client_holdings"
 LEGACY_ARCHIVE = "client_holdings_legacy"
@@ -575,10 +585,10 @@ def migrate_client_holdings(conn: Database) -> dict:
 # The second migration in this file, and much smaller than the first: it moves
 # `portfolio_holdings` from TQ-44's column names to addendum 44 §3.4's.
 #
-# Same place and same reasoning as the first (spec §10 Q1 of TQ-44):
-# backend/migrations.py backs up the backend's continuity domain, not gateway.db,
-# so registering a Gateway store there would announce a backup that did not
-# contain the file being migrated.
+# Same place, same caller and same reasoning as the first: run by
+# backend/portfolio_migration.py against the source database before it is copied
+# (TQ-69, §110), and kept out of backend/migrations.py because that pipeline's
+# backup does not contain gateway.db.
 #
 # SQLite can ALTER TABLE ... RENAME COLUMN, which is tempting and deliberately
 # not used: four separate renames cannot be made atomic with the verification

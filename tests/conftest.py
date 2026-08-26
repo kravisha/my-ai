@@ -38,6 +38,7 @@ by construction; pytest_sessionfinish below proves it stayed closed - see its
 docstring for why all three layers are worth having.
 """
 
+import json
 import hashlib
 import os
 import shutil
@@ -100,6 +101,7 @@ import bcrypt
 import pytest
 from openpyxl import Workbook
 
+from app import gateway_auth
 from app import permissions as permissions_module
 from app.audit import AuditLog
 from app.permissions import PermissionManager
@@ -376,6 +378,111 @@ def panel_client(panel_conn, tmp_path):
         yield TestClient(backend_main.app)
     finally:
         backend_main.app.dependency_overrides.clear()
+
+
+# The backend account the Gateway logs in with, for tests (TQ-69, §110).
+#
+# Hashed once at conftest import, for the same reason GATEWAY_TEST_PASSWORD_HASH
+# is: bcrypt is deliberately slow, which is the point of using it and a waste of
+# several seconds across a suite that logs the Gateway in dozens of times.
+#
+# Written straight into a UserStore's JSON rather than through `register`, so the
+# cost is one hash for the whole session rather than one per test.
+GATEWAY_BACKEND_USER = "gateway-service"
+GATEWAY_BACKEND_PASSWORD = "gateway-service-password"
+_GATEWAY_BACKEND_HASH = bcrypt.hashpw(
+    GATEWAY_BACKEND_PASSWORD.encode("utf-8"), bcrypt.gensalt()
+).decode("ascii")
+
+
+@pytest.fixture
+def portfolio_conn(tmp_path):
+    """A backend database holding the portfolio subsystem's tables (TQ-69, §110).
+
+    File-backed rather than in-memory, like `panel_conn` and for the same reason:
+    the routes open their own connection through a dependency, so a test that
+    wants to see what a route wrote has to share a *file* with it rather than a
+    connection. A second connection to ":memory:" is a different, empty
+    database."""
+    connection = fi_db.get_connection(tmp_path / "portfolios-fi.db")
+    fi_db.init_schema(connection)
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+def portfolio_backend(tmp_path, monkeypatch, portfolio_conn):
+    """A TestClient over the real backend application, configured so the Gateway
+    can log into it.
+
+    The whole point of TQ-69 is that a client's holdings pass a **backend**
+    authorization check, so the tests that matter have to reach the real routes,
+    the real `require_gateway` and the real `/auth/login`. A stand-in for any of
+    those would be a test of this fixture.
+
+    `MY_AI_ADMIN_USERS` names the same account deliberately: in production the
+    Gateway's backend user must be an admin to read `/admin`, and
+    `/admin/portfolios/simulated` is on that surface. The two gates stay separate
+    in the code (see `require_gateway`); this just reproduces the real
+    configuration rather than a convenient one."""
+    from fastapi.testclient import TestClient
+
+    import backend.main as backend_main
+
+    users_path = tmp_path / "backend-users.json"
+    users_path.write_text(json.dumps({
+        GATEWAY_BACKEND_USER: {"password_hash": _GATEWAY_BACKEND_HASH,
+                               "created_at": "2026-08-26T00:00:00+00:00"},
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(backend_main, "users", UserStore(path=users_path))
+    monkeypatch.setattr(backend_main, "sessions",
+                        SessionStore(path=tmp_path / "backend-sessions.json"))
+    monkeypatch.setenv(gateway_auth.GATEWAY_USER_ENV, GATEWAY_BACKEND_USER)
+    monkeypatch.setenv("GATEWAY_BACKEND_PASSWORD", GATEWAY_BACKEND_PASSWORD)
+    monkeypatch.setenv("MY_AI_ADMIN_USERS", GATEWAY_BACKEND_USER)
+
+    def _portfolio_db():
+        connection = fi_db.get_connection(tmp_path / "portfolios-fi.db")
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    backend_main.app.dependency_overrides[backend_main.panel_db] = _portfolio_db
+    try:
+        yield TestClient(backend_main.app)
+    finally:
+        backend_main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def portfolios_client(portfolio_backend):
+    """A `gateway.portfolio_client.PortfolioClient` speaking to that backend.
+
+    This is the fixture the headline test of TQ-69 uses: addendum 44 §15.5's
+    permanent regression, run from the Gateway's side, through the real client,
+    against the real backend routes. Everything in between is the thing under
+    test, which is why none of it is faked."""
+    from gateway import portfolio_client
+
+    def transport(method, path, *, params=None, json=None, token=None):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        response = portfolio_backend.request(
+            method, path, params=params, json=json, headers=headers)
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {}
+
+    # The module-level client is a process-wide singleton, so a test that left
+    # one behind would hand the next test a session against a database that no
+    # longer exists.
+    portfolio_client.reset()
+    try:
+        yield portfolio_client.PortfolioClient(transport=transport)
+    finally:
+        portfolio_client.reset()
 
 
 # The Gateway's Super User credential for tests. Hashed once at conftest import
