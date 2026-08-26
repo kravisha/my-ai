@@ -901,9 +901,53 @@ which is real and worth having. It is not *never seen*, and writing it down the 
 the error §110 §4.3 refused when it declined to claim the portfolio move defended against a
 compromised Gateway.
 
+**The product is the consolidation** (§112). *"Client needs consolidated portfolio analysis that
+is usually not provided by discount brokers."* A broker can already show a client their own
+account; several sources in one view is the thing being sold. So every interface here takes
+**sources, plural**, from the first line — a design that fits one account and grows a list later is
+the one that quietly assumes single-source everywhere nobody is looking. Reconciliation is core
+rather than polish: the same security at two brokers is one position, and addendum 9 §3 asked for
+exactly that reconciliation long before addendum 44 was written.
+
+**The first question, and it must be answered before any valuation is computed** (§112): *"analysis
+based on current market conditions"* — where does a current price come from? §96 refused market
+value and §101 kept `is_priced()` LIVE-only, both because *every price this organization can
+produce is simulated*. The proposal on the record is that prices arrive **with the fetched
+portfolio, from the client's own broker** — the client's own data, not this organization's output,
+which is what `MODE_LIVE` was reserved for and needs no rule change. If instead the system is to
+source market data itself, §96 and §101 must be reopened deliberately, because that *is* this
+organization producing a price.
+
 Blocked in practice on the same thing TQ-49/TQ-50 are — there is no external system to fetch from
 until the owner has broker API access — so the buildable half is the envelope, the request shape,
-and the analysis over supplied holdings, which `holdings.concentration` already does.
+the reconciliation across sources, and the analysis over supplied holdings, which
+`holdings.concentration` already does.
+
+### TQ-74 — Scenario simulation over a consolidated external portfolio
+
+**WANT · QUEUED · depends on TQ-73 · owner direction 2026-08-26 (§112) · addendum 34, addendum 9 §5**
+
+Owner direction: *"We need to build advanced portfolio analysis tools that will do scenario analysis
+of consolidated external portfolios such as scenario simulation and analysis."*
+
+**The simulation engine already exists and has never had a consumer outside its own validation**
+(addendum 34, `simulation/`, mission control). This is the consumer, which is worth noticing: the
+engine was built against §14's maturity ladder and graded on its own outputs, and a real portfolio
+to run scenarios over is the first thing that makes it answer somebody's question rather than its
+own.
+
+Two rules must hold when they meet, and neither is new:
+
+- **A simulated scenario over a real portfolio carries its label everywhere it appears** (§77's
+  `SIMULATED_NOTICE`, addendum 25). A what-if about somebody's real money that loses its label on
+  the way to a screen is the failure this project has guarded against since §70.
+- **Scenario output is not a price.** `is_priced` governs what a position is worth *now*; a scenario
+  says what it might be worth under stated assumptions. Keeping those apart is what stops a stress
+  test from quietly becoming a valuation.
+
+Addendum 9 §5 defers the detail this will need — Greeks, scenario analysis, stress testing,
+correlations, factor exposures, risk limits — and says so explicitly, so this entry is where that
+deferred list gets picked up rather than a new direction.
 
 ### TQ-70 — Three identity populations, and whether any two of them are one
 
@@ -962,10 +1006,16 @@ forwarding holdings to an external model (its §11 Q2, measured). What changed u
 where the holdings come from — §111 says the system stores none, so migrating
 `data/portfolio.xlsx` *into* a table is now the wrong direction.
 
-**One question it inherits and cannot answer alone:** the owner said portfolios are the *clients'*
-property and the system analyses their *external* portfolios. Krish is not a client. Whether the
-operator's own portfolio is also fetched-not-stored, or stays a local file read on demand, decides
-whether this increment has a subject at all.
+**That question is answered** (§112). Owner, 2026-08-26: *"my portfolio is also external, fetched
+not stored."* So `data/portfolio.xlsx` is migrated nowhere — it is a **source**, one the operator
+maintains by hand, fetched and analysed like any other. The Superuser stops being a special case in
+the data model and stays one only in authorization, which is what addendum 44 §4 actually asked
+for: *"never exposed through normal client-facing Gateway paths"* is a routing rule, and it
+survives the storage going away untouched.
+
+What is left of this increment is therefore the half that was always right — retiring the ownerless
+retrieval — with the operator as the **first real test of the §112 workflow**: a client with an
+external source, supplied per request, stored nowhere.
 
 The work already on the branch that survives regardless: the owner argument on `retrieve_portfolio`
 and `execute_tool`, `for_superuser` requiring a resolved id, the `superuser` pseudo-login and

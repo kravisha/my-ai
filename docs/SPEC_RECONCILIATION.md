@@ -9493,10 +9493,55 @@ the owner has now restated:
 Nothing in addendum 9 stores anything. The lifecycle is request → analyse →
 report → exit.
 
-Addendum 44 (2026-08-26) then specified the opposite: *"Every client must have
-their own portfolio and holdings"*, *"The Superuser portfolio must be **stored**
-and handled separately"*, §3.5's portfolio snapshots *"so analysis can be
-reproduced"*, §4.2's *"Separate storage path"*, and a data model of tables.
+Addendum 44 (2026-08-26) then appeared to specify the opposite: *"Every client
+must have their own portfolio and holdings"*, *"The Superuser portfolio must be
+**stored** and handled separately"*, §3.5's portfolio snapshots *"so analysis can
+be reproduced"*, §4.2's *"Separate storage path"*, and a data model of tables.
+
+> **Corrected 2026-08-26, same day, on the owner's challenge:** *"not sure if the
+> wording says store client processed data."*
+>
+> **They were right, and the paragraph above is wrong.** It is kept rather than
+> rewritten, because the mistake it makes is the one this record exists to warn
+> about, and a corrected version that hid it would teach nothing.
+>
+> Addendum 44 was re-read word by word. **The word "stored" appears exactly once
+> about a portfolio, and it is about the Superuser's**: *"The Superuser portfolio
+> must be stored and handled separately from all client portfolios."* About
+> clients it says *"Every client must **have** their own portfolio and
+> holdings"* — and "have" is satisfied completely by a per-request consolidated
+> view. Read in context it is plainly an isolation requirement, not a persistence
+> one: it sits in a list §1 introduces as *"The central design requirement is
+> strict ownership isolation"*, between two other isolation clauses.
+>
+> The rest is permissive where it was read as mandatory:
+>
+> - §3.5 — a snapshot *"**should** be supported"*, and its suggested fields are
+>   `snapshot_timestamp`, `source`, `payload_hash`. **A hash is not the holdings.**
+>   That is proof of what was analysed rather than a copy of it, which is very
+>   nearly the opposite of storing a portfolio.
+> - §4.2 — *"The implementation **may** use the same database, but ownership must
+>   remain structurally explicit and query-isolated."* A rule about *if* you
+>   store, not an instruction to.
+> - §3.6 — the brokerage connection carries a `credential_reference`, and
+>   *"Tokens and secrets must not be stored directly in ordinary portfolio rows."*
+>   A reference, not a credential — already consistent with credentials living
+>   client-side.
+>
+> **So the conflict with addendum 9 was manufactured by the implementation, not
+> inherited from the specifications.** §99 read a suggested data model as a
+> mandate and built custody; addendum 44 asked for isolation and offered fields
+> in case you stored anything.
+>
+> That is a worse finding than the one first recorded here, and a more useful
+> one. Two specifications disagreeing is bad luck that a careful reader catches.
+> **A specification that suggests fields being read as a specification that
+> requires tables is a failure mode no amount of re-reading the new document
+> would have caught** — because the document was never the problem. What was
+> missing is the question §111 already added to the intake step, asked the other
+> way round: not only *which existing addendum covers this subject*, but *which
+> sentence in the new one is a requirement, and which is a suggestion I am about
+> to promote into one.*
 
 **§97 assimilated addendum 44 and checked it against §96's already-built code —
 never against addendum 9.** That is the miss. Every canonical document in this
@@ -9521,7 +9566,9 @@ that implementation was supposed to be following.
 So the rule this project needed, and now has: **when a new addendum covers a
 subject an existing canonical addendum already covers, the reconciliation is
 against the addendum, not against the build.** `docs/README.md`'s assimilation
-step gets that sentence.
+step gets that sentence — and, after the correction above, a second one:
+**"suggested fields" are not a schema, and a `must` is not a `may`.** Both go in
+the reconciliation record, whether or not they turn up a conflict.
 
 ### Nothing was stored, and that is luck rather than judgment
 
@@ -9605,3 +9652,139 @@ already protects the wire. Envelope encryption on top of it protects against the
 server's *own* logs, crash dumps and disk — which is exactly the threat this
 architecture cares about — but only if the key is not sitting beside the payload.
 That is a design decision, not a detail, and it is TQ-73's.
+
+---
+
+## §112 — What the product actually is: consolidated analysis of external portfolios (2026-08-26)
+
+Owner direction, 2026-08-26, stated as a workflow:
+
+> *"Client has portfolio(s) with external sources. Client needs consolidated
+> portfolio analysis that is usually not provided by discount brokers. Client
+> provides credentials and sources and the system extracts the portfolio data,
+> does analysis based on current market conditions. We need to build advanced
+> portfolio analysis tools that will do scenario analysis of consolidated
+> external portfolios such as scenario simulation and analysis."*
+
+And, closing §111's open question:
+
+> *"my portfolio is also external, fetched not stored."*
+
+§111 recorded what the system must **not** do. This records what it is **for**,
+which turns out to be the more useful half — several decisions that looked
+arbitrary now have an obvious answer, and one that looked settled turns out to
+conflict.
+
+### The value proposition, and it is a constraint
+
+*"Consolidated portfolio analysis that is usually not provided by discount
+brokers."* A broker can already show a client their own account. **The product is
+the consolidation** — several sources, one view — and everything downstream
+follows from that being the point rather than a convenience:
+
+- **One source is the degenerate case, not the normal one.** Every interface here
+  should take *sources*, plural, from the start. A design that fits one account
+  and grows a list later is the design that quietly assumes single-source
+  everywhere it is not looking.
+- **Reconciliation is the hard part and it is core, not polish.** The same
+  security held at two brokers is one position; the same ticker in a taxable
+  account and an IRA is two lots of one exposure. Addendum 9 §3 already asks for
+  exactly this — *"Normalize and reconcile positions sufficiently to analyze the
+  portfolio as a whole. Combine duplicate or overlapping exposures where
+  appropriate"* — which is more evidence that addendum 9 always described this
+  product and addendum 44 was an isolation specification laid over it.
+- **Consolidation makes cross-client contamination worse, not better.** §111
+  already moved isolation from "whose stored row is this" to "whose context is
+  this agent holding". A consolidating analyser holds *several* portfolios in
+  memory at once by design, so the failure mode is no longer hypothetical
+  plumbing — it is the normal shape of the work.
+
+### The Superuser portfolio is external too
+
+*"my portfolio is also external, fetched not stored."* That settles TQ-46's
+inherited question and simplifies it: `data/portfolio.xlsx` is not migrated
+anywhere. It is a **source** — one the operator happens to maintain by hand — and
+it is fetched and analysed like any other.
+
+Which makes the operator the system's first and most convenient test of the real
+workflow: a client with an external source, supplying it per request, storing
+nothing. **The Superuser stops being a special case in the data model and becomes
+a special case only in authorization**, which is what addendum 44 §4 actually
+asked for — *"never exposed through normal client-facing Gateway paths"* is a
+routing rule, and it survives the storage going away untouched.
+
+### The conflict this creates, recorded rather than resolved
+
+*"does analysis based on current market conditions."*
+
+**This system has no real market prices.** §96 refused market value outright, and
+§101 kept `is_priced()` to `LIVE` only, both for the same recorded reason: *every
+price this organization can produce is simulated (addendum 25), and applying it to
+a client's real positions would present synthetic output as real.* "Analysis
+based on current market conditions" cannot be built on a simulated price without
+breaking that rule.
+
+**This is exactly the kind of conflict §111 was written about, so it is being
+recorded and not quietly resolved.** There is a resolution that looks right, and
+it is a proposal rather than a decision:
+
+> The prices arrive **with the fetched portfolio, from the client's own broker**.
+> They are the client's own data — real, current, and not this organization's
+> output — so presenting them is not presenting simulated data as real. The
+> distinction §101 drew was never "no prices"; it was "none of *ours*", and
+> `MODE_LIVE` was reserved for precisely this.
+
+If that is right, `is_priced` needs no change at all and the rule holds as
+written. If the intent is instead that the system sources market data itself —
+a vendor feed, an index, its own marks — then §96 and §101 have to be reopened
+deliberately, because that *is* this organization producing a price. **Which one
+is TQ-73's first question, and it must be answered before any valuation is
+computed.**
+
+### Scenario simulation is a bridge to something already built
+
+*"scenario analysis of consolidated external portfolios such as scenario
+simulation and analysis."*
+
+The simulation engine exists (addendum 34, `simulation/`, mission control) and
+has never had a consumer outside its own validation. This is the consumer. Two
+things must be true when they meet, and both are already rules here rather than
+new ones:
+
+- **A simulated scenario over a real portfolio must be labelled everywhere it
+  appears** (§77's `SIMULATED_NOTICE`, addendum 25). A scenario result is a
+  *what-if*, and a what-if about somebody's real money that loses its label on the
+  way to a screen is the failure this project has guarded against since §70.
+- **Scenario output is not a price.** `is_priced` governs what a position is worth
+  *now*; a scenario says what it might be worth under stated assumptions. Keeping
+  those apart is what stops a stress test from quietly becoming a valuation.
+
+### One person, and it is worth writing down that they are one
+
+Reaffirmed by the owner the same day:
+
+> *"The person building and architecting this system is the owner of the system
+> and also the superuser."*
+
+Builder, architect, owner, Superuser — **one identity, not four roles that happen
+to be held by the same person today.** That is the fact §97 was circling when it
+recorded a three-way vocabulary collision between the Server Superuser
+(`app/server_auth.py`), the Gateway Super User (`gateway/auth.py`) and
+`ROLE_OPERATOR`, and it is why the collision has never actually hurt: all three
+have always been Krish.
+
+It has not hurt *yet*. Three credentials for one person is still three places a
+password can be wrong, and the owner has separately asked for **one place where
+the id is defined** — which stays open, along with the question of whether
+collapsing them costs the Gateway its ability to let the operator in while the
+backend is down (addendum 16 §23). TQ-70 owns it.
+
+What this does settle for §112's purposes: when the owner says *"my portfolio"*,
+that is the Superuser portfolio, and it is external and fetched like everybody
+else's. There is no fourth party whose portfolio the system might have meant.
+
+### What this does not change
+
+**§111 stands.** Nothing about the portfolio is stored server-side, including the
+operator's. Consolidation happens in memory, for the life of a request, and the
+report is the only thing that leaves.
