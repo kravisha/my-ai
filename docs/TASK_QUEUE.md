@@ -67,7 +67,8 @@ holds the queue, not the record.
 > ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
 > status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
 > **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
+> hardware answers. **TQ-55 is done** (§106) — every routing decision is logged from the
+> first one, and it already detects §36 privacy misrouting. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
 > provisional, and `routing` now stands on the `seeded_leaderboard` rung. **TQ-53 is done**
 > (§104) — the task signature, the eight categories and the
 > complexity and privacy vocabularies, with four collisions against existing house vocabularies
@@ -959,8 +960,8 @@ Mutation-tested eight ways, eight caught.
 
 ### TQ-55 — The Routing Decision Record
 
-**NEED (GREEN) · QUEUED — next · depends on TQ-53 (done) · addendum 45 §26, §32,
-§45 Phase A**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §106) · depends on TQ-53 (done) ·
+addendum 45 §26, §32, §45 Phase A**
 
 §26's fields, written from the first routing decision onward rather than added once there is
 traffic worth analysing — a log that starts late is a log with a hole in it exactly where the
@@ -970,9 +971,22 @@ Records the decision *and* its outcome: estimated versus actual cost and latency
 result, quality score, `was_escalation_worthwhile`. That last field is the one the whole lineage
 is for.
 
+**Done** (§106), as `app/routing_decisions.py`, sharing `model_performance.db` with the
+leaderboards — §26's outcome fields are the same facts that feed `record_outcome`, so `complete()`
+is the single write path that closes the log and scores the tally. §26's four duplicated fields are
+derived from the stored signature rather than re-stored; `risk_level` turned out to be the **third**
+name in this codebase for one fact (`criticality`, `error_cost`, `risk_level`) and reads off the
+signature rather than adding a column.
+
+Running §25's own portfolio-analysis example found a **§36 violation nothing would have noticed**:
+a `LOCAL_ONLY` step escalated to an external model and the log recorded it silently. `privacy_
+violation` is now derived on read and counted in `summary()` — §41's `PRIVACY_MISROUTING`,
+detected here and prevented in TQ-60. Detection, never refusal: a log that would not record a
+violation hides what it exists to reveal. Mutation-tested eight ways, eight caught.
+
 ### TQ-56 — `LocalAIService`: the interface and its conformance suite, with nothing behind it
 
-**NEED (GREEN) · QUEUED · depends on TQ-53 · addendum 45 §4, §45 Phase A**
+**NEED (GREEN) · QUEUED — next · depends on TQ-53 (done) · addendum 45 §4, §45 Phase A**
 
 §4's interface, built the way TQ-45b built `PortfolioProvider` (§101) — because that increment
 just proved the pattern and found a real hole in it by attacking it.
