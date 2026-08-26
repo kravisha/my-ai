@@ -67,7 +67,9 @@ holds the queue, not the record.
 > ladder whose rungs each carry a tripwire, `preferred_model` has a planned handover to seed
 > status, and the two registries are split by writer. Next is **TQ-52** (the candidate survey) or
 > **TQ-53** (the task signature and vocabularies) — independent of each other, and TQ-53 needs no
-> hardware answers. **TQ-56 is done** (§107) — the interface local intelligence will arrive
+> hardware answers. **TQ-59 is done** (§108) — the deterministic-first check and the
+> escalation decision, including the live refusal of `LOCAL_ONLY` work with no local model.
+> **TQ-56 is done** (§107) — the interface local intelligence will arrive
 > behind, with nothing behind it yet. **TQ-55 is done** (§106) — every routing decision is logged from the
 > first one, and it already detects §36 privacy misrouting. **TQ-54 is done** (§105) — the eight leaderboards exist, seeded and
 > provisional, and `routing` now stands on the `seeded_leaderboard` rung. **TQ-53 is done**
@@ -1048,7 +1050,8 @@ A new model enters as a **challenger, not as a leader** (§34), whatever anybody
 
 ### TQ-59 — The deterministic-first check, and the capability/escalation decision
 
-**NEED (GREEN) · QUEUED · depends on TQ-53, TQ-54 · addendum 45 §3, §16, §17, §19, §45 Phase D**
+**NEED (GREEN) · DONE 2026-08-26 (`SPEC_RECONCILIATION.md` §108) · depends on TQ-53 (done),
+TQ-54 (done) · addendum 45 §3, §16, §17, §19, §45 Phase D**
 
 §3 is explicit that these are **two decisions that must not be conflated**, so they are two
 entries. This is the first: *can this be done without a model at all, and if a model is needed, is
@@ -1061,10 +1064,27 @@ The escalation decision is itself an intelligent task with its own leaderboard
 (`CAPABILITY_AND_ESCALATION_DECISION`, §17), and the model best at making it may not be the model
 best at doing the work. That is the point of giving it a category rather than a constant.
 
+**Done** (§108), as `app/capability.py`. The useful discovery: **this project was already doing
+§19 in four places** without a name for it — `holdings.concentration`, the Explorer's IV-surface
+detector, the ARB-* detectors, and slot allocation. `DETERMINISTIC_CAPABILITIES` records that
+practice rather than imposing a new constraint, with each entry's `code_ref` asserted against the
+filesystem.
+
+The live case it settles: **a `LOCAL_ONLY` task with no local model is REFUSED, not escalated.**
+Falling back externally would be helpful and would break the one rule §36 states without
+qualification. `PATH_REFUSED` is deliberately not an execution path — there is nothing to log when
+nothing ran — which closes §106's finding from the other end: TQ-55 could only *detect* a
+`LOCAL_ONLY` task that had already gone external; routed through this module that decision is
+never made.
+
+`forced` marks a constraint apart from a heuristic, so §17's leaderboard never scores a model for
+"getting right" a call privacy made for it. Mutation-tested nine ways, nine caught, including both
+privacy mutations.
+
 ### TQ-60 — Model selection, with policy and resource overrides
 
-**NEED (GREEN) · QUEUED · depends on TQ-54, TQ-59 · addendum 45 §9, §18, §24, §25, §35, §36,
-§45 Phase E**
+**NEED (GREEN) · QUEUED — next once a local model exists · depends on TQ-54 (done),
+TQ-59 (done) · addendum 45 §9, §18, §24, §25, §35, §36, §45 Phase E**
 
 §3's second decision: *which model?* Task signature to leaderboard to front-runner, with
 runner-up fallback and §9's override reasons.

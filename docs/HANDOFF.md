@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-56 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-59 complete)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -14,7 +14,7 @@ appended to — the history lives in `SPEC_RECONCILIATION.md` and in git.
 cd C:/Users/ADMIN/my-ai
 git log --oneline -5
 git status --porcelain --branch          # expect clean, synced with origin/master
-.venv/Scripts/python.exe -m pytest -q    # expect 2434 passed, 1 skipped, 5 deselected
+.venv/Scripts/python.exe -m pytest -q    # expect 2462 passed, 1 skipped, 5 deselected
 ```
 
 Use **`.venv/Scripts/python.exe`**, not bare `python` — the system Python has no
@@ -32,7 +32,7 @@ Then read, in order:
 
 ## 2. Where the project stands
 
-`master` plus this checkpoint, clean and pushed. Suite **2434 passing, 1
+`master` plus this checkpoint, clean and pushed. Suite **2462 passing, 1
 skipped**. The skip is deliberate: `none_single_model`'s tripwire stands down
 now that a later rung of the routing ladder governs. Nothing running; no
 orphaned processes.
@@ -93,7 +93,8 @@ Nine merged PRs, each with a `SPEC_RECONCILIATION` record:
 | §104 | **TQ-53** the vocabulary routing decides on | #52 |
 | §105 | **TQ-54** the competition, as data | #53 |
 | §106 | **TQ-55** every routing decision, and the violation it found | #54 |
-| §107 | **TQ-56** the interface local intelligence will arrive behind | this branch |
+| §107 | **TQ-56** the interface local intelligence will arrive behind | #55 |
+| §108 | **TQ-59** can this be done without a model, and if not is local enough | this branch |
 
 **TQ-44 final status: COMPLETE.** `gateway/portfolios.py` is the entity and the
 guard; holdings are re-keyed from `client_id` to `portfolio_id`; two clients
@@ -109,7 +110,7 @@ and recorded in its §11. Nothing outstanding.
 **Addendum 45 is assimilated** (§102) — local intelligence and competitive model
 routing, owner-supplied, queued as TQ-51 … TQ-68. Nothing built.
 
-**TQ-51, TQ-53, TQ-54, TQ-55 and TQ-56 are done** (§103–§107). Still one model and no
+**TQ-51, TQ-53, TQ-54, TQ-55, TQ-56 and TQ-59 are done** (§103–§108). Still one model and no
 model calls anywhere in the lineage. `routing` stands on **`seeded_leaderboard`**,
 the eight leaderboards exist seeded and provisional, and every routing decision
 is logged from the first one — including detection of §36 privacy misrouting,
@@ -117,8 +118,12 @@ which TQ-55 found by running §25's own example. `app/local_ai.py` is the
 interface local models will arrive behind, with an honest null implementation
 and a conformance suite already written.
 
+`app/capability.py` answers §3's first decision, and its live answer today is
+worth knowing: **a `LOCAL_ONLY` task that needs a model cannot be done at all**,
+because no local model is installed and §36 forbids the external fallback.
+
 **Every remaining entry in this lineage needs either hardware or the Inkling
-answer**, so TQ-52 is now the practical head of it.
+answer**, so TQ-52 is now the head of it with nothing else buildable ahead.
 
 **The other lineage is still open**: TQ-46 … TQ-50 (the rest of addendum 44).
 Neither blocks the other. See §7.
@@ -215,7 +220,12 @@ Each cost something to learn. Reversing one silently would undo real work.
     `conftest.executable_source()`; it strips every string literal. Three
     hand-rolled scanners were too crude before it existed (§101, §104, §107),
     each time with the module right and the test wrong.
-19. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+19. **A `LOCAL_ONLY` task with no local model is refused, never escalated**
+    (§108). Falling back to an external provider would be helpful and would
+    break the one rule §36 states without qualification. `PATH_REFUSED` is
+    deliberately not an execution path — there is nothing to log when nothing
+    ran. This is live today, because no local model is installed.
+20. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
     priced (spec §11 Q2). A cash balance is not a price — it is a quantity
     somebody holds, not a valuation — which is why `get_balances` may exist
     without widening the rule.
@@ -227,9 +237,8 @@ Each cost something to learn. Reversing one silently would undo real work.
 | Task | Status |
 |---|---|
 | **TQ-52** — candidate survey: what can run on this machine | **next** — blocked on the Inkling answer |
-| **TQ-59** — deterministic check + escalation decision | buildable now, needs no hardware |
-| TQ-51 / TQ-53 / TQ-54 / TQ-55 / TQ-56 — ladder, vocabulary, leaderboards, decision log, service | **DONE** §103–§107 |
-| TQ-57 … TQ-68 — local intelligence + competitive model routing | queued (§102) |
+| TQ-51 / TQ-53 / TQ-54 / TQ-55 / TQ-56 / TQ-59 — ladder, vocabulary, leaderboards, decision log, service, escalation | **DONE** §103–§108 |
+| TQ-57 / TQ-58 / TQ-60 … TQ-68 — the rest of the lineage | queued (§102), all behind hardware |
 | TQ-46 … TQ-50 — the rest of addendum 44 | queued, needs a spec |
 | TQ-45 — the provider abstraction | **DONE** §100 (45a), §101 (45b) |
 | TQ-47 — Superuser Portfolio tab | queued |
@@ -246,7 +255,7 @@ Full entries and reasoning in [`TASK_QUEUE.md`](TASK_QUEUE.md).
 
 ## 6. Open items and known issues
 
-TQ-52 needs one owner answer — see §7. TQ-59 is buildable without it.
+TQ-52 needs one owner answer — see §7. Nothing else in the lineage is buildable ahead of it.
 
 1. **TQ-21 — verify the off-machine copy of `backup.key` actually decrypts.**
    Owner action, and the most worth raising: an untested backup is not a recovery
@@ -291,30 +300,34 @@ TQ-52 needs one owner answer — see §7. TQ-59 is buildable without it.
 
 ## 7. Exactly what to do next
 
-**The addendum 45 lineage has reached its hardware boundary.** TQ-51, TQ-53,
-TQ-54, TQ-55 and TQ-56 are done, and everything they built runs with no model
-behind it. What remains splits in two:
+**Answer one question, or switch lineages.** Six increments of addendum 45 are
+built (§103–§108) and every remaining entry needs hardware. There is nothing left
+in it that can be built without input.
 
-**Needs an owner answer — TQ-52.** What "Inkling" is. Addendum 45 §47 requires it
+**TQ-52 needs one owner answer: what "Inkling" is.** Addendum 45 §47 requires it
 as an initial local candidate alongside Llama and DeepSeek, and it is not
 identifiable as an open-weight local model. It has deliberately **not** been
 substituted with something similarly named — that was the available failure mode,
 the pool quietly becoming Llama + DeepSeek + a guess with §47 recorded as
-satisfied. The hardware half is already measured (§102): 8 GB VRAM, 16.5 GB RAM,
-365 GB free disk. Everything downstream — TQ-57's runtime, TQ-58's pool, TQ-61's
-challengers, TQ-63's competition — waits behind it.
+satisfied.
 
-**Buildable now — TQ-59.** The deterministic-first check and the
-capability/escalation decision (§3, §16, §17, §19). It needs no hardware: §19's
-*"AI should not be used merely because AI is available"* is the cheapest and most
-testable part of the whole lineage, and the escalation decision has its own
-leaderboard already seeded (§105). It can be built against
-`app/local_ai.available()`, which currently answers False — so the honest
-escalation decision today is *"local is not available, so escalate"*, and that
-is a real answer rather than a placeholder.
+Its honest outcomes are: it is a real local model and joins the pool; or it is
+something other than a local LLM and §47's requirement is renegotiated. Both are
+findings. The hardware half is already measured (§102): 8 GB VRAM, 16.5 GB RAM,
+365 GB free disk — enough for a pool of six on disk, one or two resident.
 
-**The other lineage is TQ-46 … TQ-50** (the rest of addendum 44), independent and
-still unspecified.
+Everything downstream queues behind it: TQ-57 (the runtime), TQ-58 (the pool),
+TQ-60 (model selection), TQ-61 (challengers), TQ-63 (the competition).
+
+**The other lineage is TQ-46 … TQ-50** — the rest of addendum 44: the Superuser
+ownership domain, its UI tab, snapshots and audit, the Schwab boundary. Fully
+independent of addendum 45, unspecified, and needing nothing but a decision to
+start. **TQ-46 also owns removing `app/tools/portfolio.py`'s missing owner
+argument** (addendum 44 §16.7).
+
+**And still open, unchanged all session: TQ-21** — verify the off-machine copy of
+`backup.key` actually decrypts. It is the only item where the downside is losing
+work rather than delaying it.
 
 Then: `git checkout -b <name>`, one increment, full suite green, a
 `SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.
