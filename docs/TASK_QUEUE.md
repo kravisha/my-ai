@@ -898,6 +898,61 @@ Three things must not be lost while the tables go:
   finding and becomes a requirement. The audit log, transcripts, status events and anything logging
   a tool result owe the same check.
 
+### TQ-78 — Consolidation: several sources, one view
+
+**NEED (GREEN) · IN PROGRESS 2026-08-27 · unblocked · addendum 9 §3, §112 · chosen ahead of TQ-73
+and TQ-76 (reasoning below)**
+
+Addendum 9 §3, canonical since August 2026 and never built:
+
+> *"Normalize and reconcile positions sufficiently to analyze the portfolio as a whole. Combine
+> duplicate or overlapping exposures where appropriate."*
+
+And §112, the owner stating what the product is:
+
+> *"Client needs consolidated portfolio analysis that is usually not provided by discount
+> brokers."*
+
+**A broker can already show a client their own account. The consolidation is the thing being
+sold**, and nothing in this system does it. Every caller handles exactly one source:
+`app/tools/portfolio.py`, `gateway/demo_clients.py` and the provider interface itself all take a
+`Source`, singular, and `holdings.concentration` takes one flat list in which the same security
+held at two brokers appears as two unrelated rows.
+
+### Why this, ahead of TQ-73 and TQ-76
+
+Both were offered as next. Both are blocked in ways their own entries do not name, and both
+**assume this exists**:
+
+- **TQ-73** is *"the credential envelope and the stateless fetch/analyse pipeline"*. Its envelope
+  waits on an unanswered design question (what the encryption defends against, §113); its fetch has
+  nothing to fetch from until the owner has broker API access; its valuation waits on TQ-75. What
+  is left that is buildable today is *"the reconciliation across sources"* — this entry. Its own
+  text says every interface must take **sources, plural, from the first line**.
+- **TQ-76** is the curriculum. §114 established that there is **no Portfolio Analyst agent** — a
+  curriculum with no student — and its grading dimensions begin *"did it reconcile two sources into
+  one position"*. It cannot grade behaviour that does not exist.
+
+So the shared prerequisite neither entry names is the reconciliation itself. Building it first means
+TQ-73's envelope has something to carry credentials *for*, and TQ-76 has a behaviour to grade.
+
+Chosen over the other shared prerequisite — the Portfolio Analyst agent — because an agent without
+consolidation is a wrapper around `concentration`, which `/chat` effectively already has. The agent
+is worth building once there is something worth tasking it with.
+
+### The decisions this increment has to make, and none of them is obvious
+
+- **What merges.** Two sources reporting `SYN1` are one position. Two sources *disagreeing about
+  its asset class* are not a merge, they are a conflict — and picking one would be the fabrication
+  §100 refused when it declined to map `EQUITY` to a house code.
+- **Whether a long at one broker and a short at another net to nothing.** Economically they offset;
+  reporting `0` would erase two real positions with two cost bases and different tax treatment.
+  §101's rule about shorts, one level up.
+- **How fresh a consolidated view is.** Its sources were fetched at different times, so it is
+  current as of **none of them**. §17: *do not silently claim it is current.*
+- **What happens when one source of several fails.** A partial consolidation presented as complete
+  is a portfolio missing an account, and the client cannot see which.
+
 ### TQ-73 — The credential envelope and the stateless fetch/analyse pipeline
 
 **NEED (ORANGE) · QUEUED · depends on TQ-72 · owner direction 2026-08-26 (§111) · addendum 9 §2,
