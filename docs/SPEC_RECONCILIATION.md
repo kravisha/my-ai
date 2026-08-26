@@ -9253,3 +9253,202 @@ them.
 
 **No exposure changes.** §50's preconditions stand. This is about which process
 owns which table, not about what is reachable from outside.
+
+---
+
+## §110 — The portfolio subsystem moves behind the backend (2026-08-26, TQ-69)
+
+§109's correction, built. `portfolios` and `portfolio_holdings`, the ownership
+guard, the holdings module and the provider abstraction move out of `gateway.db`
+and into `financial_intelligence.db`; the Gateway reaches them over HTTP through
+`gateway/portfolio_client.py`, the way `gateway/jarvis.py` already reaches
+`/admin`.
+
+Suite **2497 passing, 1 skipped**, up from 2462. Verified against a copy of a
+seeded database and then against both processes actually running, including the
+step where the backend is stopped underneath a live Gateway.
+
+### What the increment actually buys
+
+Before this, **the Gateway's ownership check was the only check**. There was no
+backend authorization to bypass, because there was no backend authorization.
+Now a client asking their representative for their holdings passes two: the
+Gateway's route-level capability gate, then `portfolios.resolve` in a different
+process.
+
+Stated so nobody overclaims it, and it is written into the test file as well as
+here: **this does not defend against a compromised Gateway**, which can assert
+any `owner_id` it likes. That is inherent to any on-behalf-of design. It defends
+against a *buggy* one — §93's conversation leak and §106's privacy-misrouting
+finding were both Gateway-side logic serving the wrong data, and neither had a
+second check to catch it. A false security claim is worse than an absent one.
+
+Nor does it weaken anything: a compromised Gateway previously *had the database*.
+
+### The decision that kept it small
+
+**The backend stores `owner_id` opaquely.** It compares `(owner_type, owner_id)`
+as strings and never learns what they name. The Gateway authenticates somebody
+and asserts a subject; the backend authorizes *that subject* against *that
+portfolio*.
+
+That is exactly the owner's division, and the alternative — reconciling
+`users.json` with the Gateway's `clients` table — is a much larger change that
+nothing here needed. It is now **TQ-70** rather than a footnote (spec §10 Q2).
+
+`require_gateway` (`app/gateway_auth.py`) is what makes an asserted subject safe
+to accept. It reads `GATEWAY_BACKEND_USER` — the same variable the Gateway logs
+in with, deliberately, because two variables naming one account is two models of
+one fact and the failure is quiet: the Gateway logging in as one account while
+the backend expects another produces a 403 on every portfolio call, which reads
+exactly like a permissions bug and is a typo.
+
+It is **not** folded into `require_admin`, though they name the same account
+today. They answer different questions, and collapsing them would mean adding
+an operator to `MY_AI_ADMIN_USERS` silently granted them every client's
+portfolio by asserting an owner.
+
+### The §10 questions, decided before any code
+
+- **Q1 — does the routing decision log move?** No, and the ten minutes were
+  spent rather than skipped. The question that decides it is not "is this module
+  about portfolios" but *does this table hold a second copy of client financial
+  data outside the guard*. `routing_decisions`' twenty-seven columns and
+  `task_signature`'s fifteen fields were read: every one is a classification of a
+  task, not its content. No symbol, no quantity, no owner id, no free-text
+  payload. Nothing to leave behind.
+- **Q2 — reconcile the three identity populations?** Not now, and **queued as
+  TQ-70**. Reconciling identity stores is a data migration over credentials; this
+  increment was already a data migration over client financial records, and two
+  at once means a wrong result cannot be attributed to either.
+- **Q3 — which id owns the SUPERUSER portfolio?** Flagged into TQ-46's spec as
+  its Q4, not settled here. This increment narrows the answer space to two — only
+  the Gateway and `/chat` can assert an owner — and names the consequence TQ-46
+  has to test for.
+
+### The migration, and why the ordering is the design
+
+It moves live client financial data between **databases**, so the usual safety —
+one transaction — is not available. Two files cannot be written atomically, so
+the ordering supplies what the transaction cannot:
+
+1. bring the source to the current shape (TQ-44's and TQ-45a's migrations, which
+   now run from `backend/portfolio_migration.py` against the Gateway's database),
+2. copy into the destination, inside the destination's transaction,
+3. **verify while the source is still intact**, and
+4. only then rename `portfolios` → `portfolios_pre69`.
+
+Step 3 before step 4 is the whole thing. A failure leaves the destination rolled
+back and the source untouched, which is what "nothing was changed" has to mean
+when a single commit cannot guarantee it.
+
+**Verification is by ownership, not by count.** Counts are the weakest of the
+three checks; the one that matters asserts every migrated portfolio is still
+reachable *by the owner it had*, through `portfolios.owned()`. A move that landed
+every row and swapped two owners would pass a count check perfectly, and it would
+be the worst possible outcome of the increment. `owned()` rather than `resolve()`
+deliberately: `resolve` refuses an archived portfolio, so verifying with it would
+either report a false failure or tempt somebody to skip archived rows and leave
+retired positions behind.
+
+### The Gateway refuses to start on an unmigrated database
+
+Not a warning — a refusal, and this is the reasoning worth keeping. An
+un-migrated client is **not shown an error**. The Gateway no longer reads that
+table, so `primary_for` would create them a brand-new empty portfolio while their
+real one sat unreachable in `gateway.db`. They would record holdings into the new
+one, and a migration run afterwards would restore the old portfolio as the
+*older* primary — quietly hiding everything recorded in between.
+
+That failure reads as a working system with nothing in it, which is §100's
+clean-report-that-was-not-true arriving from the other direction.
+
+### No cache, and the pre-launch check that says so
+
+Addendum 16 §23 wants the Gateway usable when an internal component is down, and
+that is why it has local storage at all. **The reasoning does not extend to
+money.** A conversation the Gateway cannot reach is an inconvenience; holdings it
+cannot reach must not be served from a stale copy, because showing somebody last
+week's positions as though they were current is the same class of wrong as
+serving a simulated price as a real one (§101).
+
+So `portfolio_client` raises rather than returning a value — `jarvis.py`'s
+`{"available": False}` shape is right for a status panel and wrong here, since an
+empty list reads as *you hold nothing*, a false answer about somebody's money in
+the voice of a true one.
+
+The sharpest version of that rule landed in `demo_clients.outstanding()`, which is
+what a pre-launch checklist calls. With the demo portfolios behind the backend it
+can now see only two of the three places demo data hides, so when it cannot ask it
+reports **not clean** and exits non-zero. Confirmed live: with the backend
+stopped, `python -m gateway.demo_clients status` says *"I could not check … treat
+this as unclean"* rather than *"No simulated client data is present."*
+
+### Two holes mutation-testing found, and one of them was in a test
+
+Twenty-six mutations across four rounds. The first round reported twelve of
+twelve caught, and **two of those catches were worthless**: one mutation did not
+import, and three ran under `-x` so what actually failed was whichever test came
+first in the file. Re-running without `-x` and attributing each catch to the test
+written for it found the two real defects:
+
+1. **`test_the_gateway_refuses_in_words_when_the_backend_is_unreachable` was
+   green against a mutation that deleted the refusal entirely.** It never set the
+   credentials, so `_call` refused as *unconfigured* before reaching the
+   transport — and the unconfigured message happens to contain the same two words
+   the test asserted. A test passing for the wrong reason, which no amount of
+   reading it would have shown.
+2. **The import tripwire matched the string `backend.portfolios` and missed
+   `from backend import portfolios`** — the ordinary spelling, and the one
+   somebody would actually write. It now reads the import graph with `ast` and is
+   checked against five spellings including a function-local import.
+
+That second one is the **fourth** time in this project a scanner has been wrong
+while the module it guarded was right (§101, §104, §107). The lesson has a
+sharper form now than "read code, not prose": *an import is a node in a tree, and
+matching how somebody happened to spell it is guessing.*
+
+The credit-the-right-test discipline is worth keeping as well. A tripwire credited
+with a catch it did not make is worse than no tripwire, because it is believed.
+
+### Run it and look — all three live steps
+
+Verified with `gateway.db` seeded by the **pre-TQ-69 code**, in a `git worktree`
+at the previous commit, and made harder than the happy path: an archived
+portfolio, a holding a client stated in conversation (so unflagged), and a
+SUPERUSER portfolio. Five portfolios, thirteen holdings.
+
+1. **Migrated a copy.** Every id, owner, `as_of` and flag identical, compared
+   row-by-row against the archived source rather than against a number typed into
+   the check. Each owner reached exactly their own — including avery's archived
+   one — and `resolve` refused every foreign id with the one refusal.
+2. **Both processes running.** Two demo clients logged into the real Gateway,
+   subjects resolved from their session rows, holdings fetched over real HTTP
+   through the real client against the real backend. No symbol appeared in both.
+   The backend refused a foreign owner even when the Gateway asked, and an
+   ordinary backend account was refused at `/portfolios` outright.
+3. **Backend stopped underneath a live Gateway.** The step spec Risk 3 says
+   nobody tests, done by killing the process rather than mocking a timeout. All
+   four holdings tools returned `{error, unavailable}` and **nothing else** — no
+   `holdings`, no `analysis`, no `balances`, no `recorded` — with the backend
+   named. The same client had been shown four positions ninety seconds earlier,
+   so "nothing to show" would have been demonstrably wrong rather than arguably
+   wrong.
+
+`gateway.db` ended with `portfolios_pre69` and `portfolio_holdings_pre69` and no
+live portfolio table. No orphaned processes; the real
+`financial_intelligence.db` and `users.json` untouched.
+
+### What is not done here
+
+**The other four drifted subsystems stay** — `client_agents`, `conversations`,
+`messages`, `scoreboard_items`, `scoreboard_notes` (§109, spec §4.1). Same
+category, same argument, nothing in the queue needs them.
+
+**Three legacy tables now accumulate in a fully-migrated `gateway.db`** —
+`client_holdings_legacy`, `portfolio_holdings_pre45`, and now the two `*_pre69`
+ones. Dropping them is a deliberate decision about tables holding client
+financial records, so it gets its own entry rather than continuing to happen
+quietly.
+
+**No exposure changes.** §50's preconditions stand.
