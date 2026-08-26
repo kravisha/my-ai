@@ -43,10 +43,11 @@ Work that is specified and queued but not yet built.
 
 | Specification | Queue entry | Status |
 |---|---|---|
+| [`specs/TQ-46_superuser_ownership_domain.md`](specs/TQ-46_superuser_ownership_domain.md) | TQ-46 | **SPECIFIED, next in the addendum 44 lineage.** The operator's portfolio gets an owner, in a domain no client query can reach, and the last ownerless retrieval is retired. One open question is the owner's: whether `retrieve_portfolio` is retired or re-owned. |
 | [`specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md) | TQ-45 | **BUILT** 2026-08-26 — 45a the canonical holding shape (`SPEC_RECONCILIATION.md` §100), 45b the provider abstraction and its conformance suite (§101). Kept because its §3 and §11 record decisions the code depends on. |
 | [`specs/TQ-44_portfolio_ownership_and_isolation.md`](specs/TQ-44_portfolio_ownership_and_isolation.md) | TQ-44 | **BUILT** 2026-08-26, `SPEC_RECONCILIATION.md` §99. Kept because its §3 and §10 record decisions the code depends on and must not have re-litigated. |
 
-**Two lineages are open and neither has a specification yet.** Addendum 44 generates TQ-46 through
+**Two lineages are open.** Addendum 44 generates TQ-46 through
 TQ-50 (the Superuser ownership domain and its tab, snapshots and audit, the Schwab boundary, and
 Schwab live — the last blocked on the owner obtaining API access). Addendum 45, assimilated
 2026-08-26 (`SPEC_RECONCILIATION.md` §102), generates TQ-51 through TQ-68 — local intelligence and

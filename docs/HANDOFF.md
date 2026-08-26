@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-26 (TQ-59 complete)
+# Handoff — checkpoint 2026-08-26 (TQ-59 complete; the Gateway boundary corrected)
 
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
@@ -225,7 +225,14 @@ Each cost something to learn. Reversing one silently would undo real work.
     break the one rule §36 states without qualification. `PATH_REFUSED` is
     deliberately not an execution path — there is nothing to log when nothing
     ran. This is live today, because no local model is installed.
-20. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
+20. **The Gateway authenticates; the backend authorizes and holds business
+    logic** (§109, owner direction 2026-08-26). `sessions` and `clients` are the
+    only two tables that belong in `gateway.db`. The Gateway reaches everything
+    else over HTTP, the way `gateway/jarvis.py` already reaches `/admin`.
+    Route-level capability gating **stays** at the Gateway and is not the drift
+    (addendum 17 §14, §92) — a door that refuses is not a door doing business
+    logic. TQ-69 corrects the portfolio half; the rest is recorded drift.
+21. **`is_priced()` is one line and LIVE-only.** A simulated portfolio is not
     priced (spec §11 Q2). A cash balance is not a price — it is a quantity
     somebody holds, not a valuation — which is why `get_balances` may exist
     without widening the rule.
@@ -279,7 +286,14 @@ TQ-52 needs one owner answer — see §7. Nothing else in the lineage is buildab
    after §100 found it was not. **They are keyed differently, which is what made
    that easy to get half-right**; anything else that sweeps them must handle both
    keys. Dropping them deliberately is worth a line in TQ-46.
-7. **`acquired_on` accepts prose.** A live agent stored `"last month"` there,
+7. **Five of nine `gateway.db` tables are business logic** (§109).
+   `client_agents`, `conversations`, `messages`, `scoreboard_items` and
+   `scoreboard_notes` belong backend-side under the corrected boundary, along
+   with `portfolios` and `portfolio_holdings` which TQ-69 moves. The other four
+   are **deliberately not queued** — moving four subsystems because one needed it
+   is how a boundary correction becomes a rewrite. They get entries when
+   something needs them.
+8. **`acquired_on` accepts prose.** A live agent stored `"last month"` there,
    which is what the client said rather than an invention, but a date column that
    takes free text is worth a decision. Predates TQ-45a; belongs with TQ-48's
    provenance work.
@@ -300,34 +314,38 @@ TQ-52 needs one owner answer — see §7. Nothing else in the lineage is buildab
 
 ## 7. Exactly what to do next
 
-**Answer one question, or switch lineages.** Six increments of addendum 45 are
-built (§103–§108) and every remaining entry needs hardware. There is nothing left
-in it that can be built without input.
+**TQ-69 — move the portfolio subsystem behind the backend.** Owner direction,
+2026-08-26 (§109): *"Gateway is for establishing identity — Gateway only does
+authentication. Back end does authorization and all business logic."*
 
-**TQ-52 needs one owner answer: what "Inkling" is.** Addendum 45 §47 requires it
-as an initial local candidate alongside Llama and DeepSeek, and it is not
-identifiable as an open-weight local model. It has deliberately **not** been
-substituted with something similarly named — that was the available failure mode,
-the pool quietly becoming Llama + DeepSeek + a guess with §47 recorded as
-satisfied.
+`portfolios` and `portfolio_holdings`, with the ownership guard that authorizes
+every read of them, are business logic sitting in the process specified to do
+none. **TQ-46 is blocked on this** — building a `SUPERUSER` domain into
+`gateway.db` and relocating it a week later is the mistake TQ-44 refused to make
+with the entity and its guard.
 
-Its honest outcomes are: it is a real local model and joins the pool; or it is
-something other than a local LLM and §47's requirement is renegotiated. Both are
-findings. The hardware half is already measured (§102): 8 GB VRAM, 16.5 GB RAM,
-365 GB free disk — enough for a pool of six on disk, one or two resident.
+It needs a specification first, the way TQ-44's, TQ-45's and TQ-46's were. Two
+questions the queue entry already names for it: whether the Gateway keeps a
+read-through cache (leaning no — stale holdings are worse than no holdings), and
+what happens to the other four drifted subsystems (leaning: nothing, until
+something needs them).
 
-Everything downstream queues behind it: TQ-57 (the runtime), TQ-58 (the pool),
-TQ-60 (model selection), TQ-61 (challengers), TQ-63 (the competition).
+**None of §96, §99, §100, §101 or §106 is wasted by this.** The guard, the
+canonical holding shape, the provider contract and the decision log are all
+correct and all portable. What moves is which process owns the table and which
+authorizes the call — and the guard gets *stronger*, because a Gateway request
+then passes a backend check it is currently the only check for.
 
-**The other lineage is TQ-46 … TQ-50** — the rest of addendum 44: the Superuser
-ownership domain, its UI tab, snapshots and audit, the Schwab boundary. Fully
-independent of addendum 45, unspecified, and needing nothing but a decision to
-start. **TQ-46 also owns removing `app/tools/portfolio.py`'s missing owner
-argument** (addendum 44 §16.7).
+**Then TQ-46**, whose spec is written and whose Q1 is decided (reading B: keep
+the capability, remove the ownerlessness). Under the corrected architecture that
+reading is cheap rather than expensive, and no consent machinery is deleted.
+
+**The addendum 45 lineage is at its hardware boundary** — six increments built
+(§103–§108), and everything remaining waits on **TQ-52: what "Inkling" is.**
 
 **And still open, unchanged all session: TQ-21** — verify the off-machine copy of
-`backup.key` actually decrypts. It is the only item where the downside is losing
-work rather than delaying it.
+`backup.key` actually decrypts. The only item where the downside is losing work
+rather than delaying it.
 
 Then: `git checkout -b <name>`, one increment, full suite green, a
 `SPEC_RECONCILIATION` §, the queue entry updated, and **run it and look**.
