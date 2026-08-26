@@ -749,8 +749,9 @@ long calls or protective puts, diversified plus cash — which needs `asset_clas
 
 ### TQ-69 — Move the portfolio subsystem behind the backend, where authorization lives
 
-**NEED (ORANGE) · QUEUED — blocks TQ-46 · owner direction 2026-08-26
-(`SPEC_RECONCILIATION.md` §109) · addendum 16 §7, addendum 40 §14**
+**NEED (ORANGE) · SPECIFIED — next · blocks TQ-46 · owner direction 2026-08-26
+(`SPEC_RECONCILIATION.md` §109) · addendum 16 §7, addendum 40 §14 ·
+spec: `docs/specs/TQ-69_portfolio_subsystem_behind_the_backend.md`**
 
 Owner direction: *"Gateway is for establishing identity — Gateway only does authentication. Back
 end does authorization and all business logic."*
@@ -786,6 +787,27 @@ Two things to settle before building, in the spec this entry needs:
 - **What happens to the client agent, conversations and the scoreboard?** Same category of drift
   (§109), deliberately not moved here. Moving four subsystems because one needed it is how a
   boundary correction becomes a rewrite.
+
+**Specified 2026-08-26.** Writing it turned up the thing that shapes the increment: **this system
+has three separate identity populations** — backend users (`users.json`), Gateway clients
+(`clients` in `gateway.db`), and environment credentials — and `gateway/auth.py` says the
+separation is deliberate. So "move portfolios to the backend" contains a question that is not
+about tables: whose id owns a portfolio once the owner and the store are in different processes.
+
+Decided: **the backend stores `owner_id` opaquely.** It never learns who Gateway clients are; the
+Gateway authenticates and asserts a subject, the backend authorizes that subject against that
+portfolio. That is exactly the owner's division, and it keeps the increment small — reconciling
+the three populations is a much larger change nothing here needs (spec §10 Q2).
+
+Stated so nobody overclaims it: **the move does not defend against a compromised Gateway**, which
+can assert any owner it likes. It defends against a *buggy* one — which is the failure this project
+has actually had twice, in §93's conversation leak and §106's privacy-misrouting finding, neither
+of which any second check existed to catch.
+
+A second find, which unblocks TQ-46 more cheaply than expected: `backend/main.py`'s `/chat` already
+resolves `username = Depends(get_current_user)` and hands it nowhere near `retrieve_portfolio`.
+§16.7's "ownerless retrieval" is not missing an identity mechanism — it is discarding one it
+already has.
 
 ### TQ-46 — The Superuser portfolio as its own ownership domain
 

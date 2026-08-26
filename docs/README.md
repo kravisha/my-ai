@@ -43,7 +43,8 @@ Work that is specified and queued but not yet built.
 
 | Specification | Queue entry | Status |
 |---|---|---|
-| [`specs/TQ-46_superuser_ownership_domain.md`](specs/TQ-46_superuser_ownership_domain.md) | TQ-46 | **SPECIFIED, next in the addendum 44 lineage.** The operator's portfolio gets an owner, in a domain no client query can reach, and the last ownerless retrieval is retired. One open question is the owner's: whether `retrieve_portfolio` is retired or re-owned. |
+| [`specs/TQ-69_portfolio_subsystem_behind_the_backend.md`](specs/TQ-69_portfolio_subsystem_behind_the_backend.md) | TQ-69 | **SPECIFIED, next.** Owner direction (§109): the Gateway authenticates, the backend authorizes and holds business logic. Moves the portfolio subsystem to the side of that line it belongs on, with the Gateway reaching it over HTTP. Blocks TQ-46. |
+| [`specs/TQ-46_superuser_ownership_domain.md`](specs/TQ-46_superuser_ownership_domain.md) | TQ-46 | **SPECIFIED, blocked on TQ-69.** The operator's portfolio gets an owner, in a domain no client query can reach, and the last ownerless retrieval is retired. One open question is the owner's: whether `retrieve_portfolio` is retired or re-owned. |
 | [`specs/TQ-45_portfolio_provider_abstraction.md`](specs/TQ-45_portfolio_provider_abstraction.md) | TQ-45 | **BUILT** 2026-08-26 — 45a the canonical holding shape (`SPEC_RECONCILIATION.md` §100), 45b the provider abstraction and its conformance suite (§101). Kept because its §3 and §11 record decisions the code depends on. |
 | [`specs/TQ-44_portfolio_ownership_and_isolation.md`](specs/TQ-44_portfolio_ownership_and_isolation.md) | TQ-44 | **BUILT** 2026-08-26, `SPEC_RECONCILIATION.md` §99. Kept because its §3 and §10 record decisions the code depends on and must not have re-litigated. |
 
