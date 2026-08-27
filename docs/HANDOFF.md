@@ -1,5 +1,17 @@
 # Handoff — checkpoint 2026-08-26 (TQ-69 merged)
 
+> ## ⚠ STALE — 2026-08-27
+>
+> **Read [`JARVIS.md`](JARVIS.md) instead.** This file describes a system that
+> has since changed, and parts of it are now *wrong* rather than merely old — it
+> says `financial_intelligence.db` holds `portfolios` and `portfolio_holdings`,
+> which TQ-72 deleted, and it names TQ-46 as the next task when TQ-46 is paused.
+>
+> Kept rather than rewritten on owner direction (2026-08-27: *"keep handoff for
+> later when we need to change sessions"*). It is rewritten at the next session
+> change; until then the living documentation is the current truth and this file
+> is history. See `SPEC_RECONCILIATION.md` §121, §122.
+
 Written for a session with **no memory of the conversation that produced this
 state**. Everything needed to continue is here or linked from here.
 

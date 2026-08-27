@@ -11055,3 +11055,156 @@ currently states in one place:
   built, what is in simulation, and what is only specified — because 47 §17's
   requirement is that *"an unfinished idea is not mistaken for an implemented
   capability."*
+
+## §122 — The living documentation, a name it corrected on the way out, and who may write it (2026-08-27, TQ-84)
+
+`docs/JARVIS.md` exists. The map addendum 47 §2 requires, and the artifact §121
+measured this repository against and found missing.
+
+### 1. Building it found a naming collision two sections old
+
+§120 renamed the organization's highest instrument to **the Charter**, to keep
+the word *Constitution* for the owner's document. Writing the glossary meant
+checking the word against the code, and `backend/charter.py` has meant something
+else since long before addendum 47 arrived:
+
+> *"What an agent is owed, and which mechanism owes it… every protection names
+> the mechanism that enforces it, and a test resolves every name."*
+
+Two meanings for one word is precisely what addendum 47 §5 forbids, and §120
+would have created it two days after the standard arrived.
+
+**Corrected: the organization's highest instrument is the Articles.** The term
+comes from company practice — articles of association, amendable by the members
+under an authority they do not themselves hold — which is the exact relationship
+32 §19 describes. *Charter* keeps its existing meaning: the agent charter.
+
+Worth noticing about the process rather than the name: **the collision was
+invisible while the decision lived only in prose.** §120 was reasoned carefully
+against three addenda and never against the codebase, which is the mirror image
+of §111's mistake — that one checked a specification against the code and not
+against the other specification. Both directions fail, and a map that names the
+code beside the concepts is what caught this one.
+
+### 2. What the document is, and what it deliberately is not
+
+It is the current truth: what Jarvis is, how it is organized, what each component
+is *for*, and what state each one is in. Fourteen sections, addendum 47 §10
+statuses at component level only (§11 forbids turning it into a
+project-management database), and 47 §17's rule held throughout — an unfinished
+idea is never written as though it were built.
+
+It is **not** the change record, and the two are separate files on purpose.
+§121's argument stands: §111 was findable only because §97's reasoning was still
+there, unedited, four sections later. A single document rewritten in place to
+state the current truth erases the evidence that a conflict existed. 47 §22 asks
+for exactly this split — *"the current document should read cleanly as the
+current truth; historical changes should be available separately."*
+
+**It does not retire `HANDOFF.md` yet.** §121 concluded it should; owner
+direction earlier the same day was to keep the handoff for the next session
+change. It stays, and it carries a staleness notice, because a document that
+describes deleted tables is not merely out of date — it is wrong, and it is the
+first thing the README tells a fresh session to read.
+
+### 3. Keeping it current is structural, not disciplinary
+
+`tests/test_living_documentation.py` asserts what can be checked mechanically:
+every file it links to exists, every record section it cites exists, every task
+it names is in the queue, every status word is addendum 47 §10's, every
+implemented role is described, and the addenda count it states is the number on
+disk.
+
+This is §115's lesson applied to documentation. *"Documentation maintenance is
+part of development"* (47 §6) kept as a discipline is a requirement that decays —
+`HANDOFF.md` is the proof, stale for a week describing tables TQ-72 deleted, with
+nothing to notice. A rule enforced by the suite does not depend on anybody
+remembering it.
+
+**What these tests cannot do is stated in the file rather than left implied:**
+they catch a document describing components that no longer exist; they cannot
+catch one describing existing components wrongly. A green suite here means the
+document still points at a real system, not that it describes it correctly.
+
+### 4. Custody — and a write path that was open
+
+Owner directive, 2026-08-27:
+
+> *"the living document needs to be safely secured and not open for tampering by
+> anyone. only one agent should have write access to the document."*
+
+Writing the custody notice required checking the claim *"nothing in the running
+system can write this file"*, and **the claim was false.**
+`gateway/repositories.py::publish` commits any repository-relative path to a new
+branch. It is careful — it never touches the working tree and never pushes — and
+it would have happily committed a rewritten living document. It is reachable
+through the Gateway.
+
+So the refusal went where the write is, not into a policy document:
+`CUSTODIAL_PATHS` and `_refuse_custodial`, called at the top of `publish` before
+any content is examined. Reading stays open, because a document nobody may read
+is useless to the agents 47 §9 wrote it for.
+
+Three layers, and they do not give the same kind of guarantee — which is the part
+worth recording:
+
+1. **Prevention, at the one door.** The single write path from inside the running
+   system refuses custodial paths. A test asserts no second write path into
+   `docs/` appears, by scanning the runtime packages for one.
+2. **Tamper-evidence.** `docs/document_custody.yaml` records the document's
+   digest; the suite goes red when file and digest disagree. An edit made outside
+   the custodian's hand announces itself.
+3. **Cryptographic prevention is not claimed.** In a public repository without
+   signed commits, whoever can change the text can change the digest.
+
+**Saying the third thing is part of the security guarantee, not a caveat
+attached to it.** `backend/charter.py` exists because *"a charter is the easiest
+document in a governance system to write and the easiest to write falsely"*, and
+a custody notice implying more protection than it delivers would be that failure
+in a new place. Signed commits are the mechanism that would close it; that is an
+owner action, and it is queued rather than pretended.
+
+The guard keeps its own copy of the custodial list rather than reading the
+manifest at import: it must hold when the manifest is missing, unreadable, or
+edited to say something more convenient. A test requires the two to agree, so
+they cannot drift apart quietly.
+
+Custody today is the external maintainer, which is what 47 §20 specifies for
+bootstrap. 47 §21 transfers it to the Software Engineering Department; that
+transfer is an owner decision recorded in the manifest, not something an agent
+performs, and the manifest says `transferred: false`.
+
+### 5. Owner directive: decide, and ask only when the answer is genuinely theirs
+
+Recorded because it changes how this project runs, not only this increment.
+
+> *"In future, make an assertion whether I can even answer the question better
+> than you do and ask me only if there is a need. In most cases you are more
+> knowledgeable than me and so you can have a lot of independence here. This is a
+> directive for claude code and the system as well."*
+
+The test before asking is now **whether the owner is the better source for this
+particular answer**, not whether the question is important. Three kinds pass it:
+
+- **Facts only the owner holds** — what they intend, what they own, what access
+  they have. *"Is the Constitution yours or the organization's?"* (§119) was one:
+  no amount of reading the corpus settles it, because both readings are coherent
+  and only the owner knows which they meant.
+- **Authority reserved to level 0** — anything at or above the Constitution
+  (§120), where the escalation ends outside the system by design.
+- **Irreversible or outward-facing acts** — pushing, publishing, spending,
+  contacting anyone.
+
+Everything else is decided and recorded. A decision recorded in this file with
+its reasoning is reversible and auditable; a question asked is a stall that costs
+the owner attention they delegated precisely so they would not have to spend it.
+
+**The directive names the system too**, and that is not decoration. Escalation is
+the expensive path in an organization of agents as well: an agent that escalates
+what it could have decided and recorded is consuming the same scarce attention.
+It belongs in the Articles when TQ-81 builds them, and it is recorded here so it
+is not re-derived from scratch.
+
+This does not touch the refusal boundaries. Level 0 still escalates. Irreversible
+acts still ask. What changes is the default for everything below: **act, and
+write down why.**

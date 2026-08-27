@@ -999,8 +999,16 @@ not evidence of competence. 8/8 mutations caught by the test written for each.
 
 ### TQ-84 — The living documentation, which does not exist
 
-**NEED (ORANGE) · QUEUED · addendum 47 · `SPEC_RECONCILIATION.md` §121 · ahead of TQ-81 (reasoning
-below)**
+**NEED (ORANGE) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §122) · addendum 47 · ahead of TQ-81
+(reasoning below)**
+
+Built as [`docs/JARVIS.md`](JARVIS.md), with `tests/test_living_documentation.py` keeping it current
+by failing rather than by anyone remembering to. Custody per the owner directive of the same day:
+one writer, declared in `docs/document_custody.yaml`, refused at `gateway/repositories.py::publish`
+— which turned out to be an open write path into the repository from inside the running system.
+
+**One thing it did not do:** `HANDOFF.md` is not retired. §121 concluded it should be; owner
+direction was to keep it for the next session change. It carries a staleness notice instead.
 
 Addendum 47 §2 requires **one** authoritative structure that new specifications are merged into.
 This project has forty-one verbatim addenda, a 10,900-line append-only decision record, a 2,200-line
@@ -1038,9 +1046,25 @@ Forty-one addenda contain several superseded designs — stored portfolios (§11
 retrieval, the pre-TQ-72 custody — and merging them naively produces a document that describes three
 architectures at once.
 
-### TQ-81 — Parliament, and the Charter it amends
+### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
-**NEED (ORANGE) · QUEUED · addendum 32 · addendum 46 §6, §39 · `SPEC_RECONCILIATION.md` §119, §120**
+**WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**
+
+Document custody (TQ-84) has three layers and is honest about the third: in a public repository
+without commit signing, whoever can change a custodial document can change the digest that guards
+it. The suite makes an unauthorized edit **visible**; nothing makes it **impossible**.
+
+Signing closes it: a commit touching `docs/JARVIS.md` that does not carry the custodian's signature
+is rejected rather than merely noticed. It needs a key the owner holds, which is why this is a Want
+with an owner dependency rather than an increment anyone can execute.
+
+Until it exists, `JARVIS.md` says so in the same paragraph that claims the protection — a custody
+notice implying more than it delivers would be the falsely-written-charter problem
+`backend/charter.py` exists to avoid.
+
+### TQ-81 — Parliament, and the Articles it amends
+
+**NEED (ORANGE) · QUEUED · addendum 32 · addendum 46 §6, §39 · `SPEC_RECONCILIATION.md` §119, §120, §122**
 
 **The system reports this gap in its own words.** `backend/main.py` and `backend/coo_chat.py` both
 answer *"No parliament, committee or voting body exists yet"*, and addendum 46 routes every
@@ -1049,8 +1073,9 @@ the one that is not built.
 
 Not the whole of addendum 32. The minimum that makes 46's pipeline real:
 
-- **the Charter** (§120 §1 — the organization's highest instrument, renamed so the word
-  *Constitution* stays with the owner's document), and the amendment path 32 §19 specifies;
+- **the Articles** (§120, corrected at §122 — the organization's highest instrument, named so the
+  word *Constitution* stays with the owner's document and *Charter* keeps its existing meaning as
+  the agent charter), and the amendment path 32 §19 specifies;
 - **resolutions** with the provenance 46 §17 requires: what changed, why, who proposed it, what
   evidence supported it, who approved it, when it became active, what it replaced;
 - **the vote**, at whatever quorum the Charter sets, with 32 §19's supermajority for Charter change;
@@ -1071,7 +1096,7 @@ be authorized. They enter when something needs them.
 addendum 39 · `SPEC_RECONCILIATION.md` §120**
 
 Addendum 46 §2's architecture — *stable machinery, evolving data* — as something that exists rather
-than something that is intended. The store of 46 §4 (charter, laws, policies, procedures,
+than something that is intended. The store of 46 §4 (the Articles, laws, policies, procedures,
 strategies, priorities, knowledge, training material, lessons learned, directives), ordered by 46
 §5's precedence with §120's level 0 above all of it.
 

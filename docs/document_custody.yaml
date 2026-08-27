@@ -1,0 +1,55 @@
+# Documents under custody: one writer, and who it is.
+#
+# Owner directive, 2026-08-27: *"the living document needs to be safely secured
+# and not open for tampering by anyone. only one agent should have write access
+# to the document."*
+#
+# This file is data, not documentation. It exists so the custody rule is
+# machine-readable and enforced rather than asserted in prose - addendum 47 §2
+# asks for one authoritative documentation structure, and adding a second
+# *document* to protect the first would work against that.
+#
+# Enforced in two places, which is deliberate:
+#
+#   gateway/repositories.py  refuses a write to any path listed here. It is the
+#                            only write path from inside the running system into
+#                            a repository, and it keeps its own copy of the list
+#                            so the guard holds even if this file is missing,
+#                            unreadable, or edited to say something convenient.
+#
+#   tests/test_living_documentation.py  asserts the two lists agree, and that
+#                            each document still matches its digest.
+#
+# What this does NOT provide: cryptographic prevention. In a public repository
+# without signed commits, whoever can change the text can change the digest. The
+# guarantee here is that an edit made outside the custodian's hand is *visible* -
+# the suite goes red. Signing is the mechanism that would close the gap and it is
+# an owner action, recorded as an open item rather than implied.
+
+version: 1
+
+custodian:
+  id: external_maintainer
+  # Claude Code, acting as the external engineering consultant addendum 46 §19
+  # names. Addendum 47 §20 assigns the living documentation to it during the
+  # bootstrap phase.
+  is: Claude Code, external engineering consultant during bootstrap
+  transfers_to: software_engineering_department
+  # Addendum 47 §21: "responsibility transfers to the internal Software
+  # Engineering Department". That department does not exist yet - TQ-83 - and the
+  # transfer is an owner decision recorded here, not something an agent performs.
+  transfer_authority: owner
+  transferred: false
+
+documents:
+  - path: docs/JARVIS.md
+    what: The living documentation
+    sha256: "f8bed75124575e009c9ef5510657d380309386f294a1bc48d6b3057076ce3289"
+
+  - path: docs/document_custody.yaml
+    what: This manifest
+    # A manifest cannot record its own digest. It is protected by being on the
+    # guard's refusal list, and by the test that requires the two lists to agree:
+    # removing a document from custody means editing both, in a commit that says
+    # so.
+    sha256: self

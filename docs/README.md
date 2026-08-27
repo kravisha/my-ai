@@ -10,9 +10,14 @@ below. [`GOVERNANCE.md`](GOVERNANCE.md) explains the split and
 [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) the rule it is maintained under. A
 reference you cannot follow means the document is private, not missing.
 
-**Start here:** [`GOVERNANCE.md`](GOVERNANCE.md) for what governs this system and how much of it is
-published, then [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) for what is actually built against
-it. The gap analysis is the single most useful file here, and it is public in full.
+**Start here:** [`JARVIS.md`](JARVIS.md) — the living documentation, and the map of the whole
+system: what it is, how it is organized, what is built, what is not, and why the important decisions
+went the way they did. It is maintained under addendum 47 and kept honest by
+`tests/test_living_documentation.py`.
+
+Then [`GOVERNANCE.md`](GOVERNANCE.md) for what governs this system and how much of it is published,
+and [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) for the axiom-by-axiom measurement against
+the constitution.
 
 ---
 
@@ -23,7 +28,8 @@ in this order. They are maintained for exactly this purpose.
 
 | Read | For |
 |---|---|
-| [`HANDOFF.md`](HANDOFF.md) | Where the project stands right now: what shipped last session, what is pending, what is blocked, what to do first, and the design decisions that must not be reversed. **Read this before touching anything.** |
+| [`JARVIS.md`](JARVIS.md) | **The map. Read this first.** What the system is, how it is organized, the state of every major component, and the known gaps. |
+| [`HANDOFF.md`](HANDOFF.md) | **Stale as of 2026-08-27** and carrying a notice saying so; kept until the next session change on owner direction. Historical. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | The prioritised work queue. Its head block says what is next and why. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Newest `§` sections at the end. Every increment records what was built, what was decided, and what was found by running it. |
 | [`specs/`](specs/) | Implementation specifications for queued-but-unbuilt work, detailed enough to build from without further design. |
@@ -34,11 +40,11 @@ If you are looking for one specific thing rather than reading in:
 
 | Looking for | Go to |
 |---|---|
-| **Current architecture** | the orientation paragraph below, then `HANDOFF.md` §2 |
+| **Current architecture** | [`JARVIS.md`](JARVIS.md) sections 1–4 |
 | **Active specifications** | "Active specifications" in this file; the files in [`specs/`](specs/) |
 | **Completed work** | `SPEC_RECONCILIATION.md`, newest `§` last — one section per increment |
 | **Task queue status** | `TASK_QUEUE.md`; its head block is the current focus |
-| **Open issues and known defects** | `HANDOFF.md` §6 |
+| **Open issues and known defects** | [`JARVIS.md`](JARVIS.md) section 13, then `HANDOFF.md` §6 |
 | **Design decisions that must not be reversed** | `HANDOFF.md` §4 — the constraints list |
 | **Security and isolation rules** | `HANDOFF.md` §4 items on ownership, privacy, capability gating, and the Gateway boundary; then §99, §104, §108, §109 |
 | **Pending integrations** | `TASK_QUEUE.md` TQ-49/TQ-50 (Schwab, owner-blocked), TQ-52/TQ-57 (local models, owner-blocked) |

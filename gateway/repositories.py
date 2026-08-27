@@ -173,6 +173,40 @@ def _git(repo: Repository, *arguments: str, stdin: bytes | None = None, env: dic
     return result.stdout.decode("utf-8", "replace")
 
 
+# Documents under custody: one writer, named in docs/document_custody.yaml, and
+# this is not it.
+#
+# Owner directive 2026-08-27: the living documentation must not be open to
+# tampering. `publish` is the **only** write path from inside the running system
+# into a repository - it never touches the working tree and never pushes, but it
+# can commit any relative path to a branch, and a branch carrying a rewritten
+# living document is exactly the tampering the directive names.
+#
+# So the refusal lives at the door rather than in a policy document. Reading stays
+# open: `read_file` and `tracked_files` are untouched, because a document nobody
+# may read is useless to the agents addendum 47 §9 wrote it for.
+#
+# Kept as a literal tuple rather than read from the manifest at import time: this
+# guard must hold even if the manifest is missing, unreadable, or has been edited
+# to say something more convenient. `tests/test_living_documentation.py` asserts
+# the two agree, so they cannot drift apart quietly.
+CUSTODIAL_PATHS = ("docs/JARVIS.md", "docs/document_custody.yaml")
+
+
+def _refuse_custodial(relative: str) -> None:
+    """Refuse a write to a document under custody.
+
+    One refusal for every reason, naming the document rather than the rule that
+    caught it - a refusal that explained which clause applied would be a way of
+    reading the custody list without being able to write."""
+    if relative in CUSTODIAL_PATHS:
+        raise RepositoryError(
+            f"{relative} is under document custody and has one authorized writer, which is "
+            f"not this system. Reading it is fine; changing it happens through the custodian "
+            f"named in docs/document_custody.yaml."
+        )
+
+
 def _safe_relative_path(path: str) -> str:
     """A repository-relative path, or a refusal.
 
@@ -281,6 +315,7 @@ def publish(
     one are different things for a reviewer to be told about.
     """
     relative = _safe_relative_path(path)
+    _refuse_custodial(relative)
     if not (content or "").strip():
         raise RepositoryError("Refusing to publish an empty document.")
     encoded = content.encode("utf-8")
