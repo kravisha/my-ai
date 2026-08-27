@@ -177,3 +177,27 @@ def test_the_speaker_invents_no_threshold_for_too_many(governed_conn):
     source = inspect.getsource(speaker._say)
     for invented in ("> 10", ">= 10", "> 5", ">= 5", "0.5", "too many"):
         assert invented not in source
+
+
+def test_governance_coverage_survives_a_report_being_judged(governed_conn):
+    """A judged report leaves `discovery_reports` for the archive.
+
+    Counting only the pending table made governance coverage FALL as work
+    completed: a run with eight governed reports read 8 while they waited and 0
+    once they were judged (§132). §128 fixed the archive trigger to carry
+    `governed_by` precisely so the question would survive completion, and left
+    the metric reading half the evidence — the same defect one step along."""
+    _instrument(governed_conn)
+    report = fi_db.enqueue_report(
+        governed_conn, "speculator-1", "2026-01-01T00:00:00+00:00", "speculator", "SYN1",
+        summary="A lead.", evidence_ids=[1], filed_by="speculator")
+
+    before = metrics.collect_from(governed_conn)["governance"]
+    assert before["work_governed"] == 1 and before["work_ungoverned"] == 0
+
+    governed_conn.execute(
+        "UPDATE discovery_reports SET status = 'analyzed' WHERE id = ?", (report,))
+
+    after = metrics.collect_from(governed_conn)["governance"]
+    assert after["work_governed"] == 1, "judging a report did not make it ungoverned"
+    assert after["work_ungoverned"] == 0

@@ -564,9 +564,14 @@ and a curriculum measures an agent *learning* — but the answer is now in one
 place.
 
 The verdict has three values, and the third is the important one. `INCOMPLETE`
-means nothing failed and not everything was asked: three scenarios need a model,
+means nothing failed and not everything was asked: six scenarios need a model,
 and a verifier reporting "no failures" over the ones it skipped would be
 certifying an organization it had not examined. Only `PASS` exits zero.
+
+A key being reachable is not a model being callable. When the daily token budget
+is exhausted every call is refused, and a scenario that ran anyway would report
+failures about spending that look exactly like failures about the organization —
+so the budget is checked and those scenarios are skipped (§132).
 
 It prints what it cannot see with every verdict — deliberation, real prices, a
 real broker, historical operation, release and rollback. A green line therefore

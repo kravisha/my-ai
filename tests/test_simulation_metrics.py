@@ -34,7 +34,12 @@ def add_report(conn, report_id: int, created: str, completed: str | None = None)
         conn.execute(
             "INSERT INTO discovery_reports_completed (id, created_at, producer_identity, "
             "producer_spawned_at, report_type, security, summary, completed_at, outcome, schema_version) "
-            "VALUES (?, ?, 'speculator-1', ?, 'social', 'SYN1', 's', ?, 'handled', 1)",
+            # 'analyzed', because that is what production writes. The archive
+            # trigger fires on `status IN ('analyzed', 'failed')` and stores the
+            # status as the outcome, so 'handled' was a fixture value the system
+            # has never produced - harmless until §132 made the distinction
+            # between analysed and failed load-bearing.
+            "VALUES (?, ?, 'speculator-1', ?, 'social', 'SYN1', 's', ?, 'analyzed', 1)",
             (report_id, created, created, completed),
         )
 
@@ -406,3 +411,21 @@ def test_governance_reports_an_ungoverned_organization_without_inventing_one(emp
     assert governance["instruments_in_force"] == 0
     assert governance["speaker_reports"] == 0
     assert governance["speaker_last_report_at"] is None
+
+
+def test_a_failed_report_is_not_a_retired_one(empty):
+    """Retired means judged, not merely removed from the queue.
+
+    A run with an exhausted model budget failed all ninety of its reports
+    instantly. Every one left the queue, so `retirement_ratio` read 1.0 - perfect
+    health - while nothing whatsoever had been analysed (§132). The metric added
+    at §128 to replace a number anti-correlated with health was itself fooled by
+    the first real failure it met."""
+    for report_id in range(1, 5):
+        add_report(empty, report_id, at(report_id), completed=at(10 + report_id))
+    empty.execute("UPDATE discovery_reports_completed SET outcome = 'failed' WHERE id > 1")
+
+    queue = metrics.collect_from(empty)["queue"]
+    assert queue["arrivals"] == 4
+    assert queue["completions"] == 1, "only the analysed one counts"
+    assert queue["retirement_ratio"] == 0.25

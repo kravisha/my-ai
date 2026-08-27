@@ -12388,3 +12388,118 @@ interests of Creator, Agents and Clients **together**.
 
 That is a genuine addition to the Conflict Rule, which until now said *stop,
 resolve, and record* without saying what to resolve toward.
+
+## §132 — The first full verification, and the five things it found (2026-08-27)
+
+The run the owner asked for could not complete, for a reason that is not a
+defect: **the daily model token budget is exhausted.** 502,725 tokens against a
+500,000 limit, and 5,541 refusals recorded today. The budget guard is doing
+exactly what it was built to do — refusing to spend past the limit and failing
+work with a stated reason rather than silently.
+
+Raising the limit is the owner's decision and nobody else's.
+
+What the attempt produced instead is more valuable than the green line would have
+been. **Five defects, every one of them mine, none of them visible in 2,666
+passing tests.**
+
+### 1. The verifier crashed on the first failure it had to render
+
+`properties["failures"]` is a list of **names**. The composition read it as a list
+of records and raised `AttributeError` after two scenarios and four minutes.
+
+The reason it survived its own test suite is worth more than the fix. §129 said,
+deliberately: *"the composition is tested against constructed results rather than
+by running the harness."* Every test built a scenario entry **by hand**, and
+`verify()` — the thing that builds one from a real summary — was never asked to.
+The fixtures and the code disagreed about the shape and nothing compared them.
+
+**A test that constructs its own input never tests the code that constructs the
+input.** That is the same family as *a test over data does not test the rule that
+produced the data* (§117, §118, §123, §129), arriving through the other door.
+
+### 2. `retirement_ratio` read 1.0 while every single report failed
+
+The run filed ninety reports and failed all ninety instantly, each with the
+budget message. Every one left the queue, so the metric read **perfect
+retirement** during total pipeline failure.
+
+This is the metric §128 introduced *because* `pressure_ratio` was anti-correlated
+with health — and it was fooled by the first real failure it met. Retired now
+means **judged**, not merely removed: `completions` counts `outcome = 'analyzed'`
+and not `'failed'`.
+
+The scenario property moved with it, from `pipeline.reports_completed at_least 1`
+to `pipeline.analyses at_least 1`. The old one was satisfied ninety times over by
+a pipeline that judged nothing.
+
+**What caught it was a property written long before any of this** — *every
+completed report was analysed*, which read `90 == 0`. The new properties were
+fooled and the old one was not.
+
+### 3. Governance coverage fell as work completed
+
+`work_governed` counted only `discovery_reports`. A judged report leaves that
+table for the archive, so a run with eight governed reports read 8 while they
+waited and **0** once they were judged.
+
+§128 fixed the archive *trigger* to carry `governed_by`, precisely so this
+question would survive completion, and left the *metric* reading half the
+evidence. The same defect one step along, in the same increment that named it.
+
+### 4. A scenario declared it did not need what it could not run without
+
+`baseline_steady_state` carried `requires_model: false` while its own description
+said *"a language model sits in that path"* and its properties — reports judged,
+completed reports analysed, analyses graded — can only pass when Analysis calls
+one.
+
+The cost was not theoretical. Instead of being skipped honestly, it ran with the
+budget exhausted and produced **a failure about spending that looked exactly like
+a failure about the organization.**
+
+### 5. A fixture wrote a value production never produces
+
+`tests/test_simulation_metrics.py` inserted archived reports with
+`outcome='handled'`. Production writes `'analyzed'` or `'failed'` — the archive
+trigger stores the status and those are the only two it fires on.
+
+Harmless for as long as nothing read the column, and load-bearing the moment
+retirement had to distinguish judged from failed. A fixture that does not match
+production is a defect waiting for a reader.
+
+### 6. What the verifier does now, which is the point
+
+```
+[ok  ] executive_failure        6/6 properties
+[ok  ] governed_organization    11/11 properties
+[ok  ] misdrafted_instrument    7/7 properties
+[skip] anomaly_burst            declares requires_model and the model budget is
+                                exhausted, so every call would be refused and the
+                                run would measure the budget
+[skip] baseline_steady_state    ...
+[skip] developing_story         ...
+[skip] overnight_session        ...
+[skip] saturation               ...
+[skip] saturation_two_judges    ...
+
+CURRICULUM
+[ok  ] portfolio_analysis v1: 6 exercises
+
+VERDICT  INCOMPLETE
+         Nothing failed, and not everything was asked.
+```
+
+`harness.model_is_available()` answers *is there a key*. That is not the same
+question as *would a model answer*, and the difference is six scenarios. A run
+that could not use a model did not test what its scenario is about, and reporting
+that as a failure is as wrong as reporting it as a pass.
+
+**This is what `INCOMPLETE` was built for**, and it earned its place on the first
+occasion it could have been wrong in either direction.
+
+### 7. What a PASS needs
+
+The budget raised, or a new day. Everything else is green: three scenarios and
+the whole curriculum pass, and the six skipped ones passed in the survey at §128
+before the budget ran out.

@@ -41,7 +41,16 @@ config:
 # produces four, because the queue does not drain (see the pressure ratio
 # property below). The regime half of intelligence expiry is built and verified,
 # and simply cannot engage inside 90 seconds at the observed drain rate.
-requires_model: false
+requires_model: true
+# Corrected in §132. It read `false` while this file's own description said "a
+# language model sits in that path", and the properties below - `reports were
+# judged`, `every completed report was analysed`, `every analysis was graded` -
+# can only pass when Analysis can actually call one.
+#
+# The cost of the mislabel was not theoretical. With the daily token budget
+# exhausted, this scenario ran instead of being skipped, every report failed
+# instantly with a spending message, and the summary reported a failure about
+# the budget that looked exactly like a failure about the organization.
 
 expected_properties:
   # --- the organization stayed intact ---------------------------------------
@@ -84,8 +93,8 @@ expected_properties:
     value: 5
 
   # --- the pipeline actually moved ------------------------------------------
-  - name: reports were retired
-    metric: pipeline.reports_completed
+  - name: reports were judged
+    metric: pipeline.analyses
     assert: at_least
     value: 1
     # Added after a survey run passed 10/11 while the two properties below were
@@ -96,6 +105,11 @@ expected_properties:
     # One, not more. What the queue can retire in ninety seconds is a measured
     # property of the drain rate (260-400s for a full queue, TIMING_CONSTANTS),
     # and a higher bar here would be asserting a throughput nobody has changed.
+    #
+    # `pipeline.analyses` rather than `pipeline.reports_completed`, corrected in
+    # §132: a report that ends `failed` is completed and judged by nobody. A run
+    # with an exhausted model budget failed all ninety of its reports instantly
+    # and satisfied the earlier version of this property ninety times over.
 
   # --- Parliament had a voice -----------------------------------------------
   - name: the Speaker kept watching

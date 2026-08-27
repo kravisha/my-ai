@@ -124,15 +124,25 @@ def _governance(conn, since: str | None = None) -> dict:
         "SELECT instrument_id, COUNT(*) AS n FROM governed_refusals"
         " GROUP BY instrument_id ORDER BY n DESC")
 
+    # **Both tables.** A judged report leaves `discovery_reports` for the archive,
+    # and counting only the pending one made governance coverage fall as work
+    # completed: a run with eight governed reports read 8 while they waited and 0
+    # once they were judged (§132).
+    #
+    # The archive carries `governed_by` precisely so this question survives
+    # completion - §128 fixed the trigger to carry it and left this reading only
+    # half the evidence, which is the same defect one step along.
+    _BOTH = ("SELECT created_at, governed_by FROM ("
+             " SELECT created_at, governed_by FROM discovery_reports"
+             " UNION ALL"
+             " SELECT created_at, governed_by FROM discovery_reports_completed"
+             ") WHERE {bound}")
     governed_reports = _scoped_rows(
-        conn,
-        "SELECT COUNT(*) AS n FROM discovery_reports WHERE {bound} AND governed_by IS NOT NULL",
-        "created_at", since)
-    all_reports = _scoped_rows(
-        conn, "SELECT COUNT(*) AS n FROM discovery_reports WHERE {bound}", "created_at", since)
+        conn, _BOTH + " AND governed_by IS NOT NULL", "created_at", since)
+    all_reports = _scoped_rows(conn, _BOTH, "created_at", since)
 
-    filed = all_reports[0]["n"] if all_reports else 0
-    carried = governed_reports[0]["n"] if governed_reports else 0
+    filed = len(all_reports)
+    carried = len(governed_reports)
     return {
         "articles_version": (articles or {}).get("v"),
         "instruments_in_force": (instruments or {}).get("n", 0),
@@ -284,11 +294,22 @@ def _queue(conn, since: str | None = None) -> dict:
             "created_at", since,
         )
     ]
+    # Retired means JUDGED, not merely removed from the queue.
+    #
+    # A report that ends `failed` has left the queue and been analysed by nobody.
+    # Counting it retired made `retirement_ratio` read 1.0 - perfect health -
+    # during a run in which the model budget was exhausted and every single
+    # report failed instantly (§132). The metric added at §128 to replace a
+    # number that was anti-correlated with health was itself fooled by the first
+    # real failure it met.
+    #
+    # `outcome` is the archived report's status: 'analyzed' or 'failed'.
     completions = [
         row["completed_at"]
         for row in _scoped_rows(
             conn,
-            "SELECT completed_at FROM discovery_reports_completed WHERE {bound}",
+            "SELECT completed_at FROM discovery_reports_completed"
+            " WHERE outcome = 'analyzed' AND {bound}",
             "completed_at", since,
         )
     ]

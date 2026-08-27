@@ -71,6 +71,38 @@ NOT_COVERED = (
 )
 
 
+def model_can_be_called() -> bool:
+    """Whether a model would actually answer, not whether a key exists.
+
+    `harness.model_is_available()` answers the first question, and the first
+    verification run showed that is not enough: the key was reachable, the daily
+    token budget was exhausted, and every model call was refused. The
+    model-dependent scenarios ran, every report failed instantly with a spending
+    message, and the summary reported failures **about the budget while looking
+    exactly like failures about the organization** (§132).
+
+    That is precisely what `INCOMPLETE` exists for. A run that could not use a
+    model did not test the thing the scenario is about, and reporting it as a
+    failure is as wrong as reporting it as a pass."""
+    if not harness.model_is_available():
+        return False
+    try:
+        from app import model_budget
+        model_budget.check_budget()
+    except ImportError:  # pragma: no cover - the budget module is always present
+        return True
+    except Exception:  # noqa: BLE001 - any refusal means a call would not land
+        return False
+    return True
+
+
+def _why_no_model() -> str:
+    if not harness.model_is_available():
+        return "declares requires_model and no model is reachable"
+    return ("declares requires_model and the model budget is exhausted, so every "
+            "call would be refused and the run would measure the budget")
+
+
 @dataclass
 class Verification:
     scenarios: list = field(default_factory=list)
@@ -111,13 +143,13 @@ def verify(*, scenario_ids: list | None = None, include_curriculum: bool = True,
         if scenario is None:
             result.skipped.append({"id": scenario_id, "why": "no such scenario"})
             continue
-        if scenario.requires_model and not harness.model_is_available():
+        if scenario.requires_model and not model_can_be_called():
             # Skipped, and skipped loudly. The alternative - running it anyway -
             # produces a summary describing a different organization than the
             # scenario intends, which the harness already refuses to do.
             result.skipped.append({
                 "id": scenario_id,
-                "why": "declares requires_model and no model is reachable"})
+                "why": _why_no_model()})
             continue
         if on_progress:
             on_progress("scenario", scenario_id, scenario.duration_seconds)
@@ -135,7 +167,12 @@ def verify(*, scenario_ids: list | None = None, include_curriculum: bool = True,
             "graceful": run.graceful,
             "properties_passed": properties.get("passed", 0),
             "properties_total": properties.get("total", 0),
-            "failures": [entry.get("name") for entry in (properties.get("failures") or [])],
+            # `properties["failures"]` is a list of NAMES. Reading it as records
+            # crashed the first verification run that had a failure to render -
+            # and every test of this file constructed the entry by hand rather
+            # than from a real summary, so the seam between them was untested by
+            # construction (§132).
+            "failures": list(properties.get("failures") or []),
         })
 
     if include_curriculum:

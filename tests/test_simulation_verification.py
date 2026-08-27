@@ -227,3 +227,61 @@ def test_a_curriculum_out_of_date_does_not_fail_the_summary():
         _report(curriculum_out_of_date=["portfolio.detects_something"]))
     assert summary["passed"] is True
     assert summary["out_of_date"] == ["portfolio.detects_something"]
+
+
+# --- what the first real verification run found (§132) -------------------------------
+
+def test_a_scenario_entry_is_built_from_a_real_summary_shape():
+    """The seam every other test in this file skipped.
+
+    The composition was tested on entries constructed by hand and `verify()` was
+    never asked to build one from a summary. `properties["failures"]` is a list
+    of NAMES; the code read it as records and crashed on the first verification
+    run that had a failure to render - after two scenarios and four minutes."""
+    summary = {"properties": {"total": 13, "passed": 12, "failed": 1,
+                              "failures": ["every completed report was analysed"],
+                              "asserted": True}}
+    properties = summary["properties"]
+    entry = {"failures": list(properties.get("failures") or [])}
+    assert entry["failures"] == ["every completed report was analysed"]
+
+    from simulation.__main__ import _print_verification
+    import io as _io
+    import contextlib
+    printed = _io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        _print_verification(verification.Verification(
+            scenarios=[scenario_result("a", passed=False,
+                                       failures=properties["failures"])]))
+    assert "every completed report was analysed" in printed.getvalue()
+
+
+def test_an_exhausted_budget_is_a_reason_to_skip_not_a_reason_to_fail(monkeypatch):
+    """A key being reachable is not a model being callable.
+
+    The first full verification ran with the daily token budget exhausted. Every
+    model call was refused, every report failed instantly with a spending
+    message, and the summary reported failures **about the budget while looking
+    exactly like failures about the organization**.
+
+    A run that could not use a model did not test what the scenario is about, and
+    calling that a failure is as wrong as calling it a pass. It is what
+    INCOMPLETE exists for."""
+    from app import model_budget
+    from simulation import harness
+
+    monkeypatch.setattr(harness, "model_is_available", lambda: True)
+    monkeypatch.setattr(
+        model_budget, "check_budget",
+        lambda: (_ for _ in ()).throw(RuntimeError("Daily model token budget exhausted")))
+
+    assert verification.model_can_be_called() is False
+    assert "budget is exhausted" in verification._why_no_model()
+
+
+def test_no_key_and_no_budget_are_reported_differently(monkeypatch):
+    """Two different reasons a scenario could not run, and a reader deciding what
+    to do about it needs to know which."""
+    from simulation import harness
+    monkeypatch.setattr(harness, "model_is_available", lambda: False)
+    assert "no model is reachable" in verification._why_no_model()
