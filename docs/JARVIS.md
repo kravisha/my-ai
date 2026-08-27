@@ -23,7 +23,7 @@ exist and none of them replaces this one:
 |---|---|---|
 | **This document** | The current truth. What exists, what it does, what state it is in. | Always first. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | The change record. Numbered sections, append-only, in the order decisions were made. Every `§` reference in this document points there. | When you need *why*, or what was believed before. |
-| [`addenda/`](addenda/) | Provenance. Forty-two supplied specifications, kept unedited. | When you need the owner's exact words. |
+| [`addenda/`](addenda/) | Provenance. Forty-three supplied specifications, kept unedited. | When you need the owner's exact words. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
 
@@ -121,6 +121,7 @@ eventually maintains itself without the external developer who built it.
 |---|---|---|
 | **Jarvis** | The organization. The name used by every recent specification. | *My AI* / *MyAI* — the earlier name, still in the repository name and older addenda. Same system. |
 | **The Constitution** | `JARVIS_CONSTITUTION.md`. The owner's document, held privately, never in this repository or any database (§120). | Anything the organization can amend. |
+| **The Scripture** | [Addendum 48](addenda/addendum_48_scripture_of_shared_success.md), *Shared Success*. How agents should be, rather than what the system should do. **Level 0, like the Constitution** — a document defining an authority cannot be amended by those it governs (§131). | The Articles, which the organization amends by vote. |
 | **The Articles** | The organization's own highest instrument — what a supermajority may amend under addendum 32 §19, and what addendum 46 §4.1 places at the top of the governed store. | The **Charter**, which in this codebase already means [the agent charter](../backend/charter.py): what an agent is owed and which mechanism owes it. |
 
 §120 first proposed *Charter* for the organization's instrument. That was wrong —
@@ -588,6 +589,24 @@ case.
 The record carries the unmet obligations **by name and never their values**: a
 submission's field names are the organization's vocabulary, its contents are
 whatever somebody was filing.
+
+### What the organization is supposed to be, and what code can hold of it
+
+Addendum 48 states the ethic: shared success between Creator, Agents and Clients,
+cooperation over competition, maturity, reciprocal trust, responsible freedom, and
+respect that is explicitly **not** blind obedience.
+
+**Code cannot obey prose**, and the Scripture is entirely prose. Nothing here can
+check maturity, patience or good faith; loaded into the governed store it would
+sit permanently in `prose_only` — in force and enforced by nothing, which is what
+that field exists to make visible. Its influence runs through three channels and
+no others: the external developer, the agents' own prompts, and code that happens
+to embody it.
+
+One part of it is already measured under a different name. Cooperation is a
+condition of leadership in both addendum 48 §3 and addendum 37 O9, and both were
+read as unbuilt — while `cross_check.unanswered_rate` has been recording one agent
+leaving another waiting since long before either was assimilated (TQ-92).
 
 ### The Department of Education
 

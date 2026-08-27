@@ -1232,6 +1232,39 @@ agent learning, and merging them for symmetry would be the kind of tidying that 
 returns. What is worth having is one command that runs both and one report that says whether the
 organization works — which is nearly all of what the owner asked for and is cheaper than a merge.
 
+### TQ-92 — Read the cooperation the organization already records
+
+**NEED (GREEN) · QUEUED · addendum 48 §3, §13 · addendum 37 §9, O9 ·
+`SPEC_RECONCILIATION.md` §131**
+
+Addendum 48 §3 makes cooperation a measured property and a condition of leadership. Addendum 37 O9
+has said the same since it was assimilated: *"No agent may qualify for leadership without
+demonstrated collaboration."* Both were read as unbuilt because nothing scores cooperation.
+
+**But the evidence is already being written.** `cross_check_requests` records one agent asking
+another for help and the answer coming back or not; `cross_check.unanswered_rate` is precisely a
+measure of one agent leaving another waiting, and it has been a scenario property for a long time
+under a timing rationale rather than an ethical one.
+
+So this is not a new score. It is reading what exists as what it is:
+
+- **cooperation per agent**, from cross-checks answered against cross-checks received, and from
+  UQI answers;
+- **reported by role**, because an agent that answers nobody is a fact about that agent;
+- **no invented threshold.** What counts as insufficient cooperation depends on what the agent does,
+  and a number nobody measured would be a policy wearing a measurement's clothes.
+
+### What this must not become
+
+A cooperation score that agents are ranked on is a metric agents will optimize, and §12 of the
+Scripture forbids exactly the resulting behaviour — *"empty activity, performative work, needless
+conflict, and actions that create work without creating value."* An agent that answered every
+cross-check with nothing to raise its number would score perfectly and cooperate not at all.
+
+The measure has to be of *outcomes* — was the asker helped — rather than of *activity*. That is the
+same distinction §118 drew between detecting something and no longer claiming to know, and it is
+the hard part of this entry.
+
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
 **WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**

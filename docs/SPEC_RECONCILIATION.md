@@ -12288,3 +12288,103 @@ expected to produce zero reports. A run that filed reports here would mean the
 instrument was not enforced.
 
 **9/9 mutations caught** by the test written for each. Suite **2666 passing**.
+
+## §131 — The Scripture assimilated, and the one thing this system cannot do with it (2026-08-27)
+
+Addendum 48, the *Scripture of Shared Success*, assimilated verbatim.
+
+It is unlike every other addendum here. The rest specify machinery — a
+department, a store, a protocol. This one specifies **how agents should be**, and
+the difference determines almost everything about what can be done with it.
+
+### 1. The intake question, answered
+
+*Which existing addendum already covers this subject?*
+
+| Scripture | Already present |
+|---|---|
+| §3, §13 — cooperation is a condition of leadership | **addendum 37 §9 and directive O9**, near-verbatim: *"An agent that performs exceptionally in its own tasks but fails to collaborate SHALL NOT be promoted to leadership."* **Unbuilt.** |
+| §6, §10 — the Creator, and veto authority | **§120** (the Constitution is the owner's), **§122** (decide rather than escalate), the owner directions at §111 and §115 |
+| §8 — reciprocal trust; §11 — benevolence toward agents | [`backend/charter.py`](../backend/charter.py), whose evidence-driven conclusion was that *"most of what follows protects agents from the organization rather than the other way round"* |
+| §7, §9 — respect, not blind obedience; cooperative intelligence | **§122**, which the Scripture strengthens rather than contradicts |
+| §12 — purposeful conduct, no performative work | **addendum 37 §8**, collaboration as a non-negotiable optimization constraint |
+| §14 — interpret conflicts through shared success | The Conflict Rule every canonical document carries, given a tie-breaker it did not have |
+
+So the Scripture is largely **the reasoning behind rules this corpus already
+states and has not built**, plus one thing genuinely new: a stated ethic for the
+relationship between Creator, Agents and Clients.
+
+### 2. Where it sits, and why that is decided rather than asked
+
+The Scripture defines the Creator's standing (§6), the limits on the Creator's
+own veto (§10), and what agents owe in return (§8). **A document that defines an
+authority cannot be amendable by those it governs** — that is §120's argument
+about the Articles' amendment threshold, and §123's about the rule for changing
+the rules, arriving a third time.
+
+So it is **level 0 material: the Creator's, alongside the Constitution.** §15
+calls it a living document that may evolve, and that evolution is the Creator's
+to make, not Parliament's. An organization that could amend the Scripture could
+amend away §10's restraint on the Creator *and* §7's protection of dissent, which
+would leave neither party protected.
+
+Recorded as a decision rather than put to the owner, per §122: the reasoning is
+available in the corpus and the conclusion follows from two decisions the owner
+has already made. **If it is wrong, it is wrong in a way that is cheap to
+reverse** — nothing is built on it yet.
+
+### 3. The thing this system cannot do with it
+
+**Code cannot obey prose** (§126), and the Scripture is entirely prose.
+
+Nothing here can check *maturity*, *patience*, *benevolence*, or *good faith*.
+There is no obligation kind that fits and inventing one would be the registry
+claiming a mechanism that does not exist. Loaded into the governed store today,
+the Scripture would sit in `Context.prose_only` — in force, binding on whoever
+reads it, and enforced by nothing — which is exactly what that field was built to
+make visible.
+
+**That is not a failure to record. It is the honest state**, and the Scripture is
+the largest and most important prose-only instrument this system will ever hold.
+Its influence today runs through three channels and no others:
+
+1. **The external developer**, who reads it and writes accordingly.
+2. **Agent prompts** — the COO's system prompt is the one place an agent's
+   disposition is currently expressed at all.
+3. **Code that happens to embody it** — `charter.py`'s protections, the closed
+   vocabularies, the refusals that fail loudly rather than guessing.
+
+Any claim that the organization *follows* the Scripture is, today, a claim about
+those three things.
+
+### 4. What is already measured and not called by its name
+
+The most useful finding in the assimilation.
+
+§3 makes cooperation a measured property and a condition of leadership, and
+addendum 37 O9 has required the same since it was assimilated. Both were read as
+unbuilt because nothing scores *cooperation*.
+
+**But the organization already collects the evidence.** `cross_check.total`,
+`cross_check.unanswered_rate` and `cross_check.open_at_end` are records of agents
+asking each other for help and answering — and the unanswered rate is precisely a
+measure of one agent leaving another waiting. It has been a scenario property
+since before any of this, under a timing rationale rather than an ethical one.
+
+Cooperation does not need a new score invented for it. It needs the evidence
+already being written to be read as what it is. That is queued as **TQ-92**, and
+it is the only part of the Scripture this system can currently act on.
+
+### 5. What it changes about how this project runs
+
+Nothing immediately, and one thing eventually.
+
+§7 and §9 — *respect is not blind obedience*, *cooperative intelligence, not
+mechanical obedience* — describe the working relationship this project already
+has, and reinforce §122 rather than qualifying it. §14's tie-breaker is new and
+usable: when principles conflict, interpret through shared success, weighing
+long-term consequences, cooperation, maturity, trust and responsibility, and the
+interests of Creator, Agents and Clients **together**.
+
+That is a genuine addition to the Conflict Rule, which until now said *stop,
+resolve, and record* without saying what to resolve toward.
