@@ -997,6 +997,78 @@ asking** passed the exercise, because every view became unconfirmed and the clie
 suppressed. `Exercise.must_report` now requires the detection to *appear* — absence of complaint is
 not evidence of competence. 8/8 mutations caught by the test written for each.
 
+### TQ-81 — Parliament, and the Charter it amends
+
+**NEED (ORANGE) · QUEUED · addendum 32 · addendum 46 §6, §39 · `SPEC_RECONCILIATION.md` §119, §120**
+
+**The system reports this gap in its own words.** `backend/main.py` and `backend/coo_chat.py` both
+answer *"No parliament, committee or voting body exists yet"*, and addendum 46 routes every
+authorized change through one. It is the load-bearing organ of the newest specification and it is
+the one that is not built.
+
+Not the whole of addendum 32. The minimum that makes 46's pipeline real:
+
+- **the Charter** (§120 §1 — the organization's highest instrument, renamed so the word
+  *Constitution* stays with the owner's document), and the amendment path 32 §19 specifies;
+- **resolutions** with the provenance 46 §17 requires: what changed, why, who proposed it, what
+  evidence supported it, who approved it, when it became active, what it replaced;
+- **the vote**, at whatever quorum the Charter sets, with 32 §19's supermajority for Charter change;
+- **refusal and escalation at level 0** (§120 §6) — one refusal shape for every reason, and an
+  escalation queue that no in-system actor can discharge.
+
+`backend/register.py` (TQ-05) already holds petitions and mandates with fail-closed vocabulary and
+a reason on every transition. **This builds on that rather than beside it** — a second register
+would be the two-sources-of-truth mistake §54 already declined once.
+
+**Deliberately out of scope:** elections, ministers, committees, the weekly session, the
+State-of-the-Union event. Addendum 32 specifies all of them and none is required for a directive to
+be authorized. They enter when something needs them.
+
+### TQ-82 — The governed-knowledge layer and the authority hierarchy
+
+**NEED (ORANGE) · QUEUED · depends on TQ-81 · addendum 46 §4, §5, §17 · addendum 30 §12 ·
+addendum 39 · `SPEC_RECONCILIATION.md` §120**
+
+Addendum 46 §2's architecture — *stable machinery, evolving data* — as something that exists rather
+than something that is intended. The store of 46 §4 (charter, laws, policies, procedures,
+strategies, priorities, knowledge, training material, lessons learned, directives), ordered by 46
+§5's precedence with §120's level 0 above all of it.
+
+The whole difficulty is in the ordering, not the storage:
+
+- **A conflict must be detected, not resolved by whoever read it last.** This is the Conflict Rule
+  the addenda already carry, moved from a document into runtime. Lower-level material cannot
+  silently override higher-level material — *silently* being the word that makes it a mechanism.
+- **Detection needs somewhere to escalate**, which is why this depends on TQ-81 rather than the
+  other way round.
+- **Level 0 is defined by its absence** (§120 §5). No table, no protected row, no admin route. The
+  refusal that guards the boundary is what gets built; the thing it guards is not here.
+- **Versioning is the point, not a feature.** 46 §17's provenance questions are the schema.
+- **Superseded is not deleted.** 46 §18: *"Nothing about rollback should erase history."*
+
+### TQ-83 — The Software Engineering Department
+
+**NEED (GREEN) · QUEUED · depends on TQ-81 · addendum 46 §7–§12, §19–§21 ·
+`SPEC_RECONCILIATION.md` §119**
+
+One general-purpose Software Engineer agent type occupying roles rather than a catalog of
+specialists (46 §9–§11, adjudicated at §119 §3), spawned to workload (§10), with the independence
+rule holding for significant change: **the agent that produces a change is not the sole authority
+that approves it** (§11).
+
+**Directives arrive through Evolution, not on a parallel channel from Parliament** (§119 §2). 46
+§13 draws *Approved Directive → Software Department intake* with nothing between; addendum 30 §28
+forbids the equivalent bypass one level up, and building the gap is how the bypass appears.
+
+Graded from the first task by the curriculum machinery that already runs (§117): Phase 1 (46 §21)
+is a curriculum, not productivity — *"The purpose is not productivity. The purpose is to teach the
+department the correct engineering habits."*
+
+**Two measurement risks recorded at §119 §8, to be answered by the design rather than discovered
+later.** The §8 ladder must require evidence the outcome was achieved, not evidence that code was
+avoided — TQ-80's defect in a new setting. And 46 §32's external-dependency metric must be derived
+from observed facts rather than self-reported by the party it measures.
+
 ### TQ-73 — The credential envelope and the stateless fetch/analyse pipeline
 
 **NEED (ORANGE) · QUEUED · depends on TQ-72 · owner direction 2026-08-26 (§111) · addendum 9 §2,

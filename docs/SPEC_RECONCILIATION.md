@@ -10682,6 +10682,10 @@ authority over the design, not a runtime bypass. But that is an inference from
 how the code was built, and **inferring canon from the build is the exact mistake
 §111 records.** This one goes to the owner.
 
+> **Answered the same day, §120: two documents, and the Constitution is the
+> owner's.** The second reading was right, but it was right by luck — the
+> inference and the answer agreeing does not make inferring it sound.
+
 It does not block everything. It blocks **the governed-knowledge layer and the
 precedence rules specifically**, because the answer determines what sits above
 level 1 and what the store must refuse to write. Work on the Software Engineering
@@ -10749,3 +10753,136 @@ for it lets the graded party pass by asking.**
    habits."*
 
 Nothing here is built. This section records the reconciliation only.
+
+## §120 — Owner decision: the Constitution is the owner's, and the organization's is a different document (2026-08-27)
+
+§119 §6 put the question. The owner, 2026-08-27:
+
+> *"they are two documents, the constitution is mine only"*
+
+That settles what 46 §4.1 means and what 32 §19 may amend. Everything below is
+consequence, and the last of it is a mechanism rather than a rule, because a rule
+of this kind that lives only in prose is one a future increment breaks while
+adding something helpful.
+
+### 1. The word belongs to the owner's document
+
+Two artifacts sharing the name *Constitution* is not a naming inconvenience, it
+is the condition under which the confusion §119 found happens again. The owner's
+sentence assigns the word: **the Constitution** is `JARVIS_CONSTITUTION.md`, held
+privately, the durable design authority the gap analysis measures against.
+
+The organization's own highest instrument — the one 32 §19 amends at
+supermajority, the one 46 §4.1 places in the governed store — is named the
+**Charter** from here on. 32 §19's *"constitutional amendments"* are read as
+*charter* amendments; 32 §20's Department of Governance implements charter
+change. The addenda are do-not-edit, so this is a reading recorded here rather
+than an edit there.
+
+The owner may of course name it something else. What is not available is leaving
+both called the same thing.
+
+### 2. The precedence list is missing its top level
+
+46 §5 lists twelve levels beginning at *Constitution*. Under this decision that
+list describes the **governed** hierarchy, and the Constitution sits outside and
+above all of it:
+
+```
+        0.  Constitution                      the owner's. Not governed data.
+        --------------------------------      nothing below may amend anything above
+        1.  Charter                           32 §19, supermajority
+        2.  Charter amendments
+        3.  Parliamentary laws / resolutions
+        ...
+       12.  Suggestions and unapproved proposals
+```
+
+Level 0 is not a level anything votes on. It is where the votes stop.
+
+### 3. The trap: protected data is still data, and data is ranked
+
+The obvious implementation is to put the Constitution in the governed store and
+mark it unwritable. **That is wrong, and the reason is worth stating carefully
+because it is not obvious.**
+
+Everything inside the store is ordered by the store's own hierarchy. Put the
+Constitution in at level 0 and its protection depends on the ranking logic being
+correct forever. Put it in as *"Knowledge / reference material"* — level 10, the
+honest slot for a document the organization did not author — and a parliamentary
+law at level 3 **outranks it by construction**. The organization would then be
+able to legislate against a constitutional principle without ever amending
+anything, simply by outranking a copy.
+
+A store that ranks cannot hold something unrankable.
+
+### 4. So the Constitution is enforced by code that fails, not by data that ranks
+
+This project already has the mechanism and has used it for everything that must
+not be negotiable: a test that fails. Tripwires are **re-aimed, never deleted**
+(§105, §110, §116); the ownership guard, `is_priced`, the closed vocabularies and
+the import graph checks are all constraints that no amount of correct-looking
+data can talk its way past.
+
+Constitutional constraints take that form. Not a row with a high number next to
+it — **a suite that goes red**. An agent, a department, or a unanimous Parliament
+cannot vote a failing test into passing, and that asymmetry is exactly the one
+the owner's sentence describes.
+
+This is the same principle recorded when the owner was established as the
+system's principal: authority over the *design*, not a runtime bypass. §120 is
+that sentence acquiring a mechanism.
+
+### 5. The governed store has no write path to level 0 — absent, not guarded
+
+There is no protected table, no `constitution` row with a permission flag, and no
+admin route that could be reached with the right credentials. **The safest write
+path is one that does not exist**, which is the same conclusion §111 reached
+about client portfolios by a different road: the guarantee is worth more when it
+is structural than when it is enforced.
+
+Consequence: `JARVIS_CONSTITUTION.md` stays out of the repository and out of every
+database. The system does not hold it. Measuring the build against it
+(`JARVIS_GAP_ANALYSIS.md`) remains work done by the owner and by whoever is
+consulting, outside the governed store.
+
+### 6. What happens to a proposal that would touch level 0
+
+It is **refused and escalated to the owner** — never tabled, never voted, never
+silently dropped.
+
+Two details this system has learned to get right:
+
+- **The refusal is one shape, not three.** Addendum 44 §9.3's rule holds here: a
+  proposal that is unconstitutional, one that is out of scope, and one whose
+  effect on level 0 cannot be determined all receive the same refusal, because a
+  refusal that distinguishes them is a probe for finding out what the
+  Constitution says.
+- **Escalation ends outside the system.** Every other escalation in this
+  organization terminates somewhere inside it — a committee, the Board, the COO.
+  This one terminates at a person, and there is no in-system actor who can
+  discharge it. A queue of such escalations that nothing can clear is the correct
+  behaviour, and any design that lets the organization resolve them itself has
+  reintroduced the amendment path this section removes.
+
+### 7. What agents may know about it
+
+They learn the constraints the way anyone learns a boundary they cannot cross:
+**by being refused**. Teaching material may describe constitutional principles,
+and that material sits at level 10 like any other knowledge — where it carries no
+authority at all, which is correct, because the authority is in the failing test
+and not in the description of it.
+
+A derived description that drifts from the Constitution is therefore a
+documentation defect, never a governance event. That is a much smaller failure
+mode than the alternative, and it is the reason for putting the authority in code
+in the first place.
+
+### 8. What this unblocks
+
+§119 §9 item 1 is answered. The governed-knowledge layer and 46 §5's precedence
+rules are buildable, with level 0 defined by its absence and by the refusal that
+guards the boundary.
+
+Queued as TQ-81 (Parliament and the Charter), TQ-82 (the governed-knowledge layer
+and the authority hierarchy) and TQ-83 (the Software Engineering Department).
