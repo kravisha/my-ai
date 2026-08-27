@@ -1201,7 +1201,15 @@ so §111 does not bite here, but the rule should be stated rather than assumed.
 
 ### TQ-91 — The two simulation systems have never met
 
-**WANT · QUEUED · `SPEC_RECONCILIATION.md` §128**
+**WANT · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §129)**
+
+`python -m simulation verify` runs every runnable scenario and the whole curriculum and gives one
+verdict. **Not merged** — a scenario measures the organization operating and a curriculum measures
+an agent learning, and the seam is real. What was missing was a verdict, not a merge.
+
+The verdict has three values: `INCOMPLETE` is not a softer `FAIL`. **A scenario that did not run is
+not a scenario that passed**, and only `PASS` exits zero. It prints what it does not cover with
+every verdict, so a green line means something specific and limited.
 
 There are two: `simulation/harness.py` runs the real organization in its own database under a
 scenario, and `simulation/training.py` runs the Department of Education's curriculum against

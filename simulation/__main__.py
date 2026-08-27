@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from simulation import harness, parity_diagnosis, parity_evaluation, parity_world, scenario as scenario_module, stage1
+from simulation import harness, parity_diagnosis, parity_evaluation, parity_world, scenario as scenario_module, stage1, verification
 
 
 def _cmd_list(args) -> int:
@@ -346,11 +346,94 @@ def _cmd_parity_diagnose(args) -> int:
     return 2 if diagnosis["retry_recommended"] else 0
 
 
+def _cmd_verify(args) -> int:
+    """Everything, and one answer (TQ-91, §129).
+
+    The two simulation systems have always been runnable and never together, so
+    "does the organization work" had two answers depending on which somebody had
+    run. This is the one place that asks both and says so in a single line.
+
+    **A scenario that did not run is not a scenario that passed.** The verdict
+    has three values for that reason: INCOMPLETE is what an honest verifier says
+    when nothing failed and not everything was asked.
+    """
+    scenarios = scenario_module.load_all()
+    chosen = args.scenarios.split(",") if args.scenarios else sorted(
+        sid for sid, s in scenarios.items() if s.is_runnable)
+    minutes = sum(scenarios[sid].duration_seconds for sid in chosen if sid in scenarios) / 60
+
+    print(f"verifying {len(chosen)} scenario(s)"
+          + ("" if args.no_curriculum else " and the curriculum"))
+    print(f"expect roughly {minutes:.0f} minutes of running, plus startup per scenario\n")
+
+    def progress(kind, name, duration):
+        print(f"  {kind:<10} {name}" + (f"  ({duration:.0f}s)" if duration else ""), flush=True)
+
+    result = verification.verify(
+        scenario_ids=chosen, include_curriculum=not args.no_curriculum,
+        on_progress=progress)
+    _print_verification(result)
+    return 0 if result.verdict == verification.VERDICT_PASS else 1
+
+
+def _print_verification(result) -> None:
+    print("\n" + "=" * 78)
+    print("SCENARIOS")
+    for entry in result.scenarios:
+        mark = "ok  " if entry["passed"] else "FAIL"
+        detail = f"{entry['properties_passed']}/{entry['properties_total']} properties"
+        if not entry["graceful"]:
+            detail += ", SHUTDOWN NOT CLEAN"
+        print(f"  [{mark}] {entry['id']:<24} {detail}")
+        for failure in entry["failures"]:
+            print(f"           - {failure}")
+    if not result.scenarios:
+        print("  none run")
+
+    for skipped in result.skipped:
+        # Listed under their own heading rather than mixed with results, because
+        # a skipped scenario in a list of passes reads as a pass.
+        print(f"  [skip] {skipped['id']:<24} {skipped['why']}")
+
+    print("\nCURRICULUM")
+    if result.curriculum is None:
+        print("  not run")
+    else:
+        c = result.curriculum
+        mark = "ok  " if c["passed"] else "FAIL"
+        print(f"  [{mark}] {c['curriculum']} v{c['version']}: {c['exercises']} exercises")
+        for failure in c["failures"]:
+            print(f"           - failed: {failure}")
+        for regression in c["regressions"]:
+            print(f"           - REGRESSION: {regression}")
+        for stale in c["out_of_date"]:
+            print(f"           - curriculum out of date: {stale} passed and was not expected to")
+
+    print("\nNOT COVERED BY ANY OF THIS")
+    for gap in verification.NOT_COVERED:
+        print(f"  - {gap}")
+
+    print("\n" + "=" * 78)
+    print(f"VERDICT  {result.verdict}")
+    if result.verdict == verification.VERDICT_INCOMPLETE:
+        print("         Nothing failed, and not everything was asked. A skipped scenario")
+        print("         is not a passing one.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m simulation")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="show the scenario library").set_defaults(func=_cmd_list)
+
+    verify_parser = sub.add_parser(
+        "verify", help="run every scenario and the curriculum, and give one verdict")
+    verify_parser.add_argument(
+        "--scenarios", help="comma-separated ids; default is every runnable scenario")
+    verify_parser.add_argument(
+        "--no-curriculum", action="store_true",
+        help="scenarios only. The verdict is INCOMPLETE, never PASS.")
+    verify_parser.set_defaults(func=_cmd_verify)
 
     run_parser = sub.add_parser("run", help="execute one scenario")
     run_parser.add_argument("scenario_id")

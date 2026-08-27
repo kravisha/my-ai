@@ -12096,3 +12096,100 @@ one, and nothing needs an emergency.
 Neither is a bug in what was built. Both are places where *"make sure everything
 works as intended"* is not yet answerable by one command, which is what the owner
 actually asked for.
+
+## §129 — One command, one verdict, and the three values it needs (2026-08-27, TQ-91)
+
+```bash
+python -m simulation verify
+```
+
+Runs every runnable scenario and the whole curriculum, and says whether the
+organization works. Until now that question had two answers depending on which
+system somebody had run, and nothing put them in one place.
+
+### 1. Not merged, and that is the decision
+
+`simulation/harness.py` runs the real organization in its own database under a
+scenario. `simulation/training.py` runs the Department of Education's curriculum
+against simulated exchanges and clients. A scenario measures the organization
+**operating** — processes, queues, timing constants, whether the workforce
+survives its own failures. A curriculum measures an agent **learning** — whether
+it detects what it should and refuses what it cannot do.
+
+Forcing one into the other for symmetry would cost more than it returns, and the
+seam is real rather than an accident of history. **What was missing was not a
+merge. It was a verdict.**
+
+### 2. The verdict has three values, and that is the whole file
+
+**A scenario that did not run is not a scenario that passed.**
+
+Three of the eight scenarios declare `requires_model`. In an environment with no
+key they are skipped — correctly, because running them anyway produces a summary
+describing a different organization than the scenario intends, which the harness
+already refuses to do. A verifier reporting *"0 failures"* over five scenarios run
+and three skipped would be issuing a clean bill of health for an organization it
+had mostly not examined.
+
+So `INCOMPLETE` is not a softer `FAIL`. A failure means something was asked and
+answered wrongly; incomplete means it was not asked. Both are honest and they are
+not the same, and a two-valued verdict has to call one of them the other.
+
+Only `PASS` exits zero, so a caller reading nothing but the exit code cannot
+mistake an unexamined organization for a working one. Skipped scenarios print
+under their own heading, because a skip in a list of passes reads as a pass.
+
+### 3. It names its own blind spots
+
+`NOT_COVERED` is printed with every verdict:
+
+- deliberation — no agent proposes or votes, so a governed run seeds its Articles
+  and its resolution;
+- real market data — every price in every run is synthetic, so nothing exercises
+  valuation;
+- a real broker, a real client, and the credential path to reach one;
+- historical-data operation, which addendum 46 §27 requires and nothing
+  implements;
+- release and rollback, which no scenario can trigger because neither exists.
+
+Written from what the specifications ask for rather than from what the code does
+— `simulation/certification.py` states the reason for its own criteria and it
+holds here: *a list composed by looking at what the system currently does will
+certify whatever the system currently does.*
+
+**A verifier that lists what it cannot see is worth more than one that implies it
+sees everything.** A green PASS over that list means something specific and
+limited, which is the only kind of green worth having.
+
+### 4. The list is ASCII, deliberately
+
+The section sign renders as `?` under the Windows console codepage. Everywhere
+else in this project keeps it; this one list is read through a pipe that cannot
+carry it, and a reference turned into noise sits exactly where a reader is
+deciding whether to trust a verdict.
+
+### 5. Mutation testing found the fourth instance of the same mistake
+
+Two mutations survived: removing the known-gap exclusion, and dropping
+regressions from the curriculum's verdict. Neither changed anything, because **the
+live curriculum currently contains no known gap and no regression** — TQ-80 closed
+the last gap, and nothing has regressed.
+
+A test over that curriculum cannot tell whether either rule exists. So
+`summarise_curriculum` was separated from the run and is now tested on
+constructed outcomes that can exercise it.
+
+*A test over data does not test the rule that produced the data unless the data
+can exercise the rule.* Recorded at §117, §118 and §123, and this is the fourth.
+The pattern is stable enough to be worth stating as a rule of its own: **when a
+fixture is healthy, the rules about failure are untested by construction.**
+
+### 6. What this closes, and what it does not
+
+It closes the question the owner asked — *"end to end simulation and make sure
+everything works as intended"* now has one command and one answer.
+
+It does not close **TQ-90**: a governed refusal is still recorded nowhere, so no
+scenario can require one and a badly drafted instrument that rejects every report
+still looks exactly like a quiet market. That remains the largest hole in what
+the verifier can see, and the verdict does not pretend otherwise.

@@ -551,10 +551,25 @@ is recorded at §128. Two things are worth knowing before trusting a green run:
   goes through the production API; a fixture able to construct an instrument with
   no resolution behind it would measure the fixture rather than the system.
 
-Two simulation systems exist and have never met: the harness runs the
-organization under a scenario, and `simulation/training.py` runs the curriculum
-against simulated clients. *"Everything works end to end"* currently means two
-different things depending on which was run (TQ-91).
+**One command answers the whole question:**
+
+```bash
+python -m simulation verify
+```
+
+It runs every runnable scenario and the whole curriculum and gives one verdict.
+The two systems are not merged — a scenario measures the organization *operating*
+and a curriculum measures an agent *learning* — but the answer is now in one
+place.
+
+The verdict has three values, and the third is the important one. `INCOMPLETE`
+means nothing failed and not everything was asked: three scenarios need a model,
+and a verifier reporting "no failures" over the ones it skipped would be
+certifying an organization it had not examined. Only `PASS` exits zero.
+
+It prints what it cannot see with every verdict — deliberation, real prices, a
+real broker, historical operation, release and rollback. A green line therefore
+means something specific and limited, which is the only kind worth having.
 
 ### The Department of Education
 
