@@ -10886,3 +10886,172 @@ guards the boundary.
 
 Queued as TQ-81 (Parliament and the Charter), TQ-82 (the governed-knowledge layer
 and the authority hierarchy) and TQ-83 (the Software Engineering Department).
+
+## §121 — Addendum 47 reconciled, and it is a finding about this repository (2026-08-27)
+
+Addendum 47, the *Living Documentation Standard*, assimilated verbatim.
+
+Every other addendum specifies something to build. **This one specifies how the
+project describes itself, which means the first thing it produces is a
+measurement of the documentation that received it.** That measurement is
+unflattering and it is the substance of this section.
+
+### 1. The intake question, answered
+
+*Which existing addendum already covers this subject?* Almost none — and that is
+itself the finding.
+
+Addendum 46 §17 and §23 cover versioning and traceability of *governed data*; 30
+§22 covers the evolution case file; 32 §21 covers implementing a resolution. No
+canonical document has ever specified how the project's own documentation is
+organized. The one prior attempt is `DOCUMENTATION_RECONCILIATION_PLAN.md`,
+written 2026-08-16 in response to a directive of the same date, and it opens with
+a line that has now been true for eleven days:
+
+> *"Status: Proposed — for owner review. Nothing has been moved, merged, or
+> deleted."*
+
+A documentation plan that was written and then not executed is exactly the
+failure 47 §6 names — *"documentation maintenance is part of development, it is
+not something postponed"*.
+
+### 2. What addendum 47 requires, measured against what is here
+
+47 §2 requires **one** authoritative structure into which new specifications are
+merged. Present state:
+
+| | |
+|---|---|
+| Verbatim addenda | **41 files** |
+| `SPEC_RECONCILIATION.md` | **10,900 lines**, 121 appended sections, chronological |
+| `TASK_QUEUE.md` | 2,200 lines |
+| `JARVIS_GAP_ANALYSIS.md` | 786 lines |
+| `README.md` | 304 lines — an index, not a map |
+| `DOCUMENTATION_RECONCILIATION_PLAN.md` | 322 lines, proposed and never executed |
+| `MY_AI_DESIGN_SPEC.md` | marked **stale on 2026-08-16**, still present, still stale |
+| `HANDOFF.md` | describes a database schema deleted by TQ-72, and names a next task that is paused |
+| **The living documentation** | **does not exist** |
+
+Against 47 §25's seven-word standard:
+
+- **COHERENT** — no. 47 §4: *"New information must not simply be appended
+  randomly."* `SPEC_RECONCILIATION.md` is 121 sections appended in the order they
+  were decided. It is a ship's log.
+- **CONSISTENT** — partly. §120 found two artifacts sharing the name
+  *Constitution* and had to rename one. 47 §5 gives the exact example: *"if a
+  component is called Parliament, it should not later be called Governance
+  Council."*
+- **CONTINUOUS** — no. Four increments shipped without their record (§117), and a
+  documentation plan sat unexecuted for eleven days.
+- **CURRENT** — no. `HANDOFF.md` is not merely out of date, it is **wrong**: it
+  tells a fresh session that `financial_intelligence.db` holds `portfolios` and
+  `portfolio_holdings`, tables TQ-72 deleted.
+- **CLEAR** — mixed. 47 §7 asks for simple, direct language and *"the objective
+  is understanding, not literary complexity."* This record is discursive by
+  design, and 47 §22 says history should not clutter the readable document — an
+  argument that it is in the wrong artifact rather than in the wrong style.
+- **COMPLETE ENOUGH** — no. There is no single place that answers 47 §26's list.
+- **TRACEABLE** — **yes, and this is the one to defend.** Every decision here
+  carries what changed, why, on whose direction, and what it replaced, which is
+  precisely 47 §23.
+- **READABLE** — for a human with the whole history, yes. For 47 §9's second
+  reader — *"AI agents should be able to retrieve the documentation and use it as
+  authoritative organizational context"* — no. An agent handed 14,500 lines of
+  chronology has been given a search problem, not a map.
+
+**Two of eight.**
+
+### 3. The adjudication: append-only is not the defect, using it as the map is
+
+The tempting reading is that this record was a mistake and should be rewritten
+into one clean document. **That is wrong**, and getting it wrong would destroy
+the one thing that works.
+
+The append-only record is why §111 was findable at all. Addendum 44's stored
+portfolios were reconciled against the code in §97, three increments were built
+on the unadjudicated side, and the conflict surfaced only because §97's reasoning
+was still there to re-read, unedited, four sections later. A document rewritten
+in place to state the current truth would have contained no trace of what was
+believed in §97, and the conflict would have been invisible.
+
+47 §22 resolves this without being asked to: *"Version history should not clutter
+the main readable document. The current document should read cleanly as the
+current truth. Historical changes should be available separately when needed."*
+
+So the resolution is not fewer documents but **correct roles**, and the actual
+defect is that one artifact has been doing two jobs:
+
+| Artifact | Role under addendum 47 |
+|---|---|
+| **The living documentation** — to be written | 47 §2's single authoritative structure. The map. What an agent reads. **Does not exist.** |
+| `SPEC_RECONCILIATION.md` | 47 §23 change traceability. Why the map says what it says, and what it said before. Append-only, and stays that way. |
+| `addenda/` | **Provenance, not documentation.** Unedited supplied source, kept as evidence. 47 §2's *"important approved information must ultimately be merged"* is satisfied by merging it *into* the living document, not by editing the originals. |
+| `TASK_QUEUE.md` | 47 §11's *"detailed task tracking can exist elsewhere if required."* Elsewhere is here. |
+| `JARVIS_GAP_ANALYSIS.md` | 47 §15's issues and gaps, measured against the Constitution (§120). |
+| `HANDOFF.md` | **Retired by the living document.** Its stated job — *"written for a session with no memory of the conversation that produced this state"* — is 47 §26's target end state in smaller words. Two artifacts with one job is how one of them goes stale, and it is the one that went stale. |
+| `README.md` | Its map role moves to the living document; what remains is an index. |
+| `MY_AI_DESIGN_SPEC.md` | Stale for eleven days. 47 §4: *"Old wording that is no longer correct should be replaced."* Merge what survives, retire the file. |
+| `DOCUMENTATION_RECONCILIATION_PLAN.md` | Superseded by addendum 47, which answers the same question with authority. Its §0 blocker is **not** superseded — see §5 below. |
+
+### 4. The conflict this creates with a rule this project has held, and how it resolves
+
+`docs/README.md` records the verbatim rule: addenda *"are unedited copies of
+supplied specifications… never changed; disagreements with them get recorded
+elsewhere."* Addendum 47 §4 says stale wording *"should be replaced"* and §12
+says the result should look *"as though the system was documented correctly from
+the beginning, rather than appearing as layers of patches."*
+
+Both hold, once *documentation* is distinguished from *source*:
+
+- An addendum is **what the owner supplied**. Editing it destroys the evidence
+  against which conflicts are adjudicated, and §111 is the case study for why
+  that matters.
+- The living document is **what the organization currently believes**. Nothing in
+  it is sacred; 47 §24 says so directly — *"the goal is not to preserve every
+  sentence ever written."*
+
+The rule that follows: **the living document may contradict an addendum, but only
+by pointing at the section that adjudicated it.** A superseded design disappears
+from the map and remains in the record.
+
+### 5. One thing addendum 47 does not resolve, resurfaced rather than reburied
+
+`DOCUMENTATION_RECONCILIATION_PLAN.md` §0 raised a blocker and it was never
+answered:
+
+> *"This repository is public: `github.com/kravisha/my-ai`."*
+
+47 §9 wants documentation an AI agent can retrieve as authoritative context; §13
+wants security and business continuity documented; §15 wants failures, security
+concerns and governance problems recorded. **That is precisely the material the
+plan flagged as belonging somewhere access-controlled**, and today's answer is
+still the one from eleven days ago: nothing sensitive has been written yet, so
+this is a prospective risk rather than an incident.
+
+§120 already decided the sharpest case — the Constitution stays out of the
+repository entirely. The general question stands: the living document is the file
+most likely to accumulate operational detail, and where it lives should be
+decided before it starts doing so, not after.
+
+### 6. What is queued
+
+**TQ-84 — the living documentation**, placed ahead of TQ-81/82/83. 47 §20 makes
+it *"a primary source of architectural truth during the bootstrap phase"*, and
+everything in addendum 46 is work whose purpose is to be handed to agents who
+will read documentation rather than reconstruct the system from source. Building
+the handover target last is the ordering mistake §117 already made once, when a
+curriculum was queued before there was a student.
+
+Two content requirements from 47 that the living document must carry and nothing
+currently states in one place:
+
+- **§14 agent persistence** — persistent versus temporary agents, and shared
+  organizational knowledge kept *separate* from individual agent state. Partly
+  modelled already (`organization.yaml` carries `process` and `on_demand`; §117
+  invented the latter for the Portfolio Analyst) and never written down as an
+  architectural rule. 47 §14 notes it becomes important by pre-alpha.
+- **§10 status, at component level only.** The queue's NEED/WANT and
+  QUEUED/DONE stay here; the living document uses 47 §10's model to say what is
+  built, what is in simulation, and what is only specified — because 47 §17's
+  requirement is that *"an unfinished idea is not mistaken for an implemented
+  capability."*

@@ -997,6 +997,47 @@ asking** passed the exercise, because every view became unconfirmed and the clie
 suppressed. `Exercise.must_report` now requires the detection to *appear* — absence of complaint is
 not evidence of competence. 8/8 mutations caught by the test written for each.
 
+### TQ-84 — The living documentation, which does not exist
+
+**NEED (ORANGE) · QUEUED · addendum 47 · `SPEC_RECONCILIATION.md` §121 · ahead of TQ-81 (reasoning
+below)**
+
+Addendum 47 §2 requires **one** authoritative structure that new specifications are merged into.
+This project has forty-one verbatim addenda, a 10,900-line append-only decision record, a 2,200-line
+queue, a stale handoff, a gap analysis, a design spec marked stale since 2026-08-16, and a
+documentation plan proposed the same day and never executed. **What it does not have is the
+document addendum 47 is about.**
+
+### Why ahead of TQ-81
+
+47 §20: *"External development tools such as Claude Code should use the living documentation as a
+primary source of architectural truth during the bootstrap phase."* Every entry below it — Parliament,
+the governed-knowledge layer, the Software Engineering Department — is work whose whole purpose is to
+be handed over to agents who will read documentation rather than reconstruct the system from source.
+Building the handover target last is the same ordering mistake as building a curriculum before there
+was a student (§117).
+
+It is also the cheapest of the four and the only one with no unresolved design question.
+
+### What it is, and what it is not
+
+- **It is not another file beside the others.** 47 §2's whole point is that adding one more document
+  makes the problem worse. It replaces `README.md`'s role as the map and retires `HANDOFF.md`, whose
+  job — *"a session with no memory of the conversation that produced this state"* — is 47 §26's
+  target end state stated in smaller words.
+- **It does not absorb the change record.** `SPEC_RECONCILIATION.md` is what 47 §23 calls change
+  traceability, and 47 §22 says history *"should not clutter the main readable document"*. The living
+  document states the current truth; the record says how it got there. Neither replaces the other.
+- **It does not edit the addenda.** They are provenance, not documentation (§121).
+- **Status per 47 §10**, at component level only — 47 §11 forbids turning it into a project-management
+  database, and detailed tracking is what this file is for.
+- **Unfinished ideas must be labelled** (47 §17), so nothing reads as built that is not.
+
+The hard part is 47 §12 step 11-12 and §24: *"Does the document still make sense as one story?"*
+Forty-one addenda contain several superseded designs — stored portfolios (§111), the ownerless
+retrieval, the pre-TQ-72 custody — and merging them naively produces a document that describes three
+architectures at once.
+
 ### TQ-81 — Parliament, and the Charter it amends
 
 **NEED (ORANGE) · QUEUED · addendum 32 · addendum 46 §6, §39 · `SPEC_RECONCILIATION.md` §119, §120**
