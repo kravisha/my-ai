@@ -51,11 +51,19 @@ a tripwire that must be re-aimed rather than deleted (§105, §110, §116) —
 recorded absence is worth more than silence, and unrecorded success is how a
 capability arrives with nobody noticing it needs maintaining.
 
-`portfolio.detects_a_silently_partial_account` is the first one, and it is a real
-gap: an analyst told three positions by a broker that holds five has **no way to
-know**. Nothing in the answer says it is short. TQ-77's simulated client catches
-it only because the exercise knows the truth, and the analyst never will until
-something gives it a reason to doubt an account.
+`portfolio.detects_a_silently_partial_account` was the first one, and **it is now
+closed** — which is the mechanism working rather than an exception to it.
+
+It was declared a gap because an analyst told two positions by a broker that
+holds four had no way to know. Then the exercise failed for a day, said exactly
+why in the report, and TQ-80 closed it: the account is asked how much it holds,
+and the two disagreeing is the signal. When it started passing, the runner
+reported *"the curriculum is out of date"* rather than absorbing the win, and the
+exercise was reclassified deliberately.
+
+The whole cycle - declare the absence, fail loudly, close it, be told to
+reclassify - is what addendum 36 §11's adaptation looks like when the curriculum
+is honest about what the system cannot do.
 
 ## What a result may contain, and what it may never
 
@@ -120,6 +128,16 @@ class Exercise:
     # analysis.
     requested: str = "concentration"
     must_not_complain: tuple = ()
+    # Report fields that must come back non-empty.
+    #
+    # **Absence of complaint is not evidence of competence**, and mutation
+    # testing is how that was found: an analyst that simply stopped asking
+    # sources how much they hold made every view *unconfirmed*, which suppressed
+    # the client's complaint and passed the exercise. It had not detected
+    # anything - it had stopped claiming to know.
+    #
+    # So an exercise about detection requires the detection to appear.
+    must_report: tuple = ()
     why: str = ""
 
     def __post_init__(self) -> None:
@@ -268,15 +286,23 @@ PORTFOLIO_ANALYSIS_V1 = Curriculum(
             client="avery",
             sources=("avery-brokerage",),
             world=(("avery-brokerage", "partial"),),
-            expectation=EXPECT_KNOWN_GAP,
+            expectation=EXPECT_PASS,
             must_not_complain=("positions_missing",),
-            why=("**A real gap, recorded rather than omitted.** A broker that returns "
-                 "three of five positions gives a well-formed answer, and the analyst "
-                 "has no way to know it is short - nothing in the response says so, and "
-                 "there is no stored history to compare against (§111). TQ-77's "
-                 "simulated client catches it only because the exercise knows the truth. "
-                 "Closing this needs something that gives an analyst a reason to doubt an "
-                 "account; until then the curriculum says so out loud."),
+            # Evidence, not silence: the report must actually name the short
+            # source. Without this the exercise passes for an analyst that
+            # stopped asking, which is not detection.
+            must_report=("incomplete_sources",),
+            why=("**Was a known gap, closed by TQ-80, and the reclassification is the "
+                 "curriculum working.** A broker that returns two of four positions "
+                 "sends a well-formed answer, and the analyst had no way to know it was "
+                 "short: nothing in the rows says so, there is no stored history to "
+                 "compare against (§111) and no price to reconcile a total (§113).\n\n"
+                 "What closed it was noticing that the rows a source sends are not "
+                 "evidence that they are all of them. The account is asked how much it "
+                 "holds, separately, and the two disagreeing is the signal. It stays a "
+                 "capability exercise rather than becoming remediation: this was never a "
+                 "failure that happened in production, it was one the curriculum found "
+                 "before anybody shipped it."),
         ),
     ),
 )
@@ -325,7 +351,8 @@ _RECORDED_COMPLAINT_FIELDS = ("code", "rule")
 
 
 def record_result(conn: Database, curriculum: Curriculum, exercise: Exercise,
-                  verdict: dict, *, trained_agent: str | None = None) -> int:
+                  verdict: dict, *, report: dict | None = None,
+                  trained_agent: str | None = None) -> int:
     """Write down how an exercise went.
 
     `passed` is whether the analyst met the exercise's bar. `unexpected` is
@@ -334,7 +361,11 @@ def record_result(conn: Database, curriculum: Curriculum, exercise: Exercise,
     complaints = [{field: complaint.get(field) for field in _RECORDED_COMPLAINT_FIELDS}
                   for complaint in verdict.get("complaints", ())]
     raised = {complaint["code"] for complaint in complaints}
-    met_the_bar = not (raised & set(exercise.must_not_complain))
+    # The report is a separate argument and is **never written down**: it holds
+    # positions, and the row below holds codes. Keeping them apart in the
+    # signature is what stops the second from quietly becoming the first.
+    evidenced = all((report or {}).get(field) for field in exercise.must_report)
+    met_the_bar = not (raised & set(exercise.must_not_complain)) and evidenced
 
     if exercise.expectation == EXPECT_KNOWN_GAP:
         passed = False

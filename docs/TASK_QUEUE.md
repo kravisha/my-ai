@@ -900,8 +900,13 @@ Three things must not be lost while the tables go:
 
 ### TQ-78 — Consolidation: several sources, one view
 
-**NEED (GREEN) · IN PROGRESS 2026-08-27 · unblocked · addendum 9 §3, §112 · chosen ahead of TQ-73
-and TQ-76 (reasoning below)**
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §117) · addendum 9 §3, §112 · chosen
+ahead of TQ-73 and TQ-76 (reasoning below)**
+
+Built as `backend/consolidation.py`. All four decisions below were made and are recorded in §117:
+merge by symbol, an asset-class disagreement becomes `unknown` rather than a guess, a long and a
+short at different brokers keep their legs, `as_of` is the **minimum** across sources, and a
+partial consolidation is never reported as complete.
 
 Addendum 9 §3, canonical since August 2026 and never built:
 
@@ -952,6 +957,45 @@ is worth building once there is something worth tasking it with.
   current as of **none of them**. §17: *do not silently claim it is current.*
 - **What happens when one source of several fails.** A partial consolidation presented as complete
   is a portfolio missing an account, and the client cannot see which.
+
+### TQ-79 — The Portfolio Analyst, and the transport that keeps nothing
+
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §117) · addendum 9 §2, §3 · §112, §115**
+
+The role addendum 9 §2 specifies and `docs/README.md` had listed as *"Not built"* since the
+addendum-12 gap analysis. Built as `agents/portfolio_analyst.py` and `backend/analysis_requests.py`.
+
+The problem it had to solve was not the analysis. Every other agent here reads a queue in the
+database and writes results back to it; §111 says client data is never retained. The resolution is
+that **the database is a transport**: delete-on-read, discard-on-disconnect, expiry enforced on read
+rather than by a sweeper.
+
+**What it does not solve, and is not claimed to:** a subprocess agent cannot be handed a secret
+through a table without the secret landing on disk. `_refuse_secrets` refuses any source descriptor
+carrying a credential key, so the transport carries *which source* and never *how to open it*. The
+credential path remains TQ-73's.
+
+### TQ-80 — The silently partial account, detected
+
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §118) · owner direction 2026-08-27
+("close the known gap") · §100, §104, addendum 9 §3**
+
+TQ-76's curriculum shipped `portfolio.detects_a_silently_partial_account` as a declared `KNOWN_GAP`,
+failing loudly. This closed it.
+
+The defect: the analyst treated **the positions it received as all the positions there are**, so a
+broker whose positions endpoint truncated produced a report naming no failure and flagging nothing.
+An absence defaulted to the favourable value, which §100 and §104 forbid everywhere else.
+
+The fix: providers assert `position_count` on the account; the base returns `None` and refuses to
+count what it returned; `SourceAnswer` carries holdings and the expected count; `complete` became
+`not failures and not incomplete and not unconfirmed`. Unknown suppresses the completeness claim
+without inventing a shortfall.
+
+Mutation testing forced one further change worth naming here: an analyst that simply **stopped
+asking** passed the exercise, because every view became unconfirmed and the client's complaint was
+suppressed. `Exercise.must_report` now requires the detection to *appear* — absence of complaint is
+not evidence of competence. 8/8 mutations caught by the test written for each.
 
 ### TQ-73 — The credential envelope and the stateless fetch/analyse pipeline
 
@@ -1026,8 +1070,13 @@ the reconciliation across sources, and the analysis over supplied holdings, whic
 
 ### TQ-77 — The simulated exchange, and simulated clients arriving through the Gateway
 
-**NEED (GREEN) · QUEUED · depends on TQ-73's agent seam · owner direction 2026-08-27
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §117) · owner direction 2026-08-27
 (`SPEC_RECONCILIATION.md` §115) · addendum 25, addendum 34, `simulation/harness.py`**
+
+Built as `simulation/exchange.py` and `simulation/client_sessions.py`. The dependency on "TQ-73's
+agent seam" turned out to be wrong: the seam is the *provider registry*, which already existed, and
+the exchange registers in it as an ordinary provider. There is no simulation branch in the analyst
+and nothing there for one to be added to.
 
 Owner direction: *"The simulation engine simulates all external calls the agent makes and also the
 task that is assigned to the agent. This task is assigned to the agent through the gateway and when
@@ -1105,8 +1154,13 @@ this entry is **serving a real client**, which is the right thing to gate.
 
 ### TQ-76 — A portfolio-analysis curriculum, and imaginary clients to practise on
 
-**NEED (GREEN) · QUEUED — buildable now · owner direction 2026-08-26 (`SPEC_RECONCILIATION.md`
-§114) · addendum 36 (Department of Education), addendum 34 §17, addendum 13, addendum 9**
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §117) · owner direction 2026-08-26
+(`SPEC_RECONCILIATION.md` §114) · addendum 36 (Department of Education), addendum 34 §17,
+addendum 13, addendum 9**
+
+Built as `backend/curriculum.py` and `simulation/training.py`. Six exercises over five competencies,
+each declared remediation or capability-building per addendum 36 §4. It found one real gap on its
+first run — see TQ-80.
 
 Owner direction: *"Agents are being trained and we need simulation exercises for simulated requests
 for portfolio analysis from imaginary clients as part of training and this needs to be incorporated

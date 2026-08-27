@@ -7,16 +7,17 @@ lifted: the curriculum and the grade, not the Curriculum Architect.
 
 Two tests carry the weight.
 
-`test_the_known_gap_still_fails` is the one to read first. An exercise declared
-`KNOWN_GAP` **must fail**, and this asserts it does. That sounds like keeping a
-failing test green, and the point is the opposite: the day somebody builds the
-missing capability, this fails and tells them to reclassify the exercise rather
-than letting the win go unrecorded. Recorded absence beats silence; unrecorded
-success is how a capability arrives with nobody noticing it needs maintaining.
+`test_the_analyst_detects_a_silently_partial_account` is the one to read first,
+and it **used to assert the opposite**. It was a declared `KNOWN_GAP` - an
+exercise the system was expected to fail, in the curriculum so the absence was
+recorded rather than silent. It failed for a day, said why, and TQ-80 closed it;
+when it started passing the runner reported *"the curriculum is out of date"*
+rather than absorbing the win, and it was reclassified deliberately.
 
-`test_the_analyst_passes_every_exercise_it_should` is the other. It runs the real
-analyst against the real transport through the real provider lookup, with only
-the world simulated.
+`test_a_known_gap_is_still_supported_and_still_must_fail` is the other, and it
+exists because the first one stopped being a gap. A mechanism with no user rots,
+and the KNOWN_GAP machinery has to keep working for the next absence somebody
+finds - so it is exercised against a gap declared for the purpose.
 """
 
 import json
@@ -131,27 +132,26 @@ def test_the_analyst_passes_every_exercise_it_should(conn, analyst):
         f"{[r['complaints'] for r in should_pass if not r['passed']]}")
 
 
-def test_the_known_gap_still_fails(conn, analyst):
-    """**The one to read first.**
+def test_the_analyst_detects_a_silently_partial_account(conn, analyst):
+    """**The one to read first**, and it used to assert the opposite.
 
-    A broker that returns three of five positions gives a well-formed answer, and
-    the analyst has no way to know it is short: nothing in the response says so,
-    and there is no stored history to compare against (§111). The simulated client
-    catches it only because the exercise knows the truth.
+    This was a declared `KNOWN_GAP`: a broker returning two of four positions
+    sends a well-formed answer, and the analyst had no way to know it was short.
+    The exercise failed on purpose, said why in the report, and TQ-80 closed it -
+    the account is asked how much it holds, and the two disagreeing is the
+    signal.
 
-    So the exercise is declared a known gap and **must fail**. The day somebody
-    gives an analyst a reason to doubt an account, this test fails and says to
-    reclassify the exercise - which is how a capability arrives with somebody
-    noticing rather than silently."""
+    When it began passing, the runner reported *"the curriculum is out of date"*
+    rather than absorbing the win quietly, and the exercise was reclassified
+    deliberately. That is the whole loop working: declare the absence, fail
+    loudly, close it, be told."""
     result = training.run_exercise(
         conn, _exercise("portfolio.detects_a_silently_partial_account"), analyst)
 
-    assert result["passed"] is False
-    assert result["curriculum_out_of_date"] is False, (
-        "the analyst now detects a silently partial account. Build it a way to say so, "
-        "then reclassify this exercise from KNOWN_GAP to PASS - do not let the win go "
-        "unrecorded.")
-    assert "positions_missing" in {c["code"] for c in result["complaints"]}
+    assert result["passed"] is True
+    assert result["verdict"] == "satisfied", (
+        f"the client is still unhappy: {result['complaints']}")
+    assert result["curriculum_out_of_date"] is False
 
 
 def test_an_unreachable_source_is_reported_rather_than_hidden(conn, analyst):
@@ -292,7 +292,7 @@ def test_a_result_keeps_the_rule_a_complaint_named(conn, analyst):
     """*"Disappointed"* is a mood. A complaint that names its rule is something a
     curriculum can act on."""
     training.run_exercise(
-        conn, _exercise("portfolio.detects_a_silently_partial_account"), analyst)
+        conn, _exercise("portfolio.refuses_rather_than_substituting"), analyst)
 
     row = conn.fetchone("SELECT complaints FROM curriculum_results ORDER BY id DESC")
     complaints = json.loads(row["complaints"])
@@ -314,14 +314,23 @@ def test_the_report_separates_a_regression_from_a_difficulty(conn, analyst):
 
     assert report["regressions"] == [], (
         f"a remediation exercise regressed: {report['regressions']}")
-    assert report["by_competency"]["detect_silent_loss"]["known_gaps"] == 1
+    assert report["by_competency"]["detect_silent_loss"]["passed"] == 1
     assert report["by_competency"]["honest_partial"]["passed"] == 2
 
 
 def test_the_report_says_when_the_curriculum_is_out_of_date(conn):
     """A known gap that passes is not a failure - it is a signal that somebody
     built the capability and the curriculum owes an update (§11)."""
-    exercise = _exercise("portfolio.detects_a_silently_partial_account")
+    # A gap declared over something the system handles fine. It used to be a real
+    # exercise; TQ-80 closed the last one, so the mechanism is exercised against
+    # a declared gap rather than a remembered one.
+    exercise = curriculum_module.Exercise(
+        exercise_id="portfolio.a_gap_that_is_not_one",
+        competency="consolidation", kind=curriculum_module.KIND_CAPABILITY,
+        client="avery", sources=("avery-brokerage",),
+        expectation=curriculum_module.EXPECT_KNOWN_GAP,
+        must_not_complain=("positions_missing",),
+        why="Exercises the out-of-date report, which no real gap does now.")
     curriculum_module.record_result(
         conn, curriculum_module.PORTFOLIO_ANALYSIS_V1, exercise,
         {"verdict": "satisfied", "complaints": []})
@@ -345,14 +354,40 @@ def test_the_report_names_a_regression_loudly(conn):
     assert "regression rather than a difficulty" in report["note"]
 
 
-def test_a_clean_report_says_so_without_overclaiming(conn, analyst):
+def test_a_clean_report_says_so_plainly(conn, analyst):
+    """With the last known gap closed, the honest report is a clean one - and it
+    says so in one sentence rather than listing what did not go wrong."""
     outcome = training.run_curriculum(conn, analyst)
-    note = outcome["report"]["note"]
 
-    # It must mention the known gap rather than reporting unqualified success.
-    assert "known gap" in note
+    assert outcome["report"]["note"] == "Every exercise met its bar."
     assert outcome["report"]["exercises_run"] == len(
         curriculum_module.PORTFOLIO_ANALYSIS_V1.exercises)
+
+
+def test_a_known_gap_is_still_supported_and_still_must_fail(conn, analyst):
+    """The mechanism outlives the gap that motivated it.
+
+    With every declared gap now closed, nothing in the curriculum exercises
+    `EXPECT_KNOWN_GAP` - and an unexercised mechanism is one that rots. This
+    declares a gap the system genuinely does not have (an analysis it cannot
+    perform, asked of a source that is fine) and asserts the two properties that
+    matter: a known gap that fails is *not* a failure, and one that passes is
+    reported as the curriculum being out of date."""
+    gap = curriculum_module.Exercise(
+        exercise_id="portfolio.known_gap_probe",
+        competency="consolidation", kind=curriculum_module.KIND_CAPABILITY,
+        client="avery", sources=("avery-brokerage",),
+        expectation=curriculum_module.EXPECT_KNOWN_GAP,
+        must_not_complain=("positions_missing",),
+        why="Exercises the KNOWN_GAP mechanism itself, which no real gap does today.")
+
+    result = training.run_exercise(conn, gap, analyst)
+
+    # The analyst handles this fine, so the declared gap does not exist.
+    assert result["passed"] is False, "a KNOWN_GAP exercise must never count as passed"
+    assert result["curriculum_out_of_date"] is True, (
+        "a known gap the system does not actually have must be reported as the "
+        "curriculum being out of date")
 
 
 # --- what deliberately did not lift --------------------------------------------------

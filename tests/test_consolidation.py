@@ -294,4 +294,58 @@ def test_it_consolidates_what_the_real_providers_return():
     assert syn2.net_quantity == 3500
     # The spreadsheet is older, so the view is as of the spreadsheet.
     assert result.as_of == "2025-06-01T00:00:00+00:00"
+
+    # **Not complete**, because a bare list of holdings carries no claim about
+    # how many there should be (TQ-80). That is the strictness the silently
+    # partial account forced: "nothing went wrong that announced itself" is not
+    # the same as "this is the whole portfolio".
+    assert result.complete is False
+    assert set(result.unconfirmed_sources) == {"a-spreadsheet", "avery-brokerage"}
+
+
+def test_a_source_that_says_how_much_it_holds_can_be_confirmed_complete():
+    """The other half of TQ-80. A source that asserts its size and sends that
+    much is confirmed, and the view is complete in the strong sense rather than
+    in the "nothing complained" sense."""
+    simulated = portfolio_providers.Source(
+        provider_type="SIMULATED", name="avery-brokerage", owner_hint="avery")
+    provider = portfolio_providers.for_source(simulated)
+    held = provider.get_holdings(simulated)
+
+    result = consolidation.consolidate([
+        ("avery-brokerage", consolidation.SourceAnswer(
+            holdings=tuple(held),
+            expected_positions=provider.position_count(simulated)))])
+
+    assert result.complete is True
+    assert result.unconfirmed_sources == ()
+    assert result.incomplete_sources == ()
+
+
+def test_a_source_that_sends_fewer_than_it_claims_is_caught():
+    """**The failure that used to be undetectable.** A well-formed answer, no
+    error anywhere, and every figure derived from it understates the
+    portfolio."""
+    result = consolidation.consolidate([
+        ("broker-a", consolidation.SourceAnswer(
+            holdings=(_held(symbol="SYN1"), _held(symbol="SYN2")),
+            expected_positions=4))])
+
+    assert result.complete is False
+    entry = result.incomplete_sources[0]
+    assert (entry["source"], entry["expected"], entry["received"]) == ("broker-a", 4, 2)
+    assert any("understates the portfolio" in note for note in result.notes)
+
+
+def test_a_source_that_sends_more_than_it_claims_is_not_treated_as_short():
+    """Over-delivery is not the failure this guards against, and treating it as
+    one would produce an alarming report about an account that is fine. A count
+    that is *low* is the broker's own summary lagging, which is somebody else's
+    inconsistency rather than missing money."""
+    result = consolidation.consolidate([
+        ("broker-a", consolidation.SourceAnswer(
+            holdings=(_held(symbol="SYN1"), _held(symbol="SYN2")),
+            expected_positions=1))])
+
+    assert result.incomplete_sources == ()
     assert result.complete is True

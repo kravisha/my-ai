@@ -86,6 +86,38 @@ from backend import holdings as holdings_module
 from backend import portfolio_providers
 
 
+@dataclass(frozen=True)
+class SourceAnswer:
+    """What one source returned, and how much it said it holds (TQ-80).
+
+    A bare list of holdings cannot express the difference between *"here is the
+    account"* and *"here is some of the account"*, and that difference is the
+    whole of the silently-partial failure. So an answer carries the account's own
+    assertion alongside the rows.
+
+    `expected_positions` is `None` when the source did not say — **unknown, and
+    never "therefore complete"**. Defaulting an absence to the favourable value
+    is exactly what §100 and §104 forbid, and it was the actual defect behind
+    `portfolio.detects_a_silently_partial_account`.
+
+    A plain list is still accepted by `consolidate` and means the same as an
+    answer with no assertion, so nothing that already worked had to change to
+    keep working - it simply stops claiming to be complete."""
+
+    holdings: tuple
+    expected_positions: int | None = None
+
+    @property
+    def confirmed(self) -> bool:
+        return self.expected_positions is not None
+
+    @property
+    def short_by(self) -> int:
+        if not self.confirmed:
+            return 0
+        return max(0, self.expected_positions - len(self.holdings))
+
+
 class ConsolidationRefused(ValueError):
     """A consolidation this module will not perform, with the reason.
 
@@ -145,6 +177,13 @@ class Consolidated:
     as_of: str | None
     complete: bool
     failed_sources: tuple[dict, ...] = ()
+    # Answered, and returned fewer positions than the account says it holds.
+    # **Detected rather than suspected** - the account's own assertion disagrees
+    # with what arrived.
+    incomplete_sources: tuple[dict, ...] = ()
+    # Answered, and would not say how much it holds. Not a failure and not a
+    # clean bill of health: completeness is *unknown*, which is a third thing.
+    unconfirmed_sources: tuple[str, ...] = ()
     stale_sources: tuple[str, ...] = ()
     conflicts: tuple[dict, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
@@ -220,6 +259,8 @@ def consolidate(fetched) -> Consolidated:
     provider would produce on demand."""
     seen: list[str] = []
     failures: list[dict] = []
+    incomplete: list[dict] = []
+    unconfirmed: list[str] = []
     by_symbol: dict[str, list[Lot]] = {}
 
     for source_name, result in fetched:
@@ -238,7 +279,20 @@ def consolidate(fetched) -> Consolidated:
             failures.append({"source": name, "reason": str(result)})
             continue
 
-        for held in result:
+        answer = result if isinstance(result, SourceAnswer) else SourceAnswer(
+            holdings=tuple(result))
+        if not answer.confirmed:
+            unconfirmed.append(name)
+        elif answer.short_by:
+            incomplete.append({
+                "source": name,
+                "expected": answer.expected_positions,
+                "received": len(answer.holdings),
+                "reason": (f"the account says it holds {answer.expected_positions} "
+                           f"position(s) and sent {len(answer.holdings)}"),
+            })
+
+        for held in answer.holdings:
             by_symbol.setdefault(held.symbol, []).append(Lot(
                 source=name,
                 quantity=held.quantity,
@@ -300,15 +354,23 @@ def consolidate(fetched) -> Consolidated:
         positions=tuple(positions),
         sources=tuple(answered),
         as_of=as_of,
-        complete=not failures,
+        # **Strict since TQ-80.** It used to mean "no source failed", which
+        # quietly equated "nothing went wrong that announced itself" with "this
+        # is the whole portfolio". Complete now means every source answered,
+        # every source said how much it holds, and every one sent that much.
+        complete=not failures and not incomplete and not unconfirmed,
         failed_sources=tuple(failures),
+        incomplete_sources=tuple(incomplete),
+        unconfirmed_sources=tuple(sorted(unconfirmed)),
         stale_sources=stale,
         conflicts=tuple(conflicts),
-        notes=tuple(_notes(positions, failures, conflicts, stale, as_of)),
+        notes=tuple(_notes(positions, failures, incomplete, unconfirmed,
+                           conflicts, stale, as_of)),
     )
 
 
-def _notes(positions, failures, conflicts, stale, as_of) -> list[str]:
+def _notes(positions, failures, incomplete, unconfirmed, conflicts, stale,
+           as_of) -> list[str]:
     """Everything a reader has to be told, in words they can repeat.
 
     Assembled here rather than left to each caller, because a caller that forgot
@@ -321,6 +383,18 @@ def _notes(positions, failures, conflicts, stale, as_of) -> list[str]:
             f"portfolio rather than all of it: "
             f"{', '.join(f['source'] for f in failures)}. Anything computed from it - "
             "concentration especially - describes only what answered.")
+    if incomplete:
+        notes.append(
+            f"{len(incomplete)} source(s) sent fewer positions than they say they hold, "
+            "so positions are missing from this view and it is not known which: "
+            + "; ".join(f"{entry['source']} ({entry['reason']})" for entry in incomplete)
+            + ". Every figure below understates the portfolio by whatever is absent.")
+    if unconfirmed:
+        notes.append(
+            f"{len(unconfirmed)} source(s) did not say how many positions they hold, so "
+            f"this view cannot be confirmed complete: {', '.join(sorted(unconfirmed))}. "
+            "That is unknown rather than wrong - but it is also not a clean bill of "
+            "health.")
     if conflicts:
         notes.append(
             f"{len(conflicts)} security(ies) are described differently by different "

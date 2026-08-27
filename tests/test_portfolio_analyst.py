@@ -24,7 +24,7 @@ import json
 import pytest
 
 from agents import portfolio_analyst
-from backend import analysis_requests, portfolios
+from backend import analysis_requests, portfolio_providers, portfolios
 
 
 def _sources(*names, provider_type="SIMULATED"):
@@ -82,6 +82,64 @@ def test_one_unreachable_source_does_not_cost_the_others():
     assert report["failed_sources"][0]["source"] == "the-one-that-is-down"
     assert report["analysis"]["partial"] is True, (
         "a caller reading only the analysis could not tell it was partial")
+
+
+def test_a_source_that_sent_fewer_than_it_holds_is_named_in_the_report():
+    """**The gap TQ-80 closed, asserted where a client would look.**
+
+    The account says four, the positions endpoint sends two, no error anywhere.
+    Every figure in the report understates the portfolio, and nothing about the
+    arithmetic looks wrong — so the report has to say which source was short and
+    by how much, or the detection is invisible to the person it was for."""
+    from simulation import exchange
+
+    world = exchange.SimulatedExchange.from_scenario(
+        [{"source": "brokerage", "behaviour": exchange.BEHAVIOUR_PARTIAL, "returns": 2}])
+    previous = portfolio_providers._PROVIDERS[exchange.PROVIDER_TYPE]
+    portfolio_providers._PROVIDERS[exchange.PROVIDER_TYPE] = world
+    try:
+        report = portfolio_analyst.analyse({
+            "requested": portfolio_analyst.ANALYSIS_CONCENTRATION,
+            "sources": [{"provider_type": "SIMULATED", "name": "brokerage",
+                         "owner_hint": "avery"}]})
+    finally:
+        portfolio_providers._PROVIDERS[exchange.PROVIDER_TYPE] = previous
+
+    assert report["complete"] is False
+    short = report["incomplete_sources"][0]
+    assert short["source"] == "brokerage"
+    assert (short["expected"], short["received"]) == (4, 2)
+    assert report["analysis"]["partial"] is True
+
+
+def test_a_source_that_will_not_say_how_much_it_holds_is_unconfirmed():
+    """**Unknown is a third state**, and collapsing it either way is wrong: read
+    as confirmation it hides a short answer, read as failure it throws away a
+    perfectly good one.
+
+    A provider that raises when asked is the same as one that will not say. A
+    failure to *ask* must not cost the client the source."""
+    class WillNotSay(portfolio_providers.ManualPortfolioProvider):
+        def position_count(self, source):
+            raise RuntimeError("this account has no summary endpoint")
+
+    previous = portfolio_providers._PROVIDERS[portfolios.PROVIDER_MANUAL]
+    portfolio_providers._PROVIDERS[portfolios.PROVIDER_MANUAL] = WillNotSay()
+    try:
+        report = portfolio_analyst.analyse({
+            "requested": portfolio_analyst.ANALYSIS_CONCENTRATION,
+            "sources": [{"provider_type": "MANUAL", "name": "a-file",
+                         "positions": ({"symbol": "SYN1", "quantity": 10,
+                                        "average_cost": 5.0, "asset_class": "stock",
+                                        "as_of": "2026-01-01T00:00:00+00:00"},)}]})
+    finally:
+        portfolio_providers._PROVIDERS[portfolios.PROVIDER_MANUAL] = previous
+
+    assert report["unconfirmed_sources"] == ["a-file"]
+    assert report["incomplete_sources"] == []
+    assert report["complete"] is False
+    # And the positions still came through - the source was not thrown away.
+    assert [p["symbol"] for p in report["positions"]] == ["SYN1"]
 
 
 def test_a_malformed_source_fails_only_itself():

@@ -30,7 +30,7 @@ import inspect
 
 import pytest
 
-from backend import holdings, portfolio_providers, portfolios
+from backend import consolidation, holdings, portfolio_providers, portfolios
 
 # The interface a provider offers. Asserted as *present*; the shape check below
 # deliberately scans every public method instead, because the method that
@@ -284,3 +284,56 @@ def test_every_built_provider_passes_the_contract():
 
     built = {p.provider_type for p in portfolio_providers._PROVIDERS.values()}
     assert built <= tested, f"providers with no contract class: {sorted(built - tested)}"
+
+def test_a_provider_that_does_not_answer_the_count_refuses_to_guess_it():
+    """The default a future broker adapter inherits, and the one place TQ-80's
+    detection can be silently undone.
+
+    Both built providers override `position_count`, so nothing above this
+    exercises the base. That matters because the base is what an adapter written
+    against a broker with no account-summary endpoint will get - and the tempting
+    implementation there is `len(self.get_holdings(source))`, which reads like a
+    sensible default and is not one. It makes the assertion agree with the answer
+    by construction: a source that truncated its response would confirm its own
+    truncated count, and `SourceAnswer.short_by` would be `0` forever.
+
+    So the base says **unknown**, and the consolidation carries that source as
+    *unconfirmed* rather than as complete. A provider that cannot check is worse
+    than one that says it cannot; a provider that pretends to check is worse than
+    both, because the report then claims a completeness nobody verified.
+    """
+    class NoSummaryEndpoint(portfolio_providers._BaseProvider):
+        """A perfectly ordinary adapter - it fetches holdings and never
+        implements the count."""
+
+        name = "no-summary"
+        provider_type = portfolios.PROVIDER_MANUAL
+        capabilities = (portfolio_providers.CAP_HOLDINGS,
+                        portfolio_providers.CAP_ACCOUNTS,
+                        portfolio_providers.CAP_POSITIONS)
+
+        def get_holdings(self, source):
+            return [portfolio_providers.Holding.from_row(row)
+                    for row in self._check_source(source).positions]
+
+    source = portfolio_providers.Source(
+        provider_type=portfolios.PROVIDER_MANUAL,
+        name="a-broker-with-no-summary",
+        data_mode=portfolios.MODE_MANUAL,
+        simulated=False,
+        positions=({"symbol": "SYN1", "quantity": 10, "average_cost": 5.0,
+                    "asset_class": "stock", "as_of": "2026-01-01T00:00:00+00:00"},),
+    )
+    provider = NoSummaryEndpoint()
+
+    # It does return holdings - so counting them was available and was declined.
+    assert [h.symbol for h in provider.get_holdings(source)] == ["SYN1"]
+    assert provider.position_count(source) is None
+    assert provider.get_account(source)["position_count"] is None
+
+    # And the consolidation reads that as unknown rather than as agreement.
+    answer = consolidation.SourceAnswer(
+        holdings=tuple(provider.get_holdings(source)),
+        expected_positions=provider.position_count(source))
+    assert answer.confirmed is False
+    assert answer.short_by == 0, "unknown is not a shortfall either"

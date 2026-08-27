@@ -187,7 +187,31 @@ class SimulatedExchange:
             "reference": source.reference,
             "priced": portfolios.is_priced({"data_mode": source.data_mode}),
             "simulated": True,
+            "position_count": self.position_count(source),
         }
+
+    def position_count(self, source) -> int | None:
+        """How many positions this account says it holds.
+
+        **The true count, even when the positions endpoint returns fewer**, and
+        that is not the exchange being unrealistically helpful — it is the shape
+        of the real failure. A broker's account summary reports what is in the
+        account; its positions endpoint pages, times out, or truncates. The two
+        disagreeing is what a partial answer looks like from outside, and it is
+        the only thing that makes one detectable at all.
+
+        An exchange whose account summary lied *consistently* with its positions
+        would model a broker that has lost the position rather than one that
+        failed to send it, and nothing could detect that — which is why it is not
+        what `partial` means here.
+
+        `BEHAVIOUR_UNREACHABLE` says nothing, because an account that cannot be
+        reached cannot tell you how much it holds. That is `None`, which is
+        *unknown* rather than zero."""
+        behaviour = self.behaviour_for(source)
+        if behaviour.behaviour == BEHAVIOUR_UNREACHABLE:
+            return None
+        return len(self._fixture_holdings(source))
 
     def get_holdings(self, source) -> list:
         """What this account returns — which is not always what it holds.

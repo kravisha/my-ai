@@ -89,6 +89,15 @@ class SimulatedClient:
     sources: list
     truth: dict = field(default_factory=dict)
     request_id: str | None = None
+    # What the client was last shown. Kept on the *client* rather than returned
+    # on the verdict, so a curriculum can require evidence (`must_report`)
+    # without the report riding along on the grade.
+    #
+    # That distinction was forced by a test: putting it on the verdict broke
+    # `test_a_verdict_carries_no_positions`, which was right to object. A grade
+    # travels to a curriculum and gets written down; a report does not, and the
+    # two must not become one object that sometimes does both.
+    last_report: dict = field(default_factory=dict)
 
     def owner(self) -> portfolios.OwnerContext:
         return portfolios.for_client(self.client_id)
@@ -134,6 +143,7 @@ class SimulatedClient:
             return self._verdict(complaints)
 
         report = answer.get("result") or {}
+        self.last_report = report
 
         answered = report.get("requested")
         if self.asked_for and answered and answered != self.asked_for:

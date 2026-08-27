@@ -72,18 +72,36 @@ class AnalysisRefused(ValueError):
 
 
 def _fetch(source_descriptor: dict):
-    """One source, fetched. Returns holdings, or a failure to carry.
+    """One source, fetched. Returns a `SourceAnswer`, or a failure to carry.
 
     A failure is **returned rather than raised** so that one unreachable broker
     does not cost a client the analysis of the others (TQ-78). What is returned
-    is the reason, in words that reach the report."""
+    is the reason, in words that reach the report.
+
+    ## Why it asks the account how much it holds (TQ-80)
+
+    The rows a source sends are not evidence that they are all of them. A broker
+    that pages, times out or truncates sends a well-formed answer that is short,
+    and until this agent asked, **it had no way to know** — it treated "the
+    positions I received" as "all the positions", which is defaulting an absence
+    to the favourable value.
+
+    So it asks the account, separately, and hands both to the consolidation. The
+    two disagreeing is the signal, and it is the only one available: there is no
+    stored history to compare against (§111) and no price to reconcile a total
+    against (§113).
+
+    A provider that will not say returns `None`, and that stays **unknown** here
+    rather than being read as confirmation."""
     try:
         source = portfolio_providers.Source(**source_descriptor)
     except (TypeError, ValueError) as malformed:
         return f"the source description could not be used ({malformed})"
     try:
         provider = portfolio_providers.for_source(source)
-        return provider.get_holdings(source)
+        held = provider.get_holdings(source)
+        return consolidation.SourceAnswer(
+            holdings=tuple(held), expected_positions=_expected_positions(provider, source))
     except portfolio_providers.ProviderRefused as refused:
         return str(refused)
     except portfolio_providers.ProviderCapabilityUnavailable as unavailable:
@@ -93,6 +111,19 @@ def _fetch(source_descriptor: dict):
         # type so a report can say what went wrong without this agent having to
         # anticipate every provider's failure modes.
         return f"the source did not answer ({unreachable.__class__.__name__})"
+
+
+def _expected_positions(provider, source) -> int | None:
+    """What the account says it holds, or None if it will not say.
+
+    A failure to *ask* is unknown rather than fatal: a provider that cannot
+    describe its account still gave us positions, and refusing the whole source
+    because it could not confirm a count would throw away an answer over a
+    missing assurance. `None` carries that honestly."""
+    try:
+        return provider.position_count(source)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def analyse(request: dict) -> dict:
@@ -119,6 +150,13 @@ def analyse(request: dict) -> dict:
         "as_of": view.as_of,
         "complete": view.complete,
         "failed_sources": [dict(failure) for failure in view.failed_sources],
+        # Answered, and short of what the account says it holds (TQ-80). Named
+        # separately from a failure because the remedy differs: a failed source
+        # can be retried, a short one has already answered and answered wrongly.
+        "incomplete_sources": [dict(entry) for entry in view.incomplete_sources],
+        # Answered, and would not say how much it holds. Unknown, which is a
+        # third thing from complete and from short.
+        "unconfirmed_sources": list(view.unconfirmed_sources),
         "conflicts": [dict(conflict) for conflict in view.conflicts],
         "notes": list(view.notes),
         "positions": [

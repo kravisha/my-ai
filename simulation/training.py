@@ -108,7 +108,8 @@ def run_exercise(conn, exercise, analyst_cycle, *, curriculum=None,
             conn, client, analyst_cycle, requested=exercise.requested)
 
     result_id = curriculum_module.record_result(
-        conn, curriculum, exercise, verdict, trained_agent=trained_agent)
+        conn, curriculum, exercise, verdict, report=client.last_report,
+        trained_agent=trained_agent)
     row = conn.fetchone(
         "SELECT passed, unexpected FROM curriculum_results WHERE id = ?", (result_id,))
     return {**verdict,

@@ -10288,3 +10288,210 @@ them: they are keyed by portfolio id and the table that mapped a portfolio to it
 owner is gone, so "clear this client's archived rows" is a question nothing can
 answer any more. Saying so is the §100 rule holding — a check that could not see
 them would be the clean report that is not true.
+
+## §117 — The chain from a client's request to a report (2026-08-27, TQ-78, TQ-79, TQ-77, TQ-76)
+
+**Recorded in arrears, and that is the first thing worth writing down.** Four
+increments shipped between §116 and this section — the consolidation, the
+analyst, the simulated world, the curriculum — and each was committed with tests
+green, mutation-tested, and *no section here*. The queue still called TQ-78 `IN
+PROGRESS` and TQ-77 and TQ-76 `QUEUED` while all three were built and running.
+
+The rhythm this project works to is *record before moving on*, and the reason is
+not tidiness: §111's Conflict Rule miss happened because a decision was checked
+against the code rather than against the addendum, and this document is where
+that check has somewhere to stand. Four undocumented increments is four places a
+later reader would have to reconstruct the reasoning from the diff. The code
+carries it — each module's header states its decisions at length — but a module
+docstring explains *that module*, and this file is the only place that says what
+was true across them.
+
+So this section is one entry covering four increments rather than four written
+after the fact, and the loss is real: the ordering arguments below are recalled
+rather than recorded at the moment they were made.
+
+### TQ-78 — Several sources, one view
+
+Addendum 9 §3 has been canonical since August 2026 and had never been built:
+*"Normalize and reconcile positions sufficiently to analyze the portfolio as a
+whole."* Every caller in the system handled exactly one source. §112 is the owner
+saying that the consolidation **is the product** — *"analysis that is usually not
+provided by discount brokers"* — so the one thing being sold was the one thing
+absent.
+
+`backend/consolidation.py` is mostly the four places *"combine where
+appropriate"* turns out to mean **do not**:
+
+- **A merge is by symbol; a disagreement about the symbol is not a merge.** Two
+  sources calling `SYN1` a stock and an ETF are not one position seen twice — one
+  of them is wrong and this module cannot know which. The position merges, the
+  class becomes `unknown`, the disagreement is reported. Picking the first, the
+  commonest, or the more specific is the fabrication §100 refused.
+- **A long at one broker and a short at another do not net to nothing.**
+  Reporting `0` is arithmetically defensible and materially false: two positions
+  exist, with two cost bases, different tax treatment and different counterparty
+  risk. `net_quantity` is reported *and the legs are kept* — §101's rule about
+  shorts, one level up.
+- **A consolidated view is as fresh as its oldest source.** Fetched at 09:00 and
+  15:00, it is current as of neither. `as_of` is the **minimum**; reporting the
+  newest would be §17's silent freshness claim arriving in the one place where
+  two honest timestamps make a dishonest third.
+- **A partial consolidation is not a portfolio.** Failures are carried, not
+  dropped.
+
+### TQ-79 — The Portfolio Analyst, and how an agent serves a system that keeps nothing
+
+`docs/README.md` had listed this role as *"Not built"* since the addendum-12 gap
+analysis. The pieces finally existed: providers fetch (§111), consolidation
+combines (TQ-78), `concentration` analyses whatever it is handed (§101).
+
+**The real problem this increment had to solve was not the analysis.** Every
+other agent here is a subprocess that reads a queue in the database and writes
+results back to it. §111 says client data is never retained. Those two look
+incompatible, and the resolution is that **the database is a transport, not a
+store**: `backend/analysis_requests.py` holds a request only until the analyst
+claims it, holds a report only until the client collects it (`collect` deletes on
+read), discards everything for a session on disconnect, and treats an expired row
+as absent *on read* rather than trusting a sweeper to have run.
+
+That is a genuine architectural answer and it is worth being clear about what it
+does **not** solve. A subprocess agent cannot be handed a secret through a table
+without the secret landing on disk. So `_refuse_secrets` refuses any source
+descriptor carrying a `credential`, `password`, `token` or `api_key` key —
+refusing rather than storing — and the actual credential path stays TQ-73's to
+resolve. The transport carries *which source*, never *how to open it*.
+
+Two org-model tripwires caught the new role, which is what they are for. The
+second was the useful one: `spawn_paths_agree_with_coo` failed because
+`spawned_by_coo` had been conflating *"the COO can spawn this"* with *"this is in
+the baseline workforce"*. An analyst that works only when a client asks is the
+first role where those differ, so `on_demand: true` exists now and a second test
+holds the two apart. **A tripwire firing on a legitimate change is not noise if
+the fix is a distinction the model was missing.**
+
+### TQ-77 — The simulated exchange, and the clients who ask
+
+§115 corrected a framing of mine that treated *"training must match production"*
+as a discipline to maintain. The owner's design makes it **structural**: there is
+no simulation branch in `agents/portfolio_analyst.py` and nothing there for one
+to be added to. The exchange registers as an ordinary provider and the analyst
+reaches it through `for_source` like any other, because what it fetches from is
+decided by the request rather than by the mode. `simulation/harness.py` had
+already written the principle — *"Isolation is the database, not a flag"* — and I
+had reached for the weaker version anyway.
+
+**An exchange that never fails is the wrong teacher.** `SimulatedPortfolioProvider`
+always succeeds, which is right for a fixture and wrong for a broker: an analyst
+trained where outages never happen forms every habit about partial and stale data
+in a world that does not exist. So an exchange can be asked to be `healthy`,
+`unreachable`, `slow`, `partial` or `malformed`.
+
+`truth_for` — what the exchange actually holds — is deliberately **not** on the
+`PortfolioProvider` Protocol. Ground truth is for the grader, and a provider
+interface that could be asked for it would let an agent pass by asking.
+
+The simulated client is the other half: it requests, collects, and **judges**,
+with a closed vocabulary of complaints — `no_answer`, `refused`,
+`account_vanished`, `partial_presented_as_complete`, `positions_missing`,
+`positions_invented`, `priced_without_prices`, `answered_a_different_question`.
+`run_session` disconnects in a `finally`, because a client who leaves angry
+leaves nothing behind either.
+
+### TQ-76 — The curriculum, and what a passing grade may know
+
+Addendum 36 §4 separates **remediation** from **capability-building** *"because
+their goals and measurement differ"*, so a competency declares which it is and
+the report groups by it. Six exercises, and the design decisions that matter are
+about what a result may contain:
+
+- **A `KNOWN_GAP` exercise must fail.** If one passes, the report says
+  *"curriculum out of date"* rather than congratulating anyone. A gap that closes
+  quietly is a gap nobody re-aimed (§105, §110, §116).
+- **`record_result` keeps codes and rules, never `detail`.** The detail quotes
+  symbols, and a training-results table is the last place anyone would look for
+  retained client positions. §111 holds in the room next door too.
+- **The verdict is a grade and the report is not part of it.** TQ-80 forced this
+  distinction and it is recorded there.
+
+The run is clean: six exercises, no regressions, `CURRICULUM OUT OF DATE none`,
+and the closing line the run prints itself — *client analysis data held: 0 ·
+positions written down: none.*
+
+## §118 — The known gap, closed (2026-08-27, TQ-80)
+
+TQ-76 shipped with `portfolio.detects_a_silently_partial_account` declared a
+`KNOWN_GAP` and failing loudly. Owner direction: *"close the known gap."*
+
+### What the defect actually was
+
+The analyst treated **the positions it received as all the positions there are**.
+A broker whose positions endpoint truncates — pages out, times out, returns the
+first N — produced a report that named no failure, flagged nothing, and was
+missing an account's worth of holdings. The client could not tell that report
+from a correct one.
+
+Stated in this document's own terms: it was **defaulting an absence to the
+favourable value**, which §100 and §104 forbid everywhere else. *Absent is
+`unknown`, never a plausible default* — and "I did not receive a count" had been
+silently reading as "I received everything."
+
+### The fix, and why it is shaped like this
+
+A source's rows are not evidence they are all of them, so something else has to
+say. Providers gained `position_count(source)`, reported **on the account** —
+because that is where a real integration finds it: a broker's account endpoint
+reports how much is in the account, its positions endpoint returns rows, and
+**the two disagreeing is the signal**.
+
+Three decisions carry the weight:
+
+- **The base provider returns `None`, and `None` is unknown.** The tempting
+  default in a future broker adapter is `len(self.get_holdings(source))`, which
+  reads sensible and is not: it makes the assertion agree with the answer by
+  construction, so a truncated source confirms its own truncated count and
+  `short_by` is `0` forever. A provider that cannot check must say so.
+  `ManualPortfolioProvider` counts the **source descriptor**, not the list it
+  built, so a provider that dropped a row while converting is caught by its own
+  assertion.
+- **The simulated exchange's account tells the truth even when `partial`.** That
+  is not the exchange being unrealistically helpful — an account summary that
+  lied *consistently* with its truncated positions would model a broker that has
+  lost the position rather than one that failed to send it, and nothing could
+  detect that.
+- **`complete` became strict.** `SourceAnswer` carries holdings and the expected
+  count; `confirmed` is *"a count was given"*, `short_by` is the shortfall, and
+  `Consolidated.complete` is now `not failures and not incomplete and not
+  unconfirmed`. Unknown suppresses the completeness claim without inventing a
+  shortfall — `short_by == 0` for an unconfirmed source, because unknown is not a
+  shortfall either.
+
+### What mutation testing found, and it was not a small thing
+
+Round one scored 4/7 and the important miss was this: an analyst that simply
+**stopped asking** sources how much they hold made every view *unconfirmed*,
+which suppressed the client's complaint and **passed the exercise**. It had not
+detected anything. It had stopped claiming to know.
+
+So `Exercise` gained `must_report`: fields the report must actually come back
+with. **Absence of complaint is not evidence of competence**, and an exercise
+about detection now requires the detection to appear — the short source has to be
+named.
+
+Putting the report on the verdict to make that checkable immediately broke
+`test_a_verdict_carries_no_positions`, which was right to object. A grade travels
+to a curriculum and gets written down; a report does not. The report moved to
+`client.last_report` and `record_result` takes it as a separate `report=`
+argument that is **never persisted**. Keeping them apart in the signature is what
+stops the second from quietly becoming the first.
+
+The eighth mutation found the last hole: both built providers override
+`position_count`, so nothing exercised the base's refusal to guess — the exact
+line a future broker adapter inherits.
+`test_a_provider_that_does_not_answer_the_count_refuses_to_guess_it` covers it
+now.
+
+**8/8 mutations caught, each by the test written for it.** Suite **2509 passing,
+8 skipped**. The curriculum reclassified the exercise from `KNOWN_GAP` to a
+capability under `detect_silent_loss`, and reports `CURRICULUM OUT OF DATE none`
+— which is the check confirming the reclassification was earned rather than
+asserted.

@@ -189,6 +189,7 @@ class PortfolioProvider(Protocol):
 
     def supports(self, capability: str) -> bool: ...
     def get_account(self, source: Source) -> dict: ...
+    def position_count(self, source: Source) -> int | None: ...
     def get_holdings(self, source: Source) -> list[Holding]: ...
     def get_balances(self, source: Source) -> dict: ...
     def get_positions(self, source: Source) -> list[Holding]: ...
@@ -256,7 +257,31 @@ class _BaseProvider:
             # gives it one to read.
             "priced": portfolios.is_priced({"data_mode": source.data_mode}),
             "simulated": bool(source.simulated),
+            # **How many positions this account says it holds** - the assertion
+            # that makes a silently partial answer detectable (TQ-80).
+            #
+            # `None` means the source did not say, which is *unknown* and never
+            # "therefore complete". That default was the actual defect: an
+            # analyst treating "the positions I received" as "all the positions"
+            # is defaulting an absence to the favourable value, which is what
+            # §100 and §104 forbid everywhere else.
+            #
+            # It is on the account rather than beside the holdings because that
+            # is where a real integration finds it: a broker's account endpoint
+            # reports a position count, its positions endpoint returns rows, and
+            # **the two disagreeing is the signal**.
+            "position_count": self.position_count(source),
         }
+
+    def position_count(self, source: Source) -> int | None:
+        """How many positions this source says it holds, or None if it will not
+        say.
+
+        Overridden by any provider that can answer honestly. The base refuses to
+        guess: a provider that does not know must say so rather than counting
+        what it happened to return, which would make the assertion agree with
+        the answer by construction and detect nothing."""
+        return None
 
     def get_positions(self, source: Source) -> list[Holding]:
         self._require(CAP_POSITIONS)
@@ -307,6 +332,16 @@ class ManualPortfolioProvider(_BaseProvider):
         self._require(CAP_HOLDINGS)
         source = self._check_source(source)
         return [Holding.from_row(dict(row)) for row in source.positions]
+
+    def position_count(self, source: Source) -> int | None:
+        """A hand-maintained source *is* its positions, and they all arrived
+        together, so this can answer honestly.
+
+        It is not "count what I returned" dressed up: the count comes from the
+        source descriptor rather than from the list this provider built, so a
+        provider that dropped a row while converting would be caught by its own
+        assertion."""
+        return len(self._check_source(source).positions)
 
 
 # The simulated portfolios (§6.1), with the diversity that section asks for.
@@ -440,6 +475,9 @@ class SimulatedPortfolioProvider(_BaseProvider):
         fixture = self._fixture(source.owner_hint or source.name)
         return [Holding.from_row({**position, "as_of": FIXTURE_AS_OF, "simulated": True})
                 for position in fixture["positions"]]
+
+    def position_count(self, source: Source) -> int | None:
+        return len(self._fixture(source.owner_hint or source.name)["positions"])
 
     def get_balances(self, source: Source) -> dict:
         """Cash, and nothing derived from a price.
