@@ -577,6 +577,23 @@ It prints what it cannot see with every verdict — deliberation, real prices, a
 real broker, historical operation, release and rollback. A green line therefore
 means something specific and limited, which is the only kind worth having.
 
+### What a full verification currently says
+
+Eight of nine scenarios and the whole curriculum pass. One property fails
+intermittently and for a real reason: under load a single model call can take
+longer than COO's 45-second staleness threshold, so a busy Analysis agent is
+declared crashed and respawned — then found to be working.
+
+The threshold has **not** been raised to make the run green. Its recorded
+justification (*"gaps stay ~10s"*) was wrong: the gap is bounded by the slowest
+single model call, which nobody has measured and which a vendor sets. Replacing a
+margin justified by a wrong rate with one justified by no rate would also make the
+detector slower to notice a genuinely dead agent. TQ-93 asks the real question —
+whether liveness and progress are the same signal.
+
+**The suite is intermittently red for a real reason, which is the correct state
+for it to be in.**
+
 ### A rule that forbids its own subject
 
 An instrument in force can be drafted so that nothing can satisfy it — by naming

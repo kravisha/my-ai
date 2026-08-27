@@ -189,3 +189,46 @@ def test_anthropic_provider_final_event_reports_usage_strictly():
     provider._client = MagicMock(messages=MagicMock(stream=mock_usage_stream))
     final = list(provider.stream("sys", [], []))[-1]
     assert final["usage"] == {"input_tokens": None, "output_tokens": None}
+
+
+def test_the_limit_is_read_from_dotenv_and_not_from_import_order(tmp_path, monkeypatch):
+    """The same limit read two different values depending on which module was
+    imported first (§132).
+
+    `app/model_provider.py` calls `load_dotenv()` at import, so a process that had
+    touched the provider saw a configured limit and a process that only checked
+    the budget saw the default. A raise written into `.env` on the owner's
+    authority appeared to have no effect."""
+    import os
+
+    monkeypatch.delenv("MODEL_BUDGET_DAILY_TOKENS", raising=False)
+
+    # `load_dotenv()` resolves the PROJECT's .env rather than the working
+    # directory's, which is correct for the app and means a tmp_path file cannot
+    # stand in for it. So the invariant under test is that `_limit` consults the
+    # configuration at all - the thing it was not doing.
+    consulted = []
+
+    def fake_load_dotenv(*args, **kwargs):
+        consulted.append(True)
+        os.environ["MODEL_BUDGET_DAILY_TOKENS"] = "777000"
+
+    monkeypatch.setattr(model_budget, "load_dotenv", fake_load_dotenv)
+    assert model_budget._limit("MODEL_BUDGET_DAILY_TOKENS",
+                               model_budget.DEFAULT_DAILY_TOKENS) == 777000
+    assert consulted, "the limit was read without consulting the configuration"
+
+
+def test_an_explicit_variable_still_beats_the_configured_limit(monkeypatch):
+    """A deliberate one-run raise must beat the standing configuration, never the
+    reverse - `load_dotenv` does not override an existing variable, and that
+    ordering is the point."""
+    import os
+
+    monkeypatch.setattr(
+        model_budget, "load_dotenv",
+        lambda *a, **k: os.environ.setdefault("MODEL_BUDGET_DAILY_TOKENS", "777000"))
+    monkeypatch.setenv("MODEL_BUDGET_DAILY_TOKENS", "42")
+
+    assert model_budget._limit("MODEL_BUDGET_DAILY_TOKENS",
+                               model_budget.DEFAULT_DAILY_TOKENS) == 42

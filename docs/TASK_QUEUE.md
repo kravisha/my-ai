@@ -1265,6 +1265,39 @@ The measure has to be of *outcomes* — was the asker helped — rather than of 
 same distinction §118 drew between detecting something and no longer claiming to know, and it is
 the hard part of this entry.
 
+### TQ-93 — A liveness signal that does not wait for the work to finish
+
+**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §133 · `TIMING_CONSTANTS.md`**
+
+An agent's heartbeat advances when its work returns. `agents/analysis.py` already heartbeats
+immediately before every model call - the fix for the 10s threshold that once duplicated a
+busy agent - but that bounds the gap at **one model call**, not at ~10s, and a full
+`simulation verify` observed a 45.2s gap while the agent was alive and working.
+
+COO respawned it. The incident closed as `recovered` with `action: heartbeat resumed (1.0s old)`,
+which is the organization correctly noticing it had been wrong - after spawning a duplicate.
+
+### Why a bigger threshold is the wrong fix
+
+The gap is bounded by the slowest single model call, and that is set by a vendor rather than by this
+system. Any threshold chosen to sit above it is chosen against a number nobody controls, and every
+increase makes the detector slower to notice a genuinely dead agent. **That trade is what
+`TIMING_CONSTANTS.md` exists to stop being made by guess.**
+
+### What this needs to decide
+
+- **Whether liveness and progress are the same signal.** They are currently one field. An agent
+  inside a slow call is alive and not progressing, and nothing can currently say so.
+- **Who emits it.** A background thread heartbeating on its own clock is the obvious answer and
+  makes the signal say *"the process is up"* rather than *"the work is moving"* - which is a
+  weaker claim, and the weaker claim may be the true one.
+- **What COO does with two signals.** A stale *progress* signal on a live process is a different
+  event from a dead process, and only one of them warrants a respawn.
+
+Until this lands the threshold stays where a measurement put it and the property that catches the
+symptom stays where it is: **the verification is intermittently red for a real reason, which is the
+correct state for a suite to be in.**
+
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
 **WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**

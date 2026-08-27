@@ -12503,3 +12503,108 @@ occasion it could have been wrong in either direction.
 The budget raised, or a new day. Everything else is green: three scenarios and
 the whole curriculum pass, and the six skipped ones passed in the survey at §128
 before the budget ran out.
+
+## §133 — The verification, run properly, and the one thing it found (2026-08-27)
+
+Owner authorised raising the daily model budget. Made persistent, and the run
+completed.
+
+```
+[ok  ] anomaly_burst            1/1        [ok  ] misdrafted_instrument   7/7
+[ok  ] baseline_steady_state    13/13      [FAIL] overnight_session       4/5
+[ok  ] developing_story         5/5                - no agent was respawned
+[ok  ] executive_failure        6/6        [ok  ] saturation              0/0
+[ok  ] governed_organization    11/11      [ok  ] saturation_two_judges   2/2
+
+CURRICULUM  [ok] portfolio_analysis v1: 6 exercises
+
+VERDICT  FAIL
+```
+
+Eight scenarios and the whole curriculum pass. One property fails, and it is
+**real, intermittent, and exactly what that property was written to catch.**
+
+### 1. Making the budget persistent found a defect of its own
+
+`MODEL_BUDGET_DAILY_TOKENS=1500000` written into `.env` had **no effect**.
+`app/model_budget.py` never loaded `.env`; only `app/model_provider.py` calls
+`load_dotenv()`, at import.
+
+So the same limit read two different values depending on which module a process
+had imported first. A process that had touched the provider saw the configured
+limit; a process that only checked the budget saw the default — **and checking
+the budget is what happens before spending.** A raise made on the owner's
+authority would have silently done nothing in precisely the processes that
+enforce it.
+
+`_limit` now loads the configuration itself. An explicit
+`MODEL_BUDGET_DAILY_TOKENS=... command` still wins over `.env`, deliberately: a
+one-run raise should beat the standing setting, never the reverse.
+
+### 2. The failure between the two runs was the network, not the budget
+
+The first attempt after the raise failed with 125 reports carrying
+`detail = "Connection error."` — the model was unreachable mid-run. Six calls had
+landed first, so the raise was working.
+
+**That is a second instance of one pattern**: infrastructure failing produces
+results shaped exactly like the organization failing. The budget case is handled
+— `model_can_be_called()` skips those scenarios and the verdict is `INCOMPLETE`
+— and the reachability case is not, because a network that answers at check time
+can drop at second ninety. Named here rather than left to be rediscovered.
+
+### 3. The one real failure
+
+`overnight_session`. COO opened an incident on `analysis-1`:
+
+    symptom          heartbeat stopped advancing past the 45.0s threshold
+    last_healthy_at  18:04:30
+    detected_at      18:05:16          a gap of 45.2s
+    action           heartbeat resumed (1.0s old)
+    status           recovered
+
+**The agent was alive the whole time**, inside a single model call that took
+longer than the threshold. COO respawned it and then found it working.
+
+This is the defect class `baseline_steady_state`'s *"no agent was respawned"*
+property was written for, and the reason `HEALTH_STALE_THRESHOLD_SECONDS` was
+raised from 10s once already.
+
+### 4. The constant was justified against the wrong rate
+
+`TIMING_CONSTANTS.md` scored the 45s a 4.5× margin on this basis:
+
+> *"Analysis heartbeats mid-work before its model call, so gaps stay ~10s."*
+
+The mechanism is real — `agents/analysis.py` heartbeats immediately before every
+model call. **But it does not bound the gap at ~10s. It bounds the gap at one
+model call**, and one model call exceeded 45s under load.
+
+The row is now marked `UNMEASURED, and observed exceeded`, with the finding
+written out beneath it.
+
+### 5. Why the threshold was not raised
+
+Because nobody has measured the slowest single model call.
+
+Raising 45s to a larger number would replace a margin justified by a *wrong* rate
+with one justified by *no* rate — and every increase makes the detector slower to
+notice a genuinely dead agent. That trade is precisely what `TIMING_CONSTANTS.md`
+exists to stop being made by guess. It has recorded three real defects found by
+refusing to make it.
+
+**And a bigger number is probably not the fix at all.** A heartbeat that only
+advances when work returns will always be bounded by the slowest call, and the
+slowest call is set by a vendor rather than by this system. TQ-93 asks the real
+question: whether liveness and progress are the same signal. An agent inside a
+slow call is alive and not progressing, and nothing here can currently say so.
+
+### 6. The suite is intermittently red for a real reason
+
+Which is the correct state for it to be in.
+
+The alternative — raising the threshold until the run goes green — is the failure
+`baseline_steady_state.yaml` warns about in its own words about a different
+property: *"asserting `drained` would fail every run and teach everyone to ignore
+the suite."* A number chosen to make a detector stop detecting is worse than no
+detector, because it looks like one.

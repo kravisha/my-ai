@@ -52,6 +52,8 @@ Three things this deliberately is not:
 """
 
 import os
+
+from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +106,20 @@ def _ledger_path() -> Path:
 
 
 def _limit(name: str, default: int) -> int:
+    """The configured limit, or the default.
+
+    `.env` is loaded before reading, because the limit must not depend on
+    whether some other module happened to be imported first. `app/model_provider.py`
+    calls `load_dotenv()` at import, so a process that touched the provider saw
+    the configured limit and a process that only checked the budget did not -
+    which is the same limit reading two different values depending on import
+    order (§132).
+
+    `load_dotenv` does not override an existing environment variable, so an
+    explicit `MODEL_BUDGET_DAILY_TOKENS=... command` still wins over `.env`. That
+    ordering is deliberate: a deliberate one-run raise should beat the standing
+    configuration, never the reverse."""
+    load_dotenv()
     raw = os.environ.get(name)
     if raw is None or raw == "":
         return default

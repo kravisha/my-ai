@@ -43,7 +43,7 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 
 | Constant | Value | Depends on | Margin | Verdict |
 |---|---|---|---|---|
-| `HEALTH_STALE_THRESHOLD_SECONDS` (coo) | 45 s | Longest gap between an agent's heartbeats | Analysis heartbeats mid-work before its model call, so gaps stay ~10s | **OK** — 4.5× |
+| `HEALTH_STALE_THRESHOLD_SECONDS` (coo) | 45 s | Longest gap between an agent's heartbeats | **The margin's stated basis is wrong** — see below | **UNMEASURED**, and observed exceeded |
 | `UQI_TIMEOUT_SECONDS` (fi_db) | 60 s | Slowest agent's cycle + its own answer call | Worst observed 24.0s | **TUNED** from 15s |
 | `STARVATION_SECONDS` (triage) | 900 s | Queue drain time | Worst drain 400s | **TUNED** from 120s |
 | `CROSS_CHECK_TIMEOUT_SECONDS` (fi_db) | 30 s | Responder's answer latency under queueing | Max observed 15.4s | **OK** — 2× |
@@ -99,3 +99,51 @@ underneath it — `tests/test_triage.py` does this for `STARVATION_SECONDS`, and
 
 Re-measure when any of these change: the model behind `call_reasoning_model`, the number of
 securities, the number of Analysis instances, or the agent cycle interval.
+
+---
+
+## The health threshold's margin was justified against the wrong rate (2026-08-27, §133)
+
+The row above read *"Analysis heartbeats mid-work before its model call, so gaps
+stay ~10s"* and scored a 4.5× margin on that basis. The mechanism is real —
+`agents/analysis.py` records a heartbeat immediately before every model call, and
+its comment names the bug that was found fixing.
+
+**But that mechanism does not bound the gap at ~10s. It bounds the gap at the
+duration of one model call.**
+
+A full `simulation verify` caught it. In `overnight_session`, COO opened an
+incident on `analysis-1`:
+
+    symptom          heartbeat stopped advancing past the 45.0s threshold
+    last_healthy_at  18:04:30
+    detected_at      18:05:16          a gap of 45.2s
+    action           heartbeat resumed (1.0s old)
+    status           recovered
+
+The agent was **alive the whole time**, inside a single model call that took
+longer than the threshold. COO respawned it — the exact defect class
+`baseline_steady_state`'s *"no agent was respawned"* property exists to detect,
+and the reason `HEALTH_STALE_THRESHOLD_SECONDS` was raised from 10s in the first
+place.
+
+### Why the constant has not been changed
+
+**Nobody has measured the slowest single model call.** Raising 45s to some larger
+number would replace a margin justified by a wrong rate with a margin justified
+by no rate at all, which is worse — it would also make the detector slower to
+notice a genuinely dead agent, and this file exists to stop exactly that trade
+being made by guess.
+
+The observed evidence is one gap above 45s under load, and end-to-end handling
+latencies (queue-to-completion, not per call) of p50 92-167s and max 288s in the
+same runs.
+
+### The fix is probably not a bigger number
+
+A heartbeat that only advances when a model call returns will always be bounded
+by the slowest call, and the slowest call is set by a vendor rather than by this
+system. Queued as **TQ-93**: the liveness signal should not depend on the work
+completing. Until then the threshold stays where a measurement put it, and the
+property that caught this stays where it is — **the run is intermittently red for
+a real reason, which is the correct state for a suite to be in.**
