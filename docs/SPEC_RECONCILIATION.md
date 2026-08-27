@@ -12193,3 +12193,98 @@ It does not close **TQ-90**: a governed refusal is still recorded nowhere, so no
 scenario can require one and a badly drafted instrument that rejects every report
 still looks exactly like a quiet market. That remains the largest hole in what
 the verifier can see, and the verdict does not pretend otherwise.
+
+## §130 — A rule that forbids its own subject, made visible (2026-08-27, TQ-90)
+
+Until now a refusal by an instrument in force was said on stdout and kept
+nowhere. The organization could not count its own refusals, no metric could
+assert on them, and no scenario could require one.
+
+**The single refusal was never the problem.** The problem is the shape it hides.
+
+### 1. What a misdrafted instrument looks like from outside
+
+A new scenario, `misdrafted_instrument`, adopts a rule requiring `provenance` on
+every discovery report — a field nothing produces. It is drafted badly the way
+rules actually are drafted badly: not by malice, but by naming something the
+drafter assumed existed.
+
+The run:
+
+```
+detections 0   evidence 1352   reports 0   analyses 0   grades 0
+queue      arrivals 0, completed 0, pending at end 0
+population 7 registered, 0 respawns, 0 still running, 0 failed directives
+crosscheck 100 total, unanswered rate 0.0
+```
+
+Every health property passes. Nothing crashed, nothing was orphaned, no directive
+failed, and the agents were working the whole time — a hundred cross-checks were
+exchanged. The pipeline is simply, completely silent.
+
+**Before this increment that run was indistinguishable from a quiet market**, and
+every instinct reads it as calm. It is the most expensive shape a governance
+defect can take: the organization reports excellent health while producing
+nothing at all, because it forbade itself.
+
+The same run, with the number that did not exist:
+
+```
+[PASS] the refusals were counted: 91 >= 3
+[PASS] nothing was filed under the rule: 0 == 0
+```
+
+**Zero filed and zero refused is a quiet market. Zero filed and ninety-one
+refused is a rule that forbids its own subject.** One number cannot tell those
+apart and two can.
+
+### 2. Recorded at the check, not at the call sites
+
+`operating_context.check` writes the refusal itself, which makes it impure. That
+is the trade and it is the right one: a check that noticed a breach and left
+writing it down to whoever called it is how an organization ends up unable to
+count its own refusals — and **a new call site would inherit the enforcement and
+not the record**, which is the failure arriving quietly a year later.
+
+`test_the_check_records_rather_than_its_callers` asserts both halves: the check
+records, and neither `enqueue_report` nor `file_entry` does.
+
+### 3. Names, never values
+
+The record carries the *field names* that were unmet and nothing else.
+
+A submission's field names are the organization's own vocabulary. Its field
+contents are whatever somebody was filing, and a register entry can carry
+anything. Recording names lets the organization count and diagnose its refusals;
+recording values would put arbitrary content into a table nobody would think to
+look in for it — §111's reasoning one room along.
+
+Pinned by a test that files a submission containing an obvious marker and asserts
+the marker is nowhere in the table.
+
+### 4. Reported, not judged
+
+The Speaker says what the rules have refused and which instrument accounts for
+most of it, because governance is where governance speaks (§124). Refusals
+counted and never mentioned would be half a fix.
+
+It invents **no threshold**. What counts as too many refusals depends on what the
+instrument is for, and a number nobody measured would be a policy wearing a
+measurement's clothes — the discipline `TIMING_CONSTANTS.md` keeps for every
+other rate. A test asserts no such number appears.
+
+### 5. What the scenario does and does not assert
+
+`misdrafted_instrument` asserts two things and deliberately not a third.
+
+**That the organization stays intact.** A badly drafted rule must not take the
+workforce down with it, and `no directive failed` is what separates *the
+organization obeyed a bad rule* from *the organization fell over because of one*.
+
+**That the damage is visible** — counted, attributed, and reported.
+
+It asserts **nothing about the pipeline**, and that is not an omission: the run is
+expected to produce zero reports. A run that filed reports here would mean the
+instrument was not enforced.
+
+**9/9 mutations caught** by the test written for each. Suite **2666 passing**.

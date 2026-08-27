@@ -571,6 +571,24 @@ It prints what it cannot see with every verdict — deliberation, real prices, a
 real broker, historical operation, release and rollback. A green line therefore
 means something specific and limited, which is the only kind worth having.
 
+### A rule that forbids its own subject
+
+An instrument in force can be drafted so that nothing can satisfy it — by naming
+a field the drafter assumed existed. The organization then goes completely
+silent: no reports, no analyses, nothing in the queue, every agent healthy, no
+respawns, no failed directives. **It looks exactly like a quiet market**, and
+every instinct reads it as calm.
+
+Refusals are counted, attributed to the instrument that caused them, and reported
+by the Speaker. Zero filed and zero refused is a quiet market; zero filed and
+ninety-one refused is a rule forbidding its own subject. One number cannot tell
+those apart and two can. The `misdrafted_instrument` scenario runs exactly that
+case.
+
+The record carries the unmet obligations **by name and never their values**: a
+submission's field names are the organization's vocabulary, its contents are
+whatever somebody was filing.
+
 ### The Department of Education
 
 One curriculum exists: portfolio analysis, six exercises over five competencies.

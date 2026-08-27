@@ -1459,6 +1459,10 @@ def init_schema(conn: Database) -> None:
     # After parliament, because an instrument at a governing level is adopted
     # only by an enacted resolution and this reads that table to check.
     governed_knowledge.init_schema(conn)
+    # Refusals by an instrument in force (TQ-90, §130). Owned by the module that
+    # produces them, and created here for the same layering reason as every
+    # module above: it must not import fi_db back.
+    operating_context.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1629,7 +1633,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
          analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
-         governed_knowledge.SCHEMA)
+         governed_knowledge.SCHEMA, operating_context.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

@@ -45,7 +45,7 @@ from __future__ import annotations
 import sys
 
 from agents.base import run_agent
-from backend import governed_knowledge, parliament
+from backend import governed_knowledge, operating_context, parliament
 
 ROLE = parliament.SPEAKER_ROLE
 
@@ -63,20 +63,24 @@ def compose_report(conn) -> dict:
     # Read-only, like everything else here: it reports the conflict and has no
     # way to settle it, which is correct - settling it is a vote.
     unsettled = governed_knowledge.conflicts(conn)
+    # What the organization's own rules have refused. Governance in action rather
+    # than governance on paper, and the Speaker is where governance speaks (§124).
+    refusing = operating_context.refusals_by_instrument(conn)
     return {
         **state,
         "governance_conflicts": unsettled,
+        "refusals_by_instrument": refusing,
         # Named individually so a reader is not left to infer which resolutions
         # are outstanding from a count.
         "open_resolution_titles": [item["title"] for item in open_items],
         "articles_versions": len(parliament.articles_history(conn)),
         # The Speaker's own words about the state it found, so a surface has
         # something to render that is a statement rather than a number.
-        "says": _say(state, open_items, unsettled),
+        "says": _say(state, open_items, unsettled, refusing),
     }
 
 
-def _say(state: dict, open_items: list, unsettled: list) -> str:
+def _say(state: dict, open_items: list, unsettled: list, refusing: dict) -> str:
     if not state["articles_in_force"]:
         return ("Parliament stands ready and has no Articles. There is no roll, so nothing "
                 "can be put to a vote until the owner adopts the founding text.")
@@ -91,6 +95,14 @@ def _say(state: dict, open_items: list, unsettled: list) -> str:
         parts.append(
             f"{len(unsettled)} subject(s) have two instruments of equal authority and "
             f"nothing may choose between them: {', '.join(c['subject'] for c in unsettled)}.")
+    if refusing:
+        # Reported, not judged. No threshold is invented here: what counts as too
+        # many refusals depends on what the instrument is for, and a number
+        # nobody measured would be a policy wearing a measurement's clothes.
+        worst = max(refusing, key=refusing.get)
+        parts.append(
+            f"Instruments in force have refused {sum(refusing.values())} submission(s); "
+            f"instrument {worst} accounts for {refusing[worst]} of them.")
     parts.append("Elections, ministers, committees and the weekly session are not built.")
     return " ".join(parts)
 

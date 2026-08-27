@@ -118,6 +118,12 @@ def _governance(conn, since: str | None = None) -> dict:
     looks = conn.fetchone(
         "SELECT COALESCE(SUM(reaffirmations), 0) + COUNT(*) AS n FROM speaker_reports")
 
+    refused = _scoped_rows(
+        conn, "SELECT COUNT(*) AS n FROM governed_refusals WHERE {bound}", "refused_at", since)
+    refusing = conn.fetchall(
+        "SELECT instrument_id, COUNT(*) AS n FROM governed_refusals"
+        " GROUP BY instrument_id ORDER BY n DESC")
+
     governed_reports = _scoped_rows(
         conn,
         "SELECT COUNT(*) AS n FROM discovery_reports WHERE {bound} AND governed_by IS NOT NULL",
@@ -142,6 +148,12 @@ def _governance(conn, since: str | None = None) -> dict:
         # once an instrument binds the producer; before that it is simply the
         # count of everything.
         "work_ungoverned": filed - carried,
+        # Refusals by an instrument in force (TQ-90). Zero is the ordinary answer
+        # and is not the interesting one - **a single instrument accounting for
+        # every refusal is a rule that forbids its own subject**, which without
+        # this number looks exactly like a quiet market.
+        "refusals": refused[0]["n"] if refused else 0,
+        "refusals_by_instrument": {row["instrument_id"]: row["n"] for row in refusing},
     }
 
 

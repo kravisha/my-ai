@@ -1186,7 +1186,16 @@ whose correctness depends on a rate.
 
 ### TQ-90 — A governed refusal is recorded nowhere
 
-**NEED (YELLOW) · QUEUED · depends on TQ-87 · addendum 46 §17 · `SPEC_RECONCILIATION.md` §128**
+**NEED (YELLOW) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §130) · addendum 46 §17**
+
+`governed_refusals` records who was refused, on what subject, by which instrument, and **which
+obligations were unmet by name — never their values**. Written at the check rather than at the call
+sites, so a new call site inherits the record along with the enforcement.
+
+`misdrafted_instrument.yaml` demonstrates the case it exists for: a rule requiring a field nothing
+produces. Zero reports, zero analyses, zero arrivals, a hundred cross-checks exchanged, seven agents
+healthy, no respawns, no failed directives — **and 91 refusals**. Before this the run was
+indistinguishable from a quiet market.
 
 When an instrument in force refuses a filing, the agent says so on stdout and **nothing is written
 down**. The organization cannot count its own refusals, no metric can assert on them, no scenario

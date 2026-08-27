@@ -75,7 +75,33 @@ import json
 from dataclasses import dataclass, field
 
 from backend import governed_knowledge as governed
-from backend.db import Database
+from backend.db import Database, now_iso
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS governed_refusals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    refused_at TEXT NOT NULL,
+    -- Who was refused, and what they were trying to do.
+    role TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    instrument_id INTEGER,
+    -- WHICH obligations were unmet, by name. Never the values.
+    --
+    -- A submission's field names are the organization's own vocabulary; its
+    -- field contents are whatever somebody was filing, and a register entry can
+    -- carry anything. Recording names lets the organization count and diagnose
+    -- its refusals; recording values would put arbitrary content in a table
+    -- nobody would think to look in for it (§111's reasoning, one room along).
+    unmet TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS governed_refusals_recent ON governed_refusals (refused_at);
+"""
+
+SCHEMA_VERSION = 1
+
+
+def init_schema(conn: Database) -> None:
+    conn.executescript(SCHEMA)
 
 
 class Ungovernable(PermissionError):
@@ -269,5 +295,54 @@ def check(conn: Database, role: str, subject: str, submission: dict) -> dict:
                 "note": ("nothing governs this subject" if governing is None
                          else "governed by prose this system cannot enforce")}
     unmet = UNDERSTOOD_OBLIGATIONS[obligation["kind"]].unmet_by(obligation, submission)
+    if unmet:
+        # **Recorded here rather than at the call sites**, which makes `check`
+        # impure and is the right trade. A check that noticed a breach and left
+        # writing it down to whoever called it is how an organization ends up
+        # unable to count its own refusals - and a new call site would inherit
+        # the enforcement and not the record.
+        record_refusal(conn, role=role, subject=subject,
+                       instrument=governing["id"], unmet=unmet)
     return {"governed": True, "enforced": True, "fingerprint": context.fingerprint,
             "instrument": governing["id"], "unmet_fields": unmet, "complies": not unmet}
+
+
+def record_refusal(conn: Database, *, role: str, subject: str,
+                   instrument: int | None, unmet: list) -> int:
+    """Write down that an instrument in force refused something.
+
+    Until this existed the refusal was said on stdout and kept nowhere: the
+    organization could not count its own refusals, no metric could assert on
+    them, and no scenario could require one.
+
+    **The case that makes it matter is not the single refusal.** It is a badly
+    drafted instrument that refuses everything - which, with no record, looks
+    exactly like a quiet market. Discovery goes silent, the queue stays empty,
+    every property about crashes and orphans passes, and the organization reports
+    excellent health while producing nothing because it forbade itself."""
+    return conn.execute_returning_id(
+        "INSERT INTO governed_refusals (refused_at, role, subject, instrument_id, unmet)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (now_iso(), (role or "").strip().lower(), subject, instrument,
+         json.dumps(list(unmet))))
+
+
+def refusals(conn: Database, *, since: str | None = None) -> list[dict]:
+    rows = conn.fetchall(
+        "SELECT id, refused_at, role, subject, instrument_id, unmet FROM governed_refusals"
+        + (" WHERE refused_at >= ?" if since else "") + " ORDER BY id",
+        (since,) if since else ())
+    for row in rows:
+        row["unmet"] = json.loads(row["unmet"])
+    return rows
+
+
+def refusals_by_instrument(conn: Database) -> dict:
+    """How many times each instrument has refused something.
+
+    The shape a reader needs to spot the misdrafted one: a single instrument
+    accounting for every refusal in the organization is a rule that forbids its
+    own subject, not a workforce behaving badly."""
+    return {row["instrument_id"]: row["n"] for row in conn.fetchall(
+        "SELECT instrument_id, COUNT(*) AS n FROM governed_refusals"
+        " GROUP BY instrument_id ORDER BY n DESC")}

@@ -1,0 +1,121 @@
+id: misdrafted_instrument
+version: 1
+lifecycle: active
+description: >
+  A rule the organization cannot satisfy, and what that looks like from outside.
+
+  This is the failure TQ-90 was written against. An instrument in force requires
+  something no discovery report carries, so every report is refused at the filing
+  site. The workforce is healthy, nothing crashes, no agent is respawned, the
+  queue never grows because nothing ever enters it, and every property about
+  orphans and directives passes.
+
+  **Without a record of refusals it looks exactly like a quiet market.** Discovery
+  goes silent, the pipeline reports nothing to do, and the organization reports
+  excellent health while producing nothing at all because it forbade itself. That
+  is the most expensive shape a governance defect can take: it is invisible, and
+  every instinct reads it as calm.
+
+  So the properties below assert the two things that tell the difference. The
+  organization must be intact - a badly drafted rule must not take the workforce
+  down with it - and the refusals must be COUNTED, attributed to the instrument
+  that caused them, and reported by the Speaker.
+
+  This scenario is expected to produce zero reports. That is the point, and it is
+  why it asserts nothing about the pipeline: a run that filed reports here would
+  mean the instrument was not enforced.
+
+# Long enough for the discovery agents to try, be refused, and try again - a
+# single refusal could be a coincidence of timing, and the thing worth seeing is
+# a rule refusing repeatedly and nobody noticing.
+duration_seconds: 90
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+
+requires_model: false
+
+seed:
+  - adopt_articles:
+      text: The Articles, established for a simulation run.
+      roll:
+        broad: [coo, explorer, speculator, analysis, speaker]
+        representative: [coo, analysis]
+      quorum: "1/2"
+      ordinary_threshold: "1/2"
+
+  # Drafted badly on purpose, and plausibly so: `provenance` is a reasonable
+  # thing for an organization to want on a lead and nothing produces it. That is
+  # how a misdrafted instrument actually happens - not by malice, but by naming a
+  # field the drafter assumed existed.
+  - enact:
+      title: Every discovery report names its provenance
+      rationale: >
+        A lead whose origin cannot be traced cannot be re-examined later.
+      affects: organization_policy
+      proposed_by: analysis
+      votes:
+        coo: for
+        analysis: for
+
+  - adopt_instrument:
+      under: 1
+      subject: discovery_reports
+      level: organization_policy
+      text: Every discovery report names the provenance of its evidence.
+      adopted_by: coo
+      binds: "*"
+      requires:
+        kind: required_fields
+        fields: [provenance]
+
+expected_properties:
+  # --- a bad rule must not take the workforce with it ------------------------
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty
+
+  - name: no directive failed
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+    # A refusal escaping a work loop would show here, and this is the property
+    # that separates "the organization obeyed a bad rule" from "the organization
+    # fell over because of one".
+
+  # --- and the damage must be visible ---------------------------------------
+  - name: the refusals were counted
+    metric: governance.refusals
+    assert: at_least
+    value: 3
+    # THE property this scenario exists for. Before TQ-90 this number did not
+    # exist, the refusals were said on stdout and kept nowhere, and this run
+    # would have been indistinguishable from a market with nothing happening in
+    # it.
+
+  - name: nothing was filed under the rule
+    metric: governance.work_governed
+    assert: equals
+    value: 0
+    # Paired with the refusals above. Zero filed AND zero refused would be a
+    # quiet market; zero filed and many refused is a rule that forbids its own
+    # subject. One number cannot tell those apart and two can.
+
+  - name: the instrument is in force
+    metric: governance.instruments_in_force
+    assert: at_least
+    value: 1
+
+  - name: the Speaker kept watching
+    metric: governance.speaker_observations
+    assert: at_least
+    value: 3
+    # Because the Speaker is where this is reported. A run in which the refusals
+    # were counted and nobody said so would be half a fix.
