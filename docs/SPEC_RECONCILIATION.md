@@ -10495,3 +10495,257 @@ now.
 capability under `detect_silent_loss`, and reports `CURRICULUM OUT OF DATE none`
 — which is the check confirming the reclassification was earned rather than
 asserted.
+
+## §119 — Addendum 46 reconciled: what already owns this, four conflicts, and one question I cannot answer (2026-08-27)
+
+Addendum 46, *Data-Driven Self-Evolving Software Engineering Department*,
+assimilated verbatim and registered as the newest specification.
+
+This section is the intake step `docs/README.md` requires, and it exists because
+of §111: **a new specification agreeing with the current implementation says
+nothing about whether it agrees with the specification that implementation was
+supposed to be following.** So the first question is *which existing addendum
+already covers this subject*, and the answer is recorded whether or not it found
+a conflict.
+
+Here it found four, plus one question that is not mine to settle.
+
+### 1. This is not a greenfield specification
+
+Addendum 46 reads as a new department. Most of its territory is already
+canonical somewhere else:
+
+| Addendum 46 | Already specified in |
+|---|---|
+| §5 authority hierarchy, §6 Parliament authorizes change, §39 example | **32** — governance framework / parliamentary system |
+| §2–§3 behaviour from data rather than code | **30 §12** metadata-driven behavioral change; **39**, **21** boot config metadata engine |
+| §13 directive-to-implementation pipeline | **30 §4** evolution directive, **30 §23** evolution lifecycle, **32 §11** weekly governance cycle |
+| §16 release model, §18 rollback | **30 §14** rolling code evolution, **30 §27** rollback |
+| §17 database-centric versioning | **30 §26** versioned agent behavior |
+| §14 sandbox | **34** training and Monte Carlo simulation, **8** simulation/validation |
+| §20–§25 progressive training, §29 training is data-driven | **36** Department of Education, **13** training agent design, **30 §6–§7** trainers and assimilation |
+| §26 simulation phase, §27 historical-data phase | **34**, **8** |
+| §28 learning loop | **30 §22** evolution case file |
+| §30 maturity metrics, §31 complexity ladder | **30 §16–§17** evaluation and certification, **36** |
+| §41 self-evolution loop | **30**, **37 §6** optimization loop |
+| §42–§43 organization before application | **33** strategic principles, **23** organization agent architecture |
+
+**What is left after that subtraction is small, and it is the important part** —
+see §7 below. But the overlap is what makes the next four findings necessary
+rather than pedantic.
+
+### 2. Conflict — the Software Engineering Department and the Department of Evolution
+
+Addendum 30 already owns the machinery addendum 46 assigns to a new department:
+directives (§4), training and assimilation (§6–§7), simulation (§25), evaluation
+and certification (§16–§17), versioned behaviour (§26), rollback (§27), rolling
+release (§14), and the case file that captures what was learned (§22). Addendum
+46 §7 hands the same list to Software Engineering.
+
+Two departments cannot both own controlled systemic change.
+
+**Adjudicated: they do not overlap as much as the lists suggest, because
+addendum 30 has a hole exactly where addendum 46 stands.** 30 §25's agent
+catalog is forty named roles and **not one of them writes code**. There is an
+Architecture Evolution Agent, an Interface Versioning Agent, a Provider Migration
+Agent — and no developer, no reviewer, no tester, no release engineer. §14 says
+*"where code changes are required, prefer rolling agent restart…"* while naming
+nobody who makes the change. Evolution is specified as the department that
+*governs, trains, certifies and rolls out* change; addendum 46 is the department
+that *builds* it.
+
+So the split extends 30 §28's existing one rather than contradicting it:
+
+> Strategy decides Need/Want, priority, business value, timing, Board approval.
+> Evolution decides technical evolution design, directive, training,
+> certification, rollout, rollback.
+
+— and Software Engineering decides **implementation**: whether data or code can
+deliver it, the design, the build, the tests, the review, the release candidate.
+
+**Consequence for the build:** Software Engineering receives directives *through*
+Evolution, not on a parallel channel from Parliament. 30 §28's closing sentence —
+*"Evolution SHALL NOT bypass Strategy for ordinary systemic change"* — has an
+obvious sibling: Software Engineering shall not bypass Evolution. Addendum 46
+§13's pipeline shows *"Approved Directive → Software Department intake"* with
+nothing between, and that gap is where the bypass would be built by accident.
+
+### 3. Conflict — one general agent type, against a catalog of forty
+
+This one is direct and quotable in both directions.
+
+Addendum 46 §9:
+
+> *"The Software Department should not begin with a large collection of narrowly
+> specialized permanent agents."*
+
+§11:
+
+> *"Governance does not require dozens of specialized agent classes. It requires
+> independent responsibility."*
+
+Addendum 30 §25 is a catalog of roughly forty narrowly specialized agent types
+for a single department.
+
+These are not two designs for two departments. §11 states a **principle about
+governance**, and 30 §25 is the clearest existing violation of it in the corpus.
+
+**Adjudicated in favour of 46, and this project already has the evidence.**
+`organization.yaml` lists five implemented roles against a corpus specifying
+well over a hundred, and nothing has yet been blocked for want of a specialist.
+TQ-79 needed a role that exists only when a client asks, and the answer was a
+flag — `on_demand: true` — not a new agent class. **Work determines staffing**
+(46 §10) is the rule this system has been following in practice without having
+written it down.
+
+What that does *not* license is deleting 30 §25. The catalog is reinterpreted as
+**a list of responsibilities that must be covered and independently held**, not a
+headcount that must be hired. That reading keeps 46 §11's actual requirement —
+*"the agent that produces a change should not be the sole authority that approves
+the same change"* — which is about independence, not about job titles.
+
+### 4. Conflict — Strategy is missing from 46's pipeline
+
+Addendum 46 §13 runs *Observation → Recommendation → Analysis → Parliamentary
+consideration → Approved Directive*. Strategy appears nowhere in it.
+
+Three canonical documents put Strategy before the vote: 32 §11 (*"petitions and
+needs enter priority queues; Strategy evaluates and prioritizes"*), 30 §28
+(Strategy decides Need/Want and priority), and 37 §1 (*"Strategy decides what
+organizational outcomes, weaknesses, opportunities, needs, and priorities deserve
+action"*). 37 §1 goes further and forbids the shortcut for Optimization:
+*"Optimization SHALL NOT independently redefine organizational strategy."*
+
+**Adjudicated: 46 §13 is a summary of the pipeline from the Software
+Department's vantage point, not a replacement for it.** A department that only
+ever sees approved directives has no reason to draw the steps above the approval
+in detail. Strategy stays where three specifications put it.
+
+Recorded as a decision rather than an assumption because it is exactly the shape
+of §111's failure: reading a newer document's silence as a repeal.
+
+### 5. Conflict — "Version N → Version N+1" against "not a monolithic object"
+
+Addendum 46 §16 describes a release as quiescing operations, applying the change,
+validating startup, and resuming. Addendum 30 §13 says the opposite in terms:
+
+> *"MyAI is not a single monolithic object that must be serialized and
+> restarted."*
+
+and §14 makes full-system shutdown *"a last resort"*.
+
+**Adjudicated: not a true conflict, but a real constraint on how §16 gets
+built.** 46 §16 says *"quiesce operations where necessary"* and its closing line
+allows hot reload for behavioural updates. The compatible reading is that
+Version N/N+1 is the *versioning* model, not a stop-the-world *deployment* model.
+
+The constraint this places on the build is worth stating plainly, because the
+naive implementation of §16 is a restart script: **a release must not be built as
+a whole-system stop.** 30 §14's list — rolling restart, canary, version
+coexistence, compatibility adapters — is the shape the release machinery has to
+take, and 30 §15's special handling for the COO applies unchanged.
+
+### 6. The question I cannot answer: there are two things called the Constitution
+
+Asked whether the Constitution is amendable from inside the organization, I
+assumed it was not — owner-only, consistent with how this system already treats
+its principal. **That assumption is contradicted by canon**, and recording the
+correction is the point of this file.
+
+Addendum 32 §19 provides for constitutional amendments passed by the
+organization itself, at a supermajority, and §19.3 says such an amendment MAY
+require *"new authority boundaries"*. 32 §20–§21 build a whole Department of
+Governance to implement them.
+
+Meanwhile `docs/README.md` lists `JARVIS_CONSTITUTION.md` — held privately, not
+in this repository — as *"the durable design authority"*, and
+`DOCUMENTATION_RECONCILIATION_PLAN.md` calls it *"supreme authority"*.
+`JARVIS_GAP_ANALYSIS.md` measures what is built against it.
+
+Addendum 46 §4.1 places *"Constitution — the highest-level organizational
+principles and limits"* **inside the governed data layer**, at the top of §5's
+precedence list.
+
+So one of two things is true, and they lead to different systems:
+
+- **They are the same document.** Then the owner's design authority sits inside
+  the governed store, and a two-thirds vote of agents can amend the axioms the
+  gap analysis measures against. The precedence list in 46 §5 is complete as
+  written.
+- **They are two documents.** Then 46 §5's twelve-level hierarchy is missing its
+  top level — the owner — and the organizational constitution of 32 §19 is the
+  amendable one while the design authority is not. The governed store needs a
+  boundary that no in-system process can write through.
+
+The second is what the rest of this system already assumes: the principal has
+authority over the design, not a runtime bypass. But that is an inference from
+how the code was built, and **inferring canon from the build is the exact mistake
+§111 records.** This one goes to the owner.
+
+It does not block everything. It blocks **the governed-knowledge layer and the
+precedence rules specifically**, because the answer determines what sits above
+level 1 and what the store must refuse to write. Work on the Software Engineering
+Department itself can proceed without it.
+
+### 7. What addendum 46 uniquely adds
+
+After the subtraction in §1, four things are genuinely new, and they are the
+reason this specification matters:
+
+- **Claude Code as a named, measured, exiting dependency.** No other addendum
+  contemplates the external builder at all. 46 §19 calls it *"an external
+  engineering consultant during the organization's infancy"*, §25 draws the
+  insourcing curve, §32 makes external dependency a recorded metric per project,
+  and §34 makes departure conditional on transferred capability rather than on a
+  date. **This is the first specification in the corpus about how the corpus
+  stops needing me.**
+- **The data-change-before-code-change ladder (§8).** 30 §12 states the
+  preference; 46 turns it into five ordered levels with a decision procedure —
+  knowledge, directive, configuration, capability composition, code — and a test
+  to apply at the bottom rung: *"only when the existing architecture genuinely
+  lacks the mechanism."*
+- **The sandbox as an organizational experiment (§14).** *"Not simply a software
+  test environment."* Cloned organizational state, proposed policies, synthetic
+  workloads, failure injection, behavioural comparison. What exists today
+  (`simulation/`) substitutes at the provider boundary and shares the production
+  code path — the right principle at a much smaller scale (§117).
+- **A complexity ladder for engineering work (§31), with advancement gated on
+  measured performance (§30).** Education has a curriculum; it has never had a
+  ladder whose rungs are engineering tasks.
+
+### 8. Two risks recorded now, because both have already happened here once
+
+**§8's ladder can be satisfied without the outcome.** A department measured on
+*"did you avoid a code change?"* will report Level 1–4 solutions for problems
+that need Level 5, and the metric will improve while the system does not. That is
+TQ-80's defect in a new setting: the analyst that stopped asking sources how much
+they held made every complaint disappear and passed its exercise, having detected
+nothing. §118's rule transfers directly — **absence of a complaint is not
+evidence of competence**, and the ladder needs the equivalent of `must_report`:
+evidence the requested outcome was achieved, not evidence that code was avoided.
+
+**§32's external-dependency metric measures the party recording it.** *"Was
+Claude Code required? Why? What capability was missing internally?"* — answered
+by Claude Code — is a self-assessment wearing a measurement's clothes. It has to
+be derived from observed facts (which tasks came back, which commits, which
+sessions), on the same principle that kept `truth_for` off the provider Protocol
+in §117: **ground truth belongs to the grader, and an interface that can be asked
+for it lets the graded party pass by asking.**
+
+### 9. What this permits, and in what order
+
+1. **The Constitution question (§6) to the owner.** Blocks the governed-knowledge
+   layer and 46 §5's precedence rules. Blocks nothing else.
+2. **Parliament, minimally.** The system currently reports its own absence in
+   words — `backend/main.py` and `backend/coo_chat.py` both say *"No parliament,
+   committee or voting body exists yet"* — and every authorized change in 46
+   flows through it. Built against addendum 32, which specifies it, with 46 §5's
+   precedence and 46 §17's provenance fields.
+3. **The Software Engineering Department**, receiving directives through
+   Evolution (§2 above), staffed by 46 §9's single general type, graded from the
+   first task by the curriculum machinery §117 built.
+4. **Phase 1 (§21) as a curriculum**, not as productivity. *"The purpose is not
+   productivity. The purpose is to teach the department the correct engineering
+   habits."*
+
+Nothing here is built. This section records the reconciliation only.
