@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import fi_db, remediation, risk, strategy
+from backend import fi_db, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -202,6 +202,51 @@ def _ensure_baseline_population(conn) -> None:
             in_flight += 1
 
 
+# Agents already reported as working slowly, so the report is made once per
+# episode rather than once per cycle.
+#
+# Process-local, and that is a stated limit rather than an oversight: a COO that
+# restarts re-reports an agent that is still slow. One duplicate event after a
+# restart is cheaper than a table to remember it in, and the alternative -
+# inferring it from the last published event every cycle - is a query per agent
+# per cycle to save a line.
+_REPORTED_SLOW: set = set()
+
+
+def _report_slow_but_live(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_SECONDS) -> None:
+    """Agents that are up and whose work has stopped moving (TQ-93, §134).
+
+    **This is not a fault and COO does nothing about it.** A long model call puts
+    a healthy Analysis agent here routinely - §133 recorded COO respawning one
+    for exactly that, then finding it alive a second later.
+
+    But an agent slow for ten minutes with nobody saying so is the other failure,
+    and the reason this reports rather than staying silent: before TQ-93 the state
+    had no name, so it could only be reported as a crash or not at all.
+
+    Reported on entering and on leaving, because *"it was slow and now it is
+    not"* is the half that says the organization recovered without being told."""
+    stalled = {agent["identity"]: agent
+               for agent in fi_db.list_stalled_live_agents(conn, stale_seconds)}
+
+    for identity, agent in stalled.items():
+        if identity in _REPORTED_SLOW:
+            continue
+        _REPORTED_SLOW.add(identity)
+        status_events.publish(
+            conn, "agent_slow",
+            f"{identity} is alive and its work has not advanced for "
+            f"{stale_seconds:.0f}s. Not a crash and not being replaced.",
+            severity=status_events.SEVERITY_WARNING, agent=identity)
+
+    for identity in sorted(_REPORTED_SLOW - set(stalled)):
+        _REPORTED_SLOW.discard(identity)
+        status_events.publish(
+            conn, "agent_slow",
+            f"{identity} is advancing again.",
+            severity=status_events.SEVERITY_INFO, agent=identity)
+
+
 def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_SECONDS) -> None:
     """Health evaluation + restart-vs-crash distinction (Gap 3, project
     brief): an agent that exits cleanly reports process_state='stopped' via
@@ -214,6 +259,12 @@ def _evaluate_agent_health(conn, stale_seconds: float = HEALTH_STALE_THRESHOLD_S
     spawned, the same as a clean stop would. Runs before
     _ensure_baseline_population in _coo_work so a crash detected this cycle
     is already reflected in this cycle's respawn check, not one cycle later.
+
+    **Judged on liveness, not on progress** (TQ-93, §134). `list_stale_active_agents`
+    keys on `last_liveness_at`, which a thread advances on its own clock, so an
+    agent inside a single slow model call is no longer mistaken for a dead one.
+    An agent that emits no liveness at all is still judged by progress, exactly as
+    before.
 
     Records a *process* observation only - it never changes lifecycle_state.
     COO noticing a dead process is not COO retiring an agent; organizational
@@ -476,6 +527,9 @@ def _strategy_corrective_items(conn) -> list[remediation.CorrectiveItem]:
 
 def _coo_work(conn) -> None:
     _evaluate_agent_health(conn)
+    # After the crash check, because an agent marked crashed this cycle is not a
+    # slow one - the two states are exclusive and the order says so.
+    _report_slow_but_live(conn)
     _ensure_baseline_population(conn)
     _evaluate_past_decisions(conn)
     _evaluate_intelligence_health(conn)

@@ -472,6 +472,11 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     stop_requested INTEGER NOT NULL DEFAULT 0,
     spawned_at TEXT NOT NULL,
     last_heartbeat_at TEXT,
+    -- When the process last said it was up, independent of whether its work is
+    -- moving (TQ-93). Nullable: an agent that does not run the liveness thread
+    -- is judged by progress exactly as before, which is the honest reading of
+    -- the only signal it gives.
+    last_liveness_at TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1,
     lifecycle_state TEXT NOT NULL DEFAULT 'active',
     process_state TEXT NOT NULL DEFAULT 'running',
@@ -2162,27 +2167,92 @@ def staffing(conn: Database, role: str) -> dict:
     }
 
 
-def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
-    """Agents believed to be running whose most recent signal of life (last
-    heartbeat, or spawn time if they never got as far as a first heartbeat)
-    is older than stale_seconds - candidates for agents/coo.py's
-    _evaluate_agent_health to mark as crashed. An agent that exits cleanly
-    calls mark_process_stopped itself; one that's killed outright (SIGKILL,
-    OOM, host crash) never reaches that code at all, so its row would claim
-    'running' forever with a heartbeat that's stopped advancing unless
-    something else notices - this is that something else.
+def record_liveness(conn: Database, identity: str) -> None:
+    """The process is up. Says nothing about whether its work is moving.
 
-    Filters on process_state = 'running' rather than lifecycle: a dormant
-    agent that has already stopped is not stale, it is retired, and flagging
-    it as crashed would be plainly wrong."""
+    Separate from `record_heartbeat` because they answer different questions and
+    conflating them cost a respawn (§133): a heartbeat only advances when a cycle
+    returns, so an agent inside a single slow model call looked dead while it was
+    working, and COO duplicated it.
+
+    **The point of the separation is which clock the signal depends on.** A
+    progress signal is bounded by the slowest model call, which a vendor sets. A
+    liveness signal is bounded by an interval this system chooses, so the
+    threshold above it can be justified against a rate this project controls -
+    which is what `TIMING_CONSTANTS.md` asks of every constant and what the 45s
+    threshold could not have.
+
+    Deliberately not written to `health_metrics`. That table counts work reported;
+    a thread ticking on a timer is not work, and inflating the count with it would
+    make `performance_card.heartbeat_count` describe the clock instead of the
+    agent."""
+    conn.execute("UPDATE agent_registry SET last_liveness_at = ? WHERE identity = ?",
+                 (_now(), identity))
+
+
+def liveness_age_seconds(agent: dict) -> float | None:
+    """Seconds since this agent last said it was up, or None if it never has."""
+    if not agent.get("last_liveness_at"):
+        return None
+    return (datetime.now(timezone.utc)
+            - parse_timestamp(agent["last_liveness_at"])).total_seconds()
+
+
+def list_stale_active_agents(conn: Database, stale_seconds: float) -> list[dict]:
+    """Agents believed to be running that have stopped signalling life.
+
+    **Liveness, not progress** (TQ-93, §134). An agent that exits cleanly calls
+    mark_process_stopped itself; one killed outright (SIGKILL, OOM, host crash)
+    never reaches that code, so its row would claim 'running' forever unless
+    something notices its signal stopped - this is that something.
+
+    Judged on `last_liveness_at` where there is one, because that is the signal
+    that means *the process is up*. An agent deep inside a slow model call is
+    alive and not progressing, and marking it crashed on that basis is what
+    §133's incident recorded COO doing.
+
+    **An agent that emits no liveness is judged by progress, exactly as before.**
+    Not every process runs the liveness thread - a test double, an older build, a
+    future agent written differently - and falling back is the honest reading of
+    *"the only signal it gives is the one it gives"*. It is also the conservative
+    one: a silent process is still detected.
+
+    Filters on process_state = 'running' rather than lifecycle: a dormant agent
+    that has already stopped is not stale, it is retired, and flagging it as
+    crashed would be plainly wrong."""
     rows = conn.fetchall("SELECT * FROM agent_registry WHERE process_state = ?", (PROCESS_RUNNING,))
     now = datetime.now(timezone.utc)
     stale = []
     for row in rows:
-        reference = row["last_heartbeat_at"] or row["spawned_at"]
+        reference = row["last_liveness_at"] or row["last_heartbeat_at"] or row["spawned_at"]
         if (now - parse_timestamp(reference)).total_seconds() >= stale_seconds:
             stale.append(row)
     return stale
+
+
+def list_stalled_live_agents(conn: Database, stale_seconds: float) -> list[dict]:
+    """Agents that are up and whose work has stopped moving.
+
+    The state that had no name before TQ-93 and was being reported as a crash.
+    An agent here is **not** a fault: a long model call puts a healthy Analysis
+    agent in this list routinely, which is why COO reports it and does not act on
+    it.
+
+    Requires a liveness signal. Without one there is nothing to distinguish this
+    from a crash, and inventing the distinction would be claiming knowledge the
+    row does not carry."""
+    rows = conn.fetchall("SELECT * FROM agent_registry WHERE process_state = ?", (PROCESS_RUNNING,))
+    now = datetime.now(timezone.utc)
+    stalled = []
+    for row in rows:
+        if not row["last_liveness_at"]:
+            continue
+        if (now - parse_timestamp(row["last_liveness_at"])).total_seconds() >= stale_seconds:
+            continue  # not live; that is a crash and the other query owns it
+        progress = row["last_heartbeat_at"] or row["spawned_at"]
+        if (now - parse_timestamp(progress)).total_seconds() >= stale_seconds:
+            stalled.append(row)
+    return stalled
 
 
 def get_agent(conn: Database, identity: str) -> dict | None:

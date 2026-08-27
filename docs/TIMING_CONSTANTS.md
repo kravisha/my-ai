@@ -43,7 +43,7 @@ Verdict key: **OK** = margin over the measured rate. **TUNED** = corrected after
 
 | Constant | Value | Depends on | Margin | Verdict |
 |---|---|---|---|---|
-| `HEALTH_STALE_THRESHOLD_SECONDS` (coo) | 45 s | Longest gap between an agent's heartbeats | **The margin's stated basis is wrong** — see below | **UNMEASURED**, and observed exceeded |
+| `HEALTH_STALE_THRESHOLD_SECONDS` (coo) | 45 s | `LIVENESS_INTERVAL_SECONDS` (5 s), since TQ-93 | 9 ticks fit inside the threshold | **OK** — 9×, against a rate this system sets |
 | `UQI_TIMEOUT_SECONDS` (fi_db) | 60 s | Slowest agent's cycle + its own answer call | Worst observed 24.0s | **TUNED** from 15s |
 | `STARVATION_SECONDS` (triage) | 900 s | Queue drain time | Worst drain 400s | **TUNED** from 120s |
 | `CROSS_CHECK_TIMEOUT_SECONDS` (fi_db) | 30 s | Responder's answer latency under queueing | Max observed 15.4s | **OK** — 2× |
@@ -139,7 +139,18 @@ The observed evidence is one gap above 45s under load, and end-to-end handling
 latencies (queue-to-completion, not per call) of p50 92-167s and max 288s in the
 same runs.
 
-### The fix is probably not a bigger number
+### Resolved by changing what the number depends on (TQ-93, §134)
+
+Not by raising it. The signal was split: `last_liveness_at` is emitted by a thread
+on its own five-second clock, and COO's crash detection reads that instead of
+progress. The threshold now sits above **an interval this project chooses**
+rather than above the slowest call of a vendor's model, which is the first time
+this row can answer the question this file asks of every constant.
+
+An agent that emits no liveness — the Controller, which is the server process and
+never calls `run_agent` — is still judged by progress, exactly as before.
+
+### What was rejected, and why
 
 A heartbeat that only advances when a model call returns will always be bounded
 by the slowest call, and the slowest call is set by a vendor rather than by this

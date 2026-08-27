@@ -18,6 +18,7 @@ Internal rationale: INT-PHIL-0013, INT-PHIL-0014
 
 import os
 import sys
+import threading
 import time
 
 from agents import introspection
@@ -55,6 +56,73 @@ def _answer_operator_question(conn, identity: str, role: str) -> None:
         fi_db.answer_uqi_request(conn, request["id"], answer, os.getpid())
     except Exception as exc:
         print(f"[{role}:{identity}] uqi error: {exc}", file=sys.stderr)
+
+
+# How often the liveness thread says the process is up (TQ-93, §134).
+#
+# Chosen against COO's 45s staleness threshold rather than against anything a
+# model does: nine ticks fit inside the threshold, so losing several in a row to
+# scheduling still leaves the agent detected as live. **That is the whole point of
+# the separation** - a progress signal is bounded by the slowest model call, which
+# a vendor sets, and this one is bounded by an interval this system chooses.
+#
+# The cost is one UPDATE against a WAL database every five seconds per agent.
+LIVENESS_INTERVAL_SECONDS = 5.0
+
+
+class _Liveness:
+    """A thread that says the process is up, on its own clock.
+
+    **Its own connection, deliberately.** `Database` wraps a single sqlite3
+    connection and sqlite3 objects are not safe to share across threads; handing
+    this thread the agent's connection would introduce a race into every agent in
+    the organization to fix a reporting bug.
+
+    A daemon thread, so a process that is exiting is never held open by it, and
+    an `Event` rather than a sleep so a stop is immediate rather than up to one
+    interval late.
+
+    **Failures are swallowed on purpose.** This thread exists to report health and
+    must never become a way for an agent to die: a locked database or a closed
+    connection during shutdown is a missed tick, and a missed tick is what the
+    threshold's margin is for. It is the one place in this codebase where a bare
+    except is the correct answer, which is why it says so."""
+
+    def __init__(self, identity: str, db_path: str,
+                 interval: float = LIVENESS_INTERVAL_SECONDS):
+        self.identity = identity
+        self.db_path = db_path
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"liveness:{identity}",
+                                        daemon=True)
+
+    def start(self) -> "_Liveness":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=self.interval)
+
+    def _run(self) -> None:
+        conn = None
+        try:
+            conn = fi_db.get_connection(self.db_path)
+            while not self._stop.is_set():
+                try:
+                    fi_db.record_liveness(conn, self.identity)
+                except Exception:  # noqa: BLE001 - see the class docstring
+                    pass
+                self._stop.wait(self.interval)
+        except Exception:  # noqa: BLE001 - a thread that cannot start is a missed
+            pass            # signal, never a dead agent
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 def note_governed_refusal(role: str, identity: str, refusal: Exception) -> None:
@@ -107,6 +175,11 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
     # is actually running (Directive E17; backend/version.py never guesses).
     fi_db.register_agent(conn, identity, role, os.getpid(), behavior_version=code_version())
 
+    # Started after registration so the first tick has a row to write to, and
+    # before any work so an agent whose very first cycle is slow is still visibly
+    # alive - which is the case §133's incident actually caught.
+    liveness = _Liveness(identity, db_path).start()
+
     try:
         while True:
             if work_fn is not None:
@@ -127,6 +200,7 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
                 break
             time.sleep(HEARTBEAT_INTERVAL_SECONDS)
     finally:
+        liveness.stop()
         # Reports only that this process is ending. Whether the agent is
         # still in service is not its call - if it was retired, the
         # Controller already set lifecycle_state='dormant', and this simply

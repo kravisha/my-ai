@@ -577,22 +577,23 @@ It prints what it cannot see with every verdict — deliberation, real prices, a
 real broker, historical operation, release and rollback. A green line therefore
 means something specific and limited, which is the only kind worth having.
 
-### What a full verification currently says
+### Liveness and progress are two signals
 
-Eight of nine scenarios and the whole curriculum pass. One property fails
-intermittently and for a real reason: under load a single model call can take
-longer than COO's 45-second staleness threshold, so a busy Analysis agent is
-declared crashed and respawned — then found to be working.
+An agent reports two things and they answer different questions. **Progress** —
+a cycle completed — is bounded by the work, which means by the slowest model call.
+**Liveness** — the process is up — is emitted by a thread on its own five-second
+clock and is bounded by nothing the work does.
 
-The threshold has **not** been raised to make the run green. Its recorded
-justification (*"gaps stay ~10s"*) was wrong: the gap is bounded by the slowest
-single model call, which nobody has measured and which a vendor sets. Replacing a
-margin justified by a wrong rate with one justified by no rate would also make the
-detector slower to notice a genuinely dead agent. TQ-93 asks the real question —
-whether liveness and progress are the same signal.
+COO's crash detection reads liveness. An agent inside a slow model call is alive
+and not advancing, which is reported and **not** treated as a crash; before TQ-93
+that state had no name, so a busy Analysis agent was declared dead and duplicated.
+An agent that emits no liveness at all — the Controller, which is the server
+process — is judged by progress exactly as before.
 
-**The suite is intermittently red for a real reason, which is the correct state
-for it to be in.**
+The point is which clock each depends on. A staleness threshold above a
+vendor's slowest call is a number chosen against something this system does not
+control; above a five-second interval it chooses, it is a number this project can
+justify. That is what `TIMING_CONSTANTS.md` asks of every constant.
 
 ### A rule that forbids its own subject
 

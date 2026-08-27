@@ -12608,3 +12608,110 @@ The alternative — raising the threshold until the run goes green — is the fa
 property: *"asserting `drained` would fail every run and teach everyone to ignore
 the suite."* A number chosen to make a detector stop detecting is worse than no
 detector, because it looks like one.
+
+## §134 — Liveness and progress are two questions (2026-08-28, TQ-93)
+
+§133 left a threshold whose margin was justified against the wrong rate, and a
+choice: raise the number, or fix what the number depends on.
+
+**The number was not the problem.** A heartbeat that only advances when work
+returns is bounded by the slowest model call, and the slowest model call is set
+by a vendor. Any threshold above it is a number chosen against something this
+system does not control, and every increase makes the detector slower to notice
+a genuinely dead agent.
+
+So the signal was split.
+
+### 1. Two signals, two clocks
+
+**Progress** — `last_heartbeat_at`, unchanged: a cycle completed. Bounded by the
+work, which means by the slowest model call.
+
+**Liveness** — `last_liveness_at`, new: the process is up. Emitted by a thread on
+its own clock every five seconds, independent of anything the work is doing.
+
+That is the whole of it, and the value is in *which clock each depends on*. COO's
+45-second threshold now sits above a five-second interval **this project sets** —
+nine ticks inside the threshold, so losing several in a row to scheduling still
+leaves the agent detected as live. `TIMING_CONSTANTS.md` asks every constant to
+name the rate it depends on and whether that rate was measured; this is the first
+time the answer for `HEALTH_STALE_THRESHOLD_SECONDS` is a rate the answer can be
+given about.
+
+### 2. What COO does with them
+
+- **Liveness stale** → the process is gone → crashed, incident, replacement. The
+  detector is not softened: a process that is genuinely dead stops emitting
+  liveness too, and a test asserts that.
+- **Liveness fresh, progress stale** → alive and not advancing. **Not a crash, not
+  a replacement.** This is the state §133's incident recorded COO getting wrong,
+  and until now it had no name — so it could only be reported as a crash or not
+  at all.
+- **No liveness at all** → judged by progress, exactly as before. Not every
+  process runs the thread; the Controller is the server itself and never calls
+  `run_agent`. Falling back is the honest reading of *the only signal it gives*,
+  and the conservative one — a silent process is still detected.
+
+### 3. Slow is reported, not acted on
+
+An agent slow for ten minutes with nobody saying so is the other failure, so COO
+publishes `agent_slow` on entering the state and again on leaving it. *"It was
+slow and now it is not"* is the half that says the organization recovered without
+being told.
+
+Once per episode, not once per cycle: a warning repeated every cycle is a warning
+nobody reads. The set of already-reported agents is process-local, and that is a
+stated limit rather than an oversight — a COO that restarts re-reports an agent
+that is still slow, which is cheaper than a table to remember it in.
+
+### 4. The thread must never be able to kill an agent
+
+Its own connection, because `Database` wraps a single sqlite3 connection and
+sqlite3 objects are not safe across threads. Sharing the agent's would put a race
+into every agent in the organization **to fix a reporting bug**.
+
+A daemon, so a process that is exiting is never held open by it. An `Event`
+rather than a sleep, so a stop is immediate rather than up to one interval late.
+
+And failures are swallowed, deliberately: a locked database or a closed
+connection during shutdown is a missed tick, and a missed tick is what the
+threshold's margin is for. It is the one place in this codebase where a bare
+except is the right answer, which is why it says so in the docstring.
+
+### 5. Mutation testing found the seam again
+
+10/11 on the first round. The miss: deleting the call to `_report_slow_but_live`
+from COO's cycle changed nothing, because every test called the function
+directly.
+
+**A function tested in isolation is not a function that runs.** That is §132's
+finding — *a test that constructs its own input never tests the code that
+constructs the input* — arriving through the same door twice in two days. The
+call site is now asserted, along with its position: the crash check runs first,
+because an agent marked crashed this cycle is not a slow one and the order is
+what says so.
+
+11/11 after.
+
+### 6. Live
+
+```
+analysis     liveness 23:23:36.012  progress 23:23:33.346
+coo          liveness 23:23:36.978  progress 23:23:36.106
+speaker      liveness 23:23:32.077  progress 23:23:37.029
+controller   liveness -             progress 23:23:36.392
+```
+
+Two signals advancing independently, and the Controller with none — falling back
+to progress exactly as designed. No `agent_slow` events, because nothing was slow
+past the threshold in that run.
+
+### 7. What is still not known
+
+**Nobody has measured the slowest single model call**, and this increment does
+not need it any more — which is the point. The threshold no longer depends on
+that number.
+
+What it does now depend on is the liveness thread actually running, which is a
+property of this codebase and is asserted. `TIMING_CONSTANTS.md`'s row moves from
+`UNMEASURED, and observed exceeded` to a margin against a rate this system sets.

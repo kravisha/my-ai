@@ -1267,7 +1267,19 @@ the hard part of this entry.
 
 ### TQ-93 — A liveness signal that does not wait for the work to finish
 
-**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §133 · `TIMING_CONSTANTS.md`**
+**NEED (YELLOW) · DONE 2026-08-28 (`SPEC_RECONCILIATION.md` §134) · `TIMING_CONSTANTS.md`**
+
+Split into two signals. `last_liveness_at` is emitted by a daemon thread on its own five-second
+clock with its own connection; `last_heartbeat_at` still means a cycle completed. COO's crash
+detection reads liveness, so an agent inside a slow model call is no longer mistaken for a dead one,
+and an agent that emits no liveness is judged by progress exactly as before.
+
+**The threshold now depends on a rate this system sets** rather than on the slowest call of a
+vendor's model — nine ticks inside 45 seconds. That is the resolution of §133's finding, and it was
+reached by changing what the number depends on rather than by raising it.
+
+Slow-but-alive is reported and not acted on, once per episode and again on recovery: an agent slow
+for ten minutes with nobody saying so is the other failure.
 
 An agent's heartbeat advances when its work returns. `agents/analysis.py` already heartbeats
 immediately before every model call - the fix for the 10s threshold that once duplicated a
