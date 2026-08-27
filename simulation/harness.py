@@ -55,6 +55,7 @@ from backend import version as backend_version
 from simulation import metrics as metrics_module
 from simulation import properties as properties_module
 from simulation import faults as faults_module
+from simulation import seeding
 from simulation.scenario import Scenario
 
 # How often the hold checks whether a fault is due. Fine enough that a
@@ -243,6 +244,9 @@ class SimulationRun:
         self.run_id = run_id or f"{scenario.id}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
         self.directory = Path(runs_dir or RUNS_DIR) / self.run_id
         self.db_path = self.directory / "financial_intelligence.db"
+        # What the seed established, for the manifest. Empty unless the
+        # scenario declared one.
+        self.seeded: list = []
         self.manifest_path = self.directory / "manifest.json"
         self.log_path = self.directory / "backend.log"
         self.port = _free_port()
@@ -327,6 +331,19 @@ class SimulationRun:
         self.directory.mkdir(parents=True, exist_ok=True)
         if self.inherit_from is not None:
             inherit_database(self.inherit_from, self.db_path)
+        # Governance before the organization starts (TQ-88). After any inherited
+        # database and before the Controller, because an agent that came up
+        # ungoverned and was governed a second later would have done one cycle of
+        # work under rules nobody could see - which is precisely the state a
+        # governed run exists to rule out.
+        if self.scenario.seed:
+            conn = fi_db.get_connection(self.db_path)
+            try:
+                fi_db.init_schema(conn)
+                self.seeded = seeding.apply(conn, self.scenario.seed)
+            finally:
+                conn.close()
+
         self._started_at = _now()
         self.write_manifest()
 

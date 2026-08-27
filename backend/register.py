@@ -175,7 +175,7 @@ def file_entry(
                 f"carries none. Refusing rather than filing something the organization has "
                 f"decided is incomplete."
             )
-        governed_by = verdict["fingerprint"]
+        governed_by = verdict["fingerprint"] if verdict["governed"] else None
 
     now = now_iso()
     return conn.execute_returning_id(

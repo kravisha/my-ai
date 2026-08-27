@@ -1,0 +1,157 @@
+id: governed_organization
+version: 1
+lifecycle: active
+description: >
+  The organization running under a rule it was given, rather than under its code
+  alone. Same conditions as baseline_steady_state - stable market, pinned seeds,
+  no dislocation - with the Articles in force and one instrument binding every
+  role: a discovery report must carry a summary.
+
+  Until TQ-86 and TQ-87 there was nothing to run. Parliament, the Articles and
+  the governed store existed and no agent read any of them, so every scenario
+  measured an organization for which governance was decoration. This one measures
+  whether the newest half of the system does anything at all when the older half
+  is working.
+
+  What it deliberately does NOT measure is deliberation. **No agent in this
+  system proposes or votes.** The resolution below was carried by a seed, not by
+  the organization, and simulation/seeding.py says so at length. What is exercised
+  is what happens after a decision: an instrument in force, and agents that have
+  to read it before they act.
+
+# The rule is chosen to be one every producer already satisfies. That is not
+# timidity - it isolates the variable. A rule the agents violate would fail the
+# pipeline properties too, and a run in which everything went red proves nothing
+# about which mechanism broke. The refusal path has its own coverage in
+# tests/test_governed_agents.py, where a violation can be constructed exactly.
+duration_seconds: 90
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+
+requires_model: false
+
+# Established before the Controller starts, through the organization's own API -
+# never SQL. See simulation/seeding.py: a fixture able to build states the
+# organization cannot reach measures the fixture rather than the system.
+seed:
+  - adopt_articles:
+      text: >
+        The organization serves its principal and its clients. It governs itself
+        under these Articles, which are subordinate to the Constitution.
+      roll:
+        broad: [coo, explorer, speculator, analysis, speaker]
+        representative: [coo, analysis]
+      quorum: "1/2"
+      ordinary_threshold: "1/2"
+
+  - enact:
+      title: Every discovery report carries a summary
+      rationale: >
+        A lead with no summary costs a judge the time to reconstruct it from the
+        evidence, and the producer already knows what it saw.
+      affects: organization_policy
+      proposed_by: analysis
+      evidence: grading history
+      votes:
+        coo: for
+        analysis: for
+
+  - adopt_instrument:
+      under: 1
+      subject: discovery_reports
+      level: organization_policy
+      text: Every discovery report carries a summary of what was seen.
+      adopted_by: coo
+      binds: "*"
+      requires:
+        kind: required_fields
+        fields: [summary]
+
+expected_properties:
+  # --- the organization stayed intact under a rule --------------------------
+  # First, because the most likely way governance fails is not a wrong verdict
+  # but a crashed workforce: an instrument nobody can satisfy, or a refusal that
+  # escapes a work loop, takes agents down. If these fail the rest is noise.
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty
+
+  - name: no directive failed
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+
+  # --- the rule was actually in force ---------------------------------------
+  - name: the Articles were in force
+    metric: governance.articles_version
+    assert: at_least
+    value: 1
+
+  - name: an instrument bound the organization
+    metric: governance.instruments_in_force
+    assert: at_least
+    value: 1
+
+  # --- and it reached the work ----------------------------------------------
+  # The property this scenario exists for. An organization can hold Articles, an
+  # instrument and a Speaker while every report is filed by a caller that named
+  # no filer - governed on paper, ungoverned in fact. This is the only assertion
+  # that can tell those apart.
+  - name: no work was done outside the rule
+    metric: governance.work_ungoverned
+    assert: equals
+    value: 0
+
+  - name: work was done under the rule
+    metric: governance.work_governed
+    assert: at_least
+    value: 5
+    # Paired with the one above on purpose. `work_ungoverned == 0` passes
+    # perfectly in a run where nothing was filed at all, which is the vacuity
+    # this project has now been bitten by three times (§117, §118, §127).
+
+  # --- Parliament had a voice -----------------------------------------------
+  - name: the Speaker kept watching
+    metric: governance.speaker_observations
+    assert: at_least
+    value: 3
+    # RE-AIMED before it was ever green (§128). It first read
+    # `governance.speaker_reports at_least 3` — three rows — and the fix to the
+    # Speaker's unbounded growth made rows count *changes* rather than looks. A
+    # stable Parliament now produces exactly one row however long anybody
+    # watches it, so the old property measured the wrong thing the moment
+    # repeats stopped being rows.
+    #
+    # `speaker_observations` counts looking, which is what "the Speaker is doing
+    # its job" was always meant to mean: a Speaker that registered and never
+    # spoke would satisfy every population property while leaving the
+    # organization's governance unreported, which is the failure §124 built it
+    # to prevent.
+
+  - name: nothing was left with the owner
+    metric: governance.outstanding_owner_escalations
+    assert: equals
+    value: 0
+    # Nothing in this scenario approaches level 0, so an escalation here means
+    # something tried to and that is worth failing over.
+
+  # --- the ordinary work still happened -------------------------------------
+  # A governed organization that stops working has not been governed, it has
+  # been stopped.
+  - name: reports were filed
+    metric: pipeline.reports_filed
+    assert: at_least
+    value: 5
+
+  - name: cross-checks were exchanged
+    metric: cross_check.total
+    assert: at_least
+    value: 3

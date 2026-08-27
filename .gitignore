@@ -43,3 +43,4 @@ model_spend.db
 model_performance.db
 model_performance.db-wal
 model_performance.db-shm
+simulation/runs/

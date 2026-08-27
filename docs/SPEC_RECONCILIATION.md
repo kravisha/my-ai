@@ -11890,3 +11890,209 @@ changes with no code change.
 - **Two obligation kinds.** Both earned by a consumer; neither speculative.
 
 **11/11 mutations caught** by the test written for each. Suite **2611 passing**.
+
+## §128 — Every scenario surveyed, and what the simulation could not see (2026-08-27, TQ-88, TQ-89)
+
+Owner direction, 2026-08-27:
+
+> *"hold on market data for now. I want all simulation issues dealt with first so
+> that we can have end to end simulation and make sure everything works as
+> intended."*
+
+So every active scenario was run once and read. The survey is the finding; the
+fixes follow from it.
+
+### 1. Two things that looked like defects and were design
+
+Worth recording first, because both were about to be "fixed".
+
+**`saturation` declares zero properties.** A five-minute run that cannot fail
+looks exactly like coverage nobody finished. Its own file says otherwise:
+
+> *"Deliberately none. This scenario is a measurement, not a regression:
+> asserting a bound on behaviour nobody has characterised yet would be inventing
+> the answer before taking the reading."*
+
+**`anomaly_burst` declares one.** Also deliberate — the file describes *"this
+scenario's one property"* and explains that SYN3 is planted unmissable precisely
+so that property reaches the pipeline every run.
+
+Both were found by reading the files rather than the counts. **A survey that
+looks at shapes and not at reasons manufactures findings**, and two of my first
+four were manufactured.
+
+### 2. The survey
+
+| scenario | properties | arrivals | completions | pending | pressure |
+|---|---|---|---|---|---|
+| anomaly_burst | 1/1 pass | 11 | 1 | 10 | — |
+| baseline_steady_state | 10/11 pass | 10 | 2 | 8 | **22.01** |
+| developing_story | 4/4 pass | 10 | 8 | 2 | **34.08** |
+| executive_failure | 6/6 pass | 0 | 0 | 0 | — |
+
+One failing property across the whole suite, and it turned out not to be about
+the organization at all.
+
+### 3. `queue.pressure_ratio` is anti-correlated with the health it claims to measure
+
+The failure: `queue pressure has not worsened` read **22.01** against a ceiling
+of 5.0 documented from measurements of 1.89 and 3.15.
+
+Nothing had regressed. `pressure_ratio` is `drain_interval / arrival_interval`,
+and both halves move for reasons unrelated to capacity. `saturation.yaml` had
+already written down why arrivals come in a burst:
+
+> *"Discovery agents check has_pending_report before filing, so at most one
+> report per producer per security can be waiting. With ten securities under
+> observation that puts a ceiling on the backlog no matter how slow judgment
+> is."*
+
+Ten reports arrive in eleven seconds, the producer goes quiet because every
+security's last report is unconsumed, and the ratio measures intra-burst spacing.
+
+**The decisive evidence is `developing_story`.** Over three hundred seconds it
+retired eight of ten and left two pending — the queue saturating and draining,
+which is the healthy outcome `saturation.yaml` was written to look for. Its
+pressure ratio reads **34.08**: worse than the ninety-second run that left eight
+pending.
+
+The healthier run reads worse. That is not a threshold that needs adjusting; it
+is a number that does not measure what it is asserted to measure.
+
+**Re-aimed, not deleted** (§105, §110, §116). The concern is unchanged — does the
+organization retire what it files — and `queue.retirement_ratio` states it
+burst-insensitively: 0.2 over ninety seconds, 0.8 over three hundred. Monotonic
+in health, and comparable between runs of the same length.
+
+Where the bar sits is itself a decision: **loose in the control run, tight in the
+long one.** With ten arrivals the measure moves 0.1 per completion, so a tight
+bar on that sample would flake; the real assertion lives in `developing_story`,
+where five minutes make the sample worth something. `pressure_ratio` is still
+reported and no longer asserted, with the reason written where the next person
+will look.
+
+### 4. Governance was exercised by no scenario at all
+
+Four increments built Parliament, the Articles, the governed store and agents
+that obey instruments. **Every scenario still measured an organization for which
+all of it was decoration** — nothing under `simulation/` referenced any of it.
+
+A scenario had only ever been a set of `FI_*` environment variables, because
+everything a scenario needed to vary lived in the environment. Governance does
+not: the Articles, a carried resolution and an instrument in force are rows.
+
+So `simulation/seeding.py` adds a `seed` to the scenario vocabulary, applied to
+the run's fresh database **before the Controller starts** — an agent that came up
+ungoverned and was governed a second later would have done a cycle of work under
+rules nobody could see.
+
+### 5. The rule that makes a seeded run mean anything
+
+**Every step goes through the production API. Nothing writes SQL.**
+
+The temptation is an `sql:` step and it would be three lines. It would also let a
+scenario construct an instrument with no resolution behind it, a resolution
+enacted without a quorum, or Articles with an empty roll — and **every property
+asserted against such a state would be a claim about a system that does not
+exist.** A simulation that can create impossible conditions does not measure the
+organization; it measures the fixture.
+
+Asserted structurally: `test_a_seed_cannot_write_sql` fails if `INSERT`, `UPDATE`,
+`DELETE` or `execute(` appears in the module. And the store's own refusals still
+bite a seed — a seeded instrument at the wrong level is refused by
+`governed_knowledge`, not by anything in the seeding code, which is the whole
+point of routing through the real doors.
+
+A seeded resolution that does not carry **stops the run being set up** rather
+than leaving it ungoverned: a scenario that meant to run under a rule and quietly
+did not would produce properties describing an ungoverned organization under a
+governed name.
+
+### 6. What a seeded run cannot claim
+
+**No agent in this system proposes or votes.** A scenario therefore cannot
+exercise deliberation, and `governed_organization.yaml` says so in its own
+description rather than leaving a reader to infer it from something that looks
+like a parliament and is a fixture. What is exercised is what happens *after* a
+decision: an instrument in force, and agents that have to read it.
+
+That is a real limit on "end to end", and naming it is more useful than a
+scenario that implies otherwise.
+
+### 7. Two vacuities the survey exposed
+
+`baseline_steady_state` passed 10 of 11 while two of those passes were empty:
+with zero completions, `unanalysed_completed_reports == 0` and
+`ungraded_analyses == 0` are both trivially true. **A run in which Analysis never
+started would have satisfied every assertion about judgment.**
+
+`reports were retired` closes it. One, not more — what the queue can retire in
+ninety seconds is a measured property of the drain rate, and a higher bar would
+assert a throughput nobody has changed.
+
+And **the Speaker was unwatched.** It joined the baseline population in TQ-81 and
+no scenario asserted anything about it, so a Speaker that registered and never
+spoke would pass every population property while leaving the organization's
+governance unreported — the exact failure §124 built it to prevent.
+
+### 8. Three defects the simulation found, all of them mine
+
+This is what the owner asked for, working. None of these was visible in 2,600
+passing tests; all three came from running the organization for five minutes and
+reading what it left behind.
+
+**An absence recorded as an authority.** `operating_context.check` reports the
+context's fingerprint whether or not anything governs the role, and for an
+ungoverned role that fingerprint is the literal string `"ungoverned"` — which the
+filing sites duly wrote into `governed_by` as though it were an instrument. Every
+report in an ungoverned run came back as *governed*, and `work_governed` counted
+reports governed by nothing. §100 and §118 name this exact failure and it went in
+anyway, two increments after §118.
+
+**The authority a report was filed under was destroyed when it was judged.**
+`governed_by` was added to `discovery_reports` in TQ-87 and not to
+`discovery_reports_completed` or its archive trigger. The comment directly above
+that trigger warns about precisely this:
+
+> *"a database created before a column existed would keep the older trigger
+> forever and silently stop carrying that column into the archive — the row would
+> look complete, just quietly missing a field, which is the worst shape a
+> data-loss bug can take."*
+
+It is only visible in a run long enough to complete most of its reports. The
+ninety-second control run completes two of ten and shows nothing; the
+three-hundred-second saturation run completes eight and shows it plainly.
+
+**The Speaker filed three hundred reports in three hundred seconds.** A row a
+second to say nothing had changed. Filing only on change was the obvious fix and
+the wrong one: it loses the second fact, and a dead Speaker then looks like a
+quiet Parliament — the distinction §124 built the Speaker to preserve. So an
+unchanged report is *reaffirmed* in place, and the console shows both when
+Parliament's state last changed and when somebody last checked.
+
+### 9. What the saturation run answered
+
+`saturation.yaml` was written to settle one question — *"a queue that grows
+without bound and one that saturates at a fixed depth need completely different
+fixes"* — and it now has its answer. Over three hundred seconds: arrivals 10, max
+depth 10, completions 8, two left in flight.
+
+**It saturates.** The ceiling is structural, exactly as that file predicted: one
+report per producer per security, ten securities. The backlog cannot run away;
+the wait can still be long. That is a capacity question rather than a runaway
+one, and nothing needs an emergency.
+
+### 10. Still open, and queued rather than quietly carried
+
+- **TQ-90 — a governed refusal is recorded nowhere.** The agent says so on stdout
+  and nothing is written down, so the organization cannot count its own refusals
+  and no scenario can require one. The dangerous case is a badly drafted
+  instrument that rejects every report, which looks exactly like a quiet market.
+- **TQ-91 — the two simulation systems have never met.** The harness runs the
+  organization under a scenario; `simulation/training.py` runs the curriculum
+  against simulated clients. Neither knows the other exists, so *"everything works
+  end to end"* means two different things depending on which was run.
+
+Neither is a bug in what was built. Both are places where *"make sure everything
+works as intended"* is not yet answerable by one command, which is what the owner
+actually asked for.

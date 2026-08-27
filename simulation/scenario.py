@@ -27,7 +27,7 @@ from pathlib import Path
 
 import yaml
 
-from simulation import faults as faults_module
+from simulation import faults as faults_module, seeding
 
 SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
 
@@ -68,6 +68,11 @@ class Scenario:
     # that is about ordinary operation - see simulation/faults.py for why
     # the actions are as few as they are.
     faults: faults_module.FaultSchedule = field(default_factory=faults_module.FaultSchedule)
+    # Governance established in the run's database before the Controller starts
+    # (TQ-88). Empty for every scenario about an ungoverned organization, which
+    # is all of them until one is about a governed one. See simulation/seeding.py
+    # for why this is a closed vocabulary over the production API rather than SQL.
+    seed: list = field(default_factory=list)
     source_path: Path | None = None
 
     @property
@@ -142,6 +147,12 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
         schedule = faults_module.parse(raw.get("faults"))
     except faults_module.FaultError as bad:
         raise ScenarioError(f"{where}: {bad}") from bad
+    # Same reasoning as the faults above: a seed that could never run costs a
+    # load error now rather than five minutes and an untrustworthy summary.
+    try:
+        seed = seeding.validate(raw.get("seed"))
+    except seeding.SeedError as bad:
+        raise ScenarioError(f"{where}: {bad}") from bad
 
     return Scenario(
         id=scenario_id,
@@ -153,6 +164,7 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
         expected_properties=properties,
         requires_model=bool(raw.get("requires_model", False)),
         faults=schedule,
+        seed=seed,
         source_path=source_path,
     )
 

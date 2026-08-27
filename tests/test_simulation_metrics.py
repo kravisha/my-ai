@@ -349,3 +349,60 @@ def test_the_same_slot_filled_twice_is_a_respawn(empty):
             (index, at(index), at(index)),
         )
     assert metrics.collect_from(empty)["population"]["respawns"] == 1
+
+
+# -- governance, and the queue measure that replaced pressure (§128) -----------
+
+def test_retirement_ratio_rises_with_health_where_pressure_ratio_fell(empty):
+    """The metric `queue.pressure_ratio` was asserted on until a survey showed it
+    anti-correlated with health: the run that left 2 of 10 pending read 34.08,
+    worse than the run that left 8 of 10 pending at 22.01 (§128).
+
+    This is the replacement, checked in the direction that mattered — retiring
+    more of what arrived must read higher, not lower."""
+    def ten_reports_with(retired: int):
+        # A separate database per case: deleting completed rows to build the
+        # second one would remove the arrivals too, and the ratio would answer a
+        # question about four reports instead of ten.
+        connection = fi_db.get_connection(":memory:")
+        fi_db.init_schema(connection)
+        for report_id in range(1, 11):
+            add_report(connection, report_id, at(report_id),
+                       completed=at(20 + report_id) if report_id <= retired else None)
+        return metrics.collect_from(connection)["queue"]["retirement_ratio"]
+
+    healthy = ten_reports_with(8)
+    struggling = ten_reports_with(2)
+
+    assert healthy == 0.8 and struggling == 0.2
+    assert healthy > struggling
+
+
+def test_retirement_ratio_is_unknown_rather_than_zero_when_nothing_arrived(empty):
+    """Nothing filed is not a failure to retire. Zero would read as one."""
+    assert metrics.collect_from(empty)["queue"]["retirement_ratio"] is None
+
+
+def test_work_filed_under_no_authority_is_counted(empty):
+    """The number that separates governed-on-paper from governed-in-fact.
+
+    A run can hold Articles, an instrument and a talkative Speaker while every
+    report is filed by a caller that named no filer. Counting the work that
+    carried no authority is the only way that shows up."""
+    add_report(empty, 1, at(1))
+    add_report(empty, 2, at(2))
+    empty.execute("UPDATE discovery_reports SET governed_by = '7' WHERE id = 1")
+
+    governance = metrics.collect_from(empty)["governance"]
+    assert governance["work_governed"] == 1
+    assert governance["work_ungoverned"] == 1
+
+
+def test_governance_reports_an_ungoverned_organization_without_inventing_one(empty):
+    """No Articles is a real state, and every field says so rather than
+    defaulting to something that reads like governance."""
+    governance = metrics.collect_from(empty)["governance"]
+    assert governance["articles_version"] is None
+    assert governance["instruments_in_force"] == 0
+    assert governance["speaker_reports"] == 0
+    assert governance["speaker_last_report_at"] is None

@@ -11,7 +11,7 @@ is the number created by then minus the number completed by then. Polling for it
 would have needed a writer inside the run and would have recorded the depth at
 the sampling instants rather than the depth.
 
-Six families, chosen because each one is the direct observable of a defect class
+Eight families, chosen because each one is the direct observable of a defect class
 this project has actually suffered:
 
     pipeline      work reached each stage at all
@@ -20,6 +20,8 @@ this project has actually suffered:
     population    respawns and survivors - duplicate and orphaned processes
     intelligence  lens bindings and staleness, with the stated reason
     resource      what the run consumed, honestly labelled as inferred
+    incidents     whether the organization noticed its own failures
+    governance    what bound this run, and whether the work carried its authority
 
 Internal rationale: INT-PHIL-0018
 """
@@ -33,6 +35,10 @@ from backend import fi_db, strategy
 
 FAMILIES = (
     "pipeline", "queue", "cross_check", "population", "intelligence", "resource", "incidents",
+    # Added in §128. A family missing from this tuple is one a scenario cannot
+    # discover and a test will not check the shape of - which is why the omission
+    # failed the suite rather than passing quietly.
+    "governance",
 )
 
 
@@ -83,6 +89,59 @@ def collect_from(conn, since: str | None = None) -> dict:
         "intelligence": _intelligence(conn),
         "resource": _resource(conn, since),
         "incidents": _incidents(conn, since),
+        "governance": _governance(conn, since),
+    }
+
+
+def _governance(conn, since: str | None = None) -> dict:
+    """What governed this run, and whether anybody could tell.
+
+    State rather than flow for the instruments themselves - an inherited
+    instrument is genuinely part of the organization's present, the same
+    reasoning `_intelligence` is unscoped for.
+
+    **`work_ungoverned` is the number that matters here.** A run can have
+    Articles, an instrument in force and a Speaker reporting cheerfully while
+    every report is filed by a caller that named no filer - governed on paper and
+    ungoverned in fact. Counting the work that carried no authority is the only
+    way that shows up.
+    """
+    articles = conn.fetchone("SELECT MAX(version) AS v FROM articles")
+    instruments = conn.fetchone(
+        "SELECT COUNT(*) AS n FROM governed_items WHERE superseded_at IS NULL")
+    escalations = conn.fetchone(
+        "SELECT COUNT(*) AS n FROM owner_escalations WHERE decided_at IS NULL")
+    speaker = conn.fetchall(
+        "SELECT filed_at FROM speaker_reports ORDER BY id DESC LIMIT 1")
+    speaker_count = _scoped_rows(
+        conn, "SELECT COUNT(*) AS n FROM speaker_reports WHERE {bound}", "filed_at", since)
+    looks = conn.fetchone(
+        "SELECT COALESCE(SUM(reaffirmations), 0) + COUNT(*) AS n FROM speaker_reports")
+
+    governed_reports = _scoped_rows(
+        conn,
+        "SELECT COUNT(*) AS n FROM discovery_reports WHERE {bound} AND governed_by IS NOT NULL",
+        "created_at", since)
+    all_reports = _scoped_rows(
+        conn, "SELECT COUNT(*) AS n FROM discovery_reports WHERE {bound}", "created_at", since)
+
+    filed = all_reports[0]["n"] if all_reports else 0
+    carried = governed_reports[0]["n"] if governed_reports else 0
+    return {
+        "articles_version": (articles or {}).get("v"),
+        "instruments_in_force": (instruments or {}).get("n", 0),
+        "outstanding_owner_escalations": (escalations or {}).get("n", 0),
+        "speaker_reports": speaker_count[0]["n"] if speaker_count else 0,
+        "speaker_last_report_at": speaker[0]["filed_at"] if speaker else None,
+        # How many times the Speaker looked, which is not how many rows it wrote.
+        # An unchanged report is reaffirmed in place (§128), so rows count what
+        # changed and this counts whether anybody is watching at all.
+        "speaker_observations": (looks or {}).get("n", 0),
+        "work_governed": carried,
+        # Reports filed under no authority at all. Zero is the only good answer
+        # once an instrument binds the producer; before that it is simply the
+        # count of everything.
+        "work_ungoverned": filed - carried,
     }
 
 
@@ -235,7 +294,8 @@ def _queue(conn, since: str | None = None) -> dict:
             "arrivals": 0, "completions": len(completions), "net_depth_change": 0,
             "max_depth": 0, "drained": pending_now == 0,
             "arrival_interval_seconds": None, "drain_interval_seconds": None,
-            "pressure_ratio": None, "oldest_pending_age_seconds": None,
+            "pressure_ratio": None, "retirement_ratio": None,
+            "oldest_pending_age_seconds": None,
             "inherited_backlog": inherited, "pending_at_end": pending_now,
         }
 
@@ -278,11 +338,38 @@ def _queue(conn, since: str | None = None) -> dict:
         "drained": pending_now == 0,
         "arrival_interval_seconds": arrival_interval,
         "drain_interval_seconds": drain_interval,
-        # Above 1.0 the queue grows without bound. This is the single number that
-        # says whether the organization can keep up with itself.
+        # **Not the number it was believed to be, and kept only as a reading.**
+        #
+        # It was documented as "above 1.0 the queue grows without bound; the
+        # single number that says whether the organization can keep up with
+        # itself". A survey of every scenario showed it is anti-correlated with
+        # the health it claims to measure (§128):
+        #
+        #     baseline_steady_state  90s   8 of 10 left pending   pressure 22.01
+        #     developing_story      300s   2 of 10 left pending   pressure 34.08
+        #
+        # The healthier run reads worse. Both halves of the ratio move for
+        # reasons unrelated to capacity: `has_pending_report` caps the backlog at
+        # one report per producer per security, so arrivals come as a burst and
+        # then stop, while a longer run lets completions spread out and raises
+        # the drain interval.
+        #
+        # `retirement_ratio` below answers the question this was asked to answer.
+        # Nothing asserts on this one any more, and `saturation.yaml`'s reasoning
+        # about saturation-versus-growth is why: it cannot tell those apart.
         "pressure_ratio": (
             round(drain_interval / arrival_interval, 2)
             if arrival_interval and drain_interval else None
+        ),
+        # How much of what arrived was retired. Burst-insensitive, monotonic in
+        # the thing actually worried about, and comparable between runs of the
+        # same length: 0.2 over ninety seconds, 0.8 over three hundred.
+        #
+        # Below 1.0 the queue grew during the run. That is not by itself a fault
+        # - a run that ends mid-cycle leaves work in flight - which is why the
+        # scenarios assert a floor rather than 1.0.
+        "retirement_ratio": (
+            round(len(completions) / len(arrivals), 2) if arrivals else None
         ),
         "oldest_pending_age_seconds": oldest_pending_age,
         # Work this run began already owing, and everything still owed at the

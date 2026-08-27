@@ -1121,6 +1121,100 @@ Three things this needs that TQ-86 did not:
 - **Re-reading.** A context is built when work happens; nothing notices an instrument adopted
   mid-cycle. No agent needs that yet, which is why TQ-86 did not build it.
 
+### TQ-88 — Simulation exercises the governed organization
+
+**NEED (GREEN) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §128) · owner direction 2026-08-27 ·
+addendum 34, addendum 46**
+
+`simulation/seeding.py` and `governed_organization.yaml`: **11/11 properties pass** on a live run
+with the Articles in force, an instrument binding every role, eight reports filed under it and none
+outside it. TQ-89 was done in the same increment once `developing_story` and `saturation` gave the
+evidence.
+
+**Three defects the runs found, none visible in 2,636 passing tests:** `governed_by` recorded the
+literal string `"ungoverned"` as though it were an authority; the archive trigger destroyed
+`governed_by` the moment a report was judged; the Speaker wrote three hundred rows in three hundred
+seconds. All three fixed and pinned. §128 §8.
+
+Owner direction: *"I want all simulation issues dealt with first so that we can have end to end
+simulation and make sure everything works as intended."*
+
+A survey of every active scenario found that **governance is exercised by no scenario at all**. Four
+increments built Parliament, the Articles, the governed store and agents that obey instruments, and
+every simulation still measured an organization for which all of it was decoration.
+
+A scenario was only ever a set of `FI_*` environment variables, and governance lives in rows — so
+this adds a `seed` to the scenario vocabulary, applied before the Controller starts, **through the
+production API and never through SQL**. A fixture able to build states the organization cannot reach
+measures the fixture rather than the system.
+
+Also closes two vacuities the survey exposed in `baseline_steady_state`: nothing asserted the
+pipeline moved at all (so `unanalysed_completed_reports == 0` passed over zero completions), and
+nothing watched the Speaker, which joined the baseline population in TQ-81.
+
+### TQ-89 — The queue-pressure metric cannot tell saturation from growth
+
+**NEED (YELLOW) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §128) · re-aimed, not deleted**
+
+`queue.retirement_ratio` replaces it: 0.2 over ninety seconds, 0.8 over three hundred. The bar sits
+loose in the control run, where ten arrivals move the measure 0.1 per completion, and tight in
+`developing_story`, where five minutes make the sample worth something. `pressure_ratio` is still
+reported and no longer asserted.
+
+`saturation` answered its own question in the same survey: max depth 10 against a structural ceiling
+of one report per producer per security. **It saturates.**
+
+`baseline_steady_state` fails one property: `queue.pressure_ratio` reads **22.01** against a ceiling
+of 5.0 documented from measurements of 1.89 and 3.15.
+
+**The organization has not regressed; the metric is reading a burst.** `pressure_ratio` is
+`drain_interval / arrival_interval`, and `saturation.yaml` already characterised why arrivals come
+in a burst: *"discovery agents check has_pending_report before filing, so at most one report per
+producer per security can be waiting. With ten securities under observation that puts a ceiling on
+the backlog no matter how slow judgment is."* Ten reports arrive in eleven seconds, the producer
+goes quiet because every security's last report is unconsumed, and the ratio measures intra-burst
+spacing against a drain rate that is unchanged.
+
+That is the exact distinction `saturation.yaml` exists to settle — *"a queue that grows without
+bound and one that saturates at a fixed depth need completely different fixes"* — and the metric
+asserted against cannot make it.
+
+**Re-aimed, not deleted** (§105, §110, §116). The concern is unchanged: does the backlog grow
+without bound. A burst-insensitive statement of it is what this needs, measured from the saturation
+run rather than guessed — the same discipline `TIMING_CONSTANTS.md` records for every other number
+whose correctness depends on a rate.
+
+### TQ-90 — A governed refusal is recorded nowhere
+
+**NEED (YELLOW) · QUEUED · depends on TQ-87 · addendum 46 §17 · `SPEC_RECONCILIATION.md` §128**
+
+When an instrument in force refuses a filing, the agent says so on stdout and **nothing is written
+down**. The organization cannot count its own refusals, no metric can assert on them, no scenario
+can require one, and nothing can notice that a rule is refusing everything.
+
+That last case is the dangerous one: a badly drafted instrument that rejects every report looks
+exactly like a quiet market.
+
+`status_events` already exists for durable narration and is the natural home. What it needs deciding
+is what a refusal record may contain — a report's summary is the organization's own, not a client's,
+so §111 does not bite here, but the rule should be stated rather than assumed.
+
+### TQ-91 — The two simulation systems have never met
+
+**WANT · QUEUED · `SPEC_RECONCILIATION.md` §128**
+
+There are two: `simulation/harness.py` runs the real organization in its own database under a
+scenario, and `simulation/training.py` runs the Department of Education's curriculum against
+simulated exchanges and clients. **Neither knows the other exists.**
+
+A curriculum exercise cannot be a scenario property, a scenario cannot run a curriculum, and
+"everything works end to end" currently means two different things depending on which was run.
+
+Not obviously one system: a scenario measures the organization operating, a curriculum measures an
+agent learning, and merging them for symmetry would be the kind of tidying that costs more than it
+returns. What is worth having is one command that runs both and one report that says whether the
+organization works — which is nearly all of what the owner asked for and is cheaper than a merge.
+
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
 **WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**

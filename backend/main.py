@@ -838,6 +838,10 @@ def _overview(conn) -> dict:
             "speaker_has_reported": True,
             "speaker": spoken["speaker_identity"],
             "as_of": spoken["filed_at"],
+            # When the Speaker last looked and found this still true. Different
+            # from `as_of`, and the difference is what tells a reader whether a
+            # quiet Parliament is quiet or unattended (§128).
+            "confirmed_at": spoken.get("reaffirmed_at"),
             "says": report.get("says"),
             "convened": report.get("articles_in_force"),
             "articles_version": report.get("articles_version"),

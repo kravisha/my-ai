@@ -258,3 +258,42 @@ def test_the_cycle_continues_after_a_refusal(governed_conn, capsys):
     assert filed is None, "nothing was filed"
     said = capsys.readouterr().out
     assert "not filed" in said and "instrument in force" in said
+
+
+# --- what the saturation run found (§128) --------------------------------------------
+
+def test_an_ungoverned_filing_records_no_authority_rather_than_the_word(governed_conn):
+    """A saturation run recorded `governed_by = 'ungoverned'` on every report.
+
+    `operating_context.check` reports the context's fingerprint either way, and
+    for a role nothing binds that fingerprint is the literal string
+    `"ungoverned"` — which the filing site wrote down as though it were an
+    authority. **An absence recorded as a value** is the failure §100 and §118
+    both name, and it made `work_governed` count reports governed by nothing."""
+    report = _file(governed_conn)  # no instrument in force
+    row = governed_conn.fetchone(
+        "SELECT governed_by FROM discovery_reports WHERE id = ?", (report,))
+    assert row["governed_by"] is None
+
+
+def test_the_authority_a_report_was_filed_under_survives_completion(governed_conn):
+    """`governed_by` was added to `discovery_reports` and not to the archive or
+    its trigger, so the evidence was destroyed the moment a report was judged.
+
+    The trigger's own comment warns about exactly this: *"a database created
+    before a column existed would keep the older trigger forever and silently
+    stop carrying that column into the archive - the row would look complete,
+    just quietly missing a field, which is the worst shape a data-loss bug can
+    take."* Only a run long enough to complete most of its reports showed it."""
+    item = governed.adopt(
+        governed_conn, subject=fi_db.REPORT_SUBJECT, level="organization_policy",
+        text="A summary is required.", adopted_by="coo",
+        resolution_id=_enact(governed_conn, "organization_policy"), binds="*",
+        requires={"kind": "required_fields", "fields": ["summary"]})
+    report = _file(governed_conn)
+
+    governed_conn.execute(
+        "UPDATE discovery_reports SET status = 'analyzed' WHERE id = ?", (report,))
+    archived = governed_conn.fetchone(
+        "SELECT governed_by FROM discovery_reports_completed WHERE id = ?", (report,))
+    assert archived["governed_by"] == str(item), "the archive lost what governed it"

@@ -83,6 +83,38 @@ expected_properties:
     assert: at_least
     value: 5
 
+  # --- the pipeline actually moved ------------------------------------------
+  - name: reports were retired
+    metric: pipeline.reports_completed
+    assert: at_least
+    value: 1
+    # Added after a survey run passed 10/11 while the two properties below were
+    # vacuous: with zero completions, `unanalysed_completed_reports == 0` and
+    # `ungraded_analyses == 0` are both trivially true. A run in which Analysis
+    # never started would have satisfied every assertion about judgment.
+    #
+    # One, not more. What the queue can retire in ninety seconds is a measured
+    # property of the drain rate (260-400s for a full queue, TIMING_CONSTANTS),
+    # and a higher bar here would be asserting a throughput nobody has changed.
+
+  # --- Parliament had a voice -----------------------------------------------
+  - name: the Speaker kept watching
+    metric: governance.speaker_observations
+    assert: at_least
+    value: 3
+    # RE-AIMED before it was ever green (§128). It first read
+    # `governance.speaker_reports at_least 3` — three rows — and the fix to the
+    # Speaker's unbounded growth made rows count *changes* rather than looks. A
+    # stable Parliament now produces exactly one row however long anybody
+    # watches it, so the old property measured the wrong thing the moment
+    # repeats stopped being rows.
+    #
+    # `speaker_observations` counts looking, which is what "the Speaker is doing
+    # its job" was always meant to mean: a Speaker that registered and never
+    # spoke would satisfy every population property while leaving the
+    # organization's governance unreported, which is the failure §124 built it
+    # to prevent.
+
   # --- nothing was consumed without being judged ----------------------------
   - name: every completed report was analysed
     metric: pipeline.unanalysed_completed_reports
@@ -109,16 +141,29 @@ expected_properties:
     value: 0
 
   # --- the known bottleneck, held rather than endorsed -----------------------
-  - name: queue pressure has not worsened
-    metric: queue.pressure_ratio
-    assert: at_most
-    value: 5.0
-    # Measured at 3.15 on the first run: reports arrive about three times faster
-    # than Analysis retires them, so the queue grows for the whole run and each
-    # report waits longer than the last (18s, 37s, 59s, 74s).
+  - name: the queue was not abandoned
+    metric: queue.retirement_ratio
+    assert: at_least
+    value: 0.1
+    # RE-AIMED, not deleted (§105, §110, §116, §128). This property asserted
+    # `queue.pressure_ratio at_most 5.0`, measured at 1.89 and 3.15 on early
+    # runs, and read 22.01 on a survey run in which nothing had regressed.
     #
-    # This is a CEILING ON KNOWN-BAD BEHAVIOUR, not a statement that the
-    # behaviour is acceptable. Asserting `drained` would fail every run and
-    # teach everyone to ignore the suite; asserting nothing would let the
-    # backlog quietly triple. Tighten this when the bottleneck is addressed -
-    # and it should be tightened, not deleted.
+    # The ratio is drain_interval / arrival_interval, and both halves move for
+    # reasons unrelated to capacity. `has_pending_report` caps the backlog at one
+    # report per producer per security, so arrivals come as an eleven-second
+    # burst and then stop; a longer run lets completions spread out and raises
+    # the drain interval. The survey showed it anti-correlated with health:
+    #
+    #     this scenario     90s   8 of 10 left pending   pressure 22.01
+    #     developing_story 300s   2 of 10 left pending   pressure 34.08
+    #
+    # The healthier run reads worse. `saturation.yaml` had already named the
+    # distinction the ratio cannot make - a queue that grows without bound and
+    # one that saturates at a fixed depth need completely different fixes.
+    #
+    # The CONCERN is unchanged: does the organization retire what it files. The
+    # floor is deliberately loose here and not elsewhere: with ten arrivals the
+    # measure moves 0.1 per completion, and 0.2 was measured, so a tight bar on
+    # this sample would flake. The real assertion lives in developing_story,
+    # where three hundred seconds make the sample worth something.

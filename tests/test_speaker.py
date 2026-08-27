@@ -151,3 +151,41 @@ def test_the_speaker_answers_to_the_articles_and_not_to_an_officer():
     block = re.search(r"  - id: speaker\n(.*?)\n\n", text, re.S).group(1)
     assert "reports_to: null" in block
     assert "watched_by: coo" in block, "somebody must still notice if it goes quiet"
+
+
+# --- what the saturation run found (§128) --------------------------------------------
+
+def test_an_unchanged_report_is_reaffirmed_rather_than_repeated(governed):
+    """A three-hundred-second run produced three hundred speaker reports — a row
+    a second to say nothing had changed.
+
+    Two facts are worth keeping and they are not the same: when Parliament's
+    state last *changed*, and when somebody last *checked*. Filing only on change
+    loses the second, and a dead Speaker then looks like a quiet Parliament."""
+    first = speaker._speaker_work(governed, "speaker-1")
+    for _ in range(5):
+        speaker._speaker_work(governed, "speaker-1")
+
+    rows = governed.fetchall("SELECT id, filed_at, reaffirmed_at FROM speaker_reports")
+    assert len(rows) == 1, "six identical looks produced six rows"
+    assert rows[0]["reaffirmed_at"] >= rows[0]["filed_at"]
+
+
+def test_a_changed_report_is_a_new_row(governed):
+    """The counterpart. Squashing repeats must not squash history."""
+    speaker._speaker_work(governed, "speaker-1")
+    parliament.propose(governed, title="Something new", rationale="r",
+                       proposed_by="coo", affects="knowledge")
+    speaker._speaker_work(governed, "speaker-1")
+
+    rows = governed.fetchall("SELECT report FROM speaker_reports ORDER BY id")
+    assert len(rows) == 2
+    assert rows[0]["report"] != rows[1]["report"]
+
+
+def test_the_console_distinguishes_last_said_from_last_checked(governed):
+    speaker._speaker_work(governed, "speaker-1")
+    speaker._speaker_work(governed, "speaker-1")
+    section = _parliament_section(governed)
+    assert section["as_of"] and section["confirmed_at"]
+    assert section["confirmed_at"] >= section["as_of"]

@@ -131,7 +131,22 @@ CREATE TABLE IF NOT EXISTS speaker_reports (
     filed_at TEXT NOT NULL,
     -- Which Speaker said it. A report with no author is a rumour.
     speaker_identity TEXT NOT NULL,
-    report TEXT NOT NULL
+    report TEXT NOT NULL,
+    -- When the Speaker last looked and found this still true. A saturation run
+    -- showed it filing three hundred identical reports in three hundred seconds
+    -- (§128) - a table growing at a row a second to say nothing had changed.
+    --
+    -- Two facts are worth keeping and they are not the same: when Parliament's
+    -- state last *changed*, and when somebody last *checked*. Collapsing them
+    -- either loses the second (file only on change, and a dead Speaker looks
+    -- like a quiet Parliament) or floods on the first.
+    reaffirmed_at TEXT,
+    -- How many times the Speaker looked and found this still true. Rows count
+    -- CHANGES now, so a row count no longer measures whether anybody is
+    -- watching - this does. Separating them was forced by a scenario property
+    -- that read "the Speaker reported: 1 >= 3" and was measuring the wrong
+    -- thing the moment repeats stopped being rows (§128).
+    reaffirmations INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS speaker_reports_recent ON speaker_reports (id DESC);
 """
@@ -574,9 +589,20 @@ def record_speaker_report(conn: Database, *, speaker_identity: str, report: dict
     always answers cannot tell anyone that nobody is watching."""
     if not (speaker_identity or "").strip():
         raise ParliamentRefused("A report needs the Speaker who filed it.")
+    stated = json.dumps(report, sort_keys=True)
+    standing = conn.fetchone(
+        "SELECT id, report FROM speaker_reports ORDER BY id DESC LIMIT 1")
+    if standing is not None and standing["report"] == stated:
+        # Nothing has changed. The Speaker looked, and saying so is worth
+        # recording; saying it again in a new row is not.
+        conn.execute(
+            "UPDATE speaker_reports SET reaffirmed_at = ?, reaffirmations = reaffirmations + 1"
+            " WHERE id = ?", (now_iso(), standing["id"]))
+        return int(standing["id"])
     return conn.execute_returning_id(
-        "INSERT INTO speaker_reports (filed_at, speaker_identity, report) VALUES (?, ?, ?)",
-        (now_iso(), speaker_identity.strip(), json.dumps(report)))
+        "INSERT INTO speaker_reports (filed_at, speaker_identity, report, reaffirmed_at)"
+        " VALUES (?, ?, ?, ?)",
+        (now_iso(), speaker_identity.strip(), stated, now_iso()))
 
 
 def latest_speaker_report(conn: Database) -> dict | None:
@@ -587,7 +613,8 @@ def latest_speaker_report(conn: Database) -> dict | None:
     restore exactly what the owner objected to, and would do it invisibly - the
     console would look identical whether the Speaker was working or dead."""
     row = conn.fetchone(
-        "SELECT id, filed_at, speaker_identity, report FROM speaker_reports"
+        "SELECT id, filed_at, speaker_identity, report, reaffirmed_at, reaffirmations"
+        " FROM speaker_reports"
         " ORDER BY id DESC LIMIT 1")
     if row is None:
         return None

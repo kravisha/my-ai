@@ -923,6 +923,16 @@ CREATE TABLE IF NOT EXISTS discovery_reports_completed (
     cross_check_id INTEGER,
     -- See discovery_reports.parity_event_id above.
     parity_event_id INTEGER,
+    -- The instruments this report was filed under. Carried into the archive for
+    -- the reason the trigger's own comment gives: a column added to
+    -- discovery_reports and not to this table is destroyed the moment a report
+    -- is judged, and the row looks complete while quietly missing a field.
+    --
+    -- That is exactly what happened when TQ-87 added it upstream and not here
+    -- (§128). A governed run's own evidence of governance disappeared on
+    -- completion, and only a saturation run - where eight of ten reports had
+    -- completed - showed it.
+    governed_by TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -943,11 +953,11 @@ BEGIN
     INSERT INTO discovery_reports_completed
         (id, created_at, producer_identity, producer_spawned_at, report_type, security, summary,
          detector_event_id, evidence_ids, judgment_confidence, handled_by_identity, handled_by_spawned_at,
-         detail, completed_at, outcome, lens_artifact_id, cross_check_id, parity_event_id, schema_version)
+         detail, completed_at, outcome, lens_artifact_id, cross_check_id, parity_event_id, governed_by, schema_version)
     VALUES
         (NEW.id, NEW.created_at, NEW.producer_identity, NEW.producer_spawned_at, NEW.report_type, NEW.security, NEW.summary,
          NEW.detector_event_id, NEW.evidence_ids, NEW.judgment_confidence, NEW.handled_by_identity, NEW.handled_by_spawned_at,
-         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.parity_event_id, NEW.schema_version);
+         NEW.detail, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NEW.status, NEW.lens_artifact_id, NEW.cross_check_id, NEW.parity_event_id, NEW.governed_by, NEW.schema_version);
     DELETE FROM discovery_reports WHERE id = NEW.id;
 END;
 
@@ -3972,7 +3982,12 @@ def enqueue_report(
                 f"report: {', '.join(verdict['unmet_fields'])}. Refusing to file rather than "
                 f"filing something the organization has decided is not a lead."
             )
-        governed_by = verdict["fingerprint"]
+        # Only when something actually governed it. `check` reports the context's
+        # fingerprint either way, and for an ungoverned role that fingerprint is
+        # the literal string "ungoverned" - which a saturation run duly recorded
+        # in `governed_by` as though it were an authority (§128). An absence
+        # written down as a value is the failure §100 and §118 both name.
+        governed_by = verdict["fingerprint"] if verdict["governed"] else None
 
     return conn.execute_returning_id(
         "INSERT INTO discovery_reports "

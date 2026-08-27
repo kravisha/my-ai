@@ -52,3 +52,18 @@ expected_properties:
   - name: no agent survived the run
     metric: population.running_at_end
     assert: is_empty
+
+  # --- the queue saturates rather than growing ------------------------------
+  - name: the organization retired most of what it filed
+    metric: queue.retirement_ratio
+    assert: at_least
+    value: 0.5
+    # Added in §128. Three hundred seconds is long enough for this to mean
+    # something: measured 0.8 - eight of ten retired, two left in flight at the
+    # cutoff - against 0.2 over the ninety-second control run.
+    #
+    # This is the positive evidence that the backlog SATURATES rather than
+    # growing, which is the question saturation.yaml was written to settle and
+    # which queue.pressure_ratio could not answer. The floor sits below the
+    # measurement rather than at it, because a run that ends mid-cycle leaves
+    # work in flight for reasons that are not a fault.

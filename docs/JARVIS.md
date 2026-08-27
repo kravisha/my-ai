@@ -534,7 +534,27 @@ flag."*
 | Simulated clients | `IMPLEMENTED` | They request, collect, and *judge*, with a closed vocabulary of complaints |
 | Ground truth | `IMPLEMENTED` | Deliberately **not** on the provider interface. Ground truth belongs to the grader; an interface that can be asked for it lets the graded party pass by asking |
 | Fault injection | `IMPLEMENTED` | `simulation/faults.py` |
+| Governance under simulation | `IMPLEMENTED` — TQ-88. A scenario may seed the Articles, a carried resolution and an instrument, **through the organization's own API and never SQL** |
 | Historical-data operation | `TO BE DEVELOPED` | Addendum 47 §6 and addendum 46 §27 both require it |
+
+### What a simulated run can and cannot show
+
+Every active scenario is run and read; the survey that produced the current set
+is recorded at §128. Two things are worth knowing before trusting a green run:
+
+- **A scenario cannot exercise deliberation.** No agent proposes or votes, so a
+  governed run seeds its Articles and its resolution and measures what happens
+  *after* a decision — an instrument in force, and agents that have to read it.
+  `governed_organization` passes 11 of 11: eight reports filed under the rule and
+  none outside it.
+- **A seed cannot build a state the organization could not reach.** Every step
+  goes through the production API; a fixture able to construct an instrument with
+  no resolution behind it would measure the fixture rather than the system.
+
+Two simulation systems exist and have never met: the harness runs the
+organization under a scenario, and `simulation/training.py` runs the curriculum
+against simulated clients. *"Everything works end to end"* currently means two
+different things depending on which was run (TQ-91).
 
 ### The Department of Education
 
