@@ -197,10 +197,12 @@ def state_digest(conn: Database, boot=None) -> dict:
     # the model to infer from absence, because absence looks identical to
     # quiet from inside a snapshot.
     digest["not_built_yet"] = {
-        "parliament": "No parliament, committee or voting body exists. Addendum 32's "
-                      "machinery is deferred (SPEC_RECONCILIATION §47): at this population "
-                      "it would be ceremony without constituents. The Strategic Priority "
-                      "Register stands in its place.",
+        "parliament": "Parliament exists (TQ-81, §123) with a Speaker who reports on it "
+                      "(§124). Still unbuilt from addendum 32: elections, ministers, "
+                      "committees and the weekly session. Do not describe Parliament's "
+                      "current state from this digest - read the Speaker's report in the "
+                      "`parliament` section of /console/overview, and if the Speaker has "
+                      "filed nothing, say that rather than inferring.",
         "education_department": "No Curriculum Architect or trainer agents exist yet; the "
                                 "addendum-13 training loop performs the function (§60).",
         "finance_desk_news": "The Finance tab's headlines are SIMULATED placeholders until "

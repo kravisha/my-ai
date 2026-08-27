@@ -1064,7 +1064,21 @@ notice implying more than it delivers would be the falsely-written-charter probl
 
 ### TQ-81 — Parliament, and the Articles it amends
 
-**NEED (ORANGE) · QUEUED · addendum 32 · addendum 46 §6, §39 · `SPEC_RECONCILIATION.md` §119, §120, §122**
+**NEED (ORANGE) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §123) · addendum 32 · addendum 46 §6,
+§39 · §119, §120, §122**
+
+Built as `backend/parliament.py`: the Articles, resolutions with 46 §17's provenance, a
+quorum-and-threshold vote in two tiers, and the level-0 refusal with an escalation queue nothing
+inside the system can clear. Wired into `/console/overview` and the COO's digest, both of which had
+answered *"no parliament, committee or voting body exists yet"* since addendum 32 was assimilated.
+
+**The Articles' amendment threshold is a constant in code, not a clause in the Articles** — an
+instrument whose amendment bar is one of its own clauses can be lowered by simple majority and then
+walked through. §120's argument one level down.
+
+**No Articles are in force in the working database.** The genesis text is level 0's to write; the
+machinery cannot vote itself an instrument. That is the one thing this increment could not do and
+is now the open item at §123 §9.
 
 **The system reports this gap in its own words.** `backend/main.py` and `backend/coo_chat.py` both
 answer *"No parliament, committee or voting body exists yet"*, and addendum 46 routes every
@@ -1092,8 +1106,8 @@ be authorized. They enter when something needs them.
 
 ### TQ-82 — The governed-knowledge layer and the authority hierarchy
 
-**NEED (ORANGE) · QUEUED · depends on TQ-81 · addendum 46 §4, §5, §17 · addendum 30 §12 ·
-addendum 39 · `SPEC_RECONCILIATION.md` §120**
+**NEED (ORANGE) · QUEUED — unblocked 2026-08-27 by TQ-81 · addendum 46 §4, §5, §17 ·
+addendum 30 §12 · addendum 39 · `SPEC_RECONCILIATION.md` §120, §123**
 
 Addendum 46 §2's architecture — *stable machinery, evolving data* — as something that exists rather
 than something that is intended. The store of 46 §4 (the Articles, laws, policies, procedures,

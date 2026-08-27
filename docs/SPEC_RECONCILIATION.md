@@ -11208,3 +11208,301 @@ is not re-derived from scratch.
 This does not touch the refusal boundaries. Level 0 still escalates. Irreversible
 acts still ask. What changes is the default for everything below: **act, and
 write down why.**
+
+## §123 — Parliament, and two rules a vote cannot reach (2026-08-27, TQ-81)
+
+The sentence this system has answered since addendum 32 was assimilated —
+
+> *"No parliament, committee or voting body exists yet."*
+
+— is no longer true. `backend/parliament.py` holds the Articles, resolutions with
+addendum 46 §17's provenance, a vote with a quorum and a threshold, and the
+level-0 refusal §120 specified.
+
+### 1. What was built, and the much larger part that was not
+
+Addendum 32 is a thousand lines: a Board and a President, ministers elected by
+department, functional heads, standing committees, a weekly governance cycle, a
+State-of-the-Union session, and constitutional amendment. **None of that is
+here** except the last, and the omission is the design rather than a shortfall.
+
+The test applied was the one that kept the Portfolio Analyst from acquiring a
+department: *what is required for a directive to be authorized?* An electorate, a
+quorum, a threshold, a record of who decided what and why. Elections choose an
+electorate the Articles can simply name; committees pre-filter proposals a
+handful of agents can read directly; a weekly session schedules something that
+currently happens when the owner says so.
+
+So `parliament.summary()` reports `not_built: [elections, ministers, committees,
+weekly_session]` **in the same object that reports the vote**, because a status
+surface showing a working ballot and nothing else reads as a finished governance
+layer. §47 deferred this machinery with a reason — *at this population it would
+be ceremony without constituents* — and that reasoning still holds for the parts
+still absent. What changed is that the vote itself is no longer in that category.
+
+### 2. The rule for changing the rules is not changeable by the rules
+
+The Articles carry the electorate, the quorum and the ordinary threshold. That is
+addendum 46 §2 working as intended: *stable machinery, evolving data*, and
+changing who votes is a data change rather than a release.
+
+They do **not** carry the threshold for amending themselves.
+`ARTICLES_AMENDMENT_THRESHOLD` is a constant in code, at addendum 32 §19.1's
+two-thirds.
+
+The reason is mechanical rather than philosophical. An instrument whose amendment
+bar is one of its own clauses can be dismantled in two ordinary votes: lower the
+bar, then walk through it. A supermajority requirement that a simple majority can
+edit is not a supermajority requirement.
+
+**This is §120's argument one level down.** There, the Constitution could not live
+in a store that ranks, because everything in the store is outranked by something
+else in it; the answer was a test that fails. Here, the amendment rule cannot live
+in the instrument it governs; the answer is a constant no vote reaches. Neither is
+a permission that could be granted to the right caller — both are absences of a
+mechanism.
+
+`test_articles_text_claiming_its_own_amendment_threshold_does_not_get_one`
+enacts an amendment whose text declares a one-third bar and then shows the next
+amendment still facing two-thirds. **Data has no authority over the mechanism**,
+demonstrated rather than asserted.
+
+### 3. The honest limit on the level-0 refusal
+
+A proposal declares what it `affects`. Declaring `constitution` is refused and
+escalated. So is declaring a level the module does not know — because an
+undetermined target is not a safe one, which is §100's rule arriving in
+governance.
+
+Both get **identical words**. A caller who could distinguish *"that level does not
+exist"* from *"that level is out of reach"* could map the boundary by probing it,
+which is reading the governance state without being entitled to it (addendum 44
+§9.3).
+
+What the refusal cannot do is written into the module rather than left for
+somebody to discover: **the system does not hold the Constitution — deliberately,
+§120 — so nothing here can read it and notice that a proposed "policy"
+contradicts it.** The refusal covers what is *declared*. A level-0 change wearing
+a lower label passes.
+
+Recording that limit is not a caveat attached to the guarantee, it is part of it.
+`backend/charter.py` exists because *"a charter is the easiest document in a
+governance system to write and the easiest to write falsely"*, and a governance
+layer implying it could catch a disguised amendment would be that failure in the
+one place it matters most.
+
+### 4. The queue nothing inside the system can clear
+
+Every other escalation in this organization terminates somewhere inside it — a
+committee, the COO, the Board. A level-0 escalation terminates at a person.
+
+So there is no `resolve`, no `dismiss`, no expiry, and a test asserts those names
+do not exist. The single function that writes a terminal state,
+`record_owner_decision`, needs an `OwnerContext` — built from a session subject
+and never from anything a caller sent (addendum 44 §9.2) — and a
+`record_reference`, for the reason `register.set_status` requires one on a
+completed entry: **the pointer is the verification.** An escalation closed with no
+record of what was decided has been silenced rather than answered.
+
+A structural test asserts only one statement in the module writes `decided_at`.
+Mutation testing earned it: adding a second, innocuous-looking `dismiss_escalation`
+is caught, and without that test it would not have been.
+
+### 5. Genesis comes from the owner, because a vote cannot bootstrap itself
+
+A vote needs an electorate, a quorum and a threshold. Until the Articles say what
+those are, the organization has no way to decide anything — **including what they
+should be**. There is no majority to appeal to before there is a roll.
+
+So the first Articles are adopted by the owner and everything after them is
+amendment by vote. A second genesis is refused: it would be an amendment wearing
+a different name and skipping the threshold.
+
+### 6. What the live run showed
+
+Backend started against a scratch database, `/console/overview` read directly.
+
+Before adoption:
+
+```
+"convened": false,
+"reason": "Parliament exists; no Articles are in force yet, so there is no
+           electorate and nothing can be put to a vote."
+```
+
+That distinction is the one the old sentence could not make: **machinery that
+exists and governs nothing is not machinery that is absent.**
+
+After the owner adopted genesis Articles, a resolution was proposed, voted by the
+representative tier, and carried; then a level-0 proposal was refused:
+
+```
+"convened": true, "articles_version": 1, "open_resolutions": 0,
+"outstanding_owner_escalations": 1,
+"not_built": ["elections", "ministers", "committees", "weekly_session"]
+```
+
+The `1` is the point. An agent tried to amend the Constitution, was refused in
+words that tell it nothing, and left a mark on the owner's console that no agent
+can erase.
+
+**No Articles are in force in the working database.** The machinery waits; the
+first text is level 0's to write.
+
+### 7. A tripwire fired, and was re-aimed
+
+`test_digest_names_what_is_deliberately_unbuilt` asserted the COO's digest called
+parliament *"deferred"*. It failed, correctly: the thing it described changed.
+
+Deleting it would have removed the rule it defends — rule 3 of the COO's prompt,
+that **absence looks identical to quiet from inside a snapshot**, so what does not
+exist must be stated rather than inferred. The rule did not change; its subject
+moved. The assertion now requires the digest to name elections, ministers,
+committees and the weekly session, and to say where to check whether a vote is
+currently possible at all. §105, §110 and §116 again: **re-aimed, never deleted.**
+
+### 8. Mutation testing found a test that tested nothing
+
+10/10 caught, each by the test written for it — but the first round was 8/9, and
+the miss is the interesting one.
+
+`test_an_abstention_counts_toward_quorum_and_not_toward_the_threshold` used one
+vote for and one abstention. Counting the abstention as a decided vote gives one
+of two, which still clears a one-half threshold — **so the test passed whether the
+rule held or not.** It was a test over data that did not test the rule that
+produced the data, which is the same shape as the miss recorded at §117 and the
+one at §118. Third occurrence; the pattern is worth naming: *a passing assertion
+about an outcome is not evidence about the rule unless the rule's absence would
+have changed the outcome.*
+
+Two abstentions instead of one makes it discriminate.
+
+### 9. What this unblocks
+
+TQ-82, the governed-knowledge layer, was waiting on this: conflict detection
+needs somewhere to escalate, and §119 put Parliament first for that reason. It is
+now buildable.
+
+TQ-83's Software Engineering Department has a source of authorized directives.
+And the owner directive at §122 — decide rather than ask — belongs in the Articles
+when their first text is written, which is the one thing here that only level 0
+can supply.
+
+## §124 — The Speaker: Parliament reports on itself, and the system stops doing it for it (2026-08-27, TQ-81)
+
+Owner, on reading §123:
+
+> *"I thought we had a role for an agent who knows about what is happening in the
+> Parliament. If I'm wrong about that - lets add a speaker for the parliament who
+> is also the spokesperson and the speaker will answer all status updates about
+> the parliament - if not the agent should be reporting and not the system."*
+
+**No such role existed.** `organization.yaml` had seven, none of them anywhere
+near governance. Addendum 32 §10.3 seats a Board President and ministers at the
+session and nobody built any of them.
+
+### 1. What was actually wrong with §123
+
+TQ-81 built Parliament and then had `/console/overview` describe it: the web
+server queried the Articles, the resolutions and the escalations, and rendered
+what it found. Everything it said was true.
+
+The defect is not in the answers, it is in **who was answering**. The
+organization's account of its own governance was being produced by a narrator
+with no role in the story, no accountability for what it said, and - the part
+that matters - **no possible silence**.
+
+A query answers correctly whether anyone is minding Parliament or not. A console
+built on queries therefore looks identical when nobody is. That is the same
+failure the analyst had at §118, in a new place: an absence rendered as a
+confident answer.
+
+**A report has an author, a time, and an absence that can be noticed.** That is
+the whole of the difference, and it is worth more than it first sounds.
+
+### 2. The Speaker
+
+`agents/speaker.py`: a baseline subprocess agent that reads the state of
+Parliament each cycle and files a report. `parliament.record_speaker_report`
+stores it with the identity of the Speaker that filed it - a report with no
+author is a rumour - and `latest_speaker_report` is what the console reads.
+
+Not on-demand, unlike the Portfolio Analyst, and for a reason specific to this
+role: **a spokesperson that only appears when asked cannot be found to have gone
+quiet**, and its silence is the signal.
+
+### 3. It reports and does not legislate
+
+It cannot propose, vote, close a resolution, adopt Articles, escalate or resolve
+an escalation. `test_the_speaker_cannot_legislate` asserts the module never
+reaches those functions.
+
+Structural rather than behavioural, because the convenient version is very easy
+to write: the Speaker already holds a database connection and already imports
+`parliament`. Nothing except this test stands between "reports on the body" and
+"is the body". Addendum 32 §10 seats the Speaker at the session as its convenor
+and voice, and gives that seat no vote.
+
+### 4. The rule that carries the owner's point: no fallback
+
+The console renders the Speaker's report. If the Speaker has filed nothing, it
+says so:
+
+> *"Parliament has not been reported on. Its Speaker has filed nothing, so this
+> console has no account of it to show - and will not compose one, because a
+> status page speaking for Parliament is what the Speaker exists to replace."*
+
+**It does not fall back to querying the tables.** The fallback is the version
+anybody would write: it is three lines, it is correct, and it makes every console
+anyone ever opens look right. It would also restore precisely what the owner
+objected to, invisibly, and the day the Speaker died nothing would change on
+screen.
+
+`test_the_console_renders_the_speakers_report_and_never_queries_parliament`
+asserts over the source that `_overview` calls `latest_speaker_report` and never
+`summary`, `current_articles`, `open_resolutions` or `tally`. `parliament.summary`
+was re-documented as *"for the Speaker to read, not for a status surface"*, since
+a function's intended caller is not enforceable by its name.
+
+The COO's digest was changed the same way: it now tells the COO to read the
+Speaker's report and, if the Speaker has filed nothing, **to say that rather than
+inferring**.
+
+### 5. Who spawns is not who directs
+
+The Speaker's `reports_to` is `null`, and that is a claim rather than an
+omission - `test_the_speaker_answers_to_the_articles_and_not_to_an_officer`
+asserts it, together with `watched_by: coo`.
+
+A spokesperson whose reports pass through the executive is a spokesperson for the
+executive. But something must still notice when it goes quiet, and the COO is
+what notices silence here. So the COO spawns it and watches it, and directs
+nothing about what it says.
+
+That distinction is the one TQ-79 drew for the Portfolio Analyst when
+`spawned_by_coo` turned out to be carrying two meanings. This is its second use,
+which suggests it was a real seam rather than a special case.
+
+### 6. Three tripwires fired, and each was right
+
+- **`test_every_role_that_exists_has_a_declared_budget`** - a new role with no
+  iteration budget. Declared `operational`: look, and verify that what was filed
+  is what was found. Deliberately *not* `analytical`, because the Speaker's value
+  is that somebody whose job it is looked, not that it reached a conclusion about
+  what it saw. **A spokesperson given an analytical budget starts interpreting the
+  body it speaks for.**
+- **`test_every_implemented_role_is_described`** - the living documentation did
+  not mention the Speaker. Written the same increment, which is the whole point of
+  §122's tripwire: the map cannot fall behind by a week again.
+- **`test_the_coo_is_told_which_parts_of_parliament_are_still_missing`** - my own
+  test from §123, asserting the digest pointed at `/health`. It now points at the
+  Speaker's report. Re-aimed, not deleted.
+
+### 7. What this does not change
+
+Parliament is still what §123 built: the Articles, the vote, the two rules a vote
+cannot reach, and the escalation queue nothing inside the system can clear. The
+Speaker does not govern any of it. **No Articles are in force in the working
+database**, so what the Speaker currently reports is that Parliament stands ready
+and has none - which is the correct account of the organization today, delivered
+by somebody whose job it is to deliver it.

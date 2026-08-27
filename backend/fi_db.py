@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, curriculum, identifiers, iteration, migrations, missions, novelty, observations, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, identifiers, iteration, migrations, missions, novelty, observations, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -321,6 +321,29 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["evidence integration", "uncertainty", "peer classification", "grading"],
         "work_mechanism": "discovery_reports queue, polled",
+    },
+    "speaker": {
+        "agent_type": "spokesperson",
+        "description": (
+            "Parliament's voice. It reports on the governing body; it is not part of it."
+        ),
+        "responsibilities": [
+            "Read the state of Parliament and file a report saying what it found",
+            "Name what is open, what is with the owner, and what is still unbuilt",
+            "Be findable to have gone quiet - a stale report is a fact, a fresh query is not",
+        ],
+        "allowed": [
+            "Report that Parliament has no Articles and therefore cannot vote",
+            "Say that a matter is with the owner and cannot be settled inside the system",
+        ],
+        "not_allowed": [
+            "Propose, vote, close a resolution, or adopt Articles - a spokesperson who can "
+            "legislate is not reporting on a body, it is the body",
+            "Raise or resolve an escalation",
+            "Answer for Parliament when it has not looked - silence is reported as silence",
+        ],
+        "competencies": ["governance reporting", "stating what is absent"],
+        "work_mechanism": "reads parliament state each cycle and files a speaker report",
     },
     "portfolio_analyst": {
         "agent_type": "on_demand",
@@ -1409,6 +1432,13 @@ def init_schema(conn: Database) -> None:
     # §54) owns strategic_register the same way - the organization's proposals,
     # distinct from the development queue in docs/TASK_QUEUE.md.
     register.init_schema(conn)
+    # Parliament (addendum 32, TQ-81, §123) owns the Articles, resolutions, votes
+    # and the owner-escalation queue. Same layering rule as every module above:
+    # it must not import fi_db back, so this is the only place its tables are
+    # created. It sits after `register` because the register is where a proposal
+    # is *filed*; this is where one is *decided*, and the two are separate
+    # registers on purpose (§54).
+    parliament.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1578,7 +1608,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
-         analysis_requests.SCHEMA, curriculum.SCHEMA)
+         analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

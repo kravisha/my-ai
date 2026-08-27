@@ -58,7 +58,11 @@ def test_digest_names_what_is_deliberately_unbuilt(conn):
     to be inferred."""
     digest = coo_chat.state_digest(conn)
     unbuilt = digest["not_built_yet"]
-    assert "parliament" in unbuilt and "deferred" in unbuilt["parliament"]
+    # Parliament is built (TQ-81, §123); what is still absent from addendum 32
+    # is elections, ministers, committees and the weekly session. Re-aimed rather
+    # than deleted - the rule this defends is unchanged, only its subject moved.
+    # tests/test_parliament.py holds the detailed version.
+    assert "parliament" in unbuilt and "elections" in unbuilt["parliament"]
     assert "cannot act" in unbuilt["coo_actions"] or "report but cannot act" in unbuilt["coo_actions"]
 
 

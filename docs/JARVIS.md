@@ -230,16 +230,34 @@ system, and no in-system actor can discharge it.
 | Component | Status |
 |---|---|
 | The Constitution | `IMPLEMENTED` as a private document; **not** represented in the system, deliberately |
-| The Articles | `TO BE DEVELOPED` — TQ-81 |
-| Parliament, resolutions, voting | `TO BE DEVELOPED` — TQ-81. The system reports this in its own words: `/health` answers *"No parliament, committee or voting body exists yet"* |
+| The Articles | `IMPLEMENTED` as machinery — TQ-81. **None are in force.** The genesis text is adopted by the owner, not voted, because a vote needs an electorate and a threshold that only the Articles can supply |
+| Parliament: resolutions, the vote, quorum and threshold | `IMPLEMENTED` — TQ-81. [`backend/parliament.py`](../backend/parliament.py) |
+| The level-0 refusal and the owner-escalation queue | `IMPLEMENTED` — one refusal for every reason, and no function inside the system closes an escalation |
+| Elections, ministers, committees, the weekly session | `TO BE DEVELOPED`, and deliberately not queued (see below) |
 | The governed-knowledge layer and precedence rules | `TO BE DEVELOPED` — TQ-82 |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
 | Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py) |
-| Elections, ministers, committees, the weekly session | `TO BE DEVELOPED`, and deliberately not queued. Addendum 32 specifies them; none is required for a directive to be authorized |
+Addendum 32 specifies elections, ministers and committees; none is required for a
+directive to be authorized, so none was built. `parliament.summary()` names them
+in the same object that reports the vote, because a status surface showing a
+working ballot and nothing else would read as a finished governance layer.
 
-**Until Parliament exists, the owner is the Board.** [`TASK_QUEUE.md`](TASK_QUEUE.md)
+### Two rules that a vote cannot reach
+
+**The rule for changing the rules is not changeable by the rules.** The Articles
+carry the electorate, the quorum and the ordinary threshold — as data, which is
+addendum 46 §2's whole point. They do **not** carry the threshold for amending
+themselves; that is a constant in code. An instrument whose amendment bar is one
+of its own clauses can be lowered by simple majority and then walked through.
+
+**What the level-0 refusal cannot do**, stated rather than implied: the system
+does not hold the Constitution, so nothing can read it and notice that a proposed
+"policy" contradicts it. The refusal covers what a proposal *declares*. A
+level-0 change wearing a lower label is not detectable here.
+
+**Until the Articles are adopted, the owner is the Board.** [`TASK_QUEUE.md`](TASK_QUEUE.md)
 is the Strategic Priority Register in paper form, worked one item at a time, and
 it says so at the top of the file.
 
@@ -261,9 +279,21 @@ not named, fails the suite.
 | **Speculator** | discovery | subprocess | yes | Goes looking, differently. Files reports with evidence |
 | **Analysis** | judgment | subprocess | yes | Grades what the others produce |
 | **Portfolio Analyst** | on-demand | subprocess | **no** — on demand | The only role that works for a *client*. Tasked through the Gateway; produces nothing when nobody has asked |
+| **Speaker** | spokesperson | subprocess | yes | Parliament's voice. Reads the state of Parliament and files a report; the console renders *that*, never its own query |
 | **Dummy** | reference | subprocess | yes | The reference implementation the lifecycle machinery is tested against |
 
 All `IMPLEMENTED`.
+
+**The Speaker reports; it does not legislate.** It cannot propose, vote, close a
+resolution or adopt Articles, and a test asserts the module never reaches those
+functions — a spokesperson who can also legislate is not reporting on a body, it
+is the body. It answers to the Articles rather than to an officer (`reports_to:
+null`), while the COO spawns and watches it: **who starts a process is not who
+directs it.**
+
+Its silence is the point. If the Speaker stops, the console shows the age of the
+last thing it said and does **not** fall back to querying Parliament — a fallback
+would look identical whether the Speaker was working or dead (§124).
 
 **The Portfolio Analyst is the shape everything new should take.** It is not part
 of the baseline workforce: it exists when a client asks and not otherwise. Those
@@ -625,9 +655,14 @@ writing down a position.
 - A real broker connection.
 - A real price.
 - A real external client.
-- A vote.
 - A release, or a rollback.
-- An agent proposing a change to the organization.
+- An agent proposing a change to the organization of its own accord.
+- Any Articles in force in the working database — the machinery runs, and the
+  organization it would govern has not yet been given its instrument.
+
+A vote *has* happened: TQ-81's live run adopted genesis Articles against a scratch
+database, carried an organization-policy resolution, and had a level-0 proposal
+refused into an escalation queue nothing inside the system can clear (§123).
 
 ### The honest summary
 
@@ -661,6 +696,9 @@ until somebody declares it deliberately.
 
 5. **Where the living documentation and operational detail should live**, given a
    public repository (section 9).
+5a. **What the genesis Articles should say, and who is on the roll.** The
+   machinery is built and waiting; the first text is level 0's to write (§120,
+   §123). Nothing in the system can vote itself an instrument.
 6. **Whether `HANDOFF.md` is retired now or at the next session change.** Owner
    direction on 2026-08-27 was to keep it for later. It is currently *wrong* — it
    describes database tables that TQ-72 deleted — and carries a staleness notice

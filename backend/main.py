@@ -35,7 +35,7 @@ from app.privacy_preferences import PrivacyPreferenceStore
 from app.session import SessionStore
 from app.tools import TOOLS, execute_tool
 from app.users import UserStore, ensure_user_data_dir, normalize_username
-from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
+from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, finance_desk, fi_db, metadata_engine, missions, parliament, reference_data, remediation, status_events, strategy, view_intents, watch, workspace
 # Aliased because this module already has a route handler named `register`
 # (/auth/register), which would silently shadow the module name.
 from backend import register as strategic_register
@@ -797,20 +797,54 @@ def _overview(conn) -> dict:
         }
 
     def _parliament():
-        """Honest reporting of a thing that does not exist.
+        """**What the Speaker said**, not what this server found.
 
-        Addendum 32's parliament, elections and committees are deferred with
-        a stated reason (§47): at a population of a handful of role-agents the
-        machinery would be ceremony without constituents. The register below
-        is what the organization actually files today, and is the closest
-        real thing to a session outcome."""
+        Owner direction 2026-08-27: *"the agent should be reporting and not the
+        system."* This function reads one row - the Speaker's latest report - and
+        renders it. It does not query the Articles, the resolutions or the votes,
+        and `tests/test_speaker.py` asserts that it does not, because the
+        convenient version of this function is the one that quietly answers when
+        the Speaker is dead.
+
+        This answered *"no parliament, committee or voting body exists yet"* from
+        addendum 32's assimilation until TQ-81 built one (§123). The sentence was
+        true and reporting it was right; what would be wrong now is keeping it,
+        or replacing it with a claim that addendum 32 is finished. Elections,
+        ministers, committees and the weekly session are still unbuilt, and
+        `not_built` says so in the same object that reports the vote.
+
+        `articles_in_force: false` is the ordinary state before the owner adopts
+        the genesis text - the machinery exists and has nothing to govern yet,
+        which is different from the machinery being absent."""
         filed = strategic_register.list_register(conn)
+        spoken = parliament.latest_speaker_report(conn)
+        if spoken is None:
+            # **No fallback to querying the tables**, and that is the whole
+            # point (§124). A console that answered anyway would look identical
+            # whether the Speaker was working or dead, which is the condition
+            # the owner objected to.
+            return {
+                "speaker_has_reported": False,
+                "reason": "Parliament has not been reported on. Its Speaker has filed "
+                          "nothing, so this console has no account of it to show - and "
+                          "will not compose one, because a status page speaking for "
+                          "Parliament is what the Speaker exists to replace.",
+                "standing_in": "The Strategic Priority Register is where proposals are "
+                               "filed and dispositioned today; the owner acts as the Board.",
+                "filed_entries": len(filed),
+            }
+        report = spoken["report"]
         return {
-            "convened": False,
-            "reason": "No parliament, committee or voting body exists yet. Addendum 32's "
-                      "machinery is deferred with its reason recorded in "
-                      "SPEC_RECONCILIATION §47: at the current population it would be "
-                      "ceremony without constituents.",
+            "speaker_has_reported": True,
+            "speaker": spoken["speaker_identity"],
+            "as_of": spoken["filed_at"],
+            "says": report.get("says"),
+            "convened": report.get("articles_in_force"),
+            "articles_version": report.get("articles_version"),
+            "open_resolutions": report.get("open_resolutions"),
+            "open_resolution_titles": report.get("open_resolution_titles"),
+            "outstanding_owner_escalations": report.get("outstanding_owner_escalations"),
+            "not_built": report.get("not_built"),
             "standing_in": "The Strategic Priority Register is where proposals are filed "
                            "and dispositioned today; the owner acts as the Board.",
             "filed_entries": len(filed),

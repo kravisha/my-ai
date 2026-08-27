@@ -73,6 +73,10 @@ BASELINE_POPULATION = {
     "explorer": _baseline_target("explorer", 1),
     "speculator": _baseline_target("speculator", 1),
     "analysis": _baseline_target("analysis", 1),
+    # Parliament always has a Speaker (§124). Unlike the Portfolio Analyst it is
+    # not on-demand: a spokesperson who only appears when asked cannot be found
+    # to have gone quiet, and its silence is the signal.
+    "speaker": _baseline_target("speaker", 1),
 }
 
 # The role names alone. Kept because plenty of callers only ever wanted the

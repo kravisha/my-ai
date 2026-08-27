@@ -96,6 +96,12 @@ ROLE_WORK_KIND = {
     "explorer": "operational",
     "speculator": "operational",
     "analysis": "analytical",
+    # Reporting is operational: look, and verify that what you filed is what you
+    # found. Deliberately not "analytical" - the Speaker's value is that somebody
+    # whose job it is looked, not that it reached a conclusion about what it saw.
+    # A spokesperson given an analytical budget starts interpreting the body it
+    # speaks for.
+    "speaker": "operational",
 }
 
 # What the Gateway's assistant does. Not a role in agent_registry - it is the

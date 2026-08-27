@@ -82,6 +82,24 @@ roles:
     on_demand: true
     watched_by: coo
 
+  # Parliament's voice (TQ-81, §124). Added because the owner objected to the
+  # right thing: the console was describing Parliament by querying its tables,
+  # which meant the organization's account of its own governance had no author
+  # and no possible silence.
+  #
+  # `reports_to: null` is not an oversight. The Speaker answers to the Articles,
+  # not to an officer - a spokesperson whose reports pass through the executive
+  # is a spokesperson for the executive. The COO spawns and watches it, which is
+  # lifecycle rather than authority: **who starts a process is not who directs
+  # it**, the same distinction `on_demand` drew for the Portfolio Analyst.
+  - id: speaker
+    status: implemented
+    agent_type: spokesperson
+    reports_to: null
+    process: subprocess
+    spawned_by_coo: true
+    watched_by: coo
+
   - id: dummy
     status: implemented
     agent_type: reference
