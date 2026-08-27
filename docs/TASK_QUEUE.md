@@ -1091,7 +1091,21 @@ carrying requester, objective, priority, deadline, dependencies and acceptance c
 
 ### TQ-87 — The rest of the organization reads what governs it
 
-**WANT · QUEUED · depends on TQ-86 · addendum 46 §3 · `SPEC_RECONCILIATION.md` §126 §6**
+**WANT · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §127) · addendum 46 §3 · §126**
+
+Explorer, Speculator and the admin register route now check what governs them, refuse when an
+instrument is not satisfied, and record what they acted under. A second obligation kind
+(`minimum_count`) earned by a real consumer, and a tripwire that fails if any filing site stops
+naming its filer.
+
+**Found by running it:** a refusal raised inside a live agent printed as `work_fn error` - true of a
+broken agent, false of one obeying the organization. An organization whose policies make its agents
+look broken will have its policies removed by whoever watches that stream. `GovernedRefusal` now has
+its own voice.
+
+**Still ungoverned:** Analysis and the COO. Grading and directing are the two behaviours most worth
+governing, and neither has an obligation kind that fits - which waits for a rule somebody actually
+wants rather than a kind invented in advance.
 
 TQ-86 wired one code path. The Explorer, the Speculator, the Analysis agent and the COO still act
 purely on their code, so a resolution binding them changes nothing.

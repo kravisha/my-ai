@@ -25,7 +25,7 @@ import statistics
 import sys
 
 from agents import discovery_config as config
-from agents.base import run_agent
+from agents.base import note_governed_refusal, run_agent
 from app.model_gateway import call_reasoning_model
 from backend import fi_db, reference_data
 from backend.arbitrage import CostConfig, Opportunity, scan_calendar, scan_chain, scan_forward
@@ -33,6 +33,24 @@ from providers.market_data import EXPIRIES_DAYS, STRIKES, SyntheticMarketDataPro
 from providers.stored_data import StoredChainProvider, chain_snapshots, forward_quotes
 
 ROLE = "explorer"
+def _file_lead(conn, identity, spawned_at, role, security, **fields):
+    """File a lead, and treat a refusal as a decision rather than a crash.
+
+    `fi_db.enqueue_report` raises `GovernedRefusal` when an instrument in force
+    is not satisfied. Left to propagate it reaches `agents/base.py`'s cycle guard
+    and is printed as a `work_fn error` - which is true of a broken agent and
+    false of one obeying the organization, and anything reading the error stream
+    would learn the wrong thing.
+
+    So the refusal is caught here and said in its own words. The cycle carries
+    on: the rest of this agent's work is not the organization's to stop, and the
+    cross-check below is still consumed - a lead the rules rejected must not
+    leave the request open forever any more than a duplicate-suppressed one."""
+    try:
+        return fi_db.enqueue_report(conn, identity, spawned_at, role, security, **fields)
+    except fi_db.GovernedRefusal as refusal:
+        note_governed_refusal(role, identity, refusal)
+        return None
 DETECTOR_TYPE = "iv_surface_peak_ratio"
 # The arbitrage-library path's own routing tag - the requester_finding
 # ['detector'] value _file_cross_checked_reports keys off of to tell a
@@ -158,7 +176,7 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
                 strikes_text = _opportunity_strikes_text(
                     finding["strike"], finding.get("strike2"), finding.get("strike3"),
                 )
-                fi_db.enqueue_report(
+                _file_lead(
                     conn, identity, spawned_at, "explorer", security,
                     summary=(
                         f"Executable {detector_id} {finding['direction']} on {security}: "
@@ -171,9 +189,10 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
                     lens_artifact_id=finding.get("lens_artifact_id"),
                     cross_check_id=request["id"],
                     parity_event_id=finding["parity_event_id"],
+                    filed_by=ROLE,
                 )
             else:
-                fi_db.enqueue_report(
+                _file_lead(
                     conn, identity, spawned_at, "explorer", security,
                     summary=(
                         f"IV surface anomaly on {security}: ratio {finding['ratio']:.2f} "
@@ -184,6 +203,7 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str) -> None:
                     evidence_ids=[], judgment_confidence=None,
                     lens_artifact_id=finding.get("lens_artifact_id"),
                     cross_check_id=request["id"],
+                    filed_by=ROLE,
                 )
         # Consumed either way - a duplicate-suppressed lead must not leave the
         # request open forever, or this security could never be asked about again.

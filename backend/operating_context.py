@@ -105,8 +105,64 @@ class RequiredFields:
 
     @staticmethod
     def unmet_by(requires: dict, submission: dict) -> list[str]:
-        return [name for name in requires["fields"]
-                if not str(submission.get(name) or "").strip()]
+        return [name for name in requires["fields"] if _absent(submission.get(name))]
+
+
+@dataclass(frozen=True)
+class MinimumCount:
+    """Obligation: a field must carry at least N things.
+
+    A different *shape* from `RequiredFields` rather than a variation on it -
+    presence and sufficiency are different questions, and an organization that
+    says *"no lead is filed on fewer than two pieces of evidence"* is saying the
+    second one. Added with a real consumer (a discovery report's evidence) rather
+    than on speculation: a registry entry with nothing that obeys it is the
+    mechanism-that-does-not-exist problem `app/capability.py` names."""
+
+    kind: str = "minimum_count"
+
+    @staticmethod
+    def check_shape(requires: dict) -> None:
+        field_name = requires.get("field")
+        at_least = requires.get("at_least")
+        if not isinstance(field_name, str) or not field_name.strip():
+            raise governed.AdoptionRefused(
+                "A minimum_count obligation needs the 'field' it counts.")
+        if not isinstance(at_least, int) or isinstance(at_least, bool) or at_least < 1:
+            raise governed.AdoptionRefused(
+                "A minimum_count obligation needs 'at_least' as a whole number above zero. "
+                "A minimum of zero is not a rule.")
+
+    @staticmethod
+    def unmet_by(requires: dict, submission: dict) -> list[str]:
+        value = submission.get(requires["field"])
+        try:
+            count = len(value)
+        except TypeError:
+            count = 0 if value is None else 1
+        if count >= requires["at_least"]:
+            return []
+        return [f"{requires['field']} (has {count}, needs {requires['at_least']})"]
+
+
+def _absent(value) -> bool:
+    """Whether a submission is missing this field.
+
+    `None`, whitespace, and an empty collection are missing. **A zero is not.**
+    The first version of this asked whether `str(value or "").strip()` was empty,
+    which was fine for the one caller it had and wrong the moment a second
+    arrived: a report with `judgment_confidence=0.0` had stated its confidence,
+    and would have been refused for not stating it.
+
+    The second consumer found the first one's rule too narrow, which is the
+    ordinary way a rule written against one example goes wrong."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, dict, set)):
+        return not value
+    return False
 
 
 # Obligation kinds this system knows how to obey, each naming the code that
@@ -115,6 +171,7 @@ class RequiredFields:
 # mechanism which does not exist would route work to nothing.**
 UNDERSTOOD_OBLIGATIONS = {
     RequiredFields.kind: RequiredFields,
+    MinimumCount.kind: MinimumCount,
 }
 
 

@@ -1401,6 +1401,11 @@ def file_register_entry(request: RegisterEntryRequest, conn=Depends(panel_db), a
             need_flag=request.need_flag,
             quick_win=request.quick_win,
             source_reference=request.source_reference,
+            # The admin is the accountable filer, so the entry is checked against
+            # whatever binds them and records what it was checked against (§127).
+            # A '*'-binding instrument reaches an operator the same way it reaches
+            # an agent; an unnamed filer would be governed by nothing.
+            filed_by=admin,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

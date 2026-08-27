@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, curriculum, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -892,6 +892,11 @@ CREATE TABLE IF NOT EXISTS discovery_reports (
     -- nullable column rather than a reused one so neither detector's rows are
     -- ever mistaken for the other's.
     parity_event_id INTEGER,
+    -- Which instruments this report was filed under (TQ-87). Evidence rather
+    -- than a claim: the report carries the authority it was checked against, so
+    -- a grade can ask what the producer was bound by at the time. NULL for a
+    -- report filed by nobody in particular.
+    governed_by TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -3901,6 +3906,20 @@ def list_evidence_items(conn: Database, ids: list[int]) -> list[dict]:
     )
 
 
+# The subject an instrument governs when it governs what a discovery report must
+# be. One name shared by the instrument and the code that obeys it; two spellings
+# is how the two stop agreeing.
+REPORT_SUBJECT = "discovery_reports"
+
+
+class GovernedRefusal(ValueError):
+    """Work refused because an instrument in force is not satisfied.
+
+    Its own type rather than a bare ValueError: an agent that catches this is
+    catching *"the organization said no"*, which is a different thing from a
+    malformed argument and deserves a different response."""
+
+
 def enqueue_report(
     conn: Database,
     producer_identity: str,
@@ -3914,8 +3933,19 @@ def enqueue_report(
     lens_artifact_id: int | None = None,
     cross_check_id: int | None = None,
     parity_event_id: int | None = None,
+    filed_by: str | None = None,
 ) -> int:
-    """lens_artifact_id: which intelligence artifact's threshold decided this
+    """filed_by: the role filing this, so the report is checked against whatever
+    governs that role on `REPORT_SUBJECT` and records what it was checked against
+    (TQ-87, §127).
+
+    Optional in the signature and **not optional in practice**: every filing site
+    in `agents/` passes it, and `tests/test_governed_agents.py` fails if one stops.
+    A required parameter would have broken every fixture that files a report to
+    set up some other test, which is a lot of churn to buy a guarantee a tripwire
+    gives directly.
+
+    lens_artifact_id: which intelligence artifact's threshold decided this
     was worth filing. Recorded on the report itself rather than only on the
     detector event, so that grades attribute back to the lens identically for
     Explorer (which has a detector event) and Speculator (which does not).
@@ -3927,11 +3957,28 @@ def enqueue_report(
     parity_event_id: the ARB-001 detection backing this lead, for a report
     Explorer's parity path filed. Null for every other report - see
     discovery_reports.parity_event_id's own comment in SCHEMA."""
+    governed_by = None
+    if filed_by:
+        verdict = operating_context.check(conn, filed_by, REPORT_SUBJECT, {
+            "summary": summary, "security": security, "report_type": report_type,
+            "evidence_ids": evidence_ids or [],
+            "judgment_confidence": judgment_confidence,
+            "detector_event_id": detector_event_id,
+            "lens_artifact_id": lens_artifact_id,
+        })
+        if verdict.get("unmet_fields"):
+            raise GovernedRefusal(
+                f"an instrument in force ({verdict['instrument']}) is not satisfied by this "
+                f"report: {', '.join(verdict['unmet_fields'])}. Refusing to file rather than "
+                f"filing something the organization has decided is not a lead."
+            )
+        governed_by = verdict["fingerprint"]
+
     return conn.execute_returning_id(
         "INSERT INTO discovery_reports "
-        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, SCHEMA_VERSION),
+        "(created_at, producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, evidence_ids, judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, governed_by, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), producer_identity, producer_spawned_at, report_type, security, summary, detector_event_id, json.dumps(evidence_ids or []), judgment_confidence, lens_artifact_id, cross_check_id, parity_event_id, governed_by, SCHEMA_VERSION),
     )
 
 

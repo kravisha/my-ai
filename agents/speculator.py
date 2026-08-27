@@ -31,13 +31,31 @@ import json
 import sys
 
 from agents import discovery_config as config
-from agents.base import run_agent
+from agents.base import note_governed_refusal, run_agent
 from app.model_gateway import call_reasoning_model
 from backend import fi_db, reference_data
 from providers.social_data import SyntheticSocialDataProvider
 from providers.stored_data import StoredSocialProvider
 
 ROLE = "speculator"
+def _file_lead(conn, identity, spawned_at, role, security, **fields):
+    """File a lead, and treat a refusal as a decision rather than a crash.
+
+    `fi_db.enqueue_report` raises `GovernedRefusal` when an instrument in force
+    is not satisfied. Left to propagate it reaches `agents/base.py`'s cycle guard
+    and is printed as a `work_fn error` - which is true of a broken agent and
+    false of one obeying the organization, and anything reading the error stream
+    would learn the wrong thing.
+
+    So the refusal is caught here and said in its own words. The cycle carries
+    on: the rest of this agent's work is not the organization's to stop, and the
+    cross-check below is still consumed - a lead the rules rejected must not
+    leave the request open forever any more than a duplicate-suppressed one."""
+    try:
+        return fi_db.enqueue_report(conn, identity, spawned_at, role, security, **fields)
+    except fi_db.GovernedRefusal as refusal:
+        note_governed_refusal(role, identity, refusal)
+        return None
 
 # How many posts the stance read is shown. Batched into one call covering the
 # highest-engagement posts rather than one call per post: Speculator sees up to
@@ -70,7 +88,7 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str, lens_artif
         security = request["security"]
 
         if not fi_db.has_pending_report(conn, identity, security):
-            fi_db.enqueue_report(
+            _file_lead(
                 conn, identity, spawned_at, "speculator", security,
                 summary=(
                     f"Social evidence on {security}: max confidence "
@@ -83,6 +101,7 @@ def _file_cross_checked_reports(conn, identity: str, spawned_at: str, lens_artif
                 judgment_confidence=finding["max_confidence"],
                 lens_artifact_id=finding.get("lens_artifact_id", lens_artifact_id),
                 cross_check_id=request["id"],
+                filed_by=ROLE,
             )
         fi_db.consume_cross_check(conn, request["id"])
 

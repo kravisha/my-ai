@@ -11776,3 +11776,117 @@ one real code path obeys it.
 **11/11 mutations caught** by the test written for each — every one of them a way
 of making the layer decorative rather than wrong, which is the failure this
 increment is against. Suite **2600 passing**.
+
+## §127 — The working agents read what governs them, and a rule stops looking like a fault (2026-08-27, TQ-87)
+
+TQ-86 wired one code path. This wires the one the discovery agents actually use.
+
+Live, against a running database — a resolution carried, an instrument adopted,
+and the Speculator meeting it:
+
+```
+carried: True
+instrument 2 | speculator bound by: 2,1
+
+-- the agent tries to file a thin lead --
+[speculator:speculator-1] not filed - an instrument in force was not satisfied:
+  an instrument in force (2) is not satisfied by this report:
+  evidence_ids (has 1, needs 2).
+returned: None
+
+-- and a lead that meets the bar --
+filed report 1 under instrument 2,1
+```
+
+`2,1` is worth noticing: the Speculator is bound by the report policy *and* by
+the register policy adopted in §126's run. A context is everything binding the
+role, across subjects, and the fingerprint carries all of it.
+
+### 1. A second obligation kind, because presence and sufficiency are different questions
+
+`required_fields` answers *did you say?* An organization saying *"no lead is
+filed on fewer than two pieces of evidence"* is asking *is it enough?*, which is
+a different shape rather than a variation.
+
+So `minimum_count` exists — and exists **with a consumer**, not on speculation. A
+registry entry nothing obeys is the mechanism-that-does-not-exist problem
+`app/capability.py` names, one layer along. Its validation refuses a minimum of
+zero: a floor nothing can fall below is not a rule.
+
+### 2. The second consumer found the first one's rule too narrow
+
+`RequiredFields` originally asked whether `str(value or "").strip()` was empty.
+Correct for the one caller it had, and wrong the moment a second arrived: a
+report with `judgment_confidence=0.0` **has** stated its confidence, and would
+have been refused for not stating it.
+
+`_absent` now says what it means — `None`, whitespace and empty collections are
+missing; a zero is not. Both directions are pinned, because fixing one of them is
+how the other breaks.
+
+This is the ordinary way a rule written against one example goes wrong, and it is
+the argument for wiring a second consumer at all rather than declaring TQ-86
+sufficient.
+
+### 3. The tripwire that keeps it wired
+
+`filed_by` is optional in both signatures so that fixtures filing a report to set
+up some other test do not all have to change. **That convenience is exactly how a
+real filing site loses its filer later**, becomes ungoverned, and leaves the suite
+green — so the requirement lives in a test that walks the call sites in `agents/`,
+`backend/main.py` and `gateway/` and fails if one names no filer.
+
+Two details it needed:
+
+- **A forwarding wrapper is exempt and its callers are not.** `_file_lead` passes
+  `**fields` through; nothing at that node can be judged. Its callers are on the
+  list, which is where the filer either exists or does not.
+- **A scanner that finds nothing must fail.** `test_the_tripwire_is_looking_at_something`
+  asserts it sees at least four sites *and* that at least one is a real filing
+  site rather than only wrappers — otherwise a refactor that hid every call
+  behind forwarding would empty the check while leaving it green.
+
+### 4. What running it found, and it was not in any test
+
+`enqueue_report` now raises inside a live agent's cycle. `agents/base.py` catches
+everything, so the agent survives — and prints:
+
+    [speculator:speculator-1] work_fn error: ...
+
+That is true of a broken agent and **false of one obeying the organization.**
+
+The consequence is not cosmetic. Anything watching the error stream — a person, a
+health check, a future evaluator — would read a working policy as a malfunctioning
+workforce. **An organization whose policies make its agents appear broken will
+have its policies removed by whoever is watching that stream**, and the removal
+will look like good operational hygiene.
+
+So `GovernedRefusal` has its own type, `agents/base.note_governed_refusal` says it
+in its own words, and `_file_lead` catches it at the filing site. The cycle
+continues: the rest of the agent's work is not the organization's to stop, and the
+cross-check is still consumed — a lead the rules rejected must not leave a request
+open forever any more than a duplicate-suppressed one.
+
+The `GovernedRefusal` type still subclasses `ValueError`, so callers that caught
+the old behaviour still catch it. Narrowing it further would have been a change to
+error handling wearing a governance increment's clothes.
+
+### 5. What is now true, and what is not
+
+**True:** Explorer, Speculator and the admin register route all check what governs
+them before acting, refuse when an instrument is not satisfied, and record the
+instruments they acted under. A rule can be changed by vote and their behaviour
+changes with no code change.
+
+**Not true yet:**
+
+- **Analysis and the COO are still ungoverned.** Grading and directing are the two
+  behaviours most worth governing and neither has an obligation kind that fits.
+  Inventing one without a behaviour to obey it is the registry problem again, so
+  it waits for a rule somebody actually wants.
+- **Nothing re-reads mid-cycle.** A context is built when work happens. No agent
+  holds one long enough for it to matter yet, which is why it is named rather than
+  built.
+- **Two obligation kinds.** Both earned by a consumer; neither speculative.
+
+**11/11 mutations caught** by the test written for each. Suite **2611 passing**.

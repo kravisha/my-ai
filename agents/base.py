@@ -57,6 +57,20 @@ def _answer_operator_question(conn, identity: str, role: str) -> None:
         print(f"[{role}:{identity}] uqi error: {exc}", file=sys.stderr)
 
 
+def note_governed_refusal(role: str, identity: str, refusal: Exception) -> None:
+    """An instrument in force was not satisfied, so the work was not done.
+
+    Said in its own words rather than through the `work_fn error` path, because
+    those are different events and anything reading agent output has to be able
+    to tell them apart. **A rule being obeyed must not look like a fault**: an
+    organization whose policies make its agents appear broken will have its
+    policies removed by whoever is watching the error stream.
+
+    Not a warning either. The agent did exactly what the organization decided.
+    """
+    print(f"[{role}:{identity}] not filed - an instrument in force was not satisfied: {refusal}")
+
+
 def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
     """The shared run loop. `work_fn(conn)`, if given, is called once per
     cycle before the heartbeat/retire check - this is where a real agent's

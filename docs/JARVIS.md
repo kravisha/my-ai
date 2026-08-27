@@ -235,7 +235,7 @@ system, and no in-system actor can discharge it.
 | The level-0 refusal and the owner-escalation queue | `IMPLEMENTED` — one refusal for every reason, and no function inside the system closes an escalation |
 | Elections, ministers, committees, the weekly session | `TO BE DEVELOPED`, and deliberately not queued (see below) |
 | The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py) |
-| Agents reading what governs them | `IN DEVELOPMENT` — TQ-86. [`backend/operating_context.py`](../backend/operating_context.py). **One code path** obeys governed data; the rest of the organization does not — TQ-87 |
+| Agents reading what governs them | `IN DEVELOPMENT` — TQ-86, TQ-87. [`backend/operating_context.py`](../backend/operating_context.py). Explorer, Speculator and the register obey governed data. **Analysis and the COO do not** |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
@@ -277,9 +277,16 @@ level-0 change wearing a lower label is not detectable here.
 refusing submissions that did not satisfy it, with no code change — addendum 46
 §2's claim executed rather than described.
 
-It works in exactly one place. The Explorer, the Speculator, the Analysis agent
-and the COO still act purely on their code, so a resolution binding them changes
-nothing yet.
+It works for the Explorer, the Speculator and the register. **Analysis and the
+COO do not read anything** — grading and directing are the two behaviours most
+worth governing, and neither has an obligation kind that fits yet. Kinds are added
+when a rule needs one, never in advance: a registry entry nothing obeys would
+route work to nothing.
+
+A rule obeyed must not look like a fault. When an agent is refused by an
+instrument, it says so in its own words and carries on — because anything watching
+the error stream would otherwise read a working policy as a malfunctioning
+workforce, and remove the policy.
 
 **Code cannot obey prose**, and the system says so rather than pretending
 otherwise. An instrument carries `text` for people and an optional machine-
