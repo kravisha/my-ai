@@ -1046,6 +1046,36 @@ Forty-one addenda contain several superseded designs — stored portfolios (§11
 retrieval, the pre-TQ-72 custody — and merging them naively produces a document that describes three
 architectures at once.
 
+### TQ-86 — An agent that actually reads the governed data before acting
+
+**NEED (ORANGE) · QUEUED · depends on TQ-82 · addendum 46 §3, §8 · addendum 30 §12 ·
+`SPEC_RECONCILIATION.md` §125**
+
+TQ-82 built the store. **Nothing reads it.** Every agent still behaves as its code says, which
+means the organization can now change a rule by vote and no agent's behaviour changes — the
+governed layer is a filing cabinet until something consults it.
+
+Addendum 46 §3 is the requirement, and it is the whole premise of the data-driven architecture:
+
+> *"An agent may read new information, interpret it, incorporate it into its operating context, and
+> modify its decisions and behavior accordingly… A behavioral change does not automatically imply a
+> software change."*
+
+### The decisions this has to make, and none is obvious
+
+- **When does an agent read?** Every cycle is expensive and every startup is stale. Something has
+  to notice that an instrument changed.
+- **What does an agent do with a rule it cannot follow?** Refuse the work, do it the old way, or
+  escalate. Silently ignoring an instrument it did not understand is the failure that makes the
+  whole layer decorative.
+- **How is compliance visible?** An agent claiming to follow a policy and an agent following it look
+  identical from outside — TQ-80's lesson, one level up. Absence of complaint is not evidence.
+- **Which levels bind which agents?** A department policy binding an agent in another department is
+  either a bug or a law, and the store cannot tell them apart today.
+
+The natural first subject is addendum 46 §39's own worked example: interdepartmental requests
+carrying requester, objective, priority, deadline, dependencies and acceptance criteria.
+
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
 **WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**
@@ -1106,8 +1136,21 @@ be authorized. They enter when something needs them.
 
 ### TQ-82 — The governed-knowledge layer and the authority hierarchy
 
-**NEED (ORANGE) · QUEUED — unblocked 2026-08-27 by TQ-81 · addendum 46 §4, §5, §17 ·
-addendum 30 §12 · addendum 39 · `SPEC_RECONCILIATION.md` §120, §123**
+**NEED (ORANGE) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §125) · addendum 46 §4, §5, §17 ·
+addendum 30 §12 · addendum 39 · §120, §123**
+
+Built as `backend/governed_knowledge.py`. Precedence enforced **on read** — `effective()` returns
+the highest active authority on a subject and nothing else can be returned; subordinate material is
+reachable under a name that says what it is. Levels 3-9 need an enacted resolution whose `affects`
+matches; levels 10-12 need none and carry none. Superseded, never deleted. Conflicts reach the
+Speaker, which is what waiting for TQ-81 bought.
+
+**What it does not do, asserted by a test rather than admitted in prose:** it detects precedence
+violations, not contradictions. A procedure whose words contradict its policy is adopted without
+complaint, because nothing here reads the text.
+
+**What is still missing is a reader** — nothing in the organization consults `effective()` before
+acting. See TQ-86.
 
 Addendum 46 §2's architecture — *stable machinery, evolving data* — as something that exists rather
 than something that is intended. The store of 46 §4 (the Articles, laws, policies, procedures,

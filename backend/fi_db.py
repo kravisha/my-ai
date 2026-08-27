@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, curriculum, identifiers, iteration, migrations, missions, novelty, observations, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1439,6 +1439,11 @@ def init_schema(conn: Database) -> None:
     # is *filed*; this is where one is *decided*, and the two are separate
     # registers on purpose (§54).
     parliament.init_schema(conn)
+    # The governed knowledge layer (addendum 46 §4/§5, TQ-82, §125) owns
+    # governed_items: the organization's instruments, ordered by precedence.
+    # After parliament, because an instrument at a governing level is adopted
+    # only by an enacted resolution and this reads that table to check.
+    governed_knowledge.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1608,7 +1613,8 @@ def apply_additive_migrations(conn: Database) -> list[str]:
         (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
-         analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA)
+         analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
+         governed_knowledge.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

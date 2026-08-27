@@ -234,7 +234,7 @@ system, and no in-system actor can discharge it.
 | Parliament: resolutions, the vote, quorum and threshold | `IMPLEMENTED` — TQ-81. [`backend/parliament.py`](../backend/parliament.py) |
 | The level-0 refusal and the owner-escalation queue | `IMPLEMENTED` — one refusal for every reason, and no function inside the system closes an escalation |
 | Elections, ministers, committees, the weekly session | `TO BE DEVELOPED`, and deliberately not queued (see below) |
-| The governed-knowledge layer and precedence rules | `TO BE DEVELOPED` — TQ-82 |
+| The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py). Precedence enforced on read; **nothing consults it yet** — TQ-86 |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
@@ -256,6 +256,33 @@ of its own clauses can be lowered by simple majority and then walked through.
 does not hold the Constitution, so nothing can read it and notice that a proposed
 "policy" contradicts it. The refusal covers what a proposal *declares*. A
 level-0 change wearing a lower label is not detectable here.
+
+### How a rule reaches the organization, and where it stops
+
+```
+  proposal → vote → enacted resolution → instrument adopted at its level
+                                              │
+                                              ▼
+                                    effective(subject)
+                                              │
+                                              ✗  nothing reads it yet
+```
+
+An organizational rule can now be changed without changing code: propose, vote,
+enact, adopt. What is missing is the last step — **no agent consults
+`effective()` before acting**, so the organization can carry a resolution and
+nothing behaves differently. The store is a filing cabinet until something reads
+it (TQ-86), and that is the honest state of addendum 46's central premise.
+
+Precedence is enforced on read: the highest active authority on a subject is what
+comes back, and lower material is reachable only under a name that says what it
+is. Two equal authorities on one subject cause a refusal, never a choice — and
+the conflict appears in the Speaker's report, because addendum 46 §5 requires it
+to be escalated through governance rather than merely noticed.
+
+**What it does not do:** detect a contradiction in the words. A procedure saying
+the opposite of its policy is adopted without complaint. That limit is pinned by
+a test, so it cannot quietly be believed away.
 
 **Until the Articles are adopted, the owner is the Board.** [`TASK_QUEUE.md`](TASK_QUEUE.md)
 is the Strategic Priority Register in paper form, worked one item at a time, and

@@ -45,7 +45,7 @@ from __future__ import annotations
 import sys
 
 from agents.base import run_agent
-from backend import parliament
+from backend import governed_knowledge, parliament
 
 ROLE = parliament.SPEAKER_ROLE
 
@@ -57,19 +57,26 @@ def compose_report(conn) -> dict:
     whose job this is looked, and can be found not to have looked."""
     state = parliament.summary(conn)
     open_items = parliament.open_resolutions(conn)
+    # Addendum 46 §5 says a conflict between instruments is escalated *through
+    # governance*. Governance's voice is this agent, so the Speaker is where a
+    # subject with two equal authorities becomes visible to anybody (§125).
+    # Read-only, like everything else here: it reports the conflict and has no
+    # way to settle it, which is correct - settling it is a vote.
+    unsettled = governed_knowledge.conflicts(conn)
     return {
         **state,
+        "governance_conflicts": unsettled,
         # Named individually so a reader is not left to infer which resolutions
         # are outstanding from a count.
         "open_resolution_titles": [item["title"] for item in open_items],
         "articles_versions": len(parliament.articles_history(conn)),
         # The Speaker's own words about the state it found, so a surface has
         # something to render that is a statement rather than a number.
-        "says": _say(state, open_items),
+        "says": _say(state, open_items, unsettled),
     }
 
 
-def _say(state: dict, open_items: list) -> str:
+def _say(state: dict, open_items: list, unsettled: list) -> str:
     if not state["articles_in_force"]:
         return ("Parliament stands ready and has no Articles. There is no roll, so nothing "
                 "can be put to a vote until the owner adopts the founding text.")
@@ -80,6 +87,10 @@ def _say(state: dict, open_items: list) -> str:
         parts.append(
             f"{state['outstanding_owner_escalations']} matter(s) are with the owner and "
             f"cannot be settled here.")
+    if unsettled:
+        parts.append(
+            f"{len(unsettled)} subject(s) have two instruments of equal authority and "
+            f"nothing may choose between them: {', '.join(c['subject'] for c in unsettled)}.")
     parts.append("Elections, ministers, committees and the weekly session are not built.")
     return " ".join(parts)
 

@@ -11506,3 +11506,142 @@ Speaker does not govern any of it. **No Articles are in force in the working
 database**, so what the Speaker currently reports is that Parliament stands ready
 and has none - which is the correct account of the organization today, delivered
 by somebody whose job it is to deliver it.
+
+## §125 — The governed knowledge layer, and the word `silently` (2026-08-27, TQ-82)
+
+`backend/governed_knowledge.py`. Addendum 46 §2's architecture — *stable
+machinery, evolving data* — needs a store where the organization's laws,
+policies, procedures, strategies and directives live as data rather than as
+program logic. This is it.
+
+Holding the text is trivial. **Answering which text governs, without letting a
+lower authority quietly become the answer, is the whole module.**
+
+### 1. The load-bearing word
+
+Addendum 46 §5:
+
+> *"Lower-level material cannot silently override higher-level authority."*
+
+The word is `silently`. Lower-level material sitting beside higher-level material
+is ordinary — a procedure lives under a policy and both are true at once. What
+must never happen is a caller asking what governs a subject and receiving the
+procedure **because the query ordered it first**.
+
+So precedence is enforced **on read**. `effective()` returns the highest active
+authority on a subject and nothing else can be returned. Everything below it is
+reachable through `subordinate()` — reachable, and under a name that says what it
+is.
+
+That distinction is the design. A store that simply refused to hold lower
+material would be useless; a store that returned it interchangeably would be
+dangerous. `test_order_of_adoption_does_not_decide_which_governs` adopts the
+weaker item *last* and requires the policy to still be the answer.
+
+### 2. The honest limit, asserted rather than admitted
+
+**This detects precedence violations. It does not detect contradictions.**
+
+Caught: two items at the same level on one subject (refused on write, and
+`AmbiguousAuthority` on read), and an item declaring it `replaces` something
+above it — the silent override with its intent stated out loud, which is the only
+version of it this layer can see.
+
+Not caught: a procedure whose *words* contradict the policy above it. Nothing
+here reads the text.
+
+`test_it_does_not_claim_to_detect_a_contradiction_in_the_words` adopts a
+procedure saying the opposite of its policy and asserts that **no conflict is
+reported**. A test that pins a *non*-capability is unusual, and it is here for the
+reason §123 gave about the Constitution and §118 about a partial account: an
+absence that nobody wrote down gets believed away. The suite now fails if
+somebody adds shallow text-matching and starts claiming semantic detection.
+
+### 3. Authority requires provenance
+
+Levels 3–9 — law through project instruction — can be adopted **only** by an
+enacted resolution, and the resolution's own `affects` must match the level being
+adopted. *The authority granted is the authority given*: without that check, one
+carried vote on a procedure becomes a licence to write a law.
+
+Levels 10–12 — knowledge, observation, suggestion — need no vote, because they
+carry no authority. An agent may file them freely, and `effective()` will return
+one when nothing above it exists on the subject. **That is correct rather than a
+loophole**: in the absence of a rule, the best available knowledge is what the
+organization has. The reverse is refused — a resolution cannot be spent on a
+suggestion, which would produce an item whose provenance and authority disagree.
+
+### 4. Fail closed on read, even where the writer already prevents it
+
+`adopt` refuses to create two equal authorities on one subject. `effective` still
+raises `AmbiguousAuthority` if it finds them.
+
+That looks redundant and is not. Rows arrive by routes the writer does not
+control — a migration, a restore, a future module — and the read is where the
+damage happens. A store that answered in that state would be resolving a
+governance conflict **through the least visible door in the system**, which is
+precisely the failure §46 §5 names. `test_a_read_that_finds_two_equal_authorities_refuses_to_choose`
+inserts the rows directly to prove the read path holds on its own.
+
+### 5. One hierarchy, not two
+
+`governed_knowledge.LEVELS is parliament.LEVELS` — asserted by identity, not by
+equality. Two copies of a precedence order is how the two stop agreeing, and this
+is the second module that needs it. Same reasoning as `backend/watch.py` keeping
+its relationship map in one place and testing that the duplicate agrees.
+
+`REFUSAL` is imported from `parliament` for the same reason: a second refusal
+string that drifted would be a way to tell the two boundaries apart by their
+wording.
+
+### 6. What is deliberately not here
+
+- **The Constitution.** Nowhere in this system (§120). An attempt to adopt at
+  level 0 is refused in the identical words an unknown level gets, and escalated.
+- **The Articles.** Parliament's own record; `backend/parliament.py` versions
+  them. Refused here by name, because saying so hides nothing — the Speaker
+  reports their version publicly.
+- **Lessons and open questions.** `knowledge_records` has held those since long
+  before this existed. Duplicating them here would manufacture the
+  two-sources-of-truth problem §54 already declined once. This store holds
+  **instruments**: things adopted, that govern, and that can be superseded.
+
+### 7. Superseded, never deleted
+
+An instrument is replaced by naming what it replaces; the old row stays, stamped
+with when and by what. Addendum 46 §18 — *"nothing about rollback should erase
+history"* — and more practically, §17's provenance question *"what previous
+version did it replace"* is unanswerable in a store that drops rows.
+
+### 8. The conflict reaches somebody
+
+Addendum 46 §5 says a conflict is detected **and escalated through governance**.
+Detection without a route is a light nobody is looking at.
+
+Governance's voice is the Speaker (§124), so `conflicts()` appears in the
+Speaker's report and in the words it says: *"N subject(s) have two instruments of
+equal authority and nothing may choose between them."* Read-only, like everything
+the Speaker does — reporting a conflict is its job and settling one is a vote.
+
+This is why §119 put Parliament first and why TQ-82 waited for it. A
+conflict-detecting layer built before there was anywhere to escalate would have
+had to either invent a resolution rule of its own — the thing §5 forbids — or
+detect quietly, which is the same as not detecting.
+
+### 9. What is now possible that was not
+
+An organizational rule can be changed without changing code: propose, vote,
+enact, adopt. That is addendum 46 §39's worked example — *"all interdepartmental
+requests shall contain requester, objective, priority, deadline, dependencies and
+acceptance criteria"* — and it is now a path through this system rather than a
+description of one.
+
+**What is still missing is a reader.** Nothing in the organization currently
+consults `effective()` before acting; agents behave as their code says. Making
+agent behaviour actually follow governed data is the next thing, and it is bigger
+than a store — it is addendum 46 §3's *"an agent may read new information,
+interpret it, and modify its decisions accordingly"*, which no agent here does
+yet. Recorded as the honest state rather than left to be assumed from the
+existence of the store.
+
+**11/11 mutations caught** by the test written for each. Suite **2584 passing**.
