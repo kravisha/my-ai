@@ -49,6 +49,7 @@ import fi_db — the same layering as risk.py and strategy.py.
 
 from __future__ import annotations
 
+from backend import operating_context
 from backend.db import Database, now_iso
 
 SCHEMA = """
@@ -66,6 +67,11 @@ CREATE TABLE IF NOT EXISTS strategic_register (
     status TEXT NOT NULL DEFAULT 'queued',
     status_reason TEXT,
     record_reference TEXT,
+    -- Which instruments this entry was filed under (TQ-86). Evidence rather than
+    -- a claim: an entry carries the authority it was checked against, so "the
+    -- policy was followed" is a fact on the row instead of an assertion nobody
+    -- can test. NULL for an entry filed by nobody in particular.
+    governed_by TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS strategic_register_by_status ON strategic_register (status, id);
@@ -80,6 +86,15 @@ CATEGORIES = ("need", "want")
 FLAGS = ("critical", "red", "orange", "yellow", "green")
 
 STATUSES = ("queued", "in_progress", "done", "blocked", "deferred", "declined")
+
+# The subject an instrument governs when it governs what a submission must carry.
+# Addendum 46 §39's worked example lands exactly here: *"all interdepartmental
+# requests shall contain requester, objective, priority, deadline, dependencies,
+# and acceptance criteria."*
+#
+# One name, because an instrument and the code that obeys it have to agree on
+# what they are talking about, and two spellings is how they stop agreeing.
+SUBMISSION_SUBJECT = "register_submissions"
 
 # Transitions that close or park an entry must say why; done must point at
 # the record that proves it. queued/in_progress carry no obligation.
@@ -101,10 +116,24 @@ def file_entry(
     need_flag: str | None = None,
     quick_win: bool = False,
     source_reference: str | None = None,
+    filed_by: str | None = None,
 ) -> int:
     """A petition or mandate enters the register. Validation refuses rather
     than repairs — an entry the vocabulary cannot express is a conversation
-    to have, not a row to coerce."""
+    to have, not a row to coerce.
+
+    ## `filed_by` is where governed data reaches real behaviour (TQ-86)
+
+    Name the role filing this and the entry is checked against whatever governs
+    that role on `SUBMISSION_SUBJECT`, and the row records what it was checked
+    against. Name nobody and nothing changes — which is the correct default for
+    a call with no accountable filer, not a way around the rule.
+
+    **The demonstration this exists for:** with no instrument in force, every
+    field the code has always required is the only requirement. Adopt a policy
+    requiring `source_reference` — propose, vote, enact, adopt — and this
+    function starts refusing entries without one. *No code here changes.* That is
+    addendum 46 §2's claim, executed rather than described."""
     title = (title or "").strip()
     rationale = (rationale or "").strip()
     origin = (origin or "").strip()
@@ -132,14 +161,30 @@ def file_entry(
             f"status {duplicate['status']}) - consolidate rather than duplicate (addendum 31 §5.4)"
         )
 
+    governed_by = None
+    if filed_by:
+        verdict = operating_context.check(conn, filed_by, SUBMISSION_SUBJECT, {
+            "title": title, "rationale": rationale, "origin": origin,
+            "category": category, "need_flag": need_flag,
+            "source_reference": source_reference,
+        })
+        if verdict.get("unmet_fields"):
+            raise ValueError(
+                f"an instrument in force ({verdict['instrument']}) requires "
+                f"{', '.join(verdict['unmet_fields'])} on a register submission, and this entry "
+                f"carries none. Refusing rather than filing something the organization has "
+                f"decided is incomplete."
+            )
+        governed_by = verdict["fingerprint"]
+
     now = now_iso()
     return conn.execute_returning_id(
         "INSERT INTO strategic_register "
         "(created_at, updated_at, title, category, need_flag, quick_win, origin, rationale, "
-        " source_reference, status, schema_version) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+        " source_reference, status, governed_by, schema_version) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
         (now, now, title, category, need_flag, int(bool(quick_win)), origin, rationale,
-         source_reference, SCHEMA_VERSION),
+         source_reference, governed_by, SCHEMA_VERSION),
     )
 
 

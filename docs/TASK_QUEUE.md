@@ -1048,8 +1048,21 @@ architectures at once.
 
 ### TQ-86 — An agent that actually reads the governed data before acting
 
-**NEED (ORANGE) · QUEUED · depends on TQ-82 · addendum 46 §3, §8 · addendum 30 §12 ·
-`SPEC_RECONCILIATION.md` §125**
+**NEED (ORANGE) · DONE 2026-08-27 (`SPEC_RECONCILIATION.md` §126) · addendum 46 §3, §8 ·
+addendum 30 §12 · §125**
+
+Built as `backend/operating_context.py`, wired into `register.file_entry`. A resolution carried
+live, an instrument adopted under it, and the register began refusing submissions without a source
+reference — **with no code change**.
+
+The finding: **code cannot obey prose.** An instrument carries `text` for people and an optional
+`requires` payload for machines; one without a `requires` is reported as *prose only* rather than
+silently treated as satisfied. And an obligation nothing understands is **refused, never skipped** —
+accepting it would produce a rule that was voted through, is reported as in force, and changes
+nobody's behaviour.
+
+**What remains** is named at §126 §6 and queued as TQ-87: one code path reads its context, not the
+organization.
 
 TQ-82 built the store. **Nothing reads it.** Every agent still behaves as its code says, which
 means the organization can now change a rule by vote and no agent's behaviour changes — the
@@ -1075,6 +1088,24 @@ Addendum 46 §3 is the requirement, and it is the whole premise of the data-driv
 
 The natural first subject is addendum 46 §39's own worked example: interdepartmental requests
 carrying requester, objective, priority, deadline, dependencies and acceptance criteria.
+
+### TQ-87 — The rest of the organization reads what governs it
+
+**WANT · QUEUED · depends on TQ-86 · addendum 46 §3 · `SPEC_RECONCILIATION.md` §126 §6**
+
+TQ-86 wired one code path. The Explorer, the Speculator, the Analysis agent and the COO still act
+purely on their code, so a resolution binding them changes nothing.
+
+Three things this needs that TQ-86 did not:
+
+- **An obligation kind per behaviour.** `required_fields` fits a submission. What fits *"file a
+  report only when the evidence meets this bar"* is a different shape, and inventing kinds without a
+  behaviour to obey them would be the registry claiming a mechanism that does not exist.
+- **A filer on every call.** `file_entry(filed_by=None)` files as ungoverned, honestly recorded and
+  still a hole: a caller that omits the filer is not governed. Closing it is a sweep across call
+  sites rather than an increment.
+- **Re-reading.** A context is built when work happens; nothing notices an instrument adopted
+  mid-cycle. No agent needs that yet, which is why TQ-86 did not build it.
 
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 

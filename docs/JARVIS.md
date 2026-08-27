@@ -234,7 +234,8 @@ system, and no in-system actor can discharge it.
 | Parliament: resolutions, the vote, quorum and threshold | `IMPLEMENTED` — TQ-81. [`backend/parliament.py`](../backend/parliament.py) |
 | The level-0 refusal and the owner-escalation queue | `IMPLEMENTED` — one refusal for every reason, and no function inside the system closes an escalation |
 | Elections, ministers, committees, the weekly session | `TO BE DEVELOPED`, and deliberately not queued (see below) |
-| The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py). Precedence enforced on read; **nothing consults it yet** — TQ-86 |
+| The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py) |
+| Agents reading what governs them | `IN DEVELOPMENT` — TQ-86. [`backend/operating_context.py`](../backend/operating_context.py). **One code path** obeys governed data; the rest of the organization does not — TQ-87 |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
@@ -263,16 +264,33 @@ level-0 change wearing a lower label is not detectable here.
   proposal → vote → enacted resolution → instrument adopted at its level
                                               │
                                               ▼
-                                    effective(subject)
+                                    operating_context.for_role(agent)
                                               │
-                                              ✗  nothing reads it yet
+                                              ▼
+                                    the agent's behaviour changes
+                                              │
+                                              ⚠  one code path, not the whole
+                                                 organization (TQ-87)
 ```
 
-An organizational rule can now be changed without changing code: propose, vote,
-enact, adopt. What is missing is the last step — **no agent consults
-`effective()` before acting**, so the organization can carry a resolution and
-nothing behaves differently. The store is a filing cabinet until something reads
-it (TQ-86), and that is the honest state of addendum 46's central premise.
+**This works.** A rule was carried by vote and `register.file_entry` began
+refusing submissions that did not satisfy it, with no code change — addendum 46
+§2's claim executed rather than described.
+
+It works in exactly one place. The Explorer, the Speculator, the Analysis agent
+and the COO still act purely on their code, so a resolution binding them changes
+nothing yet.
+
+**Code cannot obey prose**, and the system says so rather than pretending
+otherwise. An instrument carries `text` for people and an optional machine-
+readable obligation; one without an obligation is reported as *prose only* — in
+force, binding on whoever reads it, and not enforced by code. An obligation
+nothing understands is **refused rather than skipped**, because a rule that was
+voted through and changes nobody's behaviour is worse than no rule: everyone
+believes the organization changed.
+
+What an agent produces records the instruments it acted under, so *claimed to
+follow* and *did follow* are different things on the record.
 
 Precedence is enforced on read: the highest active authority on a subject is what
 comes back, and lower material is reachable only under a name that says what it

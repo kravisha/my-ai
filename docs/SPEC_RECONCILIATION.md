@@ -11645,3 +11645,134 @@ yet. Recorded as the honest state rather than left to be assumed from the
 existence of the store.
 
 **11/11 mutations caught** by the test written for each. Suite **2584 passing**.
+
+## §126 — An agent that reads what governs it, and the thing that could not be done (2026-08-27, TQ-86)
+
+TQ-82 built the store and nothing read it. This is the reading.
+
+Live, against a running database: a resolution was proposed, voted and enacted;
+an instrument was adopted under it; and `register.file_entry` — **unchanged** —
+began refusing submissions that lack a source reference.
+
+```
+carried: True
+instrument in force: 1
+explorer is governed by: 1 | prose-only: 0 | unmet: 0
+REFUSED: an instrument in force (1) requires source_reference on a register
+         submission, and this entry carries none.
+filed 1 under 1
+```
+
+That is addendum 46 §2's claim — *stable machinery, evolving data* — executed
+rather than described. Nothing in the register's code differs between the two
+halves of that run.
+
+### 1. The finding: code cannot obey prose
+
+Addendum 46 §3 imagines an agent reading a rule and interpreting it:
+
+> *"An agent may read new information, interpret it, incorporate it into its
+> operating context, and modify its decisions and behavior accordingly."*
+
+**Interpreting text requires something that reads text.** This system has no
+model in the loop for agent work and will not until addendum 45's local
+intelligence lands. The tempting implementation is
+`if "acceptance criteria" in policy_text` — a parser wearing a reader's clothes,
+which fails silently the first time somebody phrases a policy differently, and
+fails in the direction of *appearing to comply*.
+
+So an instrument carries two things: `text`, which is for people, and an optional
+`requires` payload, which is the machine-obeyable part. The distinction is
+**reported, not hidden**:
+
+- an instrument whose `requires` this system understands is **enforced**;
+- one without is **prose only** — in force, binding on whoever reads it, and not
+  enforced by code. `Context.prose_only` names them, and `check()` returns
+  *"governed by prose this system cannot enforce"* rather than the same answer it
+  gives for an ungoverned subject.
+
+That last distinction is the one worth defending. Collapsing the two would hide
+exactly the case that matters: **a rule exists and code is not checking it.**
+
+This is not a workaround. It is the honest shape of data-driven behaviour in a
+system whose obeying is done by code: *the data has to be structured for the
+mechanism that obeys it.* When a local model can read the text, a new obligation
+kind can be understood by something that interprets, and the same store serves
+both without changing.
+
+### 2. The rule that stops the whole layer being decoration
+
+**An obligation nothing understands is refused, never skipped.**
+
+The comfortable behaviour is to accept the instrument, fail to recognise the
+obligation, and carry on. It produces the worst state available: a rule that was
+proposed, debated, voted through, is reported as in force, and changes nobody's
+behaviour. Every reader of the console would believe the organization had
+changed.
+
+So an unknown obligation kind is refused at adoption, and `Context.unmet` catches
+one that arrived any other way. `require_understood()` turns that into a refusal
+at the point of work, and the register refuses to file rather than filing as
+though unbound — because proceeding as if ungoverned is indistinguishable from
+the instrument never having been adopted, **which would mean a vote of the
+Parliament had no effect anybody could see.**
+
+### 3. To govern somebody you have to say who
+
+`binds` is now required at every governing level, and forbidden at levels 10–12.
+
+A policy that names nobody cannot be obeyed by anybody in particular and cannot
+be checked at all — it is decoration that reads like authority. And a `binds` on
+knowledge would claim an authority the hierarchy already denies it: knowledge
+informs, it does not bind.
+
+This broke five of TQ-82's own tests, which had adopted instruments that named
+nobody. They were updated rather than the rule relaxed: they predate the rule and
+were wrong under it, which is different from a tripwire firing on a legitimate
+change.
+
+### 4. Evidence, not claims
+
+A context has a `fingerprint` — the instrument ids it was built from — and
+`strategic_register` gained a `governed_by` column that records it. An entry
+carries the authority it was checked against.
+
+The alternative is an agent asserting that it complied, which is TQ-80's defect
+in a new costume: *absence of complaint is not evidence of competence*. A
+fingerprint is a fact a third party can resolve back to rows; a claim of
+compliance is not. Ids rather than a hash, deliberately — a fingerprint a reader
+can look up is worth more than one that only proves equality.
+
+**`filed_by=None` files as ungoverned**, and the row says so by carrying no
+authority rather than one it did not earn. That is the honest answer for a call
+with no accountable filer, and it is a real hole worth naming: a caller that
+omits `filed_by` is not governed. Closing it means every call site naming its
+filer, which is a sweep rather than an increment.
+
+### 5. Precedence survives the trip out of the store
+
+`binding_on` builds a context through `effective_item`, so a procedure superseded
+on a subject by a policy never reaches the agent. Without that, §125's rule would
+hold in the store and be lost on the way out — the same failure one layer along,
+which is where this kind of rule usually goes wrong.
+
+### 6. What is now true, and what is not
+
+**True:** an organizational rule can be changed by vote, with no code change, and
+one real code path obeys it.
+
+**Not true yet:**
+
+- **One code path, not the organization.** `register.file_entry` reads its
+  context; the Explorer, the Speculator, the Analysis agent and the COO do not.
+  Each is a separate wiring, and each needs an obligation kind that fits what it
+  does.
+- **Nothing re-reads mid-cycle.** A context is built when work happens. An agent
+  holding one across a long cycle would not notice an instrument adopted during
+  it. Nothing here needs that yet, and it is named so it is not assumed.
+- **One obligation kind exists.** `required_fields`, chosen because addendum 46
+  §39's worked example is exactly that shape rather than because it was easiest.
+
+**11/11 mutations caught** by the test written for each — every one of them a way
+of making the layer decorative rather than wrong, which is the failure this
+increment is against. Suite **2600 passing**.

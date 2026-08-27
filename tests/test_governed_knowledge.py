@@ -44,10 +44,10 @@ def test_the_highest_authority_on_a_subject_is_what_governs(governed_conn):
     procedure = _enact(governed_conn, "procedure")
     governed.adopt(governed_conn, subject="requests", level="procedure",
                    text="Send requests by email.", adopted_by="coo",
-                   resolution_id=procedure)
+                   resolution_id=procedure, binds="*")
     governed.adopt(governed_conn, subject="requests", level="organization_policy",
                    text="Requests carry acceptance criteria.", adopted_by="coo",
-                   resolution_id=policy)
+                   resolution_id=policy, binds="*")
 
     assert governed.effective(governed_conn, "requests") == "Requests carry acceptance criteria."
 
@@ -58,9 +58,9 @@ def test_the_subordinate_item_is_reachable_but_never_the_answer(governed_conn):
     policy = _enact(governed_conn, "organization_policy")
     procedure = _enact(governed_conn, "procedure")
     governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                   text="Policy text.", adopted_by="coo", resolution_id=policy)
+                   text="Policy text.", adopted_by="coo", resolution_id=policy, binds="*")
     governed.adopt(governed_conn, subject="requests", level="procedure",
-                   text="Procedure text.", adopted_by="coo", resolution_id=procedure)
+                   text="Procedure text.", adopted_by="coo", resolution_id=procedure, binds="*")
 
     assert governed.effective(governed_conn, "requests") == "Policy text."
     below = governed.subordinate(governed_conn, "requests")
@@ -76,7 +76,7 @@ def test_order_of_adoption_does_not_decide_which_governs(governed_conn):
         governed_conn, subject="requests", level="suggestion",
         text="Maybe use a form.", adopted_by="explorer")
     governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                   text="Policy text.", adopted_by="coo", resolution_id=policy)
+                   text="Policy text.", adopted_by="coo", resolution_id=policy, binds="*")
     late = governed.adopt(governed_conn, subject="requests", level="knowledge",
                           text="Teams historically used email.", adopted_by="explorer")
 
@@ -91,7 +91,7 @@ def test_an_item_claiming_to_replace_something_above_it_is_refused_and_escalated
     policy = _enact(governed_conn, "organization_policy")
     policy_item = governed.adopt(
         governed_conn, subject="requests", level="organization_policy",
-        text="Policy text.", adopted_by="coo", resolution_id=policy)
+        text="Policy text.", adopted_by="coo", resolution_id=policy, binds="*")
 
     with pytest.raises(governed.AdoptionRefused) as refusal:
         governed.adopt(governed_conn, subject="requests", level="suggestion",
@@ -107,10 +107,10 @@ def test_two_equal_authorities_on_one_subject_cannot_be_created(governed_conn):
     first = _enact(governed_conn, "organization_policy", "first")
     second = _enact(governed_conn, "organization_policy", "second")
     governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                   text="One.", adopted_by="coo", resolution_id=first)
+                   text="One.", adopted_by="coo", resolution_id=first, binds="*")
     with pytest.raises(governed.AdoptionRefused):
         governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                       text="Two.", adopted_by="coo", resolution_id=second)
+                       text="Two.", adopted_by="coo", resolution_id=second, binds="*")
 
 
 def test_a_read_that_finds_two_equal_authorities_refuses_to_choose(governed_conn):
@@ -156,7 +156,7 @@ def test_a_resolution_cannot_be_spent_on_a_level_it_was_not_enacted_for(governed
     procedure = _enact(governed_conn, "procedure")
     with pytest.raises(governed.AdoptionRefused) as refusal:
         governed.adopt(governed_conn, subject="requests", level="law",
-                       text="A law.", adopted_by="coo", resolution_id=procedure)
+                       text="A law.", adopted_by="coo", resolution_id=procedure, binds="*")
     assert "cannot be spent" in str(refusal.value)
 
 
@@ -175,7 +175,7 @@ def test_a_resolution_cannot_be_spent_on_material_that_carries_no_authority(gove
     policy = _enact(governed_conn, "organization_policy")
     with pytest.raises(governed.AdoptionRefused):
         governed.adopt(governed_conn, subject="requests", level="suggestion",
-                       text="A suggestion.", adopted_by="explorer", resolution_id=policy)
+                       text="A suggestion.", adopted_by="explorer", resolution_id=policy, binds="*")
 
 
 # --- the boundary at level 0 --------------------------------------------------------
@@ -218,9 +218,9 @@ def test_replacing_an_instrument_keeps_the_old_one(governed_conn):
     first = _enact(governed_conn, "organization_policy", "first")
     second = _enact(governed_conn, "organization_policy", "second")
     original = governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                              text="One.", adopted_by="coo", resolution_id=first)
+                              text="One.", adopted_by="coo", resolution_id=first, binds="*")
     replacement = governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                                 text="Two.", adopted_by="coo", resolution_id=second,
+                                 text="Two.", adopted_by="coo", resolution_id=second, binds="*",
                                  replaces=original)
 
     assert governed.effective(governed_conn, "requests") == "Two."
@@ -233,7 +233,7 @@ def test_replacing_an_instrument_keeps_the_old_one(governed_conn):
 def test_an_adopted_item_carries_the_provenance_addendum_46_asks_for(governed_conn):
     policy = _enact(governed_conn, "organization_policy")
     item_id = governed.adopt(governed_conn, subject="requests", level="organization_policy",
-                             text="Policy text.", adopted_by="coo", resolution_id=policy)
+                             text="Policy text.", adopted_by="coo", resolution_id=policy, binds="*")
     item = governed.history(governed_conn, "requests")[0]
     assert item["id"] == item_id
     assert item["adopted_by"] == "coo" and item["adopted_at"]
@@ -254,10 +254,10 @@ def test_it_does_not_claim_to_detect_a_contradiction_in_the_words(governed_conn)
     procedure = _enact(governed_conn, "procedure")
     governed.adopt(governed_conn, subject="requests", level="organization_policy",
                    text="Requests must carry acceptance criteria.", adopted_by="coo",
-                   resolution_id=policy)
+                   resolution_id=policy, binds="*")
     governed.adopt(governed_conn, subject="requests", level="procedure",
                    text="Requests need no acceptance criteria.", adopted_by="coo",
-                   resolution_id=procedure)
+                   resolution_id=procedure, binds="*")
 
     assert governed.conflicts(governed_conn) == [], "no contradiction detection is claimed"
     assert governed.effective(governed_conn, "requests").startswith("Requests must")

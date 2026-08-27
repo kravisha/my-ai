@@ -70,6 +70,8 @@ import it.
 
 from __future__ import annotations
 
+import json
+
 from backend import parliament
 from backend.db import Database, now_iso
 
@@ -83,6 +85,14 @@ CREATE TABLE IF NOT EXISTS governed_items (
     -- Where it sits in addendum 46 §5's hierarchy.
     level TEXT NOT NULL,
     text TEXT NOT NULL,
+    -- Who this binds: a role id, or '*' for every role. Required at any level
+    -- that governs somebody - **to govern somebody you have to say who**.
+    -- A rule binding nobody in particular binds everybody a little, which is how
+    -- an organization ends up unable to say whether it is being followed.
+    binds TEXT,
+    -- The machine-obeyable obligation, as JSON, or NULL for an instrument that
+    -- is prose only. See operating_context.UNDERSTOOD_OBLIGATIONS.
+    requires TEXT,
     -- Addendum 46 §17: who proposed it, what authorized it, what it replaced.
     adopted_by TEXT NOT NULL,
     resolution_id INTEGER,
@@ -147,6 +157,8 @@ def adopt(
     adopted_by: str,
     resolution_id: int | None = None,
     replaces: int | None = None,
+    binds: str | None = None,
+    requires: dict | None = None,
 ) -> int:
     """Put an instrument into force.
 
@@ -185,6 +197,8 @@ def adopt(
             "The Articles are Parliament's own record and are amended by vote, not adopted here.")
 
     _check_authorization(conn, level, resolution_id)
+    binds = _check_binding(level, binds)
+    requires = _check_requirement(requires)
 
     standing = effective_item(conn, subject, allow_ambiguous=True)
     if standing is not None and replaces is not None:
@@ -205,8 +219,10 @@ def adopt(
 
     item_id = conn.execute_returning_id(
         "INSERT INTO governed_items (adopted_at, subject, level, text, adopted_by,"
-        " resolution_id, replaces) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (now_iso(), subject, level, text.strip(), adopted_by.strip(), resolution_id, replaces))
+        " resolution_id, replaces, binds, requires)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (now_iso(), subject, level, text.strip(), adopted_by.strip(), resolution_id, replaces,
+         binds, json.dumps(requires) if requires is not None else None))
 
     if replaces is not None:
         conn.execute(
@@ -214,6 +230,71 @@ def adopt(
             " WHERE id = ? AND superseded_at IS NULL",
             (now_iso(), item_id, replaces))
     return item_id
+
+
+def _check_binding(level: str, binds: str | None) -> str | None:
+    """Who an instrument binds, or a refusal.
+
+    Required at every governing level. A policy that names nobody cannot be
+    obeyed by anybody in particular, and cannot be *checked* at all - which makes
+    it decoration that reads like authority.
+
+    Left free at levels 10-12 on purpose: knowledge and observations inform, they
+    do not bind, so a `binds` on one would claim an authority the hierarchy
+    already denies it."""
+    binds = (binds or "").strip().lower() or None
+    if level in UNGOVERNED_LEVELS:
+        if binds is not None:
+            raise AdoptionRefused(
+                f"{level!r} binds nobody - it informs. Naming who it binds would claim an "
+                f"authority its level does not carry.")
+        return None
+    if binds is None:
+        raise AdoptionRefused(
+            f"{level!r} governs somebody, so it has to say who: a role, or '*' for all.")
+    return binds
+
+
+def _check_requirement(requires: dict | None) -> dict | None:
+    """The machine-obeyable part of an instrument, or a refusal.
+
+    **An obligation whose kind nothing understands is refused at adoption**, not
+    accepted and skipped. Accepting it would put the organization in the worst
+    available state: an instrument that has been voted through, is in force, is
+    reported as governing, and changes nobody's behaviour because the code that
+    was supposed to obey it silently did not recognise it.
+
+    Deferred import: `operating_context` reads this store, so importing it at
+    module level would be a cycle. The registry lives there because the thing
+    that *obeys* an obligation is the right owner of what obeying it means."""
+    if requires is None:
+        return None
+    from backend import operating_context
+    if not isinstance(requires, dict) or "kind" not in requires:
+        raise AdoptionRefused("A requirement needs a 'kind' saying what obeying it means.")
+    kind = requires["kind"]
+    if kind not in operating_context.UNDERSTOOD_OBLIGATIONS:
+        raise AdoptionRefused(
+            f"Nothing in this system knows how to obey a {kind!r} obligation. Known kinds are "
+            f"{sorted(operating_context.UNDERSTOOD_OBLIGATIONS)}. Adopting it would put a rule "
+            f"in force that changes nobody's behaviour.")
+    operating_context.UNDERSTOOD_OBLIGATIONS[kind].check_shape(requires)
+    return requires
+
+
+def binding_on(conn: Database, role: str) -> list[dict]:
+    """Every active instrument that binds this role, most authoritative first.
+
+    Precedence still holds per subject: where two instruments bind the same role
+    on one subject, the weaker one is not returned. A caller reading this list is
+    reading what governs it, not everything that mentions it."""
+    role = (role or "").strip().lower()
+    bound = []
+    for subject in subjects(conn):
+        item = effective_item(conn, subject)
+        if item is not None and item["binds"] in (role, "*"):
+            bound.append(item)
+    return sorted(bound, key=lambda item: _rank(item["level"]))
 
 
 def _check_authorization(conn: Database, level: str, resolution_id: int | None) -> None:
