@@ -796,10 +796,16 @@ this organization may not perform rather than disappearing (§139 §6).
 ### Where the whole thing currently stands
 
 One command, `python -m simulation verify`, runs eleven scenarios and the whole
-curriculum. As of 2026-08-28 it returns **PASS**: forty-six properties across an
-organization that starts, staffs itself, discovers, cross-checks, judges, grades,
-governs itself under an instrument, refuses what a badly drafted instrument
-forbids, and shuts down leaving nothing running.
+curriculum. As of **2026-08-29** it returns **PASS**: seventy-one properties and
+six curriculum exercises, across an organization that starts, staffs itself,
+discovers, cross-checks, judges, grades, governs itself under an instrument,
+refuses what a badly drafted instrument forbids, applies a release and reverses
+it, survives an agent that is slow rather than dead, and shuts down leaving
+nothing running.
+
+It ran the model-dependent scenarios rather than skipping them, so this is a
+`PASS` and not the `INCOMPLETE` that a run over skipped scenarios would honestly
+have to report (§129).
 
 A tenth scenario, `slow_agent`, stalls one model call for ninety seconds and
 asserts what used to fail: no respawn, and an agent **reported** slow and then

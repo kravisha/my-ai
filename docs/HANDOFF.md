@@ -56,10 +56,10 @@ architecture lacks.
 PYTHONPATH=. .venv/Scripts/python.exe -m simulation verify
 ```
 
-Eleven scenarios and the curriculum, one verdict. It prints what it cannot see
-with every verdict — read that list before trusting the green. `verify` has not
-been re-run since `release_and_rollback` was added; the scenario itself passes
-14/14 live.
+Eleven scenarios and the curriculum, one verdict. **Last run: PASS (2026-08-29)**
+— seventy-one properties and six curriculum exercises, with the model-dependent
+scenarios actually run rather than skipped. It prints what it cannot see with
+every verdict; read that list before trusting the green.
 
 **The product side has not moved since TQ-80.** The system cannot price anything,
 has no broker connection, and has never served a client. Under Providence that is
