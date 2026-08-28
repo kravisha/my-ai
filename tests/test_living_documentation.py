@@ -238,7 +238,8 @@ def test_the_number_of_addenda_it_states_is_the_number_on_disk():
     without updating the count is the small kind of drift addendum 47 §5 is
     about."""
     words = {41: "Forty-one", 42: "Forty-two", 43: "Forty-three", 44: "Forty-four",
-             45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight"}
+             45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight",
+             49: "Forty-nine", 50: "Fifty", 51: "Fifty-one", 52: "Fifty-two"}
     count = len(list((DOCS / "addenda").glob("*.md")))
     assert words.get(count, "?") + " supplied specifications" in TEXT, (
         f"{count} addenda on disk; the living document says otherwise"

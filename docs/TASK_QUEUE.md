@@ -37,8 +37,20 @@ holds the queue, not the record.
 > Evolution's relay (TQ-95, declined at §138) is now unblocked, since a rollout plan finally has
 > something to plan.
 >
-> **Recommended next: assimilate Project Providence** (four documents supplied 2026-08-28) and
-> reconcile it, because it changes what this system is for. See TQ-97.
+> **Project Providence is assimilated and reconciled (§140)** — addenda 49-52, supplied
+> 2026-08-28. It re-scopes the system: financial intelligence becomes the *Personal Portfolio
+> Manager*, one of about fifteen personal agents in a personal AI world. **TQ-97 is done** —
+> persistent agent identity, which both new documents name as implementation priority one.
+>
+> **Two things are with the owner and one of them blocks a document.** Addendum 49 is titled
+> *Philosophy & Constitution v2.0*; whether it supersedes `JARVIS_CONSTITUTION.md` is not the
+> build's to decide, and until it is answered `JARVIS_GAP_ANALYSIS.md` may be measuring against a
+> superseded authority (§140 §3). And the persona work needs a mechanism before it needs code
+> (§140 §6).
+>
+> **Recommended next: TQ-98**, the client profile and the boundary §140 §5 draws — because every
+> other Providence increment binds to a client, and the guard has to be re-aimed before the table
+> exists rather than after.
 >
 > **Waiting on the owner, and blocking nothing else:** the genesis Articles (§120 — Parliament
 > governs nothing until they exist), unholding TQ-75 (the condition set for it is now met), and
@@ -1476,6 +1488,106 @@ dress rather than fix.
 Built instead: `engineering.impact_of` — who an instrument binds, what it displaces, and **whether
 adopting it would be refused**, checked against the real refusal rather than asserted. It names what
 it does not assess every time.
+
+### TQ-97 — Persistent agent identity, and the id that is not a name
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §140 · addendum 51 §2, §3, §5, §6 ·
+addendum 49 §20 · addendum 50 §11, §12**
+
+Implementation priority one in both new documents (51 §26, 50 §18), and the thing every other
+Providence increment keys off: no personal agent can be bound to a client without an `agent_id`,
+and no career can survive a role change without one.
+
+**Most of it was already built and one part of it was built wrong.** The owner decision of
+2026-08-17 already separated the durable agent from its job — `agent_names.name` is the agent,
+`agent_registry.identity` is the desk, `agent_assignments` records which held which and when, and
+no work row is ever denormalised against a name. What was wrong is *what the durable thing was*:
+the display name. Addendum 51 §3 requires the id to be **independent of display name**, and
+`coo_identity.rename()` already existed to turn that into a defect — renaming a name-keyed agent
+either breaks every join or hands its history to whoever holds the name next.
+
+`backend/agent_identity.py` makes `agent_id` the anchor and demotes the first name to a display
+attribute of it. **A name that has ever been held is never given to another agent**, enforced
+against the whole history rather than the current binding — the case a current-holder check misses
+is retirement, which is exactly when a name looks free.
+
+**The last name is derived, never stored.** 51 §5 lists `last_name` *and* `current_role`, which is
+two places for one fact and the collision 47 §5 forbids. §2 says the last name *is* the role
+designation, so it is rendered from the desk: *Jack Explorer Agent 1* becomes *Jack Reporter Agent
+1* by moving desk, which is 50 §12's career path costing nothing. An agent at no desk has no last
+name rather than a placeholder. The COO's designation comes from 51 §2's own example — data from
+the specification, never a stemming rule inferred from it, because any rule that turns `explorer`
+into `Explore` also turns `speculator` into something nobody chose.
+
+**Three of 51 §6's eight lifecycle states are refused by name.** `training`, `evolving` and
+`archived` are specified and unproducible here, and a column that accepted them would assert a
+capability by existing (§49). The refusal says *specified and unreachable* rather than *unknown*,
+because those are different facts.
+
+**Not done, and named:** nothing yet uses this identity to carry experience, role history or
+training history, so addendum 49 §20's *"preserving useful prior learning"* has an anchor and no
+content. `agent_names` is not migrated onto it — the existing personnel history keeps working
+unchanged, and joining the two is TQ-99.
+
+### TQ-98 — The client profile, and the boundary a watchlist sits on
+
+**NEED (ORANGE) · QUEUED · addendum 51 §4, §13, §15 · owner direction §111 ·
+`SPEC_RECONCILIATION.md` §140 §5**
+
+Every Providence agent is personal, and a personal agent is bound to a `client_id` and works within
+that client's profile, permissions and preferences (51 §4). 51 §15 lists seventeen profile fields;
+51 §13 has the Personal Reporter consider the client's watchlists, profession, projects and
+location.
+
+**This meets a constraint bought with a defect.** §111: the system *"holds no information of the
+portfolios."* TQ-72 deleted the storage layer an earlier reading had built, and an import tripwire
+fails the suite if a storage module returns.
+
+§140 §5 draws the boundary, and it must be written into a guard **before the table exists**:
+
+- **A profile is what the client told the system about how to serve them.** Preferences, topics,
+  tone, consent. §111 never spoke about it and Providence cannot work without it.
+- **A portfolio is what the client owns at a broker.** TQ-73's fetch-analyse-discard pipeline is
+  unchanged.
+- **A watchlist is the line.** Symbols a client typed are a preference; symbols derived from a
+  fetched portfolio are a portfolio wearing a preference's name, and the two are indistinguishable
+  in the data. The rule is *stored only as something the client typed*, and the tripwire has to be
+  re-aimed to say so (§105 — re-aimed, never deleted).
+
+Building the profile first and re-aiming the guard afterwards is how a constraint erodes, so the
+guard comes first in this entry deliberately.
+
+### TQ-99 — Join the personnel record to the agent id
+
+**NEED (GREEN) · QUEUED · addendum 51 §3, §5 · `SPEC_RECONCILIATION.md` §140 §4**
+
+TQ-97 introduced `agent_id` beside `agent_names` rather than under it, so nothing broke and two
+notions of "the durable agent" now exist. That is the state 47 §5 forbids, held deliberately for
+one increment so the identity could be built and tested without a migration in the same change.
+
+What this owes: `agent_names` and `agent_assignments` keyed by `agent_id`, `personnel_record` and
+`attributed_work` reading through it, and the existing bindings backfilled with ids — backdated to
+when the name was actually bound, for the reason `_ensure_assignment` already gives about spans
+starting at backfill time orphaning every prior hour of work.
+
+### TQ-100 — What refuses a persona that crosses the line
+
+**NEED (ORANGE) · QUEUED · addendum 50 §8 · addendum 49 §15 · addendum 50 §3 ·
+`SPEC_RECONCILIATION.md` §140 §6**
+
+Addenda 49 and 50 allow personas inspired by recognizable styles and, with consent and reference
+material, by *"someone personally meaningful"* to the client. They carry their own guardrails — a
+clear distinction from an actual human, and no false representation as a licensed professional.
+
+**The finding is not that the guardrails are missing. It is that this system cannot obey them.**
+§126 and §131: code cannot obey prose, and an instrument with no machine-readable obligation is
+reported `prose_only` — in force and enforced by nothing. Every sentence of the guardrail lands
+there.
+
+**The question this entry owns, and it comes before any code:** what refuses a persona that
+crosses the line, and is it a function or a paragraph? *"The model will decline"* is a
+self-assessment wearing a mechanism's clothes (§119 §8), and it is the answer that will be
+reached for first.
 
 ### TQ-96 — Release and rollback
 

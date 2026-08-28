@@ -13311,3 +13311,263 @@ Enrichment reaches no governed check at all, so an instrument binding
 `discovery_reports` governs the origination and not the continuing work. That is
 not a defect of release and rollback and it is worth writing down: **the governed
 surface is narrower than the working surface**, and nothing currently says so.
+
+## §140 — Project Providence reconciled: the system is renamed, re-scoped, and contradicted in two places (2026-08-28)
+
+Four documents supplied 2026-08-28 and assimilated verbatim as addenda 49–52:
+the Philosophy & Constitution (v2.0), the Final Vision (v1.0), the Agent
+Technical Specification Standard (v2.0), and the Shared Terminology & Concept
+Glossary (v2.0).
+
+This is the intake step `docs/README.md` requires, and §111's rule governs it:
+**a new specification agreeing with the current implementation says nothing about
+whether it agrees with the specification that implementation was supposed to be
+following.** So the question asked first is which existing addendum already owns
+this subject, and the answer is recorded whether or not it found a conflict.
+
+It found six, one of which is the largest single change of direction in this
+corpus, and two of which contradict rules that were each bought with a defect.
+
+### 1. This is not an addendum to the financial intelligence system. It contains it.
+
+Every addendum since 2 has specified a financial intelligence organization.
+Addendum 50 §3 lists the personal agents a client may have, and *Personal
+Portfolio Manager* is the fourth of fifteen. Addendum 49 §2 states the governing
+principle as **ONE PERSON — ONE PERSONAL WORLD**, and 49 §1 puts the purpose at
+*"discover, test, organize, explain, and broadcast truth."*
+
+So the thing this repository has been building is now **one service inside a
+larger product**, and the product is a personal AI world with an interactive
+broadcast channel, a newsroom, and a society of trained agents.
+
+That is a re-scoping rather than a contradiction, and it is worth being precise
+about what survives it. The portfolio work is not cancelled — 51 §9 keeps
+Portfolio Manager in the agent library and 50 §3 keeps it in the personal world.
+What changes is **what comes next**: 50 §18 and 51 §26 both give an ordered
+immediate mission, and market data, broker connections and the credential
+envelope are not on either list.
+
+| Already built here | Addendum 49–52 name for it |
+|---|---|
+| Kumbhakarna, the COO with a persisted identity (§88) | 49 §9, 50 §7, 51 §14 — unchanged, and now also narrator and studio host |
+| Explorer, Speculator | 50 §12, 51 §12 — the first two rungs of a career that continues to Reporter |
+| The console, briefing choreography, status-event narration (addenda 40–43) | 49 §8 the studio, 52 *running commentary* |
+| Department of Education, curriculum, competencies | 50 §16, 51 §10, 51 §23 — the trainer library |
+| `cross_check.unanswered_rate` (TQ-92) | 51 §22 *"collaboration quality is a first-class performance metric"* — measured here since long before it was asked for |
+| Grades, competency scoring | 51 §24 |
+| The owner as first and only client | 49 §19, 50 §14 **Creator-first**, and this is the one place the build was already ahead of the specification |
+| Addendum 48, the Scripture | 49 §22, restated. 48 stays canonical for it; two statements of one ethic is the collision 47 §5 forbids |
+
+### 2. Conflict — *Jarvis* now means something smaller, and 47 §5 forbids exactly this
+
+Addendum 47 §5 requires one concept to keep one name, and §122 spent an
+increment fixing three that had drifted. `JARVIS.md` opens: *"Jarvis is a
+financial intelligence organization whose employees are software agents."*
+
+Addendum 49 §8 and the Glossary both say otherwise:
+
+> **PROJECT JARVIS** — *"The operational studio and interactive environment
+> through which Providence is currently being built and experienced."*
+
+A studio is not an organization. Taken literally, the name of this repository's
+central document now denotes its user interface.
+
+**Adjudicated, and the adjudication is a reading rather than a preference.** The
+Glossary's own words are *"currently being built"* — which is not a description
+of a screen, and a definition that meant only the console would not have needed
+the phrase. Providence is the mission and the world; **Jarvis is the system
+currently realizing it**, of which the studio is the part a client sees. So:
+
+- *Providence* is the top-level name, and it owns the mission, the philosophy and
+  the personal-world model.
+- *Jarvis* keeps meaning the organization and its machinery, and gains the studio
+  as the surface through which the world is entered.
+- `JARVIS.md`'s opening sentence is **wrong as written** and is corrected in the
+  same increment, because leaving it would be 47 §5's collision recorded and left.
+
+Recorded as a decision, not an assumption, because the alternative reading — that
+Jarvis is *only* the studio and the organization needs a third name — is
+available and would cost a rename of everything. If that is what was meant, this
+section is where to say so.
+
+### 3. Conflict — there is now a second document calling itself the Constitution
+
+§120 settled the first version of this question: the Constitution is
+`JARVIS_CONSTITUTION.md`, the owner's, held privately, **never in this system**,
+Level 0, and defined by its absence. `JARVIS_GAP_ANALYSIS.md` measures what is
+built against it.
+
+Addendum 49 is titled **PHILOSOPHY & CONSTITUTION**, is dated later, is numbered
+v2.0, and was supplied into this repository.
+
+Two things have to be separated here, because conflating them is how the wrong
+one gets answered.
+
+**Where it lives is not the question, and it is already settled.** §120's rule is
+about the *governed store* — a store that ranks cannot hold something unrankable,
+so Level 0 has no table, no protected row and no admin route. Being a file in
+`docs/addenda/` is not being in the store; addendum 48 is Level 0 (§131) and sits
+on disk exactly like this one. Nothing is weakened by assimilating 49.
+
+**Whether it supersedes `JARVIS_CONSTITUTION.md` is the question, and it is not
+mine.** They are different documents about different scopes — one is the durable
+design authority for a financial intelligence system, the other is the philosophy
+of a personal AI world. But one is called the Constitution v2.0 and the other is
+called the Constitution, and if the second replaced the first then
+`JARVIS_GAP_ANALYSIS.md` is scoring the build against a superseded authority and
+has been since today.
+
+**This goes to the owner**, in the same shape and for the same reason §119 §6
+did. Until it is answered, both are treated as Level 0 and neither is treated as
+having repealed the other — which is the conservative reading, and is *not*
+assumed to be the right one. **Inferring canon from the build is the mistake §111
+records**, and inferring it from convenience would be worse.
+
+### 4. Conflict — persistent identity for every agent, against an architecture whose agents keep nothing
+
+`JARVIS.md` §4 states the current model plainly: the COO is the only agent with a
+persisted identity, and *"every other agent is a subprocess spawned for work and
+released when the work ends. It keeps nothing across a restart."*
+
+Addendum 51 §3 requires every agent to hold an immutable `agent_id` that is
+unique, persistent, never reused, and independent of both display name and
+current role. §5 lists eighteen fields of core agent record. §6 gives eight
+lifecycle states. 49 §20 and 50 §11 require agents to **grow** — Explorer →
+Speculator → Reporter — *"preserving useful prior learning"*, which is impossible
+for a process that keeps nothing.
+
+**This is a genuine architectural contradiction and it is resolved in favour of
+51**, because the current model is a consequence rather than a principle. Nothing
+in the corpus ever specified that discovery agents be amnesiac; they are
+subprocesses because that was the cheapest way to spawn them, and §88 already
+made an exception for the COO the moment one role needed continuity. Addendum 47
+§14 lists what persistence *may* include — identity, role history, experience,
+training history, performance history, decisions, lessons, responsibilities — and
+`JARVIS.md` already records that only identity is implemented, as an
+`IN DEVELOPMENT` gap rather than a settled design.
+
+**The rule that must survive the change** is the one separating the three stores,
+and it is not negotiable: what the *organization* knows, what a *particular agent*
+has learned, and what belongs to a *client* are three things. Collapsing them
+would make an agent's private experience silently become organizational fact.
+Persistent agents make that collapse easy for the first time, so the separation
+has to be structural in the identity model rather than a convention around it.
+
+### 5. Conflict — persistent client profiles, against the rule that client data is not stored
+
+The sharpest one, because §111 is a constraint bought with a defect and enforced
+by a tripwire that fails the suite.
+
+Owner direction, §111: *"The system only processes portfolios for clients… and
+holds no information of the portfolios in the system."* TQ-72 deleted the storage
+layer an earlier reading had built. No portfolio table exists, and an import
+tripwire fails the suite if a storage module returns.
+
+Addendum 51 §4 binds a personal agent to a `client_id` and *"that client's
+approved data."* §15 lists seventeen persisted client-profile fields —
+preferred tone, pacing, humor, topics, disliked topics, correction style,
+consented reference material. §13 has the Personal Reporter consider the client's
+watchlists, profession, projects, location and risk preferences.
+
+**Adjudicated: a profile is not a portfolio, and the boundary has to be written
+down before anything is built, not discovered afterwards.**
+
+- **A profile is what the client told the system about how to serve them.**
+  Preferences, topics, tone, consent. Providence cannot work without it, it is
+  supplied deliberately, and §111 never spoke about it.
+- **A portfolio is what the client owns at a broker.** Positions, quantities,
+  cost bases. §111 forbids storing it, and TQ-73's stateless fetch-analyse-discard
+  pipeline stays exactly as specified.
+- **A watchlist sits on the line and is the reason this has to be explicit.** A
+  list of symbols a client cares about is a preference. A list of symbols a client
+  *holds* is a portfolio wearing a preference's name, and the difference is
+  invisible in the data. The rule: **a watchlist is stored only as something the
+  client typed, never as something derived from a fetched portfolio**, and the
+  tripwire has to be re-aimed to say so rather than left aimed at a table name.
+
+That last clause is §105's rule — tripwires are re-aimed, never deleted — and it
+is the whole reason this conflict is recorded before any client-profile table
+exists. Building the profile first and re-aiming the guard afterwards is how a
+constraint erodes.
+
+### 6. Conflict — personas that evoke real people, against a system with no mechanism for prose
+
+Addendum 50 §8 and 49 §15 allow personas *"inspired by familiar archetypes or
+recognizable styles"*, and — *"with appropriate consent and reference material"* —
+a persona inspired by *"someone personally meaningful to them."* 50 §3 requires
+that where law or licensing demands a human professional, the agent *"assist
+rather than falsely represent itself as a licensed human professional."*
+
+The specifications carry their own guardrails, which is more than most prose
+does. The finding is not that they are missing; it is that **this system cannot
+obey them.**
+
+§126 established it and §131 confirmed it against the Scripture: *code cannot obey
+prose*. An instrument without a machine-readable obligation is reported as
+`prose_only` — in force, binding on whoever reads it, and enforced by nothing.
+Every sentence above would land there. A persona layer built without a mechanism
+would therefore ship with its safety property in the one state this project has
+a name for and no enforcement of.
+
+**Recorded as the first thing the persona work has to answer**, on the same
+principle that made TQ-73 state what its encryption defends against before the
+format was written: *what refuses a persona that crosses the line, and is it a
+function or a paragraph?* An answer of "the model will decline" is a
+self-assessment wearing a mechanism's clothes (§119 §8).
+
+### 7. Two things that look like conflicts and are not
+
+**Addendum 48 restated.** 49 §22 states Shared Success in different words. That
+is one ethic with two statements, and 47 §5 forbids the collision — so **48
+remains canonical for it** and 49 §22 is read as a pointer, not a second source.
+
+**Addendum 46 §13's pipeline, and Providence's newsroom.** 51 §21's truth pipeline
+(DISCOVER → COLLECT → COMPARE → VERIFY → CHALLENGE → ANALYZE → CLASSIFY
+UNCERTAINTY → EDIT → PERSONALIZE → PRESENT → UPDATE) is not a rival to the
+governance pipeline. It is the *work*; 46 §13 is how the organization authorizes
+changing how the work is done. They meet only at the point where a directive
+changes a newsroom rule. Recorded because §119 §4 made the mirror-image mistake
+available — reading a newer document's silence as a repeal.
+
+### 8. What is uniquely new, after the subtraction
+
+- **The world is the product, and the device is not.** 50 §17 states it as a
+  design principle: not *"a PC application that later gets ported"* but *"a
+  persistent personal world that currently happens to be entered through a PC."*
+  51 §19 makes personal-world state own the client profile, the personal agents,
+  content state and assignments, with presentation adapters below it. **Nothing in
+  this corpus has ever separated those**, and the existing desktop runtime
+  (addenda 40–43) is built the way 50 §17 warns against.
+- **Career progression as an architecture rather than a metric.** 49 §20, 50 §12
+  and 51 §12 make Explorer → Speculator → Reporter a path an *individual agent*
+  walks while keeping what it learned. Addendum 36's Education department grades;
+  nothing promotes.
+- **Intent classification as a first-class agent capability.** 51 §16's fifteen
+  intent types, and 49 §11–§13's patience rules, describe an agent that must tell
+  a question from thinking aloud before answering. This system currently has no
+  client-facing conversational agent at all.
+- **The agent and trainer libraries as blueprints.** 51 §9 and §10: a role
+  specification with sixteen declared fields, from which personal instances are
+  created. `organization.yaml` is the seed of this and carries five roles and far
+  fewer fields.
+
+### 9. What this permits, and in what order
+
+Both new documents give an ordered immediate mission, and they agree. 51 §26's
+first two items and 50 §18's third are the same thing, and everything else in
+both lists references it.
+
+1. **Persistent agent identity, with the first-name + role convention** (51 §2,
+   §3, §5, §6). Everything in 51 keys off `agent_id`, no personal agent can be
+   bound without one, and no career can be preserved across a role change without
+   one. It is also the smallest of these and closes a gap `JARVIS.md` already
+   declares.
+2. **Client binding and the client profile** (51 §4, §15) — after §5's boundary
+   above is written into a guard, not before.
+3. **The agent role library** (51 §7, §9), which `organization.yaml` becomes.
+4. **The trainer library** (51 §10), which the Education department becomes.
+5. **Personal Usher and Personal Reporter** (50 §6, §12; 51 §13, §15).
+
+The Constitution question in §3 blocks none of these. It blocks
+`JARVIS_GAP_ANALYSIS.md`, which is measuring against a document that may have been
+superseded this morning.

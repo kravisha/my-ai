@@ -23,7 +23,7 @@ exist and none of them replaces this one:
 |---|---|---|
 | **This document** | The current truth. What exists, what it does, what state it is in. | Always first. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | The change record. Numbered sections, append-only, in the order decisions were made. Every `§` reference in this document points there. | When you need *why*, or what was believed before. |
-| [`addenda/`](addenda/) | Provenance. Forty-three supplied specifications, kept unedited. | When you need the owner's exact words. |
+| [`addenda/`](addenda/) | Provenance. Forty-seven supplied specifications, kept unedited. | When you need the owner's exact words. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
 | [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped, and what to do first. Nothing else — it points here rather than repeating this. | Starting a session. |
@@ -90,14 +90,55 @@ system is in bootstrap development, exercised in simulation.
 
 ## 1. What Jarvis is
 
-Jarvis is a financial intelligence organization whose employees are software
-agents.
+Jarvis is the organization, and its employees are software agents. Since
+2026-08-28 it is **the system currently realizing Project Providence**, and
+financial intelligence is one of the services it provides rather than the whole
+of what it is (§140).
 
 That sentence is the architecture, not a metaphor. Addendum 46 §42 states it
 directly: *"Jarvis should not be designed primarily as an application containing
 many agents. It should be designed as an organization whose employees happen to
 be agents."* The application is the infrastructure through which the organization
 exists.
+
+### Providence, and what changed on 2026-08-28
+
+Four documents — addenda 49–52 — re-scope the system. **Providence is the
+mission: one person, one personal world**, entered through a device-independent
+portal, hosted by a Personal Usher, served by a society of trained personal
+agents, and informed by an AI newsroom. The financial intelligence work becomes
+the *Personal Portfolio Manager*, one of roughly fifteen personal agents named in
+addendum 50 §3.
+
+The Glossary defines *Project Jarvis* as *"the operational studio and interactive
+environment through which Providence is currently being built and experienced."*
+Read literally, the name of this document would denote the console. §140 §2
+adjudicates it: **Providence is the mission and the world; Jarvis is the system
+realizing it**, of which the studio is the part a client sees. The alternative
+reading — that a third name is needed for the organization — is available and
+would cost a rename of everything; if that is what was meant, §140 §2 is where to
+say so.
+
+Three things follow that are not yet built and are now the direction:
+
+- **Every agent gets a persistent identity and a career.** Explorer → Speculator
+  → Reporter, walked by one agent that keeps what it learned (49 §20, 50 §12).
+  The first increment exists — see section 4.
+- **Personal agents are bound to a client** and work within that client's
+  profile, permissions and preferences (51 §4 and 51 §15).
+- **A client-facing conversational agent**, the Usher, which must tell a question
+  from thinking aloud before answering (51 §16, and 49 §11 on patience). Nothing like it
+  exists here.
+
+**Two conflicts are recorded rather than resolved.** Addendum 49 is titled
+*Philosophy & Constitution v2.0*, and whether it supersedes the owner's
+`JARVIS_CONSTITUTION.md` is not this document's to decide — it is with the owner
+(§140 §3), and until it is answered `JARVIS_GAP_ANALYSIS.md` may be scoring
+against a superseded authority. And addendum 51's persistent client profiles meet
+§111's rule that client data is not stored; §140 §5 draws the boundary — **a
+profile is what the client told the system, a portfolio is what the client owns**
+— and a watchlist is stored only as something the client typed, never as
+something derived from a fetched portfolio.
 
 **What it does for the people it serves.** A client holds portfolios at several
 external brokers. No broker can show them the whole picture, because each sees
@@ -123,6 +164,7 @@ eventually maintains itself without the external developer who built it.
 | **Jarvis** | The organization. The name used by every recent specification. | *My AI* / *MyAI* — the earlier name, still in the repository name and older addenda. Same system. |
 | **The Constitution** | `JARVIS_CONSTITUTION.md`. The owner's document, held privately, never in this repository or any database (§120). | Anything the organization can amend. |
 | **The Scripture** | [Addendum 48](addenda/addendum_48_scripture_of_shared_success.md), *Shared Success*. How agents should be, rather than what the system should do. **Level 0, like the Constitution** — a document defining an authority cannot be amended by those it governs (§131). | The Articles, which the organization amends by vote. |
+| **Providence** | The mission and the product: one person, one personal world (addenda 49–52). The thing Jarvis is being built to realize. | *Jarvis*, which is the system, not the mission. |
 | **The Articles** | The organization's own highest instrument — what a supermajority may amend under addendum 32 §19, and what addendum 46 §4.1 places at the top of the governed store. | The **Charter**, which in this codebase already means [the agent charter](../backend/charter.py): what an agent is owed and which mechanism owes it. |
 
 §120 first proposed *Charter* for the organization's instrument. That was wrong —
@@ -359,14 +401,44 @@ until this role needed them separated (§117).
 Addendum 47 §14 requires this distinction to be stated plainly, and until now it
 was implied by the code rather than written down.
 
-**Persistent.** The COO is the only agent with a persisted identity today —
-Kumbhakarnan, a name and a continuity that survives restart (§88). Addendum 47
-That addendum lists what persistence may include: identity, role history, experience,
-training history, performance history, important decisions, lessons learned,
-responsibilities. Only identity is implemented. Status: `IN DEVELOPMENT`.
+**Persistent.** Addendum 47 §14 lists what persistence may include: identity,
+role history, experience, training history, performance history, important
+decisions, lessons learned, responsibilities. Addendum 51 §3 makes an immutable
+`agent_id` a requirement for *every* agent, because no personal agent can be
+bound to a client and no career can survive a role change without one.
 
-**Temporary.** Every other agent is a subprocess spawned for work and released
-when the work ends. It keeps nothing across a restart.
+The COO has had a persisted identity since §88 — Kumbhakarnan, a name and a
+continuity that survives restart and survives the code. TQ-97 built the general
+one: [`backend/agent_identity.py`](../backend/agent_identity.py). Status:
+`IN DEVELOPMENT` — identity, naming and lifecycle exist; role history,
+experience and training history do not.
+
+**The thing it corrected is worth knowing.** The owner decision of 2026-08-17
+already separated the durable agent from its job — `agent_names.name` is the
+agent, `agent_registry.identity` is the desk. But the durable thing *was the
+display name*, which addendum 51 §3 forbids in terms (*"independent of display
+name"*), and `coo_identity.rename()` already existed to turn that into a defect:
+renaming a name-keyed agent either breaks every join or hands its history to
+whoever holds the name next. So `agent_id` is now the anchor, the first name is a
+display attribute of it, and **a name that has ever been held is never given to
+another agent** — enforced against the whole history rather than the current
+binding, because a name that changes hands makes every older sentence about it
+ambiguous.
+
+The last name is **derived, never stored**. Addendum 51 §2's *"Jack Explore Agent
+1"* is a first name plus the desk's designation, so *Jack Explorer Agent 1*
+becomes *Jack Reporter Agent 1* by moving desk — addendum 50 §12's career path,
+costing nothing, because the last name was never a fact about the agent. An agent
+at no desk has no last name rather than a placeholder.
+
+Addendum 51 §6's eight lifecycle states are all named and **three are refused** —
+`training`, `evolving`, `archived` — because nothing in this system produces
+them, and a column that accepted them would assert a capability by existing.
+
+**Temporary.** Every other agent is still a subprocess spawned for work and
+released when the work ends, and it keeps nothing across a restart. Providence
+requires that to change (49 §20, 50 §11); the identity to hang it from now
+exists, and nothing yet uses it to carry experience.
 
 **Shared organizational knowledge is separate from both**, and must stay so. What
 the organization knows lives in the backend's knowledge tables; what a particular
@@ -883,7 +955,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,761 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,778 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
