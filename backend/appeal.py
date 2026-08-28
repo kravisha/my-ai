@@ -117,6 +117,13 @@ CREATE INDEX IF NOT EXISTS appeals_unheard ON appeals (heard_at, id);
 
 SCHEMA_VERSION = 1
 
+# A report and who filed it, across both tables. A judged report moves to the
+# archive, and an agent's right to know how its work was graded must survive the
+# work being finished - which is the defect §132 found in the governance metric,
+# arriving here for the same reason.
+_REPORTS = ("SELECT id, producer_identity FROM discovery_reports"
+            " UNION ALL SELECT id, producer_identity FROM discovery_reports_completed")
+
 # What can be appealed. One kind today, and the list is closed: a ruling kind
 # nothing produces would be a right over nothing.
 KIND_GRADE = "grade"
@@ -143,8 +150,19 @@ def rulings_about(conn: Database, identity: str) -> list[dict]:
     remember to make - and a sweeper that stops looks exactly like an
     organization with nothing to report.
 
-    A grade is a ruling about whoever produced the analysis, which is the join
-    `compliance.self_evaluated` has used since it was written."""
+    ## Whose ruling this is, corrected at TQ-104
+
+    A grade is a ruling about **the upstream report**, and the agent it judges is
+    whoever filed that report - Explorer or Speculator. `agents/analysis.py`'s own
+    prompt says so: *"a grade of the upstream report."*
+
+    TQ-102 wired this to `analysis_results.producer_identity`, which is the agent
+    that *wrote* the grade, not the one it was about. So `rulings_about` returned
+    an agent its own rulings about other agents' work, and every conclusion drawn
+    from that was inverted (§147).
+
+    Declared gap 1 says *a producing agent never learns how its own **report** was
+    judged* - it named the right party all along, and this now answers it."""
     identity = (identity or "").strip()
     if not identity:
         return []
@@ -164,11 +182,11 @@ def rulings_about(conn: Database, identity: str) -> list[dict]:
         }
         for row in conn.fetchall(
             "SELECT g.id, g.grader_identity, g.created_at, g.rationale, g.overall_score,"
-            " g.analysis_result_id, a2.id AS appeal_id"
+            " g.report_id AS analysis_result_id, ap.id AS appeal_id"
             " FROM grades g"
-            " JOIN analysis_results a ON a.id = g.analysis_result_id"
-            " LEFT JOIN appeals a2 ON a2.ruling_kind = ? AND a2.ruling_id = g.id"
-            " WHERE a.producer_identity = ?"
+            " JOIN (" + _REPORTS + ") r ON r.id = g.report_id"
+            " LEFT JOIN appeals ap ON ap.ruling_kind = ? AND ap.ruling_id = g.id"
+            " WHERE r.producer_identity = ?"
             " ORDER BY g.id",
             (KIND_GRADE, identity))
     ]
@@ -177,11 +195,10 @@ def rulings_about(conn: Database, identity: str) -> list[dict]:
 def _ruling(conn: Database, kind: str, ruling_id: int) -> dict | None:
     if kind != KIND_GRADE:
         return None
-    row = conn.fetchone(
-        "SELECT g.id, g.grader_identity AS author, a.producer_identity AS subject"
-        " FROM grades g JOIN analysis_results a ON a.id = g.analysis_result_id"
+    return conn.fetchone(
+        "SELECT g.id, g.grader_identity AS author, r.producer_identity AS subject"
+        " FROM grades g JOIN (" + _REPORTS + ") r ON r.id = g.report_id"
         " WHERE g.id = ?", (ruling_id,))
-    return row
 
 
 def file_appeal(conn: Database, *, ruling_kind: str, ruling_id: int,
@@ -356,64 +373,68 @@ def summary(conn: Database) -> dict:
 def contestable_by(conn: Database, identity: str) -> list[dict]:
     """Rulings about this agent that the record alone shows are contestable.
 
-    **Deterministic, and that is the whole design.** Whether a grade is *wrong*
-    is a judgement, and an agent that appealed every low score would be appealing
-    rather than disagreeing. So the ground is two facts already in the data, and
-    neither is an opinion:
+    **Deterministic, and that is the whole design.** Whether a grade is *wrong* is
+    a judgement, and an agent that appealed every low score would be appealing
+    rather than disagreeing. So a ground has to be a fact already in the record.
 
-    - **The grader was the producer.** `backend/charter.py`'s duty says work is
-      evaluated by its consumer, not its producer, because *"a grade written by
-      the producer looks complete and carries no independent information."*
-      `compliance.self_evaluated` has detected this since it was written and
-      nothing has ever acted on it.
-    - **The grade declared the work not worth the compute.** Unfavourable by the
-      grader's own boolean, so no threshold is invented here - a score bar nobody
-      measured would be a policy wearing a measurement's clothes (§128).
+    Two are, and both are the charter's own standards:
 
-    Both are required. A self-evaluated grade that was generous is not a
-    grievance, and the owner's words are the right to appeal an *unfavourable*
-    ruling.
+    - **The grader filed the report it graded.** No independent information, which
+      is the duty `compliance.self_evaluated` exists to detect.
+    - **The ruling carries no rationale.** `record_disposition` has always refused
+      one, on the grounds that ruling without saying why is how a check stops
+      covering things while still passing. A graded party cannot evaluate a
+      reason it was not given.
 
-    **This is not hypothetical.** Measured against the last full run before this
-    was written: nine grades, nine self-evaluated, five declaring the work not
-    worth the compute. `agents/analysis.py` records the analysis and the grade
-    under one identity, so every grade this organization has produced carries no
-    independent information (§146).
+    ## Corrected at TQ-104, and the correction removed the condition
 
-    Already-appealed rulings are excluded, so an agent calling this every cycle
-    converges rather than refiling - `file_appeal` would refuse anyway, and a
-    caller that had to catch that refusal to make progress would be using an
-    exception as a filter."""
+    TQ-103's version compared the grader to the *analysis result's* producer,
+    which `agents/analysis.py` makes identical by construction - so it matched
+    every grade, and the agent it offered them to was the one that *wrote* them.
+    The live demonstration at §146 was of a condition manufactured by that
+    misreading (§147).
+
+    Correctly aimed, **neither ground currently fires**: Analysis does not file
+    reports, so it never grades its own, and `record_grade` now refuses a grade
+    with no rationale. That is the honest state of a right whose grounds are
+    real and whose occasions do not presently arise - and it is why nothing here
+    files an appeal on a schedule."""
     identity = (identity or "").strip()
     if not identity:
         return []
-    return [
-        {
+    rows = conn.fetchall(
+        "SELECT g.id, g.grader_identity, g.overall_score, g.rationale,"
+        " r.producer_identity"
+        " FROM grades g"
+        " JOIN (" + _REPORTS + ") r ON r.id = g.report_id"
+        " LEFT JOIN appeals ap ON ap.ruling_kind = ? AND ap.ruling_id = g.id"
+        " WHERE r.producer_identity = ? AND ap.id IS NULL"
+        "   AND (g.grader_identity = r.producer_identity"
+        "        OR g.rationale IS NULL OR TRIM(g.rationale) = '')"
+        " ORDER BY g.id",
+        (KIND_GRADE, identity))
+    contestable = []
+    for row in rows:
+        if row["grader_identity"] == row["producer_identity"]:
+            grounds = (
+                f"This grade was written by {row['grader_identity']}, which is the identity that "
+                f"filed the report it grades, so it carries no independent information (agent "
+                f"charter: work is evaluated by its consumer, not its producer). Asking for "
+                f"review by someone other than its author.")
+        else:
+            grounds = (
+                f"This grade carries no rationale, so there is nothing in it for the agent it "
+                f"judges to evaluate or answer. A ruling that does not say why is an assertion. "
+                f"Asking for review by someone other than its author.")
+        contestable.append({
             "kind": KIND_GRADE,
             "id": row["id"],
             "author": row["grader_identity"],
             "overall_score": row["overall_score"],
             "rationale": row["rationale"],
-            # The facts, not a verdict. Whoever hears this reads the same record.
-            "grounds": (
-                f"This grade was written by {row['grader_identity']}, which is the identity "
-                f"that produced the analysis it grades, so it carries no independent "
-                f"information (agent charter: work is evaluated by its consumer, not its "
-                f"producer). It declares the work not worth the compute. Asking for review "
-                f"by someone other than its author."),
-        }
-        for row in conn.fetchall(
-            "SELECT g.id, g.grader_identity, g.overall_score, g.rationale"
-            " FROM grades g"
-            " JOIN analysis_results a ON a.id = g.analysis_result_id"
-            " LEFT JOIN appeals ap ON ap.ruling_kind = ? AND ap.ruling_id = g.id"
-            " WHERE a.producer_identity = ?"
-            "   AND g.grader_identity = a.producer_identity"
-            "   AND g.worth_the_compute = 0"
-            "   AND ap.id IS NULL"
-            " ORDER BY g.id",
-            (KIND_GRADE, identity))
-    ]
+            "grounds": grounds,
+        })
+    return contestable
 
 
 def roles_awaiting_a_peer(conn: Database) -> list[str]:
@@ -458,8 +479,8 @@ def independence_finding(conn: Database, appeal_id: int) -> dict:
     opinion is one whose outcome depends on who happened to be spawned."""
     row = require(conn, appeal_id)
     grade = conn.fetchone(
-        "SELECT g.grader_identity, a.producer_identity, g.worth_the_compute"
-        " FROM grades g JOIN analysis_results a ON a.id = g.analysis_result_id"
+        "SELECT g.grader_identity, r.producer_identity, g.worth_the_compute"
+        " FROM grades g JOIN (" + _REPORTS + ") r ON r.id = g.report_id"
         " WHERE g.id = ?", (row["ruling_id"],))
     if grade is None:
         return {
@@ -473,16 +494,16 @@ def independence_finding(conn: Database, appeal_id: int) -> dict:
         return {
             "outcome": OUTCOME_UPHELD,
             "rationale": (
-                f"The ground does not hold: {grade['grader_identity']} did not produce the work "
+                f"The ground does not hold: {grade['grader_identity']} did not file the report "
                 f"it graded, so the ruling carried an independent view. This review reaches the "
                 f"independence of the ruling and not the merits of the score."),
         }
     return {
         "outcome": OUTCOME_OVERTURNED,
         "rationale": (
-            f"{grade['grader_identity']} graded work it produced itself, so the ruling carried "
+            f"{grade['grader_identity']} graded a report it filed itself, so the ruling carried "
             f"no independent judgement (agent charter: work is evaluated by its consumer, not "
-            f"its producer). **This says nothing about the quality of the work** - the analysis "
+            f"its producer). **This says nothing about the quality of the work** - the report "
             f"is now ungraded rather than well graded, and an independent grade is what it is "
             f"owed."),
     }

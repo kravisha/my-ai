@@ -298,7 +298,7 @@ it, which is the property that matters and is what §120 meant to say.
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; **two** are listed as *unenforced* rather than quietly omitted. TQ-102 discharged appeal (§145) and deliberately did **not** discharge *"an agent is told what is found about it"* — the read path exists and nothing reads it, and being told is passive in a way that having a right is not |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
-| Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py) |
+| Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py). `self_evaluated` was **re-aimed at §147**: it compared the grader to the analysis result's producer, which is one identity by construction, so it flagged every grade and could never return false |
 Addendum 32 specifies elections, ministers and committees; none is required for a
 directive to be authorized, so none was built. `parliament.summary()` names them
 in the same object that reports the vote, because a status surface showing a
@@ -347,12 +347,16 @@ staffing** (46 §10), which is the same rule that gave the Portfolio Analyst
 heard, since zero filed and forty filed with none heard are the same silence in
 one number (§130).
 
-**The whole loop runs, and it ran without being asked.** In a 90-second baseline
-run: Analysis graded its own work, one grade declared the work not worth the
-compute, the agent read its own record and appealed, nobody was eligible, the COO
-enqueued a spawn saying *"has an appeal waiting for somebody other than its author
-to hear it"*, and the peer that arrived overturned it — on the ruling's
-**independence**, explicitly not on the work's quality (§146 §4).
+**The loop was demonstrated live and the demonstration was of a defect** (§147).
+TQ-102 read the graded party off the wrong column — a grade judges the *upstream
+report*, so the agent it judges is the report's filer, not the Analysis agent that
+wrote it. Corrected at TQ-104: `rulings_about(explorer-1)` returns the grades on
+explorer-1's reports, and Analysis, being an author here rather than a subject,
+gets nothing.
+
+After the correction the same scenario files no appeal and spawns no peer, which
+is right — the organization had been manufacturing grievances against itself every
+cycle.
 
 **And code cannot apply this criterion**, which matters because the direction
 makes it tempting to try. The refusal covers what a proposal *declares*: a
@@ -1092,7 +1096,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,858 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,862 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -1149,13 +1153,10 @@ until somebody declares it deliberately.
    rulings about its own work each cycle and acts on them. What it cannot do is
    let a grader's rationale change its reasoning, which needs something that
    reads text — the `prose_only` boundary again (§126).
-1a. **Every grade this organization produces is written by its own producer**
-   (§146). Measured at nine of nine in a full run.
-   `agents/analysis.py` records the analysis and the grade under one identity, and
-   `compliance.self_evaluated` has detected exactly this since it was written
-   while nothing read the detector. It is now contested by the affected agent and
-   reviewed by a peer; **it is not fixed**, and an overturned grade changes
-   nothing downstream. TQ-104.
+1a. **Nothing files an appeal, and that is now the honest state** (§147). The
+   right exists, its two grounds are facts in the record — the grader filed the
+   report it graded, or the ruling carries no reasoning — and neither currently
+   arises. §146 claimed otherwise and was wrong; see below.
 2. **Lessons written when a lens goes stale are never read back.** They are
    preserved and guarded against duplication, and no consumer exists.
 

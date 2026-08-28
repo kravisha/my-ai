@@ -1,230 +1,286 @@
-"""An agent reading its own record and acting on it (TQ-103;
-docs/SPEC_RECONCILIATION.md §146; organization-model declared gap 1).
+"""An agent reading its own record and acting on it (TQ-103, corrected at TQ-104;
+docs/SPEC_RECONCILIATION.md §146, §147; organization-model declared gap 1).
 
-TQ-102 built the read path and the right, and nothing used either. This is the
-increment that turns them into behaviour, so the tests are written against
-**§118's trap**: an agent that reads its grades and changes nothing has closed
-declared gap 1 on paper. Every test below requires the reading to *appear* in
-what the agent does.
+**This file previously encoded a misreading, and the correction is the point.**
 
-The finding that made a deterministic ground possible is at §146:
-`agents/analysis.py` records the analysis and the grade under one identity, so
-**every grade this organization has ever produced was written by its own
-producer** — nine of nine in the last full run before this was written.
+A grade is a ruling about the **upstream report** — `agents/analysis.py`'s own
+prompt says *"a grade of the upstream report"*, and its scores are relevance,
+novelty, evidence quality and worth-the-compute, which are properties of the lead
+Explorer or Speculator filed. So the agent a grade judges is the **report's
+filer**, and the agent that writes it is Analysis.
+
+TQ-102 and TQ-103 read that party off `analysis_results.producer_identity` — the
+agent that *wrote* the grade. Every conclusion drawn from it was inverted, and the
+live demonstration at §146 was of a condition manufactured by the misreading.
+§147 has the whole correction.
+
+What the tests here now hold:
+
+- the graded party is the report's filer, and only they may appeal;
+- the grounds are facts in the record, and **neither currently fires**, which is
+  the honest state rather than a gap;
+- a peer of the *author* hears it, and the COO staffs one when it waits.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from agents import analysis
+from agents import analysis, base
 from backend import appeal, fi_db
 
-PRODUCER = "analysis-1"
+FILER = "explorer-1"
+GRADER = "analysis-1"
 PEER = "analysis-2"
 
 
-def _register(conn, identity, role="analysis"):
+def _register(conn, identity, role):
     fi_db.register_agent(conn, identity, role, pid=1000 + len(identity))
 
 
-def _self_graded(conn, *, identity=PRODUCER, worth=False, score=0.2) -> int:
-    """The condition this system actually produces: one identity records the
-    analysis and the grade. Built through the production API (§128)."""
+def _graded(conn, *, filer=FILER, grader=GRADER, worth=False, rationale="thin") -> int:
+    """The shape the organization actually produces: Explorer files, Analysis
+    consumes and grades. Built through the production API (§128)."""
     report = fi_db.enqueue_report(
-        conn, identity, "t0", "lead", "SYN1", summary="s", evidence_ids=[])
+        conn, filer, "t0", "lead", "SYN1", summary="s", evidence_ids=[])
     result = fi_db.record_analysis_result(
-        conn, identity, "t0", report, "SYN1", "thesis", "e", 0.5, "some")
+        conn, grader, "t0", report, "SYN1", "thesis", "e", 0.5, "some")
     return fi_db.record_grade(
-        conn, identity, "t0", report, result, score, score, score, worth, score, "thin")
+        conn, grader, "t0", report, result, .2, .2, .2, worth, .2, rationale)
 
 
-def _independently_graded(conn, *, producer=PRODUCER, grader=PEER, worth=False) -> int:
+def _grade_without_rationale(conn, *, filer=FILER, grader=GRADER) -> int:
+    """A grade that got in before `record_grade` required a reason. Written
+    directly because the production API now refuses it - which is the fix - and
+    the ground still has to cover what is already on the record."""
     report = fi_db.enqueue_report(
-        conn, producer, "t0", "lead", "SYN1", summary="s", evidence_ids=[])
+        conn, filer, "t0", "lead", "SYN2", summary="s", evidence_ids=[])
     result = fi_db.record_analysis_result(
-        conn, producer, "t0", report, "SYN1", "thesis", "e", 0.5, "some")
-    return fi_db.record_grade(
-        conn, grader, "t0", report, result, .1, .1, .1, worth, .1, "poor")
+        conn, grader, "t0", report, "SYN2", "thesis", "e", 0.5, "some")
+    return conn.execute_returning_id(
+        "INSERT INTO grades (created_at, grader_identity, grader_spawned_at, report_id,"
+        " analysis_result_id, relevance_score, novelty_score, evidence_quality_score,"
+        " worth_the_compute, overall_score, rationale, schema_version)"
+        " VALUES ('2026-08-28T00:00:00+00:00', ?, 't0', ?, ?, .2, .2, .2, 0, .2, NULL, 1)",
+        (grader, report, result))
 
 
 @pytest.fixture
-def solo(conn):
-    _register(conn, PRODUCER)
+def pipeline(conn):
+    _register(conn, FILER, "explorer")
+    _register(conn, GRADER, "analysis")
     return conn
 
 
-# --- the ground is deterministic, and it is not vacuous --------------------------------
+# --- whose ruling it is -----------------------------------------------------------------
 
-def test_a_self_graded_unfavourable_ruling_is_contestable(solo):
-    """Both facts are in the data and neither is an opinion: the grader was the
-    producer, and the grade declared the work not worth the compute."""
-    grade = _self_graded(solo, worth=False)
-    contestable = appeal.contestable_by(solo, PRODUCER)
+def test_the_graded_party_is_the_agent_that_filed_the_report(pipeline):
+    """**The correction.** A grade judges the report, so it is the filer's
+    record — not the record of the agent that wrote the grade."""
+    grade = _graded(pipeline)
+    assert [r["id"] for r in appeal.rulings_about(pipeline, FILER)] == [grade]
+    assert appeal.rulings_about(pipeline, GRADER) == [], (
+        "the agent that wrote the grade was handed it as a ruling about itself")
+
+
+def test_a_ruling_survives_its_report_being_completed(pipeline):
+    """A judged report moves to the archive, and an agent's right to know how its
+    work was graded must survive the work finishing — §132's defect, in the place
+    it would do the most damage."""
+    grade = _graded(pipeline)
+    report = pipeline.fetchone("SELECT report_id FROM grades WHERE id = ?", (grade,))["report_id"]
+    fi_db.complete_report(pipeline, report, "analyzed",
+                          handled_by_identity=GRADER, handled_by_spawned_at="t0")
+    assert [r["id"] for r in appeal.rulings_about(pipeline, FILER)] == [grade]
+
+
+def test_only_the_graded_party_may_appeal(pipeline):
+    grade = _graded(pipeline)
+    for impostor in (GRADER, "speculator-1"):
+        with pytest.raises(appeal.AppealRefused) as refusal:
+            appeal.file_appeal(pipeline, ruling_kind="grade", ruling_id=grade,
+                               appellant=impostor, grounds="I disagree")
+        assert "on another agent's behalf is an opinion" in str(refusal.value)
+
+    filed = appeal.file_appeal(pipeline, ruling_kind="grade", ruling_id=grade,
+                               appellant=FILER, grounds="The detector output was not read.")
+    row = appeal.require(pipeline, filed)
+    assert row["appellant"] == FILER and row["author"] == GRADER
+
+
+# --- the grounds are facts, and they do not currently fire ------------------------------
+
+def test_an_independently_graded_ruling_with_a_reason_is_not_contestable(pipeline):
+    """**The honest state after the correction.** Grading here *is* independent —
+    Analysis does not file reports — and `record_grade` now requires a reason. So
+    both grounds are correctly aimed and neither occurs, which is why nothing
+    files an appeal on a schedule."""
+    _graded(pipeline, worth=False)
+    assert appeal.contestable_by(pipeline, FILER) == []
+
+
+def test_a_report_graded_by_its_own_filer_is_contestable(pipeline):
+    """The first ground, correctly aimed. It does not arise in the current
+    pipeline and it is the duty's actual question, so it is kept rather than
+    dropped for being quiet."""
+    _register(pipeline, "speculator-1", "speculator")
+    grade = _graded(pipeline, filer="speculator-1", grader="speculator-1")
+    contestable = appeal.contestable_by(pipeline, "speculator-1")
     assert [c["id"] for c in contestable] == [grade]
     assert "no independent information" in contestable[0]["grounds"]
 
 
-def test_a_self_graded_favourable_ruling_is_not_a_grievance(solo):
-    """The owner's words are the right to appeal an *unfavourable* ruling. A
-    generous self-evaluation is still improper, and it is not something the agent
-    it favoured has standing to complain about."""
-    _self_graded(solo, worth=True)
-    assert appeal.contestable_by(solo, PRODUCER) == []
+def test_a_ruling_with_no_reason_is_contestable(pipeline):
+    """The second ground, and the reachable one. `record_disposition` has always
+    refused a ruling without a rationale; `record_grade` accepted one until
+    TQ-104, so the ground covers what is already on the record."""
+    grade = _grade_without_rationale(pipeline)
+    contestable = appeal.contestable_by(pipeline, FILER)
+    assert [c["id"] for c in contestable] == [grade]
+    assert "nothing in it for the agent it judges to evaluate" in contestable[0]["grounds"]
 
 
-def test_an_independently_graded_ruling_is_not_contestable_on_this_ground(solo):
-    """Whether the score was *fair* is a judgement, and an agent appealing every
-    low score would be appealing rather than disagreeing."""
-    _register(solo, PEER)
-    _independently_graded(solo)
-    assert appeal.contestable_by(solo, PRODUCER) == []
+def test_a_grade_can_no_longer_be_written_without_a_reason(pipeline):
+    """The fix, rather than only the remedy. A grade is a ruling about somebody
+    else's work and the agent it judges cannot answer a reason it was not given."""
+    with pytest.raises(ValueError) as refusal:
+        _graded(pipeline, rationale="   ")
+    assert "must carry a rationale" in str(refusal.value)
 
 
-def test_a_contested_ruling_is_not_offered_again(solo):
-    """An agent calling this every cycle converges rather than refiling."""
-    grade = _self_graded(solo, worth=False)
-    appeal.file_appeal(solo, ruling_kind="grade", ruling_id=grade,
-                       appellant=PRODUCER, grounds="g")
-    assert appeal.contestable_by(solo, PRODUCER) == []
+def test_a_contested_ruling_is_not_offered_again(pipeline):
+    grade = _grade_without_rationale(pipeline)
+    appeal.file_appeal(pipeline, ruling_kind="grade", ruling_id=grade,
+                       appellant=FILER, grounds="g")
+    assert appeal.contestable_by(pipeline, FILER) == []
 
 
 # --- the reading appears in what the agent does (§118) ----------------------------------
 
-def test_the_agents_cycle_files_an_appeal_rather_than_merely_reading(solo):
-    """**The property §118 demands.** An agent that consulted its record and did
-    nothing would look identical to one that never looked."""
-    grade = _self_graded(solo, worth=False)
-    assert appeal.summary(solo)["filed"] == 0
+def test_reading_the_record_files_an_appeal_when_the_record_warrants_one(pipeline):
+    """**§118's property.** An agent that consulted its record and did nothing
+    would look identical to one that never looked."""
+    grade = _grade_without_rationale(pipeline)
+    assert appeal.summary(pipeline)["filed"] == 0
 
-    analysis._contest_own_rulings(solo, PRODUCER)
+    assert base.read_own_record(pipeline, FILER) == 1
 
-    assert appeal.summary(solo)["filed"] == 1, "the agent read its record and changed nothing"
-    row = appeal.require(solo, 1)
-    assert row["appellant"] == PRODUCER and row["ruling_id"] == grade
-
-
-def test_a_cycle_with_nothing_contestable_files_nothing(solo):
-    """The other half. A cycle that always filed something would be an agent
-    appealing on a schedule rather than on a ground."""
-    _self_graded(solo, worth=True)
-    assert analysis._contest_own_rulings(solo, PRODUCER) == 0
-    assert appeal.summary(solo)["filed"] == 0
+    assert appeal.summary(pipeline)["filed"] == 1
+    assert appeal.require(pipeline, 1)["ruling_id"] == grade
 
 
-def test_the_cycle_is_idempotent_across_cycles(solo):
-    _self_graded(solo, worth=False)
-    assert analysis._contest_own_rulings(solo, PRODUCER) == 1
-    assert analysis._contest_own_rulings(solo, PRODUCER) == 0
-    assert appeal.summary(solo)["filed"] == 1
+def test_reading_a_clean_record_files_nothing(pipeline):
+    """The other half. An agent that always filed something would be appealing on
+    a schedule rather than on a ground."""
+    _graded(pipeline, worth=False)
+    assert base.read_own_record(pipeline, FILER) == 0
+    assert appeal.summary(pipeline)["filed"] == 0
 
 
-# --- a peer hears it, and the finding is about independence -----------------------------
-
-def test_a_peer_hears_what_the_author_may_not(solo):
-    grade = _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    assert analysis._hear_peer_appeals(solo, PRODUCER) == 0, (
-        "the appellant heard its own appeal")
-
-    _register(solo, PEER)
-    assert analysis._hear_peer_appeals(solo, PEER) == 1
-    row = appeal.require(solo, 1)
-    assert row["heard_by"] == PEER
-    assert row["outcome"] == appeal.OUTCOME_OVERTURNED
-    assert row["ruling_id"] == grade
+def test_reading_is_idempotent_across_cycles(pipeline):
+    _grade_without_rationale(pipeline)
+    assert base.read_own_record(pipeline, FILER) == 1
+    assert base.read_own_record(pipeline, FILER) == 0
+    assert appeal.summary(pipeline)["filed"] == 1
 
 
-def test_the_finding_reaches_independence_and_says_it_is_not_about_quality(solo):
+def test_every_agent_reads_its_own_record_not_only_the_graded_role():
+    """It lives in the loop every agent shares. The charter owes this to *agents*,
+    and discharging a protection about agents by serving the one role that
+    happened to have rulings is the generalisation §147 warns against."""
+    import inspect
+
+    source = inspect.getsource(base.run_agent)
+    assert "read_own_record(conn, identity)" in source, (
+        "reading your own record is not in the loop every agent shares")
+
+
+# --- a peer of the author hears it -------------------------------------------------------
+
+def test_a_peer_of_the_author_hears_it_and_neither_party_can(pipeline):
+    grade = _grade_without_rationale(pipeline)
+    base.read_own_record(pipeline, FILER)
+
+    assert analysis._hear_peer_appeals(pipeline, GRADER) == 0, "the author heard its own ruling"
+    assert appeal.eligible_adjudicators(pipeline, 1) == []
+
+    _register(pipeline, PEER, "analysis")
+    assert appeal.eligible_adjudicators(pipeline, 1) == [PEER]
+    assert analysis._hear_peer_appeals(pipeline, PEER) == 1
+    assert appeal.require(pipeline, 1)["heard_by"] == PEER
+    assert appeal.require(pipeline, 1)["ruling_id"] == grade
+
+
+def test_the_finding_reaches_independence_and_says_it_is_not_about_quality(pipeline):
     """**Overturned does not mean the work was good.** A reader inferring quality
-    from a true record would have learned something false, so the rationale says
-    what the finding covers."""
-    _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    _register(solo, PEER)
-    analysis._hear_peer_appeals(solo, PEER)
+    from a true record would have learned something false."""
+    _register(pipeline, "speculator-1", "speculator")
+    _register(pipeline, "speculator-2", "speculator")
+    _graded(pipeline, filer="speculator-1", grader="speculator-1")
+    base.read_own_record(pipeline, "speculator-1")
 
-    rationale = appeal.require(solo, 1)["rationale"]
+    assert analysis._hear_peer_appeals(pipeline, "speculator-2") == 1
+    rationale = appeal.require(pipeline, 1)["rationale"]
     assert "no independent judgement" in rationale
     assert "says nothing about the quality" in rationale
-    assert "ungraded rather than well graded" in rationale
 
 
-def test_a_ground_that_no_longer_holds_is_upheld(solo):
-    """The peer re-checks rather than rubber-stamping. Upheld here means the
-    ruling *was* independent, which is a finding and not a formality."""
-    _register(solo, PEER)
-    grade = _independently_graded(solo)
-    appeal.file_appeal(solo, ruling_kind="grade", ruling_id=grade,
-                       appellant=PRODUCER, grounds="I believe it was self-evaluated")
-
-    finding = appeal.independence_finding(solo, 1)
+def test_a_ground_that_no_longer_holds_is_upheld(pipeline):
+    """The peer re-checks rather than rubber-stamping. Upheld means the ruling
+    *was* independent, which is a finding and not a formality."""
+    grade = _graded(pipeline)
+    appeal.file_appeal(pipeline, ruling_kind="grade", ruling_id=grade,
+                       appellant=FILER, grounds="I believe it was self-evaluated")
+    finding = appeal.independence_finding(pipeline, 1)
     assert finding["outcome"] == appeal.OUTCOME_UPHELD
-    assert "did not produce the work it graded" in finding["rationale"]
-
-
-def test_a_peer_never_hears_its_own_ruling(solo):
-    """Structural, from `eligible_adjudicators` rather than from a check written
-    in the agent."""
-    _register(solo, PEER)
-    _self_graded(solo, identity=PEER, worth=False)
-    analysis._contest_own_rulings(solo, PEER)
-    assert analysis._hear_peer_appeals(solo, PEER) == 0
-    assert appeal.summary(solo)["heard"] == 0
+    assert "did not file the report it graded" in finding["rationale"]
 
 
 # --- the COO staffs the peer a hearing needs ---------------------------------------------
 
-def test_a_waiting_appeal_names_the_role_that_would_hear_it(solo):
-    """46 §10's *work determines staffing*, as a signal whoever staffs can read."""
-    assert appeal.roles_awaiting_a_peer(solo) == []
-    _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    assert appeal.roles_awaiting_a_peer(solo) == ["analysis"]
+def test_a_waiting_appeal_names_the_authors_role(pipeline):
+    """The peer must be able to make this kind of ruling, so it is the *author's*
+    role that is short — not the appellant's."""
+    assert appeal.roles_awaiting_a_peer(pipeline) == []
+    _grade_without_rationale(pipeline)
+    base.read_own_record(pipeline, FILER)
+    assert appeal.roles_awaiting_a_peer(pipeline) == ["analysis"]
+
+    _register(pipeline, PEER, "analysis")
+    assert appeal.roles_awaiting_a_peer(pipeline) == []
 
 
-def test_the_role_stops_awaiting_once_a_peer_exists(solo):
-    _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    _register(solo, PEER)
-    assert appeal.roles_awaiting_a_peer(solo) == []
-
-
-def test_many_waiting_appeals_ask_for_one_peer_and_not_many(solo):
+def test_many_waiting_appeals_ask_for_one_peer(pipeline):
     """One agent hears all of them. A role per appeal would ask for five agents
-    to do one agent's work, which is 46 §9's warning."""
-    for _ in range(4):
-        _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    assert appeal.summary(solo)["filed"] == 4
-    assert appeal.roles_awaiting_a_peer(solo) == ["analysis"]
+    to do one agent's work (46 §9)."""
+    for _ in range(3):
+        _grade_without_rationale(pipeline)
+    base.read_own_record(pipeline, FILER)
+    assert appeal.summary(pipeline)["filed"] == 3
+    assert appeal.roles_awaiting_a_peer(pipeline) == ["analysis"]
 
 
-def test_the_coo_staffs_the_peer_a_hearing_needs(solo):
-    """Read from what the COO actually enqueues rather than asserted about its
-    intent: the directive is what staffs anybody."""
+def test_the_coo_staffs_the_peer_a_hearing_needs(pipeline):
+    """Read from what the COO actually enqueues: the directive is what staffs
+    anybody."""
     from agents import coo
 
-    _self_graded(solo, worth=False)
-    analysis._contest_own_rulings(solo, PRODUCER)
-    coo._ensure_baseline_population(solo)
+    _grade_without_rationale(pipeline)
+    base.read_own_record(pipeline, FILER)
+    coo._ensure_baseline_population(pipeline)
 
-    reasons = [
-        (row["reason"] or "")
-        for row in solo.fetchall("SELECT reason FROM coo_directives WHERE target_role = 'analysis'")
-    ]
+    reasons = [(row["reason"] or "") for row in pipeline.fetchall(
+        "SELECT reason FROM coo_directives WHERE target_role = 'analysis'")]
     assert any("appeal waiting" in reason for reason in reasons), (
         f"the COO did not staff the peer a hearing needs; reasons were {reasons}")
 
 
-def test_the_coo_asks_for_nothing_extra_when_no_appeal_waits(solo):
-    """The other half, and the one that keeps this from being a permanent
-    headcount rise wearing an appeal's name."""
+def test_the_coo_asks_for_nothing_extra_when_no_appeal_waits(pipeline):
+    """The half that keeps this from being a permanent headcount rise wearing an
+    appeal's name."""
     from agents import coo
 
-    coo._ensure_baseline_population(solo)
-    reasons = [
-        (row["reason"] or "")
-        for row in solo.fetchall("SELECT reason FROM coo_directives WHERE target_role = 'analysis'")
-    ]
+    coo._ensure_baseline_population(pipeline)
+    reasons = [(row["reason"] or "") for row in pipeline.fetchall(
+        "SELECT reason FROM coo_directives WHERE target_role = 'analysis'")]
     assert not any("appeal waiting" in reason for reason in reasons)

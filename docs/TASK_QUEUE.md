@@ -55,8 +55,11 @@ holds the queue, not the record.
 > **TQ-102 and TQ-103 are done (§145, §146).** The right to appeal exists, is exercised, and
 > found that every grade in this organization was written by its own producer.
 >
-> **Recommended next: TQ-104** (grading that carries independent information — the defect TQ-103
-> surfaced and did not fix) or **TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
+> **TQ-104 is done and found that its own premise was false (§147)** — grading was already
+> independent, and the check that said otherwise could never return false. §146 is retracted in
+> place.
+>
+> **Recommended next: TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
 > found is already half-built in the Gateway.
 >
@@ -2987,8 +2990,28 @@ have happened.
 
 ### TQ-104 — Grading that carries independent information
 
-**NEED (ORANGE) · QUEUED · agent charter (duties) · addendum 7 §8 · addendum 46 §11 ·
-`SPEC_RECONCILIATION.md` §146 §1, §146 §6**
+**NEED (ORANGE) · DONE, AND ITS PREMISE WAS FALSE — `SPEC_RECONCILIATION.md` §147 ·
+agent charter (duties) · addendum 7 §8 · addendum 46 §11**
+
+**Grading was already independent.** A grade is a ruling about the *upstream report* —
+`agents/analysis.py`'s own prompt says so — and Analysis, its consumer, writes it. §146's finding
+was wrong and is retracted in place.
+
+What the check found instead is worse than what it retracted. `compliance.self_evaluated`
+compared the grader to the **analysis result's** producer, which `agents/analysis.py` makes one
+identity by construction — so it flagged every grade ever written, **could never return false**,
+and was named in `backend/charter.py` as the mechanism enforcing a duty. A charter citing a check
+that cannot fail is the falsely-written charter that file exists to prevent, arriving inside it.
+
+Three fixes: the detector re-aimed at the report's producer; `appeal`'s subject model corrected
+(the graded party is the report's filer, so TQ-102/TQ-103 had it inverted and §146's live
+demonstration ran on a grievance the defect invented); and `record_grade` now requires a
+rationale, which it had never validated.
+
+Live: the same scenario now registers seven agents instead of eight and files no appeal. The
+extra agent §146 celebrated was the defect.
+
+<details><summary>The entry as it was queued, on the false premise</summary>
 
 **Every grade this organization has ever produced was written by its own producer.**
 `agents/analysis.py` records the analysis and the grade under one identity; measured at nine of
@@ -3020,3 +3043,5 @@ independent grading is what makes discarding the old ones affordable.
 **The trap:** making Analysis stop grading itself, with no second grader, produces an
 organization with no grades at all and a clean `self_evaluated` report. That is TQ-80's defect
 exactly — the analyst that stopped asking, and every complaint disappeared.
+
+</details>

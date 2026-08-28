@@ -14256,6 +14256,17 @@ the summary claiming a promise was kept while the list still owed it.
 
 ## §146 — The agent reads its own record, and finds that every grade was written by itself (2026-08-28, TQ-103)
 
+> **RETRACTED IN PART BY §147, the next day's first act.** The headline finding
+> below is **wrong**: a grade is a ruling about the *upstream report*, so
+> `analysis-1` grading a `speculator-1` report was independent all along. The
+> claim rested on `compliance.self_evaluated`, which compared the grader to the
+> *analysis result's* producer — a field `agents/analysis.py` makes identical by
+> construction, so the check could never return false.
+>
+> What survives: the appeal machinery, the staffing rule, and §118's discipline.
+> What does not: the finding, the ground built on it, and the live demonstration
+> in §5 — which ran on a grievance the defect invented. Read §147 with this.
+
 TQ-102 built the read path and the right, and nothing used either.
 `appeal.rulings_about` existed and no agent called it; `file_appeal` existed and
 nothing filed one. This is the increment that turns two mechanisms into
@@ -14407,3 +14418,136 @@ Analysis now reads its own rulings, so one agent of eight is told. The protectio
 is about agents, not about Analysis, and marking it enforced because the one role
 that had rulings now reads them would be generalising from the only case that
 exists.
+
+## §147 — §146 was wrong, and the check it trusted could never have said so (2026-08-28, TQ-104)
+
+TQ-104 was queued to fix what §146 found: *every grade this organization has ever
+produced was written by its own producer.* The first thing it did was check that
+claim, and the claim is false.
+
+**Grading here has been independent all along.** This section is the correction,
+and the defect it uncovered is worse than the one it retracts.
+
+### 1. What a grade is actually about
+
+`agents/analysis.py`'s own system prompt, which §146 did not read:
+
+> *"You receive one queued report… and must produce both a client-facing analysis
+> and **a grade of the upstream report** in a single response."*
+
+Its scores are relevance, novelty, evidence quality and worth-the-compute. Those
+are properties of the **lead Explorer or Speculator filed**, not of the analysis.
+
+So the party a grade judges is the report's filer, and the party writing it is
+Analysis — the *consumer* of that report. Which is precisely what the charter's
+duty requires: *work is evaluated by its consumer, not its producer.*
+
+Measured on the run §146 cited: every report filed by `speculator-1`, every grade
+written by `analysis-1`. Independent, in every row, all along.
+
+### 2. The check that could not return false
+
+`compliance.self_evaluated` compared `grades.grader_identity` to
+**`analysis_results.producer_identity`** — and `agents/analysis.py` writes the
+analysis and the grade under one identity, in two consecutive statements. The two
+were equal *by construction*.
+
+So the check returned **every grade ever written**, could never return fewer, and
+reported a genuinely independent pipeline as a total violation of the duty it
+existed to protect.
+
+> **A tripwire that always fires carries exactly as much information as one that
+> never does.**
+
+This project has recorded the tripwire lesson four times (§105, §110, §116, §128,
+§134) and always in one form: *aimed where the risk used to be.* This is a form it
+had not seen — **aimed where the answer is a tautology.** Nothing decays into it;
+it was wrong on the day it was written, and it passed its own tests because those
+tests varied the analysis producer, which is the field that cannot vary.
+
+Worse than a useless check: `backend/charter.py` named it as the mechanism
+enforcing a duty. **The charter cited a check that could not fail**, which is the
+falsely-written charter that file exists to prevent, arriving inside it.
+
+Re-aimed at the report's producer, across both report tables — a judged report
+moves to the archive, and the question has to survive completion (§132's defect,
+in the place it was first found). It now returns nothing for the real pipeline and
+one finding for a genuinely self-graded report.
+
+### 3. The correction I introduced, and what it cost
+
+TQ-102 built `appeal` on the same misreading, and TQ-103 built behaviour on top of
+it. `rulings_about(identity)` returned grades joined through
+`analysis_results.producer_identity` — the agent that **wrote** the grade. So:
+
+- an agent was handed its own rulings about *other agents' work* as though they
+  were rulings about itself;
+- `contestable_by`'s first clause was always true, so the ground collapsed to
+  *"the grade was unfavourable"*, which is the reflexive appealing that ground was
+  written to avoid;
+- and §146's live demonstration — *analysis-1 read its record, appealed, the COO
+  staffed a peer, the peer overturned it* — **was a condition manufactured by the
+  defect.** The loop ran; it ran on a grievance that did not exist.
+
+That is §136's lesson inverted. §136 says a green run over a condition that never
+happened proves nothing; this was a green run over a condition **the code
+invented**, which is worse, because it looked like evidence.
+
+Corrected: the subject of a grade is the report's filer. `rulings_about(explorer-1)`
+now returns the grades on explorer-1's reports and `rulings_about(analysis-1)`
+returns nothing, which is right — Analysis is an author here, not a subject.
+
+And declared gap 1 said so all along: *a producing agent never learns how its own
+**report** was judged.* It named the correct party, and TQ-102 read past it.
+
+### 4. What is left of the grounds, honestly
+
+Two, both facts in the record, both correctly aimed:
+
+- **The grader filed the report it graded** — the duty's actual question. It does
+  not arise in the current pipeline, because Analysis does not file reports.
+- **The ruling carries no rationale.** `record_disposition` has refused one since
+  it was written; `record_grade` had **no validation at all** and accepted a null.
+  A graded party cannot answer a reason it was not given.
+
+`record_grade` now requires a rationale — the fix — so the second ground covers
+what is already on the record rather than what can still be written.
+
+**Neither ground currently fires**, and nothing files an appeal. That is the
+honest state of a right whose grounds are real and whose occasions do not
+presently arise, and it is strictly better than the previous state, in which the
+organization manufactured grievances against itself every cycle.
+
+Live confirmation, same 90-second baseline scenario §146 cited: **seven agents
+registered instead of eight, no appeal filed, no peer spawned**, 13/13 properties
+passing. The extra agent §146 celebrated was the defect.
+
+### 5. Where the reading now lives
+
+`read_own_record` moved from `agents/analysis.py` into `agents/base.py`, the loop
+every agent shares.
+
+The charter owes this to **agents**, and declared gap 1 is about **producing
+agents** — Explorer and Speculator, who file the reports that get graded.
+Discharging a protection about agents by wiring it into the one role that happened
+to look like it had rulings was the same generalisation error as the finding
+itself: reasoning from the only case in view.
+
+### 6. What this says about the method
+
+Two sections in a row now (§141, §144) found the honest thing already recorded and
+the prose around it stale. **This one is the opposite and it is the more
+dangerous:** a mechanism that was wrong, prose that described it confidently, and
+tests that confirmed it — because the tests exercised the same misreading.
+
+The check that would have caught it is the one this project already writes down
+and did not apply here: **§128's rule that a fixture able to construct only one
+answer measures the fixture.** `tests/test_compliance.py`'s helper varied
+`analysis_results.producer_identity`, the field that cannot differ from the
+grader, and never varied the one that can. A test over data does not test the rule
+that produced the data (§117) — and a test whose input cannot express the negative
+case cannot detect that the rule is a tautology.
+
+`test_the_real_pipeline_does_not_trip_the_check` is now pinned for exactly that:
+the shape the organization actually produces, which the shipped check would have
+failed.

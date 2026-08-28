@@ -472,42 +472,6 @@ def _resolve_answered_questions(conn, security: str, result: dict, analysis_resu
             )
 
 
-def _contest_own_rulings(conn, identity: str) -> int:
-    """Read what was found about this agent's own work, and act on it (TQ-103).
-
-    **The half of declared gap 1 that can be closed without a model.** Feedback
-    has always closed at the lens level - the COO reads grades and moves the lens
-    - so the organization learned and the individual agent did not. This is the
-    agent reading its own record.
-
-    Reading it changes nothing on its own, which is the trap §118 records: an
-    analyst that stopped asking sources how much they held made every complaint
-    disappear and passed its exercise, having detected nothing. So the reading has
-    to *appear in what the agent does*, and here it does - an appeal is filed, or
-    there was nothing contestable.
-
-    The ground is `appeal.contestable_by`'s and is deterministic: a grade this
-    agent wrote about its own work, declaring that work not worth the compute.
-    Not a judgement about whether the score was fair, which would need something
-    that reads text."""
-    filed = 0
-    for ruling in appeal.contestable_by(conn, identity):
-        try:
-            appeal.file_appeal(
-                conn, ruling_kind=ruling["kind"], ruling_id=ruling["id"],
-                appellant=identity, grounds=ruling["grounds"])
-        except appeal.AppealRefused as refusal:
-            # Never fatal. An agent that could not file an appeal has still got
-            # work to do, and a right whose exercise could stop the day's work
-            # would be one nobody dared use.
-            print(f"[analysis] could not contest {ruling['kind']} {ruling['id']}: {refusal}")
-            continue
-        filed += 1
-        print(f"[analysis] contested {ruling['kind']} {ruling['id']}: "
-              f"graded by its own producer and declared not worth the compute")
-    return filed
-
-
 def _hear_peer_appeals(conn, identity: str) -> int:
     """Hear appeals this agent is eligible for: a peer's, never its own.
 
@@ -554,11 +518,14 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     if reclaimed:
         print(f"[analysis] returned {reclaimed} abandoned report(s) to the queue")
 
-    # Before claiming work, and deliberately not conditional on there being any:
-    # an agent's own record is not something it reads only when it happens to be
-    # busy, and the early return below would otherwise skip both of these on
-    # every idle cycle - which is most of them.
-    _contest_own_rulings(conn, identity)
+    # Hearing a peer's appeal, and deliberately not conditional on there being
+    # work: the early return below would otherwise skip it on every idle cycle,
+    # which is most of them.
+    #
+    # Reading this agent's *own* record is not here - it is in `agents/base.py`,
+    # because it is owed to every agent. Analysis is the author of a grade, not
+    # its subject: a grade is a ruling about the upstream report, and the agent it
+    # judges is whoever filed that (§147).
     _hear_peer_appeals(conn, identity)
 
     report = fi_db.claim_next_report(conn, identity, spawned_at)

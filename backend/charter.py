@@ -202,11 +202,13 @@ DUTIES = (
         "work is evaluated by its consumer, not its producer",
         "An agent does not grade its own output. A grade written by the producer looks complete and "
         "carries no independent information, which is harder to notice than an absent one. "
-        "**Measured 2026-08-28 and violated by every grade this organization has produced** - "
-        "agents/analysis.py records the analysis and the grade under one identity, so the condition "
-        "this duty calls harder-to-notice-than-an-absence was universal, detected and unread for "
-        "months (SPEC_RECONCILIATION 146). It is now contested by the agent it affects and reviewed "
-        "by a peer; **it is not yet fixed**, and TQ-104 owns making a grade independent.",
+        "**Satisfied, and the check that said otherwise was broken** (SPEC_RECONCILIATION 147): a "
+        "grade is a ruling about the upstream report, and Analysis - its consumer - writes it. The "
+        "detector named below compared the grader to the analysis result's producer, which is the "
+        "same identity by construction, so it flagged every grade including correct ones and could "
+        "never return false. A charter naming a check that cannot fail is the falsely-written "
+        "charter this file exists to prevent, arriving inside it. Re-aimed at the report's "
+        "producer.",
         ("backend.compliance.self_evaluated", "backend.appeal.contestable_by"),
     ),
 )

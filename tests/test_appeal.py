@@ -38,7 +38,11 @@ def _register(conn, identity, role):
 
 
 def _graded(conn, *, producer=PRODUCER, grader=GRADER, score=0.2) -> int:
-    """A ruling: an analysis by `producer`, graded by `grader`.
+    """A ruling: a report filed by `producer`, graded by `grader`.
+
+    A grade judges the **upstream report**, so `producer` is the agent the ruling
+    is about (§147). Named `analysis-1` here only because the author must be a
+    peer of the same role for the eligibility tests below.
 
     Built through the production API rather than by inserting rows, on §128's
     rule - a fixture able to construct states the organization cannot reach

@@ -63,6 +63,38 @@ def complete_report(conn, report_id, graded=True, producer="speculator-1", outco
         )
 
 
+def report_with_grader(conn, report_id, filer, grader):
+    """A report and the grade written about it.
+
+    **The grade is of the upstream report** (`agents/analysis.py`: *"a grade of
+    the upstream report"*), so the party whose work was judged is whoever filed
+    it. This fixture used to vary the *analysis result's* producer, which is the
+    agent that writes the grade - so the two were equal by construction and the
+    check under test could never come back empty (§147)."""
+    conn.execute(
+        "INSERT INTO discovery_reports (id, created_at, producer_identity, "
+        "producer_spawned_at, report_type, security, status, schema_version) "
+        "VALUES (?, '2026-08-17T00:00:00+00:00', ?, '2026-08-17T00:00:00+00:00', "
+        "'lead', 'SYN1', 'pending', 1)",
+        (report_id, filer),
+    )
+    conn.execute(
+        "INSERT INTO analysis_results (id, created_at, producer_identity, producer_spawned_at, "
+        "report_id, security, thesis, evidence_summary, confidence, schema_version) "
+        "VALUES (?, '2026-08-17T00:00:00+00:00', 'analysis-1', '2026-08-17T00:00:00+00:00', ?, "
+        "'SYN1', 't', 'e', 0.5, 1)",
+        (report_id, report_id),
+    )
+    conn.execute(
+        "INSERT INTO grades (created_at, grader_identity, grader_spawned_at, report_id, "
+        "analysis_result_id, relevance_score, novelty_score, evidence_quality_score, "
+        "worth_the_compute, overall_score, rationale, schema_version) "
+        "VALUES ('2026-08-17T00:01:00+00:00', ?, '2026-08-17T00:00:00+00:00', ?, ?, "
+        "0.5, 0.5, 0.5, 1, 0.5, 'because', 1)",
+        (grader, report_id, report_id),
+    )
+
+
 def analysis_with_grader(conn, analysis_id, producer, grader):
     conn.execute(
         "INSERT INTO analysis_results (id, created_at, producer_identity, producer_spawned_at, "
@@ -148,16 +180,33 @@ def test_a_directive_with_no_observed_result_is_found(db):
 def test_work_graded_by_its_own_producer_is_found(db):
     """The subtle one. A grade exists and the record looks complete; what is
     missing is that the evaluation is independent."""
-    analysis_with_grader(db, 1, producer="analysis-1", grader="analysis-1")
+    report_with_grader(db, 1, filer="explorer-1", grader="explorer-1")
     findings = compliance.check(db)["self_evaluated"]
 
     assert len(findings) == 1
-    assert findings[0]["producer"] == findings[0]["grader"] == "analysis-1"
+    assert findings[0]["producer"] == findings[0]["grader"] == "explorer-1"
 
 
 def test_work_graded_by_someone_else_is_not_flagged(db):
-    """Otherwise every grade would be a finding and the check would say nothing."""
-    analysis_with_grader(db, 1, producer="analysis-1", grader="evaluator-1")
+    """Otherwise every grade would be a finding and the check would say nothing.
+
+    **This is what the check could not do until §147.** It compared the grader to
+    the *analysis result's* producer, and `agents/analysis.py` writes both under
+    one identity - so the comparison was true by construction, every grade came
+    back as a violation, and a genuinely independent pipeline was reported as a
+    total failure of the duty. A tripwire that always fires carries exactly as
+    much information as one that never does."""
+    report_with_grader(db, 1, filer="explorer-1", grader="analysis-1")
+    assert compliance.check(db)["self_evaluated"] == []
+
+
+def test_the_real_pipeline_does_not_trip_the_check(db):
+    """Written against the shape the organization actually produces: Explorer
+    files, Analysis grades. The version of this check that shipped for months
+    would have failed here, which is why the case is pinned rather than left to
+    the two tests above."""
+    for report_id, filer in ((1, "explorer-1"), (2, "speculator-1"), (3, "explorer-1")):
+        report_with_grader(db, report_id, filer=filer, grader="analysis-1")
     assert compliance.check(db)["self_evaluated"] == []
 
 

@@ -139,6 +139,42 @@ def note_governed_refusal(role: str, identity: str, refusal: Exception) -> None:
     print(f"[{role}:{identity}] not filed - an instrument in force was not satisfied: {refusal}")
 
 
+def read_own_record(conn, identity: str) -> int:
+    """What was found about this agent's own work, read by the agent itself.
+
+    The charter owes an agent knowledge of findings concerning its work, and the
+    organization model's declared gap 1 is that *a producing agent never learns
+    how its own report was judged.* Both are about **every** agent, so this lives
+    in the loop every agent shares rather than in the one role that happened to
+    have rulings - putting it in `agents/analysis.py` would have discharged a
+    protection about agents by serving one of them (§147).
+
+    Reading alone changes nothing, which is §118's trap. So this also files an
+    appeal where the **record alone** shows a ruling is contestable - the grader
+    filed the report it graded, or the ruling carries no reasoning. Whether a
+    grade is *wrong* is a judgement and stays out of it; an agent appealing every
+    low score would be appealing rather than disagreeing.
+
+    Both grounds are correctly aimed and neither currently fires (§147). That is
+    the honest state of a right whose occasions do not presently arise, and it is
+    why this is written to report what it found rather than to be seen filing."""
+    from backend import appeal
+
+    filed = 0
+    for ruling in appeal.contestable_by(conn, identity):
+        try:
+            appeal.file_appeal(conn, ruling_kind=ruling["kind"], ruling_id=ruling["id"],
+                               appellant=identity, grounds=ruling["grounds"])
+        except appeal.AppealRefused as refusal:
+            # Never fatal. A right whose exercise could stop the day's work is one
+            # nobody would dare use.
+            print(f"[{identity}] could not contest {ruling['kind']} {ruling['id']}: {refusal}")
+            continue
+        filed += 1
+        print(f"[{identity}] contested {ruling['kind']} {ruling['id']}: {ruling['grounds'][:90]}")
+    return filed
+
+
 def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
     """The shared run loop. `work_fn(conn)`, if given, is called once per
     cycle before the heartbeat/retire check - this is where a real agent's
@@ -182,6 +218,13 @@ def run_agent(identity: str, role: str, work_fn=None, db_path=None) -> None:
 
     try:
         while True:
+            # Before the role's own work and outside its try, because an agent's
+            # record is not something it reads only on the cycles its job succeeds.
+            try:
+                read_own_record(conn, identity)
+            except Exception as record_failure:  # noqa: BLE001
+                print(f"[{identity}] could not read its own record: {record_failure}")
+
             if work_fn is not None:
                 try:
                     work_fn(conn)

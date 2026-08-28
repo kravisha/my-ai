@@ -44,7 +44,7 @@ custodian:
 documents:
   - path: docs/JARVIS.md
     what: The living documentation
-    sha256: "7f40bf6f4e36dcce21ee3500543a78205f5e9cebc8771af47629095b7587783a"
+    sha256: "9f9d0ef7d91ea93bb1a08d96621057bd8460a97b735cf21d63e65b45c8f9494f"
 
   - path: docs/document_custody.yaml
     what: This manifest

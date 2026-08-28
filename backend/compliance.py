@@ -266,17 +266,42 @@ def self_evaluated(conn: Database, limit: int = 50) -> list[dict]:
     exists to prevent. Harder to spot than an absence, because the record looks
     complete.
 
-    Reads `analysis_results` against `grades`, which is where producer and grader
-    can currently coincide."""
-    if not (_table_exists(conn, "analysis_results") and _table_exists(conn, "grades")):
+    ## RE-AIMED at TQ-104, after it was found to be structurally always true
+
+    A grade is **of the upstream report** - `agents/analysis.py`'s own prompt says
+    so: *"produce both a client-facing analysis and a grade of the upstream
+    report in a single response."* Its scores are relevance, novelty, evidence
+    quality and worth-the-compute, which are properties of the lead Explorer or
+    Speculator filed.
+
+    This compared the grader to the **analysis result's** producer, and
+    `agents/analysis.py` writes the analysis and the grade under one identity. So
+    the two were equal *by construction*: the check returned every grade ever
+    written, could never return fewer, and reported a genuinely independent
+    grading pipeline as a total violation.
+
+    **A tripwire that always fires carries exactly as much information as one
+    that never does**, and this one was named in `backend/charter.py` as the
+    mechanism enforcing a duty - so the charter cited a check that could not
+    fail. §105's lesson, in a form this project had not seen: not aimed where the
+    risk *used* to be, but aimed where the answer is a tautology.
+
+    Now compares the grader to the producer of the **report** it graded, which is
+    the duty's actual question. Both report tables, because a judged report moves
+    to the archive and the question must survive completion (§132's defect, in
+    the place it was first found)."""
+    if not (_table_exists(conn, "grades") and _table_exists(conn, "discovery_reports")):
         return []
 
     rows = conn.fetchall(
-        "SELECT a.id AS item, a.producer_identity AS producer, g.grader_identity AS grader, "
-        "a.created_at AS completed_at FROM analysis_results a "
-        "JOIN grades g ON g.analysis_result_id = a.id "
-        "WHERE g.grader_identity = a.producer_identity "
-        "ORDER BY a.created_at LIMIT ?",
+        "SELECT g.report_id AS item, r.producer_identity AS producer,"
+        " g.grader_identity AS grader, g.created_at AS completed_at"
+        " FROM grades g JOIN ("
+        "   SELECT id, producer_identity FROM discovery_reports"
+        "   UNION ALL SELECT id, producer_identity FROM discovery_reports_completed"
+        " ) r ON r.id = g.report_id"
+        " WHERE g.grader_identity = r.producer_identity"
+        " ORDER BY g.created_at LIMIT ?",
         (limit,),
     )
     return [

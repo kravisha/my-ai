@@ -4407,6 +4407,22 @@ def record_grade(
     overall_score: float,
     rationale: str,
 ) -> int:
+    """A grade of the upstream report, by whoever consumed it.
+
+    **A rationale is required** (TQ-104), on `record_disposition`'s rule and for a
+    sharper reason: a grade is a ruling about somebody else's work, and the agent
+    it judges cannot evaluate - or appeal - a ruling that does not say why. This
+    function had no validation at all until a grade with no reasoning turned out
+    to be a legitimate ground for contesting one.
+
+    Refuses rather than defaulting. A grade stored with an empty rationale reads
+    as a complete record, which is the same trap the duty above it names."""
+    if not (rationale or "").strip():
+        raise ValueError(
+            "a grade must carry a rationale. A ruling about another agent's work that does not "
+            "say why cannot be evaluated by the agent it judges, and a record without one looks "
+            "complete (agent charter; SPEC_RECONCILIATION §147)."
+        )
     return conn.execute_returning_id(
         "INSERT INTO grades "
         "(created_at, grader_identity, grader_spawned_at, report_id, analysis_result_id, relevance_score, novelty_score, evidence_quality_score, worth_the_compute, overall_score, rationale, schema_version) "
