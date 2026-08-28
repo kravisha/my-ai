@@ -13423,6 +13423,13 @@ having repealed the other — which is the conservative reading, and is *not*
 assumed to be the right one. **Inferring canon from the build is the mistake §111
 records**, and inferring it from convenience would be worse.
 
+> **Answered the same day, §141: one document, and the premise was wrong.**
+> Addendum 49 is the Constitution v2.0 and supersedes `JARVIS_CONSTITUTION.md`.
+> More importantly, *"the owner is part of the system"* — so §120's **outside the
+> system entirely**, which this section reasoned from, was itself the
+> misunderstanding. The question above was the right one to ask and it was
+> narrower than the answer it got.
+
 ### 4. Conflict — persistent identity for every agent, against an architecture whose agents keep nothing
 
 `JARVIS.md` §4 states the current model plainly: the COO is the only agent with a
@@ -13571,3 +13578,145 @@ both lists references it.
 The Constitution question in §3 blocks none of these. It blocks
 `JARVIS_GAP_ANALYSIS.md`, which is measuring against a document that may have been
 superseded this morning.
+
+## §141 — Owner correction: one Constitution, and the owner is inside the system (2026-08-28)
+
+§140 §3 put a question to the owner: addendum 49 is titled *Philosophy &
+Constitution v2.0*, and does it supersede the privately-held
+`JARVIS_CONSTITUTION.md`? Answered the same day, and the answer corrects
+something larger than the question asked.
+
+> *"§120 settled that the Constitution is yours, held privately, never in this
+> system — that is a misunderstanding. The philosophy and constitution applies to
+> the system and the owner is part of the system. So this is all just one
+> document — we just keep the philosophy private and keep the rest public."*
+
+Three things are settled and one is reopened.
+
+### 1. One document, and addendum 49 is its current version
+
+Not two instruments at level 0. `JARVIS_CONSTITUTION.md` (2026-08-16) is version
+1; **addendum 49 is version 2.0 of the same document**, extended with
+Providence's purpose, the personal world, the Usher, and the Creator's role.
+
+Consequences that follow immediately rather than needing a decision:
+
+- `JARVIS_GAP_ANALYSIS.md` measures the build against *the Constitution*. That
+  target moved on 2026-08-28 and the scorecard has not been re-run against it.
+  **Recorded as stale rather than quietly left**: a gap analysis scoring against
+  v1 while v2 is in force reports a number about a document nobody is following.
+- §140 §3's *"until it is answered, both are treated as Level 0 and neither is
+  treated as having repealed the other"* is discharged. There is one.
+
+### 2. The owner is part of the system, and §120's framing was wrong
+
+This is the correction that matters, and it is not about a file.
+
+§120 wrote level 0 as *"the owner's. Outside the system entirely"*, and wrote the
+escalation path as ending *"outside the system, and no in-system actor can
+discharge it."* Both sentences put the owner beyond the thing being governed.
+
+The owner is **inside** it. The Constitution applies to the system, and the owner
+is part of the system, so the Constitution binds the owner too. A constitution
+its author is exempt from is not a constitution; it is a preference with a
+formal name.
+
+**And the code already knew.** `parliament.record_owner_decision` does not accept
+a decision from nowhere — it takes an `OwnerContext` built by
+`_require_superuser`, from a session subject and never from caller input, and it
+writes `decided_by = context.owner_id` into `owner_escalations`. The owner has an
+authenticated identity in this system, and their decisions are this system's
+records, stored in its own tables and reportable by its own Speaker.
+
+So §120's prose was the outlier and the implementation was right, which inverts
+the usual direction of this file's findings and is the reason this section is
+worth its length. **The check that would have caught it existed**: §111's rule
+says a specification agreeing with the implementation proves nothing about
+whether it agrees with the *specification*. Nobody ran the mirror image — prose
+that contradicts a working mechanism, where the mechanism is the better witness.
+
+`record_owner_decision`'s own docstring said *"arriving from outside the
+system"*, describing the function's behaviour incorrectly while implementing it
+correctly. Corrected in this increment.
+
+### 3. The public/private line runs through the material, not around the owner
+
+*"We just keep the philosophy private and keep the rest public."*
+
+That is `PUBLIC_PRIVATE_BOUNDARY.md`'s existing rule, applied to a document rather
+than to a comment: the **why** — organizational philosophy, strategic rationale —
+is private and referenced by identifier; the **what** and the **technical how**
+are public in full.
+
+So addendum 49 is held privately, like addenda 5, 11, 15 and 22. Addenda 50, 51
+and 52 — the Vision, the Agent Technical Specification and the Glossary — stay
+public, because they are what the system is and how it is built.
+
+**It was assimilated publicly first, and that is the incident this section
+records.** The intake rule is *assimilate supplied documents verbatim into
+`docs/addenda/`*, it was followed, and nothing in the process asked whether a
+document titled *Philosophy & Constitution* belonged in a public repository. It
+reached one local commit, `7172301`, which was never pushed; the commit was
+amended so the file is absent from every commit in this repository's history.
+
+The rule had been prose since 2026-08-16 with nothing enforcing it, and **a rule
+that is only prose gets followed until somebody is busy.**
+`tests/test_public_private_boundary.py` is the mechanism: a privately-held
+addendum in `docs/addenda/` fails the suite, as does a markdown link to a
+document that is not here — because a broken link reads as a broken repository
+rather than a deliberate boundary, and the next person fixes it by adding the
+file back.
+
+It is not a security control and does not claim to be. It catches the accident,
+which is what happened.
+
+### 4. What survives from §120, restated with the correct reason
+
+§120's *conclusion* about storage holds; its *argument* has to be rebuilt,
+because half of it was the premise now corrected.
+
+**The Constitution still does not go in `governed_items`,** and not because its
+author is external. Two reasons that stand on their own:
+
+- **A store that ranks cannot hold something unrankable.** At level 10 — the
+  honest slot for a document the organization did not author — a parliamentary
+  law at level 3 outranks it *by construction*. At level 0 inside the store, its
+  protection depends on ranking logic staying correct forever.
+- **A rule a vote can reach is not a rule** (§123). The amendment threshold for
+  the Articles is a constant in code for exactly this reason, and the same
+  argument applies one level up.
+
+The level-0 refusal is unchanged: a proposal declaring level 0 is refused in one
+shape — identical for unconstitutional, out of scope and cannot-be-determined, so
+the refusal is not a probe — and escalated. What changes is the description of
+where that escalation goes. It goes **to a participant of this system who holds
+an identity in it**, not into the void.
+
+What is now *available* and deliberately not built: the system could hold that
+the Constitution exists and binds, without holding its text. It effectively does
+— the level-0 refusal knows level 0 is there. Nothing more is added, because the
+next step is a table, and a table is the thing both arguments above forbid.
+
+### 5. Reopened, and not answered here
+
+**May the organization amend the Constitution?**
+
+§119 §6 raised it and named the stakes: addendum 32 §19 provides for
+constitutional amendments carried by the organization at supermajority, with
+§19.3 allowing *"new authority boundaries."* §120 answered *no* — and answered it
+from the premise that the Constitution is the owner's and outside the system.
+That premise is now corrected, so the answer does not survive its reasoning even
+if it survives on other grounds.
+
+**Scope is not amendment authority, and the two must not be run together.** That
+a document binds everyone does not imply everyone may change it; a constitution
+that binds its author is ordinary, and so is one only its author may amend. Both
+readings are consistent with *"the owner is part of the system."* Treating the
+first as settling the second would be §138's error — one word doing two jobs —
+in the place it would do the most damage.
+
+So it goes back to the owner as its own question rather than being inherited from
+a corrected section. **Until it is answered, nothing changes**: the amendment
+threshold stays a constant in code, level 0 stays refused and escalated, and no
+vote reaches it. That is the conservative position and it is held as a position,
+not as an assumption.

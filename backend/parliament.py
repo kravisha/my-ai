@@ -519,7 +519,15 @@ def outstanding_escalations(conn: Database) -> list[dict]:
 def record_owner_decision(
     conn: Database, escalation_id: int, *, owner, record_reference: str
 ) -> None:
-    """The owner's answer, arriving from outside the system.
+    """The owner's answer, recorded as this system's own.
+
+    **Not "arriving from outside the system"**, which is what this docstring said
+    until §141 and which the function has never done. The owner is part of the
+    system (owner correction, 2026-08-28): `_require_superuser` authenticates
+    them from a session subject, `decided_by` records which owner, and the row
+    lives in the organization's own table where its Speaker can report it. The
+    prose described the behaviour incorrectly while the code implemented it
+    correctly - §120's framing leaking into a function that never shared it.
 
     `record_reference` is required for the reason `register.set_status` requires
     one on a completed entry: the pointer *is* the verification. An escalation

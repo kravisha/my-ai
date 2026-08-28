@@ -1,4 +1,4 @@
-# Handoff — checkpoint 2026-08-28
+# Handoff — checkpoint 2026-08-28 (Providence)
 
 Written for a session with no memory of the conversation that produced this
 state. **Rewritten at each checkpoint, not appended to.**
@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 138 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 141 sections, newest last. |
 
 ## Run these first
 
@@ -26,12 +26,24 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2724 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2781 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
 
 ## Where the project stands
+
+**The system was re-scoped on 2026-08-28.** Project Providence (addenda 49–52,
+reconciled at §140) makes the product *a personal AI world* — one person, one
+world, entered through a device-independent portal, hosted by a Personal Usher,
+served by ~15 personal agents and informed by an AI newsroom. **The financial
+intelligence work everything here was built for becomes the Personal Portfolio
+Manager, one agent among them.**
+
+That changes what comes next. Market data (TQ-75) and the broker connection are
+no longer the head of the queue; agent identity, client binding, the agent and
+trainer libraries, the Usher and the Reporter are. Both Providence documents give
+the same ordered priority and TQ-97 built the first item.
 
 **The governance stack is complete and verified end to end.** Parliament carries
 resolutions, the governed store holds instruments under a precedence rule, agents
@@ -44,16 +56,34 @@ architecture lacks.
 PYTHONPATH=. .venv/Scripts/python.exe -m simulation verify
 ```
 
-Ten scenarios and the curriculum, one verdict. **Last run: PASS** (2026-08-28),
-and it was the first that exercised every mechanism rather than passing over some
-of them. It prints what it cannot see with every verdict — read that list before
-trusting the green.
+Eleven scenarios and the curriculum, one verdict. It prints what it cannot see
+with every verdict — read that list before trusting the green. `verify` has not
+been re-run since `release_and_rollback` was added; the scenario itself passes
+14/14 live.
 
 **The product side has not moved since TQ-80.** The system cannot price anything,
-has no broker connection, and has never served a client. That is a consequence of
-the track the owner chose deliberately, not a defect.
+has no broker connection, and has never served a client. Under Providence that is
+no longer the critical path, but it is still true and still worth stating.
 
 ## What this session did
+
+Three commits on top of `c80ac29`:
+
+- **TQ-96 — release and rollback** (§139). The question first: *what is a release
+  when the governed layer already changes behaviour without one?* A named set of
+  governed changes that stand or fall together, whose way back is authorized
+  before the way forward is taken. The **code** half is declined, not deferred —
+  this organization observes its code version and may not choose it.
+- **Providence assimilated and reconciled** (addenda 49–52, §140). Six conflicts,
+  two against constraints bought with a defect.
+- **TQ-97 — persistent agent identity** (§140 §4). The durable identity here *was*
+  the display name, which addendum 51 §3 forbids in terms.
+- **§141 — owner correction.** The Constitution is one document, addendum 49 is
+  its v2.0, and **it applies to the system with the owner inside it**. §120's
+  *outside the system entirely* was a misunderstanding. Addendum 49 is now held
+  privately, enforced rather than asked.
+
+### The previous session, for context
 
 Sixteen commits, `e48fd64` through `855f89a`. In order of what they built:
 
@@ -78,6 +108,12 @@ Every one is recorded at `SPEC_RECONCILIATION.md` §117–§138.
    working database: no Articles are in force, so there is no electorate and no
    arithmetic. Level 0's to write (§120). An offer to draft a candidate text and
    roll for approval or rejection stands and has not been taken up.
+1a. **Answer whether the organization may amend the Constitution** (§141 §5).
+   Addendum 32 §19 provides for it at supermajority; §120 said no from a premise
+   §141 corrected, so the answer needs re-deriving rather than inheriting. Until
+   then nothing changes.
+1b. **Re-run `JARVIS_GAP_ANALYSIS.md` against Constitution v2.0**, or say it is
+   retired. It currently scores against v1 (§141 §1).
 2. **Unhold market data.** TQ-75 was held pending *"all simulation issues dealt
    with first"*; that condition is met. It needs a provider choice and a cost.
 3. **Signed commits** (TQ-85), which would make document custody prevent rather
@@ -88,11 +124,23 @@ Every one is recorded at `SPEC_RECONCILIATION.md` §117–§138.
 - **No reviewer role.** The Software Engineer never approves its own proposal
   (46 §11), and nothing else in the organization can approve one, so proposals
   wait for a person. Deliberate — see §137.
-- **No release, no rollback** (TQ-96). Evolution's contribution has nothing to
-  plan without them, which is why §138 declined the relay.
-- **The repository is public** (`github.com/kravisha/my-ai`). Raised in
-  `DOCUMENTATION_RECONCILIATION_PLAN.md` §0 on 2026-08-16, never answered. The
-  Constitution and addenda 5, 11, 15, 22 are held privately.
+- **Release and rollback exist for governed data** (TQ-96, §139) and are declined
+  for code, because this organization observes its code version and may not
+  choose it. Evolution's relay (§138) is unblocked.
+- **Project Providence re-scopes the system** (addenda 49–52, §140). Financial
+  intelligence becomes one personal agent among fifteen. TQ-97 built persistent
+  agent identity; TQ-98 (the client profile, and the watchlist boundary §140 §5
+  draws) is next and its guard comes before its table.
+- **Two questions are with the owner**: whether the organization may amend the
+  Constitution (§141 §5), and what refuses a persona that crosses the line
+  (TQ-100). `JARVIS_GAP_ANALYSIS.md` is stale until re-run against v2.0.
+- **The repository is public** (`github.com/kravisha/my-ai`), and on 2026-08-28
+  that cost something: addendum 49 — the Constitution — was assimilated into
+  `docs/addenda/` by the ordinary intake rule, reached one local commit, and was
+  removed from history before any push (§141 §3). The boundary had been prose
+  since 2026-08-16 with nothing enforcing it. It is now
+  `tests/test_public_private_boundary.py`. **Nothing was pushed; nothing leaked.**
+  The Constitution and addenda 5, 11, 15, 22 are held privately.
 - **`MODEL_BUDGET_DAILY_TOKENS=1500000`** is set in `.env` (gitignored) on the
   owner's authority. The guard still exists; do not remove it.
 
@@ -102,9 +150,13 @@ These have each been bought with a defect. `SPEC_RECONCILIATION.md` has the stor
 
 1. **Client portfolios are never stored** (§111). No table exists; an import
    tripwire fails the suite if a storage module returns.
-2. **The Constitution is the owner's and is not in this system** (§120). It is
+2. **The Constitution is not in any store** (§120, corrected by §141). It is
    enforced by tests that fail, never by data that ranks — a store that ranks
-   cannot hold something unrankable.
+   cannot hold something unrankable, and a rule a vote can reach is not a rule.
+   **It is not "the owner's, outside the system": it applies to the whole system
+   and the owner is part of the system.** One document — addendum 49 is v2.0 of
+   the one whose v1 was `JARVIS_CONSTITUTION.md` — and it is **held privately**,
+   which `tests/test_public_private_boundary.py` now enforces rather than asks.
 3. **The Articles' amendment threshold is a constant in code**, not a clause in
    the Articles (§123). A rule a vote can reach is not a rule.
 4. **Absence is `unknown`, never a plausible default** (§100, §104, §118, §132).
@@ -133,21 +185,26 @@ after the code looked right:
 
 ## What the next session should do first
 
-**TQ-96 — release and rollback.** It was queued at §138 as the thing that unblocks
-Evolution's contribution, and it is the largest item `simulation verify` lists
-among what it cannot see.
+**TQ-98 — the client profile, and the boundary a watchlist sits on.** Every
+Providence agent is personal and binds to a `client_id`, so this gates everything
+after it.
 
-Its first question is not how to build one but **what a release even is here**,
-given that the governed layer already changes behaviour without one. Rolling back
-an instrument is a supersession the store already supports; rolling back *code*
-is a different problem, and conflating them would be §138's mistake in the other
-direction. §119 §5 already set the constraint: addendum 30 §13 says this system
-*"is not a single monolithic object that must be serialized and restarted"*, so a
-release must not be built as a restart script.
+**Its guard comes before its table, and that ordering is the whole entry.** §111
+forbids storing client data and a tripwire enforces it. §140 §5 draws the line: a
+profile is what the client *told* the system; a portfolio is what the client
+*owns*; and a **watchlist is the line** — symbols the client typed are a
+preference, symbols derived from a fetched portfolio are a portfolio wearing a
+preference's name, and the two are indistinguishable in the data. Re-aim the
+tripwire first (§105 — re-aimed, never deleted). Building the table first and
+re-aiming afterwards is how a constraint erodes.
 
-Smaller alternatives if that is too large to start: **TQ-92** (read the
-cooperation the organization already records — the only actionable part of
-addendum 48) or **TQ-28** (a real known defect: the database-isolation guard trips
+Then **TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left
+two notions of "the durable agent" for one increment) and **TQ-100** (*what
+refuses a persona that crosses the line — a function or a paragraph?*, which comes
+before any persona code).
+
+Smaller alternatives: **TQ-92** (read the cooperation the organization already
+records) or **TQ-28** (a real known defect: the database-isolation guard trips
 after a backend has run).
 
 ## Working rhythm

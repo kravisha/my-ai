@@ -240,6 +240,9 @@ def test_the_number_of_addenda_it_states_is_the_number_on_disk():
     words = {41: "Forty-one", 42: "Forty-two", 43: "Forty-three", 44: "Forty-four",
              45: "Forty-five", 46: "Forty-six", 47: "Forty-seven", 48: "Forty-eight",
              49: "Forty-nine", 50: "Fifty", 51: "Fifty-one", 52: "Fifty-two"}
+    # Counts what is ON DISK. Privately-held addenda are not, by design
+    # (tests/test_public_private_boundary.py), so this number is smaller than the
+    # highest addendum number and that is correct rather than a gap.
     count = len(list((DOCS / "addenda").glob("*.md")))
     assert words.get(count, "?") + " supplied specifications" in TEXT, (
         f"{count} addenda on disk; the living document says otherwise"

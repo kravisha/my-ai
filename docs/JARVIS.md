@@ -23,7 +23,7 @@ exist and none of them replaces this one:
 |---|---|---|
 | **This document** | The current truth. What exists, what it does, what state it is in. | Always first. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | The change record. Numbered sections, append-only, in the order decisions were made. Every `§` reference in this document points there. | When you need *why*, or what was believed before. |
-| [`addenda/`](addenda/) | Provenance. Forty-seven supplied specifications, kept unedited. | When you need the owner's exact words. |
+| [`addenda/`](addenda/) | Provenance. Forty-six supplied specifications, kept unedited. **Five more are held privately** and named without links (the Constitution — addendum 49 — and addenda 5, 11, 15, 22). | When you need the owner's exact words. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
 | [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped, and what to do first. Nothing else — it points here rather than repeating this. | Starting a session. |
@@ -130,11 +130,16 @@ Three things follow that are not yet built and are now the direction:
   from thinking aloud before answering (51 §16, and 49 §11 on patience). Nothing like it
   exists here.
 
-**Two conflicts are recorded rather than resolved.** Addendum 49 is titled
-*Philosophy & Constitution v2.0*, and whether it supersedes the owner's
-`JARVIS_CONSTITUTION.md` is not this document's to decide — it is with the owner
-(§140 §3), and until it is answered `JARVIS_GAP_ANALYSIS.md` may be scoring
-against a superseded authority. And addendum 51's persistent client profiles meet
+**One conflict was resolved by the owner the same day, and it corrected more
+than it settled (§141).** Addendum 49 *is* the Constitution — v2.0 of one
+document whose v1 was `JARVIS_CONSTITUTION.md` — it **applies to the system with
+the owner inside it**, and it is held privately while the Vision, the Technical
+Specification and the Glossary stay public. Two things follow:
+`JARVIS_GAP_ANALYSIS.md` is **stale**, because the document it scores against
+moved; and whether the organization may amend the Constitution is **reopened**,
+because §120 answered it from the premise now corrected (§141 §5).
+
+And addendum 51's persistent client profiles meet
 §111's rule that client data is not stored; §140 §5 draws the boundary — **a
 profile is what the client told the system, a portfolio is what the client owns**
 — and a watchlist is stored only as something the client typed, never as
@@ -162,7 +167,7 @@ eventually maintains itself without the external developer who built it.
 | Name | Means | Not to be confused with |
 |---|---|---|
 | **Jarvis** | The organization. The name used by every recent specification. | *My AI* / *MyAI* — the earlier name, still in the repository name and older addenda. Same system. |
-| **The Constitution** | `JARVIS_CONSTITUTION.md`. The owner's document, held privately, never in this repository or any database (§120). | Anything the organization can amend. |
+| **The Constitution** | Addendum 49, *Providence: Philosophy & Constitution* v2.0 — **held privately**, never in this repository or any database (§120, §141). `JARVIS_CONSTITUTION.md` was its v1; they are one document, not two. | Anything the organization can amend — though whether *anything* may amend this is reopened at §141 §5. |
 | **The Scripture** | [Addendum 48](addenda/addendum_48_scripture_of_shared_success.md), *Shared Success*. How agents should be, rather than what the system should do. **Level 0, like the Constitution** — a document defining an authority cannot be amended by those it governs (§131). | The Articles, which the organization amends by vote. |
 | **Providence** | The mission and the product: one person, one personal world (addenda 49–52). The thing Jarvis is being built to realize. | *Jarvis*, which is the system, not the mission. |
 | **The Articles** | The organization's own highest instrument — what a supermajority may amend under addendum 32 §19, and what addendum 46 §4.1 places at the top of the governed store. | The **Charter**, which in this codebase already means [the agent charter](../backend/charter.py): what an agent is owed and which mechanism owes it. |
@@ -225,7 +230,8 @@ what exists, so it is written with the gap visible.
 ### The hierarchy
 
 ```
-   0.  The Constitution              the owner's. Outside the system entirely.
+   0.  The Constitution              applies to the whole system, the owner
+                                     included. Held privately; not in any store.
    ═══════════════════════════════   nothing below may amend anything above
    1.  The Articles                  amendable at supermajority (addendum 32 §19)
    2.  Amendments to the Articles
@@ -241,7 +247,7 @@ what exists, so it is written with the gap visible.
   12.  Suggestions and unapproved proposals
 ```
 
-Levels 1–12 are addendum 46 §5. Level 0 and the line beneath it are §120.
+Levels 1–12 are addendum 46 §5. Level 0 and the line beneath it are §120, as corrected by §141: the Constitution is **one document** — addendum 49 is its v2.0 — and it **applies to the system, with the owner inside it**. §120's *outside the system entirely* was a misunderstanding.
 
 **Lower-level material may not silently override higher-level material.** The
 word doing the work is *silently*: a conflict is meant to be detected and
@@ -249,8 +255,10 @@ escalated, not resolved by whoever read it last.
 
 ### Why the Constitution is not stored anywhere
 
-The intuitive design — keep it in the governed store, mark it unwritable — fails
-in both available forms:
+**Not because its author is external — the owner is part of the system (§141).**
+The reason is the store, and it stands without that premise. The intuitive design
+— keep it in the governed store, mark it unwritable — fails in both available
+forms:
 
 - At level 0 inside the store, its protection depends on ranking logic staying
   correct forever.
@@ -258,16 +266,20 @@ in both available forms:
   parliamentary law at level 3 **outranks it by construction**. The organization
   could legislate against a constitutional principle without amending anything.
 
-**A store that ranks cannot hold something unrankable.** So constitutional
-constraints take the form this project already uses for everything
+**A store that ranks cannot hold something unrankable**, and **a rule a vote can
+reach is not a rule** (§123). Either argument is sufficient on its own. So
+constitutional constraints take the form this project already uses for everything
 non-negotiable: a test that fails. No unanimous vote turns a red suite green.
 Level 0 is defined by its absence — no table, no protected row, no admin route
 (§120).
 
 A proposal that would touch level 0 is refused in one shape — the same refusal
 for unconstitutional, out of scope, and cannot-be-determined, so the refusal is
-not a probe — and escalated to the owner. That escalation ends outside the
-system, and no in-system actor can discharge it.
+not a probe — and escalated to the owner. **That escalation goes to a participant
+of this system who holds an identity in it**, not out of the system: the owner
+authenticates through `_require_superuser`, and `record_owner_decision` writes
+which owner decided into the organization's own table. No *agent* can discharge
+it, which is the property that matters and is what §120 meant to say.
 
 ### What exists today
 
@@ -955,7 +967,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,778 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,781 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -1019,6 +1031,12 @@ until somebody declares it deliberately.
 
 5. **Where the living documentation and operational detail should live**, given a
    public repository (section 9).
+5b. **May the organization amend the Constitution?** Addendum 32 §19 provides
+   for it at supermajority; §120 said no, from a premise §141 corrected. Scope is
+   not amendment authority and the two must not be run together, so it goes back
+   as its own question. Until answered nothing changes.
+5c. **`JARVIS_GAP_ANALYSIS.md` is stale.** It scores the build against the
+   Constitution, and the Constitution became v2.0 on 2026-08-28 (§141 §1).
 5a. **What the genesis Articles should say, and who is on the roll.** The
    machinery is built and waiting; the first text is level 0's to write (§120,
    §123). Nothing in the system can vote itself an instrument.
