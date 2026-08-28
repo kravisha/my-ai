@@ -23,39 +23,29 @@ holds the queue, not the record.
 
 ## Queue, in priority order
 
-> **Owner-directed head of the queue** (2026-08-25, `SPEC_RECONCILIATION.md` §60): **both head
-> items are now DONE** — TQ-14 (forward leg §61, event-stepped timeline §63) and TQ-15
-> (market-implied validation §62). **Every entry the 34–37 assimilation generated is now
-> DONE** (TQ-14 §61/§63, TQ-15 §62, TQ-16 §64, TQ-17 §65, TQ-18 §66). The one remaining
-> **Current focus: the live studio** (addenda 41–43, assimilated 2026-08-25, §85) — **TQ-33**,
-> the visual redesign, because addendum 41 makes the look a requirement and the console as built
-> is the terminal it forbids — **done 2026-08-25** (§86), as are **TQ-38** (the dormancy gate
-> that did not hold, §87) and **TQ-35** (Kumbhakarnan as persisted identity, §88).
+> **Checkpoint 2026-08-28.** The governance stack is complete and verified end to end:
+> Parliament (TQ-81), the governed knowledge layer (TQ-82), agents that read what binds them
+> (TQ-86, TQ-87), refusals that are counted (TQ-90), and a Software Engineering Department
+> that turns an authorized directive into governed data or names the capability the
+> architecture lacks (TQ-83). `python -m simulation verify` runs ten scenarios and the
+> curriculum for one verdict; the last run was **PASS**, and it was the first that exercised
+> every mechanism rather than passing over some of them.
 >
-> **TQ-36** (the migration pipeline and the escape hatches, §89) is done too.
+> **Recommended next: TQ-96**, release and rollback. Queued at §138 as the thing Evolution's
+> contribution has nothing to plan without, and the largest item the verifier lists among what
+> it cannot see. Its first question is what a release *is* here, given the governed layer
+> already changes behaviour without one.
 >
-> **TQ-37** (the briefing and its choreography, §90) is done, which closes every entry the
-> 41–43 assimilation generated except the deferred animated figure.
+> **Waiting on the owner, and blocking nothing else:** the genesis Articles (§120 — Parliament
+> governs nothing until they exist), unholding TQ-75 (the condition set for it is now met), and
+> signed commits (TQ-85).
 >
-> **TQ-34** (the role-based Gateway, §92) is done, and with it every entry the 40–43 lineage
-> generated except the deferred animated figure.
+> **The product side has not moved since TQ-80** — no prices, no broker, no client. A deliberate
+> consequence of the chosen track rather than a defect, and the shape of the balance if it is
+> ever weighed again.
 >
-> **TQ-39** (the client agent, and the conversation leak it uncovered, §93) is done.
->
-> **TQ-41** (the clock-comparison sweep, §94) is done — one more bug found, and the rule
-> that came out of it is not the one three fixes in a row suggested.
->
-> **TQ-40** (the client agent's skills, §95) is done — the mechanism, the scope field the
-> mechanism was missing, and two skills declared-and-unbuilt with reasons the agent gives
-> aloud. Both remain genuinely blocked on data, not on effort.
->
-> **TQ-42** (client-owned holdings, §96) is done, which built the first real client skill.
->
-> **Current focus (checkpoint 2026-08-26): TQ-69**, moving the portfolio subsystem behind the
-> backend. Specified, unblocked, and it **blocks TQ-46**.
->
-> This block states the *present*. The increment-by-increment narration it used to carry is in
-> `SPEC_RECONCILIATION.md` §99–§109, which is where history belongs.
+> This block states the *present*. The increment-by-increment narration is in
+> `SPEC_RECONCILIATION.md`, newest section last, which is where history belongs.
 >
 > **Addendum 44 (portfolio subsystem, §97).** TQ-44 done (§99) — every portfolio has an explicit
 > owner, `resolve()` is the only way to one, and the §15.5 regression is permanent. TQ-45 done —

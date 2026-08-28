@@ -26,6 +26,7 @@ exist and none of them replaces this one:
 | [`addenda/`](addenda/) | Provenance. Forty-three supplied specifications, kept unedited. | When you need the owner's exact words. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
+| [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped, and what to do first. Nothing else — it points here rather than repeating this. | Starting a session. |
 
 **Two rules about how these relate.**
 

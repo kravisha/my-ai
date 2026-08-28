@@ -29,7 +29,7 @@ in this order. They are maintained for exactly this purpose.
 | Read | For |
 |---|---|
 | [`JARVIS.md`](JARVIS.md) | **The map. Read this first.** What the system is, how it is organized, the state of every major component, and the known gaps. |
-| [`HANDOFF.md`](HANDOFF.md) | **Stale as of 2026-08-27** and carrying a notice saying so; kept until the next session change on owner direction. Historical. |
+| [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped and what to do first. Deliberately thin — it points at `JARVIS.md` rather than repeating it. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | The prioritised work queue. Its head block says what is next and why. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Newest `§` sections at the end. Every increment records what was built, what was decided, and what was found by running it. |
 | [`specs/`](specs/) | Implementation specifications for queued-but-unbuilt work, detailed enough to build from without further design. |
