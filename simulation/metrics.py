@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend import fi_db, strategy
+from backend import fi_db, status_events, strategy
 
 FAMILIES = (
     "pipeline", "queue", "cross_check", "population", "intelligence", "resource", "incidents",
@@ -85,7 +85,7 @@ def collect_from(conn, since: str | None = None) -> dict:
         "pipeline": _pipeline(conn, since),
         "queue": _queue(conn, since),
         "cross_check": _cross_check(conn, since),
-        "population": _population(conn, since),
+        "population": {**_population(conn, since), **_slow_episodes(conn, since)},
         "intelligence": _intelligence(conn),
         "resource": _resource(conn, since),
         "incidents": _incidents(conn, since),
@@ -164,6 +164,32 @@ def _governance(conn, since: str | None = None) -> dict:
         # this number looks exactly like a quiet market.
         "refusals": refused[0]["n"] if refused else 0,
         "refusals_by_instrument": {row["instrument_id"]: row["n"] for row in refusing},
+    }
+
+
+def _slow_episodes(conn, since: str | None = None) -> dict:
+    """Agents reported alive-but-not-advancing, and reported advancing again.
+
+    Counted from `status_events` because that is where COO says it (§134), and
+    exposed as a metric because **a scenario cannot assert on a condition it
+    cannot see**. The first fully green verification passed `no agent was
+    respawned` without the condition ever arising (§135), which is consistent
+    with the fix working and with nothing having happened.
+
+    These two numbers are what tell those apart."""
+    reported = _scoped_rows(
+        conn,
+        "SELECT COUNT(*) AS n FROM status_events WHERE event_type = 'agent_slow'"
+        " AND severity = ? AND {bound}", "timestamp", since,
+        (status_events.SEVERITY_WARNING,))
+    recovered = _scoped_rows(
+        conn,
+        "SELECT COUNT(*) AS n FROM status_events WHERE event_type = 'agent_slow'"
+        " AND severity = ? AND {bound}", "timestamp", since,
+        (status_events.SEVERITY_INFO,))
+    return {
+        "slow_reported": reported[0]["n"] if reported else 0,
+        "slow_recovered": recovered[0]["n"] if recovered else 0,
     }
 
 

@@ -1312,7 +1312,21 @@ correct state for a suite to be in.**
 
 ### TQ-94 — A fault that makes an agent slow rather than dead
 
-**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §134, §135 · addendum 29 §15**
+**NEED (YELLOW) · DONE 2026-08-28 (`SPEC_RECONCILIATION.md` §136) · addendum 29 §15**
+
+`slow_agent.yaml` stalls one model call for ninety seconds through `SlowProvider`, a decorator in
+the same shape as `BudgetedProvider`. Live: COO reported *"analysis-1 is alive and its work has not
+advanced for 45s. Not a crash and not being replaced"*, then *"advancing again"* sixty-eight seconds
+later, with **zero incidents and zero respawns**. Before TQ-93 that exact stall opened an incident
+and replaced the agent.
+
+Injected at the model call rather than at the process, because SIGSTOP would stop the liveness
+thread too and test the mechanism backwards. Outside the budget wrapper, so a stalled call costs
+what a slow real one would.
+
+`population.slow_reported` and `slow_recovered` are new metrics, because **a scenario cannot assert
+on a condition it cannot see** — which is what made §135's green silent about the thing it was built
+to check.
 
 `simulation/faults.py` can `kill`, `stop` and `lock_database`. **All three produce a dead agent**,
 and the condition this organization has actually been getting wrong is a *live* one: an agent inside

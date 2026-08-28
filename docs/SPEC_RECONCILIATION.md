@@ -12787,3 +12787,104 @@ condition this organization has actually been getting wrong.
 
 Until that exists, the verification's green is honest about everything it ran and
 silent about the thing it was built to check.
+
+## §136 — The condition, produced on demand (2026-08-28, TQ-94)
+
+§135 closed with a green verification and an honest gap: the liveness split had
+never been exercised, because nothing happened to be slow that day. *A green run
+over a condition that never happened is not evidence about the condition.*
+
+The condition is now producible, and the evidence is in.
+
+### 1. What the run shows
+
+`slow_agent`, 240 seconds, one model call stalled for ninety:
+
+```
+00:27:43  WARNING  analysis-1 is alive and its work has not advanced for 45s.
+                   Not a crash and not being replaced.
+00:28:51  INFO     analysis-1 is advancing again.
+
+0 incidents            7/7 properties
+population 7 registered, 0 respawns, 0 still running, 0 failed directives
+pipeline   10 reports, 4 analyses, 4 grades
+```
+
+**Before TQ-93 this exact stall opened an incident and respawned the agent.** §133
+recorded it happening: *"heartbeat stopped advancing past the 45.0s threshold"*,
+followed by a replacement and then `action: heartbeat resumed (1.0s old)`.
+
+Now it produces a warning, a recovery, and no incident at all. That is the
+end-to-end claim §135 could not make.
+
+### 2. Where the fault had to go, and where it must not
+
+The stall is injected at the model call — `SlowProvider`, a decorator in the same
+shape as `BudgetedProvider`, applied only when a scenario configures it.
+
+**Not by pausing the process.** SIGSTOP would stop the liveness thread too and
+produce a dead-*looking* agent, which is the opposite of the condition and would
+have tested the mechanism backwards. The slowness that caused the defect
+originates at the model call, so that is where a faithful reproduction has to
+originate.
+
+Outside the budget wrapper, deliberately: a stalled call still counts against
+spend exactly as a slow real one would. Inside would make the fault invisible to
+the ledger and the run cheaper than the thing it simulates.
+
+**The first N calls, not every call.** A provider that stalled forever would
+starve the pipeline and fail every property about work getting done — and a run
+in which everything goes red proves nothing about which mechanism broke. Stalling
+once produces exactly one episode: quiet, noticed, recovered.
+
+### 3. A seam in production code, said out loud
+
+`simulation/faults.py`'s three actions — kill, stop, lock the database — need no
+seam because they act from outside. This one is internal, so it needs one, and a
+fault hook living in `app/model_gateway.py` is a real cost.
+
+It is paid down where it can be: inert unless configured, and **refusing a value
+it cannot read** rather than falling back to no delay. A typo in a scenario's
+config would otherwise produce a run that looked like it exercised the fault and
+did not — which is this entry's own failure mode, arriving through its own front
+door.
+
+### 4. The scenario asserts the condition, not only the absence of the symptom
+
+Two properties that stop it being another vacuous green:
+
+- `no agent was respawned` — the thing that used to fail;
+- `an agent was reported slow` **and** `and was reported advancing again` — that
+  it could have.
+
+Without the second pair, this run passes in a world where nothing was ever slow,
+which is precisely what §135 found. `population.slow_reported` and
+`slow_recovered` are new metrics read from what COO actually said, because **a
+scenario cannot assert on a condition it cannot see.**
+
+And `work still got done` guards the other direction: if the fault starves the
+pipeline rather than delaying one call, everything above would be measuring an
+idle organization.
+
+### 5. The surviving mutation was the wiring again
+
+9/10 on the first round. The miss: disabling the branch that applies
+`SlowProvider` changed nothing, because the only test looking at it read the
+*source*, and the source still mentioned the class inside the dead branch.
+
+**A seam asserted by reading code is not a seam that runs.** §132 found it
+(a test that constructs its own input never tests the code that constructs the
+input), §134 found it (a function tested in isolation is not a function that
+runs), and this is the third. The pattern is now consistent enough to be worth
+stating as a rule: **whenever a test reaches for `inspect.getsource`, ask what
+would still pass if the code were there and never executed.**
+
+10/10 after two tests that build the provider and check what came back.
+
+### 6. What is now true
+
+The organization can be shown, on demand, to distinguish an agent that is dying
+from an agent that is merely slow — and to say so, and to leave it alone.
+
+Suite **2700 passing**. `slow_agent` joins the nine scenarios `simulation verify`
+runs, which makes the next full verification the first one that exercises this.

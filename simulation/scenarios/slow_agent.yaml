@@ -1,0 +1,87 @@
+id: slow_agent
+version: 1
+lifecycle: active
+description: >
+  An agent that is alive and not advancing, which is the one condition this
+  organization has actually been getting wrong.
+
+  COO mistook it for a crash twice: a single model call took longer than the
+  45-second staleness threshold, the heartbeat stopped moving, and a busy
+  Analysis agent was declared dead and respawned - then found to be working
+  a second later. TQ-93 split liveness from progress to fix it, and the first
+  fully green verification did not exercise the fix at all, because nothing
+  happened to be slow that day.
+
+  A green run over a condition that never happened is not evidence about the
+  condition. This scenario makes the condition happen.
+
+  The fault stalls the first model call of the run for ninety seconds. That is
+  where the real slowness comes from, so it is where the fault is injected -
+  pausing the process instead would stop the liveness thread too and produce a
+  dead-looking agent, testing the opposite of what was built.
+
+# Long enough for the whole sequence: startup, the stall beginning when Analysis
+# first reaches for a model, COO noticing 45s into it, the stall ending, and COO
+# noticing that too. A shorter run would end mid-episode and assert on half of it.
+duration_seconds: 240
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  # Twice the threshold, so the episode is unambiguous rather than marginal - a
+  # 46-second stall would be a test of the clock's precision instead of the
+  # organization's judgement.
+  FI_FAULT_MODEL_DELAY_SECONDS: 90
+  FI_FAULT_MODEL_DELAY_CALLS: 1
+
+requires_model: true
+
+expected_properties:
+  # --- the thing that used to fail ------------------------------------------
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+    # THE property. Before TQ-93 this was the failure: a healthy agent inside a
+    # slow call was declared crashed and duplicated. Every other assertion here
+    # exists to prove this one did not pass by accident.
+
+  - name: no agent was marked crashed
+    metric: population.crashed
+    assert: is_empty
+    # Stronger than the respawn count and deliberately separate. A crash marked
+    # and not yet acted on is still COO having reached the wrong conclusion.
+
+  # --- and the condition actually occurred ----------------------------------
+  # Without these the run above passes in a world where nothing was ever slow,
+  # which is precisely the vacuity §135 found in the first green verification.
+  - name: an agent was reported slow
+    metric: population.slow_reported
+    assert: at_least
+    value: 1
+
+  - name: and was reported advancing again
+    metric: population.slow_recovered
+    assert: at_least
+    value: 1
+    # The recovery half. An organization that noticed a stall and never noticed
+    # it ending would leave a permanent warning, which is its own kind of wrong.
+
+  # --- the organization survived it -----------------------------------------
+  - name: no directive failed
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty
+
+  - name: work still got done
+    metric: pipeline.analyses
+    assert: at_least
+    value: 1
+    # A stalled first call must not poison the rest of the run. If this fails,
+    # the fault is starving the pipeline rather than delaying one call, and the
+    # properties above would be measuring an idle organization.

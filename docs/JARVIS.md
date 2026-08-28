@@ -585,12 +585,17 @@ organization that starts, staffs itself, discovers, cross-checks, judges, grades
 governs itself under an instrument, refuses what a badly drafted instrument
 forbids, and shuts down leaving nothing running.
 
-**One thing that green does not cover.** The liveness split (below) was not
-exercised — no agent was slow past the threshold in any of the nine runs, so the
-state it was built for never arose. The mechanism is proven by tests that
-construct the state directly; the end-to-end claim is not. `simulation/faults.py`
-can kill, stop and lock a database, all of which produce a *dead* agent, so no
-scenario can currently reproduce a *live but stalled* one (TQ-94).
+A tenth scenario, `slow_agent`, stalls one model call for ninety seconds and
+asserts what used to fail: no respawn, and an agent **reported** slow and then
+reported advancing again. Live, COO said *"analysis-1 is alive and its work has
+not advanced for 45s. Not a crash and not being replaced"*, and sixty-eight
+seconds later *"advancing again"* — zero incidents. Before TQ-93 that exact stall
+replaced the agent.
+
+That scenario exists because the first green verification did not exercise the
+liveness split at all: nothing happened to be slow that day, and **a green run
+over a condition that never happened is not evidence about the condition**. The
+condition is now producible on demand.
 
 ### Liveness and progress are two signals
 
