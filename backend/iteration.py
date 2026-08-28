@@ -102,6 +102,12 @@ ROLE_WORK_KIND = {
     # A spokesperson given an analytical budget starts interpreting the body it
     # speaks for.
     "speaker": "operational",
+    # Architectural, and the fit is exact: §8's ladder IS "explore alternatives
+    # before choosing one, and say what was rejected and why". An engineer that
+    # reported a data solution without having considered whether the mechanism
+    # exists would be the first-draft-wearing-a-decision's-clothes this budget
+    # names.
+    "software_engineer": "architectural",
 }
 
 # What the Gateway's assistant does. Not a role in agent_registry - it is the

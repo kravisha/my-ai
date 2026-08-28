@@ -12888,3 +12888,116 @@ from an agent that is merely slow — and to say so, and to leave it alone.
 
 Suite **2700 passing**. `slow_agent` joins the nine scenarios `simulation verify`
 runs, which makes the next full verification the first one that exercises this.
+
+## §137 — The Software Engineering Department, and what it can honestly do (2026-08-28, TQ-83)
+
+Addendum 46's terminal claim is *Jarvis develops Jarvis*. This is the first
+increment of it, and most of the design is about being accurate concerning how
+little of that is true yet.
+
+### 1. What it does: the ladder's preferred answer, which needs no code
+
+Addendum 46 §8 orders the ways to satisfy a directive — knowledge, policy,
+configuration, composition, and only then code — and calls the last a last
+resort. **Levels 1 through 4 are all data changes, and TQ-82 built the store for
+them.** So the department's first real capability is the one §8 says should be
+preferred anyway, and delivering it requires no ability to write code at all.
+
+An engineer takes an authorized directive, works out how the organization's
+stated outcome would be enforced, and either proposes an instrument or records
+that the architecture lacks the mechanism.
+
+### 2. The ladder's question, answered by the registry that already knows it
+
+§8 asks whether the existing architecture has the mechanism required. For an
+obligation, `operating_context.UNDERSTOOD_OBLIGATIONS` already answers exactly
+that: a kind in it can be put in force by adopting an instrument; a kind not in
+it cannot be enforced by any amount of governed data.
+
+That is addendum 46 §40's own worked example in miniature:
+
+> *"Parliament determines that agents require secure real-time video
+> communication, but the platform contains no video capability. Changing
+> instructions cannot create an underlying video transport."*
+
+Live, that is precisely what came out:
+
+```
+directive 1  Reports name their source   -> level 2, instrument proposed
+directive 2  Agents confer by video      -> level 5, capability gap:
+             "nothing in this system knows how to obey an obligation of kind
+              'secure_video_transport'. No instrument can create the mechanism."
+```
+
+**Deliberately deterministic.** A model asked *"could this be data?"* answers
+plausibly every time, including for the cases where it cannot — and the
+department would then report level 2 for problems needing level 5, which is
+exactly what §119 said to write the metric against. The registry does not guess.
+
+### 3. Measured by outcome, never by level
+
+§119's warning, written down before this department existed:
+
+> *"A department measured on 'did you avoid a code change?' will report Level 1–4
+> solutions for problems that need Level 5, and the metric will improve while the
+> system does not."*
+
+So `assessed_level` is descriptive and `outcome` is the judgement, and
+`outcomes()` reports `achieved`, `needs_code`, `open_directives` and `in_flight`
+— no level appears in it. A test asserts that.
+
+`in_flight` exists so a department with proposals nobody has approved cannot read
+as one that delivered them, or as one that refused. **Needing code is an outcome,
+not a failure**: a department that could never say it would report a data
+solution for everything, score perfectly, and change nothing.
+
+### 4. The producer is not the approver
+
+Addendum 46 §11, structural: `approve` refuses an approver matching the author,
+and the agent never calls `approve` at all — asserted by parsing its call graph
+rather than by matching a string, because the module's own docstring names the
+function while explaining why it does not call it.
+
+**This leaves proposals waiting for somebody who does not exist.** There is no
+reviewer role, so nothing in the organization can currently approve one; today
+the owner or a test does it. That is the honest state and it is better than the
+alternative, which is an engineer that adopts its own work and satisfies §11 in
+wording while breaking it in fact.
+
+### 5. A deviation from §119, declared rather than quiet
+
+§119 adjudicated that this department receives directives **through Evolution**,
+because 46 §13 draws *"Approved Directive → Software Department intake"* with
+nothing between and that gap is where a bypass appears by accident.
+
+**The Department of Evolution does not exist.** So intake requires an enacted
+resolution directly, and every directive carries `arrived_via =
+"resolution_directly_no_evolution_relay"` — the shortcut named in the row itself,
+so a later reader cannot mistake it for the intended architecture. Queued as
+TQ-95.
+
+Naming it in the data rather than only in a comment is the difference between a
+declared deviation and the bypass §119 was worried about.
+
+### 6. On demand, because work determines staffing
+
+§10: *"Work determines staffing. Staffing does not determine work."* The role is
+`on_demand` like the Portfolio Analyst — it exists when directives exist and
+produces nothing otherwise. A quiet cycle means the organization has asked for
+nothing, and anything watching has to know the difference (§117).
+
+Its iteration budget is `architectural`, and the fit is exact: that budget's
+stance is *"explore alternatives before choosing one, and say what was rejected
+and why"*, which is §8's ladder stated as a work habit.
+
+### 7. What this is not
+
+It does not write code, review code, test code, or release anything. It is one of
+the twelve roles 46 §9 lists and the only one currently occupied. Addendum 46's
+phases 2 through 4, the complexity ladder, the maturity metrics and the
+external-dependency curve are all unbuilt.
+
+What exists is the intake, the ladder, the independence rule, and an honest
+boundary at level 5 — which is the part everything else has to sit on.
+
+**15/15 mutations caught** by the test written for each. Suite **2719 passing**.

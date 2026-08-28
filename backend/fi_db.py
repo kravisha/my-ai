@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, curriculum, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -370,6 +370,30 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["reconciliation across sources", "concentration", "partial-answer honesty"],
         "work_mechanism": "portfolio_analysis_requests queue, filled by a client through the Gateway",
+    },
+    "software_engineer": {
+        "agent_type": "engineering",
+        "description": (
+            "One general-purpose engineer occupying roles rather than a catalog of "
+            "specialists. Turns an authorized directive into governed data, or names the "
+            "capability the architecture lacks."
+        ),
+        "responsibilities": [
+            "Assess a directive against addendum 46 §8's ladder and record the reasoning",
+            "Propose the instrument that would put the organization's outcome in force",
+            "Name a capability gap when no instrument could create the mechanism",
+        ],
+        "allowed": [
+            "Refuse to deliver, by recording that a directive needs a code change",
+            "Produce nothing when the organization has asked for nothing",
+        ],
+        "not_allowed": [
+            "Approve its own proposal - the producer is not the sole authority (46 §11)",
+            "Write code; nothing here can, and level 5 is named rather than attempted",
+            "Act on a directive with no enacted resolution behind it",
+        ],
+        "competencies": ["ladder assessment", "instrument drafting", "naming a capability gap"],
+        "work_mechanism": "engineering_directives queue, filled by an authorized resolution",
     },
     "dummy": {
         "agent_type": "test",
@@ -1468,6 +1492,10 @@ def init_schema(conn: Database) -> None:
     # produces them, and created here for the same layering reason as every
     # module above: it must not import fi_db back.
     operating_context.init_schema(conn)
+    # The Software Engineering Department's intake and work record (TQ-83,
+    # §137). After governed_knowledge and parliament, because a directive needs
+    # an enacted resolution and its delivery is an adopted instrument.
+    engineering.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1638,7 +1666,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
          analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
-         governed_knowledge.SCHEMA, operating_context.SCHEMA)
+         governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

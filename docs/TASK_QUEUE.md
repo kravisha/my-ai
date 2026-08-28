@@ -1447,8 +1447,38 @@ The whole difficulty is in the ordering, not the storage:
 
 ### TQ-83 — The Software Engineering Department
 
-**NEED (GREEN) · QUEUED · depends on TQ-81 · addendum 46 §7–§12, §19–§21 ·
-`SPEC_RECONCILIATION.md` §119**
+**NEED (GREEN) · DONE 2026-08-28 (`SPEC_RECONCILIATION.md` §137) · addendum 46 §7–§12, §19–§21 ·
+§119**
+
+`backend/engineering.py` and `agents/software_engineer.py`. The department takes an authorized
+directive and either proposes the instrument that would put the outcome in force, or **names the
+capability the architecture lacks** — addendum 46 §8's ladder, with its question answered by
+`operating_context.UNDERSTOOD_OBLIGATIONS`, which already knows whether a mechanism exists.
+
+Live, it produced §40's own example unprompted: a directive needing
+`secure_video_transport` came back as *"No instrument can create the mechanism"* — level 5.
+
+**Measured by outcome, never by level** (§119's warning). The producer never approves its own
+proposal, asserted by parsing the agent's call graph. The §119 deviation — intake direct from a
+resolution because Evolution does not exist — is named in every row rather than left in a comment.
+
+### TQ-95 — Evolution's directive relay
+
+**NEED (YELLOW) · QUEUED · addendum 30 §4, §23, §28 · addendum 46 §13 ·
+`SPEC_RECONCILIATION.md` §119, §137**
+
+§119 adjudicated that Software Engineering receives directives **through Evolution**: 46 §13 draws
+*"Approved Directive → Software Department intake"* with nothing between, and that gap is where a
+bypass appears by accident. TQ-83 built the department and Evolution still does not exist, so every
+directive carries `arrived_via = "resolution_directly_no_evolution_relay"`.
+
+The deviation is declared and bounded. What it needs is the smallest piece of addendum 30 that makes
+the relay real — an evolution directive with its own record (30 §4, §22) — and **not** the
+forty-agent catalog, which §119 §3 already reinterpreted as responsibilities rather than headcount.
+
+The question it has to answer: what does Evolution *add* between a resolution and the department?
+If the honest answer is nothing, the relay is ceremony and §119's adjudication should be revisited
+rather than implemented.
 
 One general-purpose Software Engineer agent type occupying roles rather than a catalog of
 specialists (46 §9–§11, adjudicated at §119 §3), spawned to workload (§10), with the independence

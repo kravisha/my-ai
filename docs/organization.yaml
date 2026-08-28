@@ -100,6 +100,20 @@ roles:
     spawned_by_coo: true
     watched_by: coo
 
+  # The Software Engineering Department, first increment (TQ-83, §137).
+  #
+  # `on_demand` for the reason the Portfolio Analyst is: addendum 46 §10 says
+  # work determines staffing, so this exists when the organization has asked for
+  # something and produces nothing when it has not. A quiet cycle means idle.
+  - id: software_engineer
+    status: implemented
+    agent_type: engineering
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true
+    watched_by: coo
+
   - id: dummy
     status: implemented
     agent_type: reference

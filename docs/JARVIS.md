@@ -385,7 +385,7 @@ Specified across the addenda; mostly `TO BE DEVELOPED`. What exists:
 | Department of Education | `IMPLEMENTED` (portfolio-analysis curriculum only) | [`backend/curriculum.py`](../backend/curriculum.py), [`simulation/training.py`](../simulation/training.py) |
 | Strategy | `IMPLEMENTED` in part — the register and the strategy store | [`backend/strategy.py`](../backend/strategy.py), [`backend/register.py`](../backend/register.py) |
 | Department of Evolution | `TO BE DEVELOPED` | addendum 30 |
-| Software Engineering | `TO BE DEVELOPED` — TQ-83 | addendum 46 |
+| Software Engineering | `IN DEVELOPMENT` — TQ-83. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap; **writes no code** |
 | Governance | `TO BE DEVELOPED` (measurement exists; the department does not) | addendum 32 §20 |
 | Security Defense, Business Continuity, Law Enforcement | `TO BE DEVELOPED` | addenda 28, 29 |
 
@@ -632,6 +632,25 @@ case.
 The record carries the unmet obligations **by name and never their values**: a
 submission's field names are the organization's vocabulary, its contents are
 whatever somebody was filing.
+
+### The department that is supposed to replace the external developer
+
+Addendum 46's terminal claim is *Jarvis develops Jarvis*. The first increment
+exists: an engineer takes an authorized directive and either proposes the
+instrument that would put the outcome in force, or records that the architecture
+lacks the mechanism.
+
+The ladder's question — *can this be done as governed data?* — is answered by the
+registry that already knows whether a mechanism exists, not by asking a model.
+A model asked *"could this be data?"* answers plausibly every time, including
+when it cannot.
+
+**It writes no code.** Level 5 is named and stopped at, which addendum 46 §8
+defines as the correct outcome rather than a failure. It never approves its own
+proposal, and there is no reviewer role yet, so proposals wait for a person.
+
+Everything else in addendum 46 — phases 2 to 4, the complexity ladder, the
+maturity metrics, the external-dependency curve — is unbuilt.
 
 ### What the organization is supposed to be, and what code can hold of it
 
