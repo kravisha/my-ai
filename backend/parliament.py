@@ -68,6 +68,27 @@ from backend import portfolios
 from backend.db import Database, now_iso
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS constitution (
+    version INTEGER PRIMARY KEY,
+    adopted_at TEXT NOT NULL,
+    adopted_by TEXT NOT NULL,
+    -- 'genesis' once, from the owner; 'amendment' thereafter, from a vote.
+    adopted_via TEXT NOT NULL,
+    resolution_id INTEGER,
+    text TEXT NOT NULL
+    -- **No roll, no quorum, no threshold here.** The electorate is the Articles'
+    -- (level 1), because there is only one organization and a second roll would
+    -- be a second answer to who may vote. The amendment threshold is
+    -- CONSTITUTIONAL_AMENDMENT_THRESHOLD, in code, for the reason §123 gives.
+    --
+    -- The consequence is real and is recorded rather than guarded against: a
+    -- supermajority can amend the Articles' roll, and the roll decides who
+    -- amends the Constitution. Addendum 32 §19.3 explicitly permits a
+    -- constitutional amendment to require "new voting rights" and "removal of
+    -- voting rights", so a countermeasure here would contradict the
+    -- specification it was protecting. See SPEC_RECONCILIATION §142.
+);
+
 CREATE TABLE IF NOT EXISTS articles (
     version INTEGER PRIMARY KEY,
     adopted_at TEXT NOT NULL,
@@ -100,6 +121,12 @@ CREATE TABLE IF NOT EXISTS resolutions (
     approved_by TEXT,                -- the tally, snapshotted at enactment
     became_active_at TEXT,           -- when it became active
     articles_text TEXT,              -- the proposed Articles, for an amendment
+    -- The proposed Constitution, for a constitutional amendment. A SEPARATE
+    -- column rather than one shared "proposed text": two instruments at two
+    -- levels, and separate columns make it structurally impossible to apply a
+    -- text meant for one as the other. `close` would otherwise have to infer it
+    -- from `affects`, which is inference where a refusal is available.
+    constitution_text TEXT,
     closed_reason TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
@@ -157,8 +184,10 @@ SCHEMA_VERSION = 1
 # the head. It is the one place the precedence lives; `_RESERVED_LEVELS` and
 # `_RESTRICTED_LEVELS` below are drawn from it rather than restating it.
 LEVEL_CONSTITUTION = "constitution"
+LEVEL_CONSTITUTION_AMENDMENT = "constitution_amendment"
 LEVELS = (
     LEVEL_CONSTITUTION,
+    LEVEL_CONSTITUTION_AMENDMENT,
     "articles",
     "articles_amendment",
     "law",
@@ -173,11 +202,13 @@ LEVELS = (
     "suggestion",
 )
 
-# The two levels an ordinary vote may not reach. `constitution` is the owner's
-# (§120). `articles_amendment` is reachable, but only through `propose_amendment`,
-# which sets it - a caller naming it directly is trying to route an amendment
-# through the ordinary path.
-_RESERVED_LEVELS = (LEVEL_CONSTITUTION, "articles", "articles_amendment")
+# The levels an ordinary `propose` may not reach. `constitution` and `articles`
+# are the documents themselves and are never what a resolution *affects*; the two
+# `_amendment` levels are reachable only through their own entry points, which
+# set them - a caller naming one directly is trying to route an amendment through
+# the ordinary path and its ordinary threshold.
+_RESERVED_LEVELS = (LEVEL_CONSTITUTION, LEVEL_CONSTITUTION_AMENDMENT,
+                    "articles", "articles_amendment")
 
 # 32 §5's two tiers. Which one applies is decided by `_tier_for`, not by the
 # proposer, because a proposer choosing its own electorate chooses its own odds.
@@ -188,6 +219,7 @@ TIERS = (TIER_BROAD, TIER_REPRESENTATIVE)
 # 32 §6.3: authority, rights, risk, multiple departments, long-term strategy.
 # Anything on this list is a restricted vote whatever the proposer wanted.
 _RESTRICTED_LEVELS = (
+    LEVEL_CONSTITUTION_AMENDMENT,
     "articles_amendment", "law", "organization_policy", "strategy",
 )
 
@@ -209,6 +241,26 @@ STATUSES = (STATUS_OPEN, STATUS_ENACTED, STATUS_REJECTED, STATUS_WITHDRAWN)
 # nothing by a simple majority in two steps: lower the bar, then walk through it.
 ARTICLES_AMENDMENT_THRESHOLD = Fraction(2, 3)
 
+# Owner decision, 2026-08-28: *"yes, the organization can amend it at
+# supermajority"* (§142). Two-thirds is 32 §19.1's own number - *"a supermajority
+# such as two-thirds MAY be required"* - and the only one the corpus specifies.
+# A higher bar would read as measured and would be invented.
+#
+# In code for the same reason as the Articles', and it matters more here: a
+# constitutional amendment threshold written into the Constitution could be
+# lowered by one supermajority and then everything below it walked through.
+CONSTITUTIONAL_AMENDMENT_THRESHOLD = Fraction(2, 3)
+
+# Level 0 must never be cheaper to amend than level 1. If it were, a majority
+# wanting an Articles change could take the constitutional route instead and
+# arrive with a *higher-order* directive (32 §19.2) for the same price, which
+# inverts the hierarchy while every individual rule still looks correct.
+#
+# Asserted at import rather than tested, because the failure is a
+# misconfiguration that must not be able to start.
+assert CONSTITUTIONAL_AMENDMENT_THRESHOLD >= ARTICLES_AMENDMENT_THRESHOLD, (
+    "the Constitution may not be easier to amend than the Articles")
+
 # One refusal for every reason a proposal cannot proceed (addendum 44 §9.3). A
 # refusal that distinguished "unconstitutional" from "unknown level" from "no
 # Articles yet" would be a way to read the governance state without being
@@ -226,6 +278,87 @@ class NoArticles(LookupError):
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+
+
+# --- the Constitution ---------------------------------------------------------------
+
+def adopt_genesis_constitution(conn: Database, *, owner, text: str) -> int:
+    """The first Constitution, authored by the owner rather than voted.
+
+    **Owner decision, 2026-08-28: the organization may amend the Constitution at
+    supermajority** (§142), which reverses §120's *"no table, no protected row,
+    no admin route"*. Amending something requires holding it, and a vote on a
+    document nobody can read is theatre.
+
+    Genesis is still the owner's, on `adopt_genesis_articles`' argument one level
+    up: a vote needs an electorate, and the electorate is defined by the Articles,
+    which are defined below the Constitution. Something has to be first.
+
+    **This machinery holds no text until the owner puts one here.** Addendum 49 is
+    the Constitution and is held privately; nothing in this repository seeds it,
+    and `financial_intelligence.db` is not versioned. The capability exists and
+    the document is the owner's to place.
+    """
+    context = _require_superuser(owner)
+    if current_constitution(conn) is not None:
+        raise ParliamentRefused(
+            "A Constitution is already in force. Changing it is an amendment, which is voted.")
+    if not (text or "").strip():
+        raise ParliamentRefused("A Constitution with no text governs nothing.")
+    conn.execute(
+        "INSERT INTO constitution (version, adopted_at, adopted_by, adopted_via,"
+        " resolution_id, text) VALUES (1, ?, ?, 'genesis', NULL, ?)",
+        (now_iso(), context.owner_id, text.strip()))
+    return 1
+
+
+def current_constitution(conn: Database) -> dict | None:
+    return conn.fetchone(
+        "SELECT version, adopted_at, adopted_by, adopted_via, resolution_id, text"
+        " FROM constitution ORDER BY version DESC LIMIT 1")
+
+
+def constitution_history(conn: Database) -> list[dict]:
+    """Every version, oldest first. Nothing is overwritten.
+
+    The text is deliberately not returned: a history is for answering *when did
+    this change and under what resolution*, and a caller wanting a superseded
+    constitutional text should have to ask for that version by name."""
+    return conn.fetchall(
+        "SELECT version, adopted_at, adopted_by, adopted_via, resolution_id"
+        " FROM constitution ORDER BY version")
+
+
+def propose_constitutional_amendment(
+    conn: Database,
+    *,
+    title: str,
+    rationale: str,
+    proposed_by: str,
+    constitution_text: str,
+    evidence: str | None = None,
+) -> int:
+    """Propose a new Constitution. The only route to `constitution_amendment`.
+
+    Separate from `propose` and from `propose_amendment` for the reason the
+    latter is separate: the level is not a parameter anybody can pass, so it
+    cannot be passed wrongly. It clears `CONSTITUTIONAL_AMENDMENT_THRESHOLD`,
+    which is in code and cannot be amended by what it governs.
+
+    Carries the **whole replacement text**, not a diff. Addendum 32 §19.2 makes a
+    passed amendment a highest-order directive immediately; a diff would mean the
+    thing in force is the result of applying something to something else, and
+    what was voted on would be neither."""
+    constitution = current_constitution(conn)
+    if constitution is None:
+        raise ParliamentRefused(
+            "There is no Constitution to amend. The genesis text is the owner's.")
+    if not (constitution_text or "").strip():
+        raise ParliamentRefused("An amendment must carry the text it proposes.")
+    return _insert(conn, title=title, rationale=rationale, proposed_by=proposed_by,
+                   affects=LEVEL_CONSTITUTION_AMENDMENT, evidence=evidence,
+                   replaces=constitution["version"],
+                   constitution_text=constitution_text.strip())
 
 
 # --- the Articles -------------------------------------------------------------------
@@ -339,7 +472,7 @@ def propose_amendment(
 
 
 def _insert(conn: Database, *, title, rationale, proposed_by, affects, evidence,
-            replaces, articles_text=None) -> int:
+            replaces, articles_text=None, constitution_text=None) -> int:
     for name, value in (("title", title), ("rationale", rationale),
                         ("proposed_by", proposed_by)):
         if not (value or "").strip():
@@ -350,10 +483,10 @@ def _insert(conn: Database, *, title, rationale, proposed_by, affects, evidence,
     stamp = now_iso()
     return conn.execute_returning_id(
         "INSERT INTO resolutions (created_at, updated_at, status, title, rationale,"
-        " proposed_by, evidence, affects, replaces, tier, articles_text)"
-        " VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)",
+        " proposed_by, evidence, affects, replaces, tier, articles_text, constitution_text)"
+        " VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (stamp, stamp, title.strip(), rationale.strip(), proposed_by.strip(),
-         evidence, affects, replaces, _tier_for(affects), articles_text),
+         evidence, affects, replaces, _tier_for(affects), articles_text, constitution_text),
     )
 
 
@@ -415,9 +548,7 @@ def tally(conn: Database, resolution_id: int) -> dict:
     turnout = sum(counts.values())
     articles = current_articles(conn)
     quorum = _fraction(articles["quorum"])
-    threshold = (ARTICLES_AMENDMENT_THRESHOLD
-                 if resolution["affects"] == "articles_amendment"
-                 else _fraction(articles["ordinary_threshold"]))
+    threshold = _threshold_for(resolution["affects"], articles)
     decided = counts[VOTE_FOR] + counts[VOTE_AGAINST]
     quorum_met = len(roll) > 0 and Fraction(turnout, len(roll)) >= quorum
     carried = quorum_met and decided > 0 and Fraction(counts[VOTE_FOR], decided) >= threshold
@@ -434,10 +565,28 @@ def tally(conn: Database, resolution_id: int) -> dict:
         "threshold": str(threshold),
         # Named so a reader can tell an amendment's fixed bar from an ordinary
         # one read out of the Articles.
-        "threshold_source": ("code" if resolution["affects"] == "articles_amendment"
+        # Named so a reader can tell an amendment's fixed bar from an ordinary
+        # one read out of the Articles. Both amendment bars are in code, and
+        # saying so is what makes "a rule a vote can reach is not a rule"
+        # checkable from the tally rather than only from the source.
+        "threshold_source": ("code" if resolution["affects"] in _CODE_THRESHOLD_LEVELS
                              else "articles"),
         "carried": carried,
     }
+
+
+# The levels whose threshold is a constant here rather than a clause in the
+# document being amended (§123, §142). Derived once so `tally` and its reported
+# `threshold_source` cannot disagree about which those are.
+_CODE_THRESHOLD_LEVELS = (LEVEL_CONSTITUTION_AMENDMENT, "articles_amendment")
+
+
+def _threshold_for(affects: str, articles: dict) -> Fraction:
+    if affects == LEVEL_CONSTITUTION_AMENDMENT:
+        return CONSTITUTIONAL_AMENDMENT_THRESHOLD
+    if affects == "articles_amendment":
+        return ARTICLES_AMENDMENT_THRESHOLD
+    return _fraction(articles["ordinary_threshold"])
 
 
 def close(conn: Database, resolution_id: int) -> dict:
@@ -460,6 +609,13 @@ def close(conn: Database, resolution_id: int) -> dict:
              resolution_id))
         return result
 
+    if resolution["affects"] == LEVEL_CONSTITUTION_AMENDMENT:
+        previous = current_constitution(conn)
+        conn.execute(
+            "INSERT INTO constitution (version, adopted_at, adopted_by, adopted_via,"
+            " resolution_id, text) VALUES (?, ?, 'parliament', 'amendment', ?, ?)",
+            (previous["version"] + 1, stamp, resolution_id,
+             resolution["constitution_text"]))
     if resolution["affects"] == "articles_amendment":
         previous = current_articles(conn)
         conn.execute(
@@ -641,7 +797,19 @@ def summary(conn: Database) -> dict:
     addendum 32 was assimilated - *"No parliament, committee or voting body
     exists yet"* - which was true and is not any more."""
     articles = current_articles(conn)
+    constitution = current_constitution(conn)
     return {
+        # The Constitution is amendable by the organization at supermajority
+        # (owner decision 2026-08-28, §142), so its version is something that can
+        # *change* while the system runs - which makes reporting it necessary
+        # rather than decorative. An amendment nobody can see is §130's quiet
+        # market at level 0.
+        #
+        # The version and never the text: the Speaker reports the state of
+        # Parliament, and a spokesperson that recited the Constitution on every
+        # cycle would put it in every log and every console that renders a report.
+        "constitution_in_force": constitution is not None,
+        "constitution_version": constitution["version"] if constitution else None,
         "articles_in_force": articles is not None,
         "articles_version": articles["version"] if articles else None,
         "roll": articles["roll"] if articles else None,

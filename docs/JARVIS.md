@@ -167,7 +167,7 @@ eventually maintains itself without the external developer who built it.
 | Name | Means | Not to be confused with |
 |---|---|---|
 | **Jarvis** | The organization. The name used by every recent specification. | *My AI* / *MyAI* — the earlier name, still in the repository name and older addenda. Same system. |
-| **The Constitution** | Addendum 49, *Providence: Philosophy & Constitution* v2.0 — **held privately**, never in this repository or any database (§120, §141). `JARVIS_CONSTITUTION.md` was its v1; they are one document, not two. | Anything the organization can amend — though whether *anything* may amend this is reopened at §141 §5. |
+| **The Constitution** | Addendum 49, *Providence: Philosophy & Constitution* v2.0 — **held privately**, never in this repository (§141 §3). `JARVIS_CONSTITUTION.md` was its v1; one document, not two. Parliament holds its version and its text once the owner seeds it, and the organization amends it at two-thirds (§142). | The **Articles**, which are level 1 and amendable at the same bar. Precedence separates them, not price. |
 | **The Scripture** | [Addendum 48](addenda/addendum_48_scripture_of_shared_success.md), *Shared Success*. How agents should be, rather than what the system should do. **Level 0, like the Constitution** — a document defining an authority cannot be amended by those it governs (§131). | The Articles, which the organization amends by vote. |
 | **Providence** | The mission and the product: one person, one personal world (addenda 49–52). The thing Jarvis is being built to realize. | *Jarvis*, which is the system, not the mission. |
 | **The Articles** | The organization's own highest instrument — what a supermajority may amend under addendum 32 §19, and what addendum 46 §4.1 places at the top of the governed store. | The **Charter**, which in this codebase already means [the agent charter](../backend/charter.py): what an agent is owed and which mechanism owes it. |
@@ -231,8 +231,9 @@ what exists, so it is written with the gap visible.
 
 ```
    0.  The Constitution              applies to the whole system, the owner
-                                     included. Held privately; not in any store.
-   ═══════════════════════════════   nothing below may amend anything above
+                                     included. Amendable by the organization
+                                     at a two-thirds supermajority (§142).
+   ═══════════════════════════════   the amendment BAR is not amendable
    1.  The Articles                  amendable at supermajority (addendum 32 §19)
    2.  Amendments to the Articles
    3.  Parliamentary laws and resolutions
@@ -247,7 +248,9 @@ what exists, so it is written with the gap visible.
   12.  Suggestions and unapproved proposals
 ```
 
-Levels 1–12 are addendum 46 §5. Level 0 and the line beneath it are §120, as corrected by §141: the Constitution is **one document** — addendum 49 is its v2.0 — and it **applies to the system, with the owner inside it**. §120's *outside the system entirely* was a misunderstanding.
+Levels 1–12 are addendum 46 §5. Level 0 is §120, twice corrected by the owner: the Constitution is **one document** — addendum 49 is its v2.0, held privately — it **applies to the system with the owner inside it** (§141), and **the organization may amend it at a two-thirds supermajority** (§142). §120's *outside the system entirely* and *no vote reaches it* were both wrong.
+
+The line beneath level 0 has moved with it. What no vote may reach is not the Constitution but **the bar for amending it**, which is a constant in code — a threshold written into the document it guards can be lowered once and then walked through (§123).
 
 **Lower-level material may not silently override higher-level material.** The
 word doing the work is *silently*: a conflict is meant to be detected and
@@ -285,7 +288,7 @@ it, which is the property that matters and is what §120 meant to say.
 
 | Component | Status |
 |---|---|
-| The Constitution | `IMPLEMENTED` as a private document; **not** represented in the system, deliberately |
+| The Constitution | `IMPLEMENTED` as a private document (addendum 49). The **machinery** to hold and amend it is `IMPLEMENTED` — genesis by the owner, amendment by the organization at two-thirds, every version kept (§142). **No text is in force**: the genesis text is the owner's to place, and nothing in this repository seeds it |
 | The Articles | `IMPLEMENTED` as machinery — TQ-81. **None are in force.** The genesis text is adopted by the owner, not voted, because a vote needs an electorate and a threshold that only the Articles can supply |
 | Parliament: resolutions, the vote, quorum and threshold | `IMPLEMENTED` — TQ-81. [`backend/parliament.py`](../backend/parliament.py) |
 | The level-0 refusal and the owner-escalation queue | `IMPLEMENTED` — one refusal for every reason, and no function inside the system closes an escalation |
@@ -301,13 +304,35 @@ directive to be authorized, so none was built. `parliament.summary()` names them
 in the same object that reports the vote, because a status surface showing a
 working ballot and nothing else would read as a finished governance layer.
 
-### Two rules that a vote cannot reach
+### The one rule a vote cannot reach
 
-**The rule for changing the rules is not changeable by the rules.** The Articles
-carry the electorate, the quorum and the ordinary threshold — as data, which is
-addendum 46 §2's whole point. They do **not** carry the threshold for amending
-themselves; that is a constant in code. An instrument whose amendment bar is one
-of its own clauses can be lowered by simple majority and then walked through.
+**The rule for changing the rules is not changeable by the rules**, and after
+§142 this is the *only* thing at the top that a vote cannot reach.
+
+The Articles carry the electorate, the quorum and the ordinary threshold — as
+data, which is addendum 46 §2's whole point. Neither they nor the Constitution
+carry the threshold for amending themselves; both are constants in code. An
+instrument whose amendment bar is one of its own clauses can be lowered by simple
+majority and then walked through.
+
+That is tested rather than asserted: the suite amends the Constitution to say it
+may be amended by simple majority, carries that at two-thirds, and then shows the
+next amendment still needing two-thirds. **The text talks and the constant
+decides.**
+
+`CONSTITUTIONAL_AMENDMENT_THRESHOLD >= ARTICLES_AMENDMENT_THRESHOLD` is asserted
+at import, because level 0 must never be cheaper to amend than level 1 — a
+majority wanting an Articles change could otherwise take the constitutional route
+and arrive with a highest-order directive (32 §19.2) for the same price. Today
+both are two-thirds, which is the weakest form of that guarantee and is what the
+specification states.
+
+**One attack is named and deliberately not guarded.** The electorate for a
+constitutional amendment is the Articles' roll, one level below the document being
+amended — so a supermajority can amend the roll, and the roll decides who amends
+the Constitution. A countermeasure would contradict 32 §19.3, which says in terms
+that a constitutional amendment may require *"new voting rights"* and *"removal of
+voting rights"*. Recorded at §142 §2 rather than engineered around.
 
 **What the level-0 refusal cannot do**, stated rather than implied: the system
 does not hold the Constitution, so nothing can read it and notice that a proposed
@@ -967,7 +992,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,781 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,800 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -993,7 +1018,11 @@ writing down a position.
   finds it misdrafted, and reverses it with no restart and no respawn (§139).
 - An agent proposing a change to the organization of its own accord.
 - Any Articles in force in the working database — the machinery runs, and the
-  organization it would govern has not yet been given its instrument.
+  organization it would govern has not yet been given its instrument. The same is
+  now true one level up: the Constitution's machinery runs and no text is in
+  force.
+- A constitutional amendment. The path exists and is tested; nothing has been
+  amended, because there is nothing yet to amend.
 
 A vote *has* happened: TQ-81's live run adopted genesis Articles against a scratch
 database, carried an organization-policy resolution, and had a level-0 proposal
@@ -1031,10 +1060,11 @@ until somebody declares it deliberately.
 
 5. **Where the living documentation and operational detail should live**, given a
    public repository (section 9).
-5b. **May the organization amend the Constitution?** Addendum 32 §19 provides
-   for it at supermajority; §120 said no, from a premise §141 corrected. Scope is
-   not amendment authority and the two must not be run together, so it goes back
-   as its own question. Until answered nothing changes.
+5b. **Should level 0 cost more than level 1?** Answered in part: the
+   organization may amend the Constitution at two-thirds (§142), the same bar as
+   the Articles. So precedence separates them and price does not. Whether that is
+   intended is an owner question; the code asserts only that level 0 is never
+   *cheaper*.
 5c. **`JARVIS_GAP_ANALYSIS.md` is stale.** It scores the build against the
    Constitution, and the Constitution became v2.0 on 2026-08-28 (§141 §1).
 5a. **What the genesis Articles should say, and who is on the roll.** The

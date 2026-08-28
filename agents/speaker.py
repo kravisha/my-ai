@@ -81,6 +81,7 @@ def compose_report(conn) -> dict:
         # are outstanding from a count.
         "open_resolution_titles": [item["title"] for item in open_items],
         "articles_versions": len(parliament.articles_history(conn)),
+        "constitution_versions": len(parliament.constitution_history(conn)),
         # The Speaker's own words about the state it found, so a surface has
         # something to render that is a statement rather than a number.
         "says": _say(state, open_items, unsettled, refusing, releases),
@@ -93,6 +94,16 @@ def _say(state: dict, open_items: list, unsettled: list, refusing: dict,
         return ("Parliament stands ready and has no Articles. There is no roll, so nothing "
                 "can be put to a vote until the owner adopts the founding text.")
     parts = [f"The Articles are in force at version {state['articles_version']}."]
+    if state["constitution_in_force"]:
+        # Said first among the substantive lines when it has moved: a level-0
+        # change is the largest thing that can happen to this organization, and
+        # a report that mentioned it after the open-resolution count would bury it.
+        parts.append(
+            f"The Constitution is in force at version {state['constitution_version']}.")
+    else:
+        parts.append(
+            "No Constitution is in force. The genesis text is the owner's; until it "
+            "exists there is nothing for a supermajority to amend.")
     parts.append(f"{len(open_items)} resolution(s) are open."
                  if open_items else "No resolution is open.")
     if state["outstanding_owner_escalations"]:

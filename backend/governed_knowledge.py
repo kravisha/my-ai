@@ -192,9 +192,12 @@ def adopt(
                      f"may not hold."),
             raised_by=adopted_by)
         raise AdoptionRefused(REFUSAL)
-    if level in ("articles", "articles_amendment"):
+    if level in ("articles", "articles_amendment", parliament.LEVEL_CONSTITUTION_AMENDMENT):
         raise AdoptionRefused(
-            "The Articles are Parliament's own record and are amended by vote, not adopted here.")
+            "The Articles and the Constitution are Parliament's own records and are amended by "
+            "vote, not adopted here. Nothing is hidden by saying so - the Speaker reports both "
+            "versions publicly, and the routes are `propose_amendment` and "
+            "`propose_constitutional_amendment`.")
 
     _check_authorization(conn, level, resolution_id)
     binds = _check_binding(level, binds)

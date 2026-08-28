@@ -13720,3 +13720,137 @@ a corrected section. **Until it is answered, nothing changes**: the amendment
 threshold stays a constant in code, level 0 stays refused and escalated, and no
 vote reaches it. That is the conservative position and it is held as a position,
 not as an assumption.
+
+> **Answered the same day, §142: yes, at supermajority.** §119 §6's first branch
+> was the right one. The threshold is a constant in code — two-thirds, 32 §19.1's
+> own number — because a bar written into the document it guards can be lowered
+> once and walked through afterwards.
+
+## §142 — The organization may amend its own Constitution (2026-08-28, owner decision)
+
+§141 §5 put the question back rather than inheriting §120's answer, because §120
+had said *no* from a premise the owner had just corrected. Answered the same day:
+
+> *"yes, the organization can amend it at supermajority"*
+
+Addendum 32 §19.1 is now in force as the design, and §119 §6's first branch — the
+one this project spent two sections arguing itself out of — is the right one.
+
+### 1. What is built
+
+`backend/parliament.py` gains the Constitution as a versioned record, mirroring
+the Articles one level up because the Articles are already the worked example of
+*an instrument amendable by supermajority whose threshold is out of its own
+reach*:
+
+| | Constitution | Articles |
+|---|---|---|
+| genesis | owner, once | owner, once |
+| amendment | `propose_constitutional_amendment` | `propose_amendment` |
+| threshold | `CONSTITUTIONAL_AMENDMENT_THRESHOLD`, in code | `ARTICLES_AMENDMENT_THRESHOLD`, in code |
+| tier | representative (32 §6.3) | representative |
+| history | every version kept | every version kept |
+
+**Two-thirds, because it is 32 §19.1's own number** — *"a supermajority such as
+two-thirds MAY be required"* — and the only one the corpus states. A higher bar
+would have read as measured and would have been invented, which is the shape
+§128 refuses about thresholds generally.
+
+**The bar is in code, and that matters more here than it did for the Articles.**
+A constitutional amendment threshold written into the Constitution could be
+lowered by one supermajority, and then everything below it walked through at the
+new price. §123's rule, at the level where it is worth the most. The test for it
+does not read the source: it amends the Constitution to say *"this Constitution
+may be amended by simple majority"*, carries that at two-thirds, and then shows
+the next amendment still needing two-thirds — the text talks and the constant
+decides.
+
+**Genesis is still the owner's**, on `adopt_genesis_articles`' argument one level
+up. A vote needs an electorate; the electorate is in the Articles; the Articles
+are below the Constitution. Something has to be first.
+
+**The machinery holds no text.** Addendum 49 is the Constitution and is held
+privately (§141 §3); nothing in this repository seeds it, and
+`financial_intelligence.db` is not versioned. This is the same state TQ-81 left
+the Articles in — built, tested, and waiting for the owner's text — and it means
+the privacy decision of §141 and the amendability decision of §142 do not have to
+be traded against each other.
+
+### 2. Two structural consequences, chosen rather than stumbled into
+
+**The Constitution must never be cheaper to amend than the Articles.** If it
+were, a majority wanting an Articles change could take the constitutional route
+and arrive with a *highest-order governance directive* (32 §19.2) for the same
+price — inverting the hierarchy while every individual rule still reads correctly.
+Asserted at import rather than in a test, because it is a misconfiguration that
+must not be able to start.
+
+Today the two are equal at two-thirds, which is the weakest form of that
+guarantee. It is what the specification says and it is not obviously right: with
+equal bars, level 0 and level 1 cost the same, and the hierarchy's *precedence*
+is real while its *cost structure* is flat. Recorded as an observation for the
+owner, not resolved by picking a number nobody specified.
+
+**The electorate for a constitutional amendment lives in the Articles**, one
+level below the document being amended. There is one organization, and a second
+roll would be a second answer to who may vote.
+
+The consequence is an attack and it is written down rather than guarded against:
+**a supermajority can amend the Articles' roll, and the roll decides who amends
+the Constitution.** Remove enough opposing voters at two-thirds and the next
+constitutional amendment is cheaper.
+
+A guard would contradict the specification it protected — 32 §19.3 says in terms
+that a constitutional amendment *may* require *"new voting rights"* and *"removal
+of voting rights"*, so the corpus contemplates exactly this and permits it. Naming
+it is the honest response; building a countermeasure the specification forbids
+would be this project deciding a governance question it was not asked.
+
+### 3. What did not change
+
+**Level 0 is still refused in the governed store, identically, and escalated.**
+Amending the Constitution is a vote, not an adoption into a store that ranks, so
+a caller reaching for `constitution` in `governed_knowledge.adopt` is still
+probing and still gets the single refusal (§123). `constitution_amendment` is
+refused *by name*, like the Articles, because nothing is concealed by saying so —
+the Speaker reports both versions publicly, and naming the route is how somebody
+with a legitimate amendment finds it.
+
+**§120's storage argument survives, on one of its two reasons.** *A store that
+ranks cannot hold something unrankable* still holds. The other reason — *a rule a
+vote can reach is not a rule* — has **narrowed**: it now constrains the
+*threshold*, not the document. That distinction was always what §123 meant and it
+was easy to read more broadly while nothing tested the difference.
+
+### 4. An amendment at level 0 must not be invisible
+
+The Constitution can now change while the system is running, which is new. So
+`parliament.summary` carries its version and the Speaker says it, before the
+open-resolution count, because a level-0 change is the largest thing that can
+happen here and a report that mentioned it further down would bury it.
+
+**The version and never the text.** A spokesperson reciting the Constitution
+every cycle would put it into every log and every console that renders a report,
+which would undo §141 §3 by accident rather than by decision.
+
+And when there is none, the Speaker says so: *"No Constitution is in force. The
+genesis text is the owner's; until it exists there is nothing for a supermajority
+to amend."* §124's rule — silence is information, rendered as silence rather than
+as a blank.
+
+### 5. What this does not build
+
+Addendum 32 §20 and §21 specify a **Department of Governance** whose whole
+purpose is that *"passing a constitutional amendment is not sufficient"* — the
+change must be interpreted, planned, communicated, assigned, implemented,
+trained, verified, audited and closed. None of that exists.
+
+So a constitutional amendment here **changes a stored text and nothing else**. It
+does not migrate policies, retrain agents, restructure departments or recertify
+anybody, all of which 32 §19.3 says an amendment may require. That is the same
+honest boundary `governed_knowledge` draws with `prose_only`: the instrument is
+genuinely in force, and what enforces it is a person.
+
+Naming it here matters because the gap is invisible from inside a passing test.
+An amendment that carried at two-thirds and updated a row looks exactly like an
+amendment that was implemented.

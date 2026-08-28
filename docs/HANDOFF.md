@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 141 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 142 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2781 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2800 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -108,10 +108,9 @@ Every one is recorded at `SPEC_RECONCILIATION.md` §117–§138.
    working database: no Articles are in force, so there is no electorate and no
    arithmetic. Level 0's to write (§120). An offer to draft a candidate text and
    roll for approval or rejection stands and has not been taken up.
-1a. **Answer whether the organization may amend the Constitution** (§141 §5).
-   Addendum 32 §19 provides for it at supermajority; §120 said no from a premise
-   §141 corrected, so the answer needs re-deriving rather than inheriting. Until
-   then nothing changes.
+1a. **Seed the genesis Constitution**, now that the machinery exists (§142). Same
+   shape as the Articles: the owner's text, adopted once, and every amendment
+   after it is a two-thirds vote. Addendum 49 is the document.
 1b. **Re-run `JARVIS_GAP_ANALYSIS.md` against Constitution v2.0**, or say it is
    retired. It currently scores against v1 (§141 §1).
 2. **Unhold market data.** TQ-75 was held pending *"all simulation issues dealt
@@ -131,9 +130,13 @@ Every one is recorded at `SPEC_RECONCILIATION.md` §117–§138.
   intelligence becomes one personal agent among fifteen. TQ-97 built persistent
   agent identity; TQ-98 (the client profile, and the watchlist boundary §140 §5
   draws) is next and its guard comes before its table.
-- **Two questions are with the owner**: whether the organization may amend the
-  Constitution (§141 §5), and what refuses a persona that crosses the line
-  (TQ-100). `JARVIS_GAP_ANALYSIS.md` is stale until re-run against v2.0.
+- **The organization may amend its own Constitution at two-thirds** (§142, owner
+  decision). Built, tested, and holding no text: genesis is the owner's, like the
+  Articles. Two consequences are recorded rather than engineered around — level 0
+  and level 1 cost the same, and the roll that decides constitutional amendments
+  is itself amendable (§142 §2).
+- **Still with the owner**: what refuses a persona that crosses the line (TQ-100),
+  and `JARVIS_GAP_ANALYSIS.md` is stale until re-run against Constitution v2.0.
 - **The repository is public** (`github.com/kravisha/my-ai`), and on 2026-08-28
   that cost something: addendum 49 — the Constitution — was assimilated into
   `docs/addenda/` by the ordinary intake rule, reached one local commit, and was
