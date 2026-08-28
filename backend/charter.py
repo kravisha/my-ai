@@ -132,6 +132,22 @@ PROTECTIONS = (
         ("backend.fi_db.record_disposition", "backend.fi_db.disposition_history"),
     ),
 
+    Protection(
+        "a settled matter can be appealed",
+        "A ruling an agent believes wrong is reviewed by someone other than whoever made it. The "
+        "agent the ruling was about may file; nobody may file on its behalf; and neither the "
+        "author nor the appellant may hear it. **Named by the owner as a fundamental right** "
+        "(2026-08-28) - one of two examples of the 'undeniable and inalienable' kind of rule that "
+        "belongs in the Constitution, alongside the right to vote (SPEC_RECONCILIATION 144). "
+        "**Two limits, stated rather than implied.** A hearing needs a peer of the author to "
+        "exist, and this organization runs one of each role - so an appeal often waits. It waits "
+        "openly: there is no dismissal, no expiry and no auto-denial, because a lapsed appeal "
+        "would be a denial nobody had to make. And no agent files one yet; the right is available "
+        "rather than exercised.",
+        ("backend.appeal.file_appeal", "backend.appeal.hear",
+         "backend.appeal.eligible_adjudicators"),
+    ),
+
     # -- not yet enforced, and named rather than omitted ----------------------
     Protection(
         "self-reporting is treated more favourably than concealment",
@@ -149,29 +165,26 @@ PROTECTIONS = (
         "an agent is told what is found about it",
         "An agent can learn of a finding concerning its own work.",
         aspirational=(
-            "there is no agent-facing notification channel. Agents poll tables for work, and nothing "
-            "routes a finding back to its subject. Needs a read path an agent's cycle would consult"
-        ),
-    ),
-    Protection(
-        "a settled matter can be appealed",
-        "A ruling an agent believes wrong can be reviewed by someone other than whoever made it. "
-        "**Named by the owner as a fundamental right** (2026-08-28): one of two examples of the "
-        "'undeniable and inalienable' kind of rule that belongs in the Constitution and needs a "
-        "two-thirds majority to change - alongside the right to vote (SPEC_RECONCILIATION 144).",
-        aspirational=(
-            "no adjudicator exists, and the owner is both first and last instance, which is not an "
-            "appeal. **The reason for deferring it no longer holds.** It said 'deferred until a "
-            "contested caseload justifies it' - a volume argument, and the owner has since called "
-            "this a fundamental right, which is not a thing that waits for demand. TQ-102 owns it; "
-            "the entry that changed is recorded rather than quietly rewritten"
+            "**the read path now exists and nothing reads it.** `backend.appeal.rulings_about` "
+            "returns every grade made about an agent's own analyses, derived rather than delivered - "
+            "which closed the half of this that was missing when TQ-102 built the appeal on top of "
+            "it. What is still absent is the telling: no agent's cycle consults it, so an agent that "
+            "does not think to look is still not told. This is deliberately NOT marked enforced - a "
+            "function tested in isolation is not a function that runs (SPEC_RECONCILIATION 134), and "
+            "being told is passive from the agent's side in a way that having a right is not"
         ),
     ),
 )
 
 # Pinned. A charter grows by promising, and promises are free - so the count of
 # things promised without machinery cannot move without someone moving it.
-UNENFORCED_COUNT = 3
+#
+# Went 3 -> 2 at TQ-102, and only one of the two changes was a discharge. Appeal
+# became enforced; "an agent is told" did not, though the read path it needed now
+# exists - see its entry. Moving this number down is the easiest way to make a
+# charter look better than it is, so what moved and what did not is recorded at
+# SPEC_RECONCILIATION 145.
+UNENFORCED_COUNT = 2
 
 
 # What an agent owes in return. Deliberately short: only duties something

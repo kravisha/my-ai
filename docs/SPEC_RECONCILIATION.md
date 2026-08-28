@@ -14117,3 +14117,139 @@ does not exist is the same role an adjudicator would need.
 Not built in this increment, deliberately. It needs a decision about who
 adjudicates, and appointing an adjudicator inside an organization whose only
 non-owner authority is a vote is a governance design rather than a function.
+
+## §145 — The right to appeal, and the court this organization did not need (2026-08-28, TQ-102)
+
+Owner direction, 2026-08-28: the right to appeal an unfavourable ruling is one of
+two examples of the *"undeniable and inalienable"* kind of rule that belongs in
+the Constitution. §144 §4 found that `backend/charter.py` had declared it **owed
+and unenforced** since it was written. This discharges it.
+
+### 1. Two of the charter's three unenforced protections were the same missing thing
+
+**You cannot appeal a ruling you were never told about.**
+
+The charter's *"an agent is told what is found about it"* and the organization
+model's declared gap 1 — *a producing agent never learns how its own report was
+judged* — are the **prerequisite**, not a neighbouring nicety. Building the appeal
+alone would have produced a right nobody could exercise, which is the failure this
+project keeps recording under different names: an instrument nothing obeys (§126),
+a metric that improves while the system does not (§119 §8), a scenario green over
+a condition that never happened (§136).
+
+So `rulings_about` came first, and it is **derived rather than delivered**. A
+grade is a ruling about whoever produced the analysis, and the join already
+existed — `compliance.self_evaluated` has used it since it was written. No
+notification table, no write anybody has to remember to make, and **no sweeper
+whose stopping would look exactly like an organization with nothing to report.**
+
+### 2. Who adjudicates: three bad answers, and the one the architecture already had
+
+TQ-102 was queued saying the mechanism was easy and *who adjudicates* was not.
+Three answers were available and each fails in its own way:
+
+- **A standing adjudicator appointed by vote** is removable by the same vote, so
+  an appeal becomes reviewable by whoever is currently winning.
+- **Parliament as the appellate court** makes the electorate the reviewer, and the
+  electorate contains whoever made the ruling.
+- **The owner** is what happens today, and the charter already says that is not an
+  appeal.
+
+**The answer is that there is no court.** The charter's requirement is precisely
+*"reviewed by someone other than whoever made it"*, which is satisfied by a **peer
+of the author** — same role, different instance — chosen by neither party.
+
+This system already implements that independence three times: the producer is not
+the approver (`engineering.approve`, 46 §11), the producer is not the grader
+(`compliance.self_evaluated`), and the preparer is not the health judge
+(`release.judge`, §139). An appeal is the fourth instance of one rule, not a new
+kind of thing.
+
+**Nothing is appointed, so nothing can be removed.** That is the whole of the
+problem TQ-102 named, dissolved rather than solved — and it is 46 §10's *work
+determines staffing* again, the same reasoning that gave the Portfolio Analyst
+`on_demand: true` instead of a new agent class (§117).
+
+### 3. An appeal that lapses is a denial nobody had to make
+
+This organization runs one of each role. **So most of the time there is no
+eligible peer**, and an appeal waits.
+
+It waits **openly**. There is no `dismiss`, no `deny`, no `expire`, no timeout and
+no delete — the same construction `parliament.escalate` uses for owner
+escalations, and asserted the same way: over the parsed module, because the
+property is the *absence* of a capability.
+
+The reasoning matters more than the code. An appeal closed by a timeout would be
+**indistinguishable from one that was heard and refused**, and the agent whose
+work it was could not tell which had happened. A right that can expire unexercised
+because nobody was available is a right in name.
+
+So `summary` reports **two numbers**: filed and heard, with the unheard named
+individually. Zero appeals filed is an organization nobody disagrees with; zero
+heard against forty filed is a right that exists on paper. **Both look like
+silence in one number** — §130's lesson, arriving where the failure would be least
+visible, because an unexercised right and a suppressed one are the same silence.
+
+Live: with one Analysis agent besides the grader, `eligible_adjudicators` returns
+`[]` and the appeal is filed anyway. Register a peer and it becomes heard. The
+grade row is byte-identical before and after being overturned.
+
+### 4. The right is not gateable by ordinary law
+
+The owner placed this right in the Constitution, where changing it needs
+two-thirds (§142, §144). So `backend/appeal.py` reads **no governed data at
+all** — no instrument can disable an appeal, no obligation kind gates one, and a
+test asserts that `governed_knowledge`, `operating_context` and `parliament` are
+not imported.
+
+What an ordinary law *may* eventually govern is **procedure** — who hears what, in
+what time. That split is the owner's own criterion applied to this right's own
+machinery: the durable part in the Constitution, the situational part in ordinary
+law.
+
+**When the genesis Constitution is written, this is one of the provisions it
+should carry.** Nothing here can put it there; the text is the owner's.
+
+### 5. What moved in the charter, and what deliberately did not
+
+`UNENFORCED_COUNT` went 3 → 2, and **only one of the two changes was a
+discharge.**
+
+**Appeal is now enforced**, naming three functions that resolve. Two limits are
+stated in the protection itself rather than implied: a hearing needs a peer to
+exist, and no agent files one yet — the right is *available* rather than
+exercised.
+
+**"An agent is told what is found about it" stays aspirational**, and its
+reasoning is rewritten rather than its status. The read path it asked for now
+exists and **nothing reads it**: no agent's cycle consults `rulings_about`, so an
+agent that does not think to look is still not told. Marking it enforced would be
+§134's error — *a function tested in isolation is not a function that runs* — and
+**being told is passive from the agent's side in a way that having a right is
+not.** An agent can exercise a right by choosing to; it cannot be told by choosing
+to.
+
+Moving that number down is the easiest way to make a charter look better than it
+is, so what moved and what did not is recorded here and pinned by a test that
+names both.
+
+The test asserting the summary line also stopped hardcoding `3`. A number written
+in two places eventually disagrees with itself, and in a charter that would mean
+the summary claiming a promise was kept while the list still owed it.
+
+### 6. What this does not do
+
+- **Nothing files an appeal.** No agent's cycle checks its own rulings or
+  contests one. The right is available and unexercised, which is the honest state
+  and is named in the charter rather than left to be discovered.
+- **Only grades are appealable.** A closed vocabulary of one: compliance
+  dispositions and governed refusals are rulings too, and adding a kind nothing
+  produces would be a right over nothing.
+- **The COO does not spawn a peer when an appeal waits.** It could — an appeal is
+  workload, and 46 §10 says work determines staffing — and the state it would read
+  is already visible in `unheard()`. Not wired, and named so the gap is not
+  mistaken for a design.
+- **There is no second instance.** One appeal per ruling, refused by name: a
+  second review needs a hierarchy this organization does not have, and an agent
+  that could refile until it won would be relitigating rather than appealing.

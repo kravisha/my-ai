@@ -296,7 +296,7 @@ it, which is the property that matters and is what §120 meant to say.
 | The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py) |
 | Agents reading what governs them | `IN DEVELOPMENT` — TQ-86, TQ-87. [`backend/operating_context.py`](../backend/operating_context.py). Explorer, Speculator and the register obey governed data. **Analysis and the COO do not** |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
-| The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted. One of them — **appeal** — the owner named a fundamental right on 2026-08-28, so its deferral reasoning was corrected rather than left (§144 §4). TQ-102 |
+| The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; **two** are listed as *unenforced* rather than quietly omitted. TQ-102 discharged appeal (§145) and deliberately did **not** discharge *"an agent is told what is found about it"* — the read path exists and nothing reads it, and being told is passive in a way that having a right is not |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
 | Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py) |
 Addendum 32 specifies elections, ministers and committees; none is required for a
@@ -321,13 +321,27 @@ The two examples given are both rights: **the right to vote** and **the right to
 appeal an unfavourable ruling.** Rights are level 0's natural inhabitants, because
 their whole value is that the people they constrain cannot easily remove them.
 
-**One of the two is built and the other is owed.** The right to vote works — the
-roll is in the Articles, `cast_vote` refuses anybody not on it, and amending the
-roll costs two-thirds. The right to appeal does not exist, and
-[`backend/charter.py`](../backend/charter.py) has said so since it was written:
-*"a settled matter can be appealed"* is listed as owed and unenforced, because
-*"no adjudicator exists… the owner is both first and last instance, which is not
-an appeal."* TQ-102.
+**Both are now built.** The right to vote works — the roll is in the Articles,
+`cast_vote` refuses anybody not on it, and amending the roll costs two-thirds. The
+right to appeal was declared owed and unenforced in
+[`backend/charter.py`](../backend/charter.py) from the day it was written, and
+TQ-102 discharged it: [`backend/appeal.py`](../backend/appeal.py), §145.
+
+**There is no court, and that was the answer rather than a compromise.** Every
+candidate adjudicator fails — one appointed by vote is removable by the same vote,
+Parliament contains the author, and the owner is what the charter already says is
+not an appeal. The charter's requirement is *"reviewed by someone other than
+whoever made it"*, which needs a **peer of the author**: same role, different
+instance, chosen by neither party. Nothing is appointed, so nothing can be
+removed. It is the fourth instance of one rule this system already applies three
+times — producer is not approver, producer is not grader, preparer is not health
+judge.
+
+**An appeal that lapses is a denial nobody had to make**, so there is no
+dismissal, no expiry, no auto-denial and no delete. It waits openly. And because
+this organization runs one of each role, it usually *does* wait: `summary` reports
+filed **and** heard, since zero appeals filed and forty filed with none heard are
+the same silence in one number (§130).
 
 **And code cannot apply this criterion**, which matters because the direction
 makes it tempting to try. The refusal covers what a proposal *declares*: a
@@ -1067,7 +1081,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,819 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,842 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -1122,11 +1136,12 @@ until somebody declares it deliberately.
 1. **A producing agent never learns how its own report was judged.** Feedback
    closes at the lens level — the COO reads grades and moves the lens — so the
    organization learns while the individual agent does not.
-1a. **No agent can appeal a ruling.** Declared in the charter since it was
-   written, and named by the owner on 2026-08-28 as a fundamental right rather
-   than a deferrable feature (§144). The hard part is not the mechanism: this
-   organization's only non-owner authority is a vote, and an adjudicator a
-   majority appoints is one a majority removes. TQ-102.
+1a. **No agent reads its own record.** TQ-102 built the read path —
+   `appeal.rulings_about` returns every grade made about an agent's own work —
+   and nothing in `agents/` calls it, so an agent that does not think to look is
+   still not told. Nothing files an appeal either: the right is available and
+   unexercised. TQ-103, and §118's rule applies to it — reading grades and
+   changing nothing would close this gap on paper.
 2. **Lessons written when a lens goes stale are never read back.** They are
    preserved and guarded against duplication, and no consumer exists.
 

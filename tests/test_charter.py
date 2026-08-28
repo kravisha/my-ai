@@ -168,9 +168,36 @@ def test_the_cover_up_clause_is_recorded_as_preventive():
 
 
 def test_summarise_marks_the_unenforced_ones():
+    """Derived from `UNENFORCED_COUNT` rather than repeating it. The literal `3`
+    stood here until TQ-102 discharged one, and a number written in two places is
+    one that eventually disagrees with itself - which in a charter would mean the
+    summary claiming a promise was kept while the list still owed it."""
     text = charter.summarise()
-    assert "3 not yet" in text
+    assert f"{charter.UNENFORCED_COUNT} not yet" in text
     assert text.count("missing:") == charter.UNENFORCED_COUNT
+
+
+def test_appeal_is_enforced_and_notification_is_still_not():
+    """TQ-102 moved one and deliberately left the other.
+
+    **The right to appeal is enforced**: an agent can file, nobody can file on its
+    behalf, and neither the author nor the appellant may hear it.
+
+    **"An agent is told what is found about it" is not**, though the read path it
+    needed now exists. Nothing in `agents/` consults it, and a function tested in
+    isolation is not a function that runs (§134). Being told is passive from the
+    agent's side in a way that having a right is not - so marking it enforced
+    would be the charter claiming something the agent would not experience.
+
+    Pinned as a pair because moving the count down is the easiest way to make a
+    charter look better than it is."""
+    appeal_clause = next(p for p in charter.PROTECTIONS if "appealed" in p.name)
+    assert appeal_clause.enforced_by and not appeal_clause.aspirational
+    assert "backend.appeal.hear" in appeal_clause.enforced_by
+
+    told = next(p for p in charter.PROTECTIONS if "is told what is found" in p.name)
+    assert told.aspirational and not told.enforced_by
+    assert "nothing reads it" in told.aspirational
 
 
 # -- duties ------------------------------------------------------------------

@@ -48,8 +48,9 @@ holds the queue, not the record.
 > superseded authority (§140 §3). And the persona work needs a mechanism before it needs code
 > (§140 §6).
 >
-> **TQ-98 is done (§143).** The client profile exists, the watchlist boundary is structural rather
-> than conventional, and §111's tripwires are re-aimed at where the risk moved to.
+> **TQ-98 is done (§143)** and **TQ-102 is done (§145)** — the client profile with a structural
+> watchlist boundary, and the right to appeal, which the charter had declared owed and unenforced
+> since it was written. Two of the three unenforced protections were the same missing thing.
 >
 > **Recommended next: TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
@@ -2874,8 +2875,31 @@ and it is unanswered.
 
 ### TQ-102 — The right to appeal an unfavourable ruling
 
-**NEED (ORANGE) · QUEUED · owner direction 2026-08-28 · addendum 32 §19 · addendum 46 §11 ·
-`SPEC_RECONCILIATION.md` §144 §4, §137**
+**NEED (ORANGE) · DONE — `SPEC_RECONCILIATION.md` §145 · owner direction 2026-08-28 ·
+addendum 32 §19 · addendum 46 §11 · `SPEC_RECONCILIATION.md` §144 §4, §137**
+
+`backend/appeal.py`. **The hard question dissolved rather than being answered.** All three
+candidate adjudicators fail — a standing one is removable by whoever appointed it, Parliament
+contains the author, and the owner is what the charter already says is not an appeal. The
+charter's requirement is *"reviewed by someone other than whoever made it"*, which needs a
+**peer of the author**, not a court. Nothing is appointed, so nothing can be removed — and it
+is 46 §10's *work determines staffing* again, the rule that gave the Portfolio Analyst
+`on_demand` instead of a new agent class.
+
+**Two of the charter's three unenforced protections were the same missing thing**: you cannot
+appeal a ruling you were never told about. `rulings_about` is derived from the join
+`compliance.self_evaluated` already used, so there is no notification table and no sweeper
+whose stopping would look like an organization with nothing to report.
+
+**An appeal that lapses is a denial nobody had to make**, so there is no dismiss, deny, expire
+or delete — asserted over the parsed module. `summary` reports filed *and* heard, because zero
+appeals filed and forty filed with none heard are the same silence in one number (§130).
+
+`UNENFORCED_COUNT` went 3 → 2 and **only one change was a discharge** (§145 §5). Appeal is
+enforced; *"an agent is told what is found about it"* is not, because the read path now exists
+and nothing reads it — being told is passive in a way that having a right is not.
+
+<details><summary>The entry as it was queued</summary>
 
 Named by the owner as one of two examples of the *"undeniable and inalienable"* fundamental
 rights that belong in the Constitution: **the right to appeal an unfavorable ruling.** The
@@ -2911,3 +2935,29 @@ purpose the owner described.
 
 **Related and not the same:** §137's missing reviewer role. An adjudicator and a reviewer are
 both *somebody other than the author*, and whether they are one role is part of this entry.
+
+</details>
+
+### TQ-103 — Let an agent read its own record, and act on it
+
+**NEED (GREEN) · QUEUED · addendum 47 §14 · `SPEC_RECONCILIATION.md` §145 §5, §145 §6 ·
+organization-model declared gap 1**
+
+TQ-102 built the read path and left the telling. `backend.appeal.rulings_about` returns every
+grade made about an agent's own analyses, and **nothing in `agents/` calls it** — so an agent
+that does not think to look is still not told, and the charter keeps
+*"an agent is told what is found about it"* as unenforced for exactly that reason.
+
+Small, and it is the increment that turns two mechanisms into behaviour:
+
+1. An agent's cycle consults its own rulings.
+2. Having read one, it may file an appeal — which nothing currently does, so the right built
+   at TQ-102 is available and unexercised.
+3. The COO spawns a peer when an appeal is waiting. An appeal is workload, 46 §10 says work
+   determines staffing, and `appeal.unheard()` already makes the condition visible. Without it
+   this organization — one of each role — heard appeal is rare by construction.
+
+**The trap to write against:** an agent that reads its grades and changes nothing has closed
+declared gap 1 on paper. §118's rule — *absence of complaint is not evidence of competence* —
+means the test has to require the reading to *appear* in what the agent does, not merely to
+have happened.
