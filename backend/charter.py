@@ -201,8 +201,13 @@ DUTIES = (
     Protection(
         "work is evaluated by its consumer, not its producer",
         "An agent does not grade its own output. A grade written by the producer looks complete and "
-        "carries no independent information, which is harder to notice than an absent one.",
-        ("backend.compliance.self_evaluated",),
+        "carries no independent information, which is harder to notice than an absent one. "
+        "**Measured 2026-08-28 and violated by every grade this organization has produced** - "
+        "agents/analysis.py records the analysis and the grade under one identity, so the condition "
+        "this duty calls harder-to-notice-than-an-absence was universal, detected and unread for "
+        "months (SPEC_RECONCILIATION 146). It is now contested by the agent it affects and reviewed "
+        "by a peer; **it is not yet fixed**, and TQ-104 owns making a grade independent.",
+        ("backend.compliance.self_evaluated", "backend.appeal.contestable_by"),
     ),
 )
 

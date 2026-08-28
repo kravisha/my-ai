@@ -23,7 +23,7 @@ import sys
 from agents import discovery_config as config
 from agents.base import run_agent
 from app.model_gateway import call_reasoning_model
-from backend import fi_db
+from backend import appeal, fi_db
 
 ROLE = "analysis"
 ANALYSIS_MAX_TOKENS = 4096
@@ -472,6 +472,70 @@ def _resolve_answered_questions(conn, security: str, result: dict, analysis_resu
             )
 
 
+def _contest_own_rulings(conn, identity: str) -> int:
+    """Read what was found about this agent's own work, and act on it (TQ-103).
+
+    **The half of declared gap 1 that can be closed without a model.** Feedback
+    has always closed at the lens level - the COO reads grades and moves the lens
+    - so the organization learned and the individual agent did not. This is the
+    agent reading its own record.
+
+    Reading it changes nothing on its own, which is the trap §118 records: an
+    analyst that stopped asking sources how much they held made every complaint
+    disappear and passed its exercise, having detected nothing. So the reading has
+    to *appear in what the agent does*, and here it does - an appeal is filed, or
+    there was nothing contestable.
+
+    The ground is `appeal.contestable_by`'s and is deterministic: a grade this
+    agent wrote about its own work, declaring that work not worth the compute.
+    Not a judgement about whether the score was fair, which would need something
+    that reads text."""
+    filed = 0
+    for ruling in appeal.contestable_by(conn, identity):
+        try:
+            appeal.file_appeal(
+                conn, ruling_kind=ruling["kind"], ruling_id=ruling["id"],
+                appellant=identity, grounds=ruling["grounds"])
+        except appeal.AppealRefused as refusal:
+            # Never fatal. An agent that could not file an appeal has still got
+            # work to do, and a right whose exercise could stop the day's work
+            # would be one nobody dared use.
+            print(f"[analysis] could not contest {ruling['kind']} {ruling['id']}: {refusal}")
+            continue
+        filed += 1
+        print(f"[analysis] contested {ruling['kind']} {ruling['id']}: "
+              f"graded by its own producer and declared not worth the compute")
+    return filed
+
+
+def _hear_peer_appeals(conn, identity: str) -> int:
+    """Hear appeals this agent is eligible for: a peer's, never its own.
+
+    Eligibility is `appeal.eligible_adjudicators`', which excludes the author and
+    the appellant - so this cannot reach its own ruling or its own appeal, and the
+    refusal is structural rather than a check written here.
+
+    **What it decides is the ruling's independence, not the work's quality**, and
+    `appeal.independence_finding` says why. A peer cannot re-grade an analysis
+    without redoing it; what it can establish from the record is whether the
+    ruling carried an independent view."""
+    heard = 0
+    for waiting in appeal.unheard(conn):
+        if identity not in appeal.eligible_adjudicators(conn, waiting["id"]):
+            continue
+        finding = appeal.independence_finding(conn, waiting["id"])
+        try:
+            appeal.hear(conn, waiting["id"], adjudicator=identity,
+                        outcome=finding["outcome"], rationale=finding["rationale"])
+        except appeal.AppealRefused as refusal:
+            print(f"[analysis] could not hear appeal {waiting['id']}: {refusal}")
+            continue
+        heard += 1
+        print(f"[analysis] heard appeal {waiting['id']} by {waiting['appellant']}: "
+              f"{finding['outcome']}")
+    return heard
+
+
 def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     # Prioritised rather than FIFO: at ten securities detection outpaces
     # reasoning (gap analysis §4.3b), so which lead gets the one deep-reasoning
@@ -489,6 +553,13 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     reclaimed = fi_db.release_stale_claims(conn)
     if reclaimed:
         print(f"[analysis] returned {reclaimed} abandoned report(s) to the queue")
+
+    # Before claiming work, and deliberately not conditional on there being any:
+    # an agent's own record is not something it reads only when it happens to be
+    # busy, and the early return below would otherwise skip both of these on
+    # every idle cycle - which is most of them.
+    _contest_own_rulings(conn, identity)
+    _hear_peer_appeals(conn, identity)
 
     report = fi_db.claim_next_report(conn, identity, spawned_at)
     if report is None:

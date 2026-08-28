@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import fi_db, status_events, remediation, risk, strategy
+from backend import appeal, fi_db, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -164,6 +164,15 @@ def _ensure_baseline_population(conn) -> None:
     Before lifecycle and process state were separated, this was impossible
     to express: a retired agent was indistinguishable from a dead one, so
     COO respawned it within a cycle and retirement silently did nothing."""
+    # Addendum 46 §10: work determines staffing. An appeal waiting for somebody
+    # eligible to hear it IS work, and this organization runs one of each role -
+    # so without this the right built at TQ-102 is exercisable in principle and
+    # never in practice, which is the shape §126 calls a filing cabinet.
+    #
+    # One peer per role however many appeals wait: one agent hears all of them,
+    # and a role per appeal would ask for five agents to do one agent's work.
+    awaiting_peer = appeal.roles_awaiting_a_peer(conn)
+
     for role, target in BASELINE_POPULATION.items():
         staffing = fi_db.staffing(conn, role)
 
@@ -172,6 +181,12 @@ def _ensure_baseline_population(conn) -> None:
         # replaced - otherwise COO would quietly spawn a substitute and undo a
         # decision the Controller took.
         effective_target = max(0, target - staffing["dormant"])
+        if role in awaiting_peer:
+            # Raised rather than special-cased into its own spawn path: the
+            # shortfall machinery below already handles in-flight spawns, dormant
+            # slots and the three reasons a role can be short, and a second way to
+            # ask for an agent is a second way to ask for two.
+            effective_target += 1
 
         in_flight = _spawns_in_flight(conn, role)
         have = staffing["running"] + in_flight
@@ -189,6 +204,9 @@ def _ensure_baseline_population(conn) -> None:
                 what = "has never been spawned - establishing initial population"
             elif staffing["awaiting_process"] > index:
                 what = "has a slot with no process - refilling it under the same identity"
+            elif role in awaiting_peer:
+                what = ("has an appeal waiting for somebody other than its author to hear it - "
+                        "staffing the peer that hearing needs")
             else:
                 what = "needs more agents than it has slots - adding capacity"
             reason = (

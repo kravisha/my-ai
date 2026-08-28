@@ -14253,3 +14253,157 @@ the summary claiming a promise was kept while the list still owed it.
 - **There is no second instance.** One appeal per ruling, refused by name: a
   second review needs a hierarchy this organization does not have, and an agent
   that could refile until it won would be relitigating rather than appealing.
+
+## §146 — The agent reads its own record, and finds that every grade was written by itself (2026-08-28, TQ-103)
+
+TQ-102 built the read path and the right, and nothing used either.
+`appeal.rulings_about` existed and no agent called it; `file_appeal` existed and
+nothing filed one. This is the increment that turns two mechanisms into
+behaviour, and the finding that made it possible was sitting in the data.
+
+### 1. Every grade this organization has produced was written by its own producer
+
+`agents/analysis.py` records the analysis and the grade under **one identity**:
+
+```python
+analysis_result_id = fi_db.record_analysis_result(conn, identity, spawned_at, ...)
+fi_db.record_grade(conn, identity, spawned_at, report["id"], analysis_result_id, ...)
+```
+
+Measured against the last full run before this was written: **nine grades, nine
+self-evaluated.** Not a sample - all of them, in every run.
+
+`backend/charter.py` states the duty this violates: *"work is evaluated by its
+consumer, not its producer. A grade written by the producer looks complete and
+carries no independent information, which is harder to notice than an absent
+one."* `compliance.self_evaluated` has detected it since it was written, and
+**nothing has ever read the detector.**
+
+So the condition the charter names as *harder to notice than an absence* was
+universal, detected, and unnoticed for months. It was found here by looking for
+something else - a deterministic ground an agent could appeal on - which is how
+most of this project's real defects have surfaced.
+
+### 2. A ground that is a fact, not an opinion
+
+An agent that appealed every low score would be appealing rather than
+disagreeing, and *"was this grade fair?"* is a judgement needing something that
+reads text. So `contestable_by` uses two facts already in the record:
+
+- **The grader was the producer** - the charter's own standard for a ruling that
+  carries no independent information.
+- **The grade declared the work not worth the compute** - unfavourable by the
+  grader's own boolean, so **no threshold is invented**. A score bar nobody
+  measured would be a policy wearing a measurement's clothes (§128).
+
+Both are required. A generous self-evaluation is still improper and is not
+something the agent it favoured has standing to complain about; the owner's words
+are the right to appeal an *unfavourable* ruling.
+
+Not vacuous: five of the nine grades in that run declared the work not worth the
+compute.
+
+### 3. The reading has to appear in what the agent does
+
+§118's trap, transferred exactly. An analyst that stopped asking sources how much
+they held made every complaint disappear and passed its exercise, having detected
+nothing. **An agent that reads its grades and changes nothing closes declared gap
+1 on paper.**
+
+So the test is not that `rulings_about` was called. It is that an appeal exists
+that did not exist before, naming the specific ruling that met the ground - and
+that a cycle with nothing contestable files nothing, because an agent that always
+filed something would be appealing on a schedule.
+
+Both calls sit **before** the claim, and deliberately not inside the branch that
+handles work: an agent's own record is not something it reads only when it
+happens to be busy, and `_analysis_work` returns early on an idle cycle, which is
+most of them.
+
+### 4. What a peer decides, and what it must not claim to decide
+
+A peer cannot re-grade an analysis without redoing it. What it can establish from
+the record is whether the ruling carried an independent view - which is the
+charter's standard and the ground the appeal was filed on.
+
+So `independence_finding` **reviews the ruling's independence, not the work's
+quality**, and the rationale says so in terms:
+
+> *"This says nothing about the quality of the work - the analysis is now
+> ungraded rather than well graded, and an independent grade is what it is owed."*
+
+A reader seeing `overturned` and inferring the work was good would have learned
+something false from a true record. That sentence is the whole reason the finding
+is worth having rather than being a rubber stamp: it is deterministic on a fact
+about *independence*, and an appeal decided on the merits by whoever happened to
+be spawned would have an outcome that depended on who was spawned.
+
+The peer also re-checks rather than assuming: a ruling that turns out to have been
+independent is **upheld**, which is a finding and not a formality.
+
+### 5. Staffing, which is where the loop closes
+
+An appeal needs a peer, and this organization runs one of each role. Without
+staffing, TQ-102's right is exercisable in principle and never in practice -
+§126's filing cabinet.
+
+`roles_awaiting_a_peer` names the roles where an appeal waits with nobody
+eligible, and the COO raises that role's target by one. **One peer per role
+however many appeals wait** - one agent hears all of them, and a role per appeal
+would ask for five agents to do one agent's work (46 §9).
+
+Raised into the existing shortfall machinery rather than given its own spawn
+path, because that machinery already handles in-flight spawns, dormant slots and
+the three reasons a role can be short - and *a second way to ask for an agent is
+a second way to ask for two.*
+
+**Live, in a 90-second baseline run, unprompted:**
+
+```
+analysis-1 produced two analyses and graded both itself
+one declared worth_the_compute=0        -> contestable
+analysis-1 read its own record          -> appeal 1 filed
+nobody eligible                         -> roles_awaiting_a_peer == ["analysis"]
+COO: "has an appeal waiting for somebody other than its author to hear it
+      - staffing the peer that hearing needs (1/2 in service)"
+Controller spawned analysis-2
+analysis-2 heard appeal 1               -> overturned
+```
+
+Thirteen of thirteen properties still passed. The favourable grade was left
+alone, which is the check that this is a ground and not a schedule.
+
+### 6. What this does **not** fix, and it is the larger half
+
+**Grading is still not independent.** The appeal makes the defect visible and
+contested; it does not make a grade carry independent information. Analysis still
+grades its own work on the next cycle and the one after.
+
+**And an overturned grade changes nothing downstream.** The `grades` row is
+untouched by design - nothing erases a ruling - and whatever reads grades still
+reads it. The COO's lens still moves on a grade a peer found carried no
+independent judgement.
+
+So the honest statement of what TQ-103 achieved is narrow and worth having: **the
+organization's own record now says, per grade, contested by the affected agent and
+confirmed by a peer, that its grades are not independent.** `compliance.self_evaluated`
+said the same thing to nobody. What no part of this does is act on it.
+
+Queued as TQ-104, and it carries the decision this increment deliberately did not
+take: what an overturned ruling *means* operationally. Excluding overturned grades
+from what consumes them is the obvious answer and it is not obviously right -
+the organization would lose most of its grades, and losing a bad measurement is
+only an improvement if something replaces it.
+
+### 7. One charter entry moves, and the count does not
+
+The duty *"work is evaluated by its consumer, not its producer"* now names
+`backend.appeal.contestable_by` alongside `compliance.self_evaluated`: the
+violation is not only detected but contested by the party it affects.
+
+`UNENFORCED_COUNT` stays at 2. *"An agent is told what is found about it"* is
+**still not enforced**, and this increment is the reason to be careful about that:
+Analysis now reads its own rulings, so one agent of eight is told. The protection
+is about agents, not about Analysis, and marking it enforced because the one role
+that had rulings now reads them would be generalising from the only case that
+exists.

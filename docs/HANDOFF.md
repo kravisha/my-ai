@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 145 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 146 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2842 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2858 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -204,12 +204,17 @@ thing here that genuinely needs a model to read text — so the seam where a mod
 answers has to be in the design from the first line, along with what happens when
 none is reachable.
 
-**TQ-103 — let an agent read its own record, and act on it.** TQ-102 built the
-appeal and left the telling: `appeal.rulings_about` exists and nothing in
-`agents/` calls it, nothing files an appeal, and the COO does not spawn a peer
-when one is waiting. Three small wirings turn two mechanisms into behaviour —
-and §118's rule applies, so the test has to require the reading to *appear* in
-what the agent does.
+**TQ-104 — grading that carries independent information.** TQ-103 found that
+**every grade this organization has ever produced was written by its own
+producer** (§146) — nine of nine in a full run, detected by
+`compliance.self_evaluated` since it was written, and never read. It is now
+contested and reviewed; it is **not fixed**.
+
+Two decisions, and the second is harder: how a grade becomes independent, and
+what an overturned grade *means* (today: nothing — the grades row is untouched
+and whatever reads grades still reads it). Take them together. **The trap is
+TQ-80's**: stopping Analysis from grading itself with no second grader produces
+an organization with no grades and a clean `self_evaluated` report.
 
 **TQ-100 stays first among the unanswered**: *what refuses a persona that crosses
 the line — a function or a paragraph?* It comes before any persona code.

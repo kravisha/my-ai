@@ -349,3 +349,140 @@ def summary(conn: Database) -> dict:
             "An appeal with no eligible adjudicator stays open. It is never denied, expired "
             "or closed by a timeout - a lapsed appeal would be a denial nobody had to make."),
     }
+
+
+# --- what an agent can contest on the record alone --------------------------------------
+
+def contestable_by(conn: Database, identity: str) -> list[dict]:
+    """Rulings about this agent that the record alone shows are contestable.
+
+    **Deterministic, and that is the whole design.** Whether a grade is *wrong*
+    is a judgement, and an agent that appealed every low score would be appealing
+    rather than disagreeing. So the ground is two facts already in the data, and
+    neither is an opinion:
+
+    - **The grader was the producer.** `backend/charter.py`'s duty says work is
+      evaluated by its consumer, not its producer, because *"a grade written by
+      the producer looks complete and carries no independent information."*
+      `compliance.self_evaluated` has detected this since it was written and
+      nothing has ever acted on it.
+    - **The grade declared the work not worth the compute.** Unfavourable by the
+      grader's own boolean, so no threshold is invented here - a score bar nobody
+      measured would be a policy wearing a measurement's clothes (§128).
+
+    Both are required. A self-evaluated grade that was generous is not a
+    grievance, and the owner's words are the right to appeal an *unfavourable*
+    ruling.
+
+    **This is not hypothetical.** Measured against the last full run before this
+    was written: nine grades, nine self-evaluated, five declaring the work not
+    worth the compute. `agents/analysis.py` records the analysis and the grade
+    under one identity, so every grade this organization has produced carries no
+    independent information (§146).
+
+    Already-appealed rulings are excluded, so an agent calling this every cycle
+    converges rather than refiling - `file_appeal` would refuse anyway, and a
+    caller that had to catch that refusal to make progress would be using an
+    exception as a filter."""
+    identity = (identity or "").strip()
+    if not identity:
+        return []
+    return [
+        {
+            "kind": KIND_GRADE,
+            "id": row["id"],
+            "author": row["grader_identity"],
+            "overall_score": row["overall_score"],
+            "rationale": row["rationale"],
+            # The facts, not a verdict. Whoever hears this reads the same record.
+            "grounds": (
+                f"This grade was written by {row['grader_identity']}, which is the identity "
+                f"that produced the analysis it grades, so it carries no independent "
+                f"information (agent charter: work is evaluated by its consumer, not its "
+                f"producer). It declares the work not worth the compute. Asking for review "
+                f"by someone other than its author."),
+        }
+        for row in conn.fetchall(
+            "SELECT g.id, g.grader_identity, g.overall_score, g.rationale"
+            " FROM grades g"
+            " JOIN analysis_results a ON a.id = g.analysis_result_id"
+            " LEFT JOIN appeals ap ON ap.ruling_kind = ? AND ap.ruling_id = g.id"
+            " WHERE a.producer_identity = ?"
+            "   AND g.grader_identity = a.producer_identity"
+            "   AND g.worth_the_compute = 0"
+            "   AND ap.id IS NULL"
+            " ORDER BY g.id",
+            (KIND_GRADE, identity))
+    ]
+
+
+def roles_awaiting_a_peer(conn: Database) -> list[str]:
+    """Roles where an appeal is waiting and nobody is eligible to hear it.
+
+    **The workload signal, for whoever staffs the organization.** Addendum 46 §10
+    is *work determines staffing*, and a hearing needs a peer of the author -
+    which this organization, running one of each role, usually does not have. The
+    condition was already visible in `unheard()`; this names what would fix it.
+
+    At most one role per entry however many appeals are waiting: **one peer hears
+    all of them.** Returning a role per appeal would ask for five agents to do one
+    agent's work, which is the shape 46 §9 warns against."""
+    roles = []
+    for row in unheard(conn):
+        if eligible_adjudicators(conn, row["id"]):
+            continue
+        author_role = conn.fetchone(
+            "SELECT role FROM agent_registry WHERE identity = ?", (row["author"],))
+        if author_role is not None and author_role["role"] not in roles:
+            roles.append(author_role["role"])
+    return roles
+
+
+def independence_finding(conn: Database, appeal_id: int) -> dict:
+    """What a peer finds when it reviews a contested ruling, on the record alone.
+
+    **This reviews the ruling's independence, not the work's quality**, and the
+    distinction is the whole of what makes it honest. A peer cannot re-grade an
+    analysis without redoing it; what it *can* establish from the record is
+    whether the ruling was made by somebody with an independent view - which is
+    the charter's own standard, and the ground the appeal was filed on.
+
+    So an overturned grade does **not** mean the work was good. It means the
+    grade did not carry the independent judgement a grade is supposed to carry,
+    and the analysis is now ungraded rather than well graded. The rationale says
+    so, because a reader seeing `overturned` and inferring quality would have
+    learned something false from a true record.
+
+    Deterministic, because the ground is. A peer asked to decide *whether the
+    score was right* would be asked for an opinion, and an appeal decided by
+    opinion is one whose outcome depends on who happened to be spawned."""
+    row = require(conn, appeal_id)
+    grade = conn.fetchone(
+        "SELECT g.grader_identity, a.producer_identity, g.worth_the_compute"
+        " FROM grades g JOIN analysis_results a ON a.id = g.analysis_result_id"
+        " WHERE g.id = ?", (row["ruling_id"],))
+    if grade is None:
+        return {
+            "outcome": OUTCOME_UPHELD,
+            "rationale": (
+                "The ruling this appeal names is no longer in the record, so there is nothing "
+                "to find it wanting. Upheld for want of anything to review, which is not the "
+                "same as having been reviewed."),
+        }
+    if grade["grader_identity"] != grade["producer_identity"]:
+        return {
+            "outcome": OUTCOME_UPHELD,
+            "rationale": (
+                f"The ground does not hold: {grade['grader_identity']} did not produce the work "
+                f"it graded, so the ruling carried an independent view. This review reaches the "
+                f"independence of the ruling and not the merits of the score."),
+        }
+    return {
+        "outcome": OUTCOME_OVERTURNED,
+        "rationale": (
+            f"{grade['grader_identity']} graded work it produced itself, so the ruling carried "
+            f"no independent judgement (agent charter: work is evaluated by its consumer, not "
+            f"its producer). **This says nothing about the quality of the work** - the analysis "
+            f"is now ungraded rather than well graded, and an independent grade is what it is "
+            f"owed."),
+    }

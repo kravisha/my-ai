@@ -52,7 +52,11 @@ holds the queue, not the record.
 > watchlist boundary, and the right to appeal, which the charter had declared owed and unenforced
 > since it was written. Two of the three unenforced protections were the same missing thing.
 >
-> **Recommended next: TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
+> **TQ-102 and TQ-103 are done (§145, §146).** The right to appeal exists, is exercised, and
+> found that every grade in this organization was written by its own producer.
+>
+> **Recommended next: TQ-104** (grading that carries independent information — the defect TQ-103
+> surfaced and did not fix) or **TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
 > found is already half-built in the Gateway.
 >
@@ -2940,8 +2944,27 @@ both *somebody other than the author*, and whether they are one role is part of 
 
 ### TQ-103 — Let an agent read its own record, and act on it
 
-**NEED (GREEN) · QUEUED · addendum 47 §14 · `SPEC_RECONCILIATION.md` §145 §5, §145 §6 ·
-organization-model declared gap 1**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §146 · addendum 47 §14 ·
+`SPEC_RECONCILIATION.md` §145 §5, §145 §6 · organization-model declared gap 1**
+
+Done, and it found the thing that made it worth doing: **every grade this organization has
+ever produced was written by its own producer** (§146 §1). Nine of nine in a full run, detected
+by `compliance.self_evaluated` since it was written, read by nobody.
+
+That gave the appeal a ground that is a fact rather than an opinion — the grader was the
+producer, and the grade declared the work not worth the compute — so no threshold is invented
+and an agent is not appealing on a schedule.
+
+**The loop ran live and unprompted in a 90-second baseline run:** Analysis graded its own work,
+read its own record, appealed; nobody was eligible; the COO enqueued a spawn saying *"has an
+appeal waiting for somebody other than its author to hear it"*; the peer that arrived overturned
+it — on the ruling's **independence**, explicitly not on the work's quality. 13/13 properties
+still passed, and the favourable grade was left alone.
+
+**What it does not fix is the larger half** (§146 §6): grading is still not independent, and an
+overturned grade changes nothing downstream. TQ-104.
+
+<details><summary>The entry as it was queued</summary>
 
 TQ-102 built the read path and left the telling. `backend.appeal.rulings_about` returns every
 grade made about an agent's own analyses, and **nothing in `agents/` calls it** — so an agent
@@ -2961,3 +2984,39 @@ Small, and it is the increment that turns two mechanisms into behaviour:
 declared gap 1 on paper. §118's rule — *absence of complaint is not evidence of competence* —
 means the test has to require the reading to *appear* in what the agent does, not merely to
 have happened.
+
+### TQ-104 — Grading that carries independent information
+
+**NEED (ORANGE) · QUEUED · agent charter (duties) · addendum 7 §8 · addendum 46 §11 ·
+`SPEC_RECONCILIATION.md` §146 §1, §146 §6**
+
+**Every grade this organization has ever produced was written by its own producer.**
+`agents/analysis.py` records the analysis and the grade under one identity; measured at nine of
+nine in a full run. The charter's duty says a grade written by the producer *"looks complete and
+carries no independent information, which is harder to notice than an absent one"*, and
+`compliance.self_evaluated` has detected exactly this since it was written while nothing read
+the detector.
+
+TQ-103 made it **visible and contested** — the affected agent appeals, a peer confirms the
+ruling was not independent. That is not a fix. Analysis grades its own work on the next cycle.
+
+Two decisions, and the second is the harder one.
+
+**1. How a grade becomes independent.** Addendum 7 §6–§8 treats analysis and grading as one
+handoff, which is why they share an identity — so this is not a bug to patch but a design to
+revisit. Options: a second Analysis agent grades the first's output (the peer machinery
+`appeal.eligible_adjudicators` already picks); a distinct grader role; or the consumer of the
+analysis grades it, which is what the duty literally says and which nothing currently models.
+
+**2. What an overturned grade *means*.** Today: nothing. The `grades` row is untouched by
+design — nothing erases a ruling — and whatever reads grades still reads it, so the COO's lens
+still moves on a grade a peer found carried no independent judgement.
+
+Excluding overturned grades from what consumes them is the obvious answer and **is not
+obviously right**: the organization would lose most of its grades, and losing a bad measurement
+is only an improvement if something replaces it. Decide this with option 1, not before it —
+independent grading is what makes discarding the old ones affordable.
+
+**The trap:** making Analysis stop grading itself, with no second grader, produces an
+organization with no grades at all and a clean `self_evaluated` report. That is TQ-80's defect
+exactly — the analyst that stopped asking, and every complaint disappeared.

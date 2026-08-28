@@ -339,9 +339,20 @@ judge.
 
 **An appeal that lapses is a denial nobody had to make**, so there is no
 dismissal, no expiry, no auto-denial and no delete. It waits openly. And because
-this organization runs one of each role, it usually *does* wait: `summary` reports
-filed **and** heard, since zero appeals filed and forty filed with none heard are
-the same silence in one number (§130).
+this organization runs one of each role, it would usually *keep* waiting —
+so TQ-103 made a waiting appeal into staffing pressure: `roles_awaiting_a_peer`
+names the role, and the COO raises that role's target by one. **Work determines
+staffing** (46 §10), which is the same rule that gave the Portfolio Analyst
+`on_demand` instead of a new agent class. `summary` still reports filed **and**
+heard, since zero filed and forty filed with none heard are the same silence in
+one number (§130).
+
+**The whole loop runs, and it ran without being asked.** In a 90-second baseline
+run: Analysis graded its own work, one grade declared the work not worth the
+compute, the agent read its own record and appealed, nobody was eligible, the COO
+enqueued a spawn saying *"has an appeal waiting for somebody other than its author
+to hear it"*, and the peer that arrived overturned it — on the ruling's
+**independence**, explicitly not on the work's quality (§146 §4).
 
 **And code cannot apply this criterion**, which matters because the direction
 makes it tempting to try. The refusal covers what a proposal *declares*: a
@@ -1081,7 +1092,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,842 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,858 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -1133,15 +1144,18 @@ until somebody declares it deliberately.
 
 ### Declared gaps in the organization model
 
-1. **A producing agent never learns how its own report was judged.** Feedback
-   closes at the lens level — the COO reads grades and moves the lens — so the
-   organization learns while the individual agent does not.
-1a. **No agent reads its own record.** TQ-102 built the read path —
-   `appeal.rulings_about` returns every grade made about an agent's own work —
-   and nothing in `agents/` calls it, so an agent that does not think to look is
-   still not told. Nothing files an appeal either: the right is available and
-   unexercised. TQ-103, and §118's rule applies to it — reading grades and
-   changing nothing would close this gap on paper.
+1. **A producing agent learns how its work was judged, and cannot yet learn
+   *from* it.** TQ-103 closed the half that needs no model: Analysis reads the
+   rulings about its own work each cycle and acts on them. What it cannot do is
+   let a grader's rationale change its reasoning, which needs something that
+   reads text — the `prose_only` boundary again (§126).
+1a. **Every grade this organization produces is written by its own producer**
+   (§146). Measured at nine of nine in a full run.
+   `agents/analysis.py` records the analysis and the grade under one identity, and
+   `compliance.self_evaluated` has detected exactly this since it was written
+   while nothing read the detector. It is now contested by the affected agent and
+   reviewed by a peer; **it is not fixed**, and an overturned grade changes
+   nothing downstream. TQ-104.
 2. **Lessons written when a lens goes stale are never read back.** They are
    preserved and guarded against duplication, and no consumer exists.
 
