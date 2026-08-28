@@ -12715,3 +12715,75 @@ that number.
 What it does now depend on is the liveness thread actually running, which is a
 property of this codebase and is asserted. `TIMING_CONSTANTS.md`'s row moves from
 `UNMEASURED, and observed exceeded` to a margin against a rate this system sets.
+
+## §135 — The verification passes, and what that does not prove (2026-08-28)
+
+```
+[ok  ] anomaly_burst            1/1        [ok  ] misdrafted_instrument   7/7
+[ok  ] baseline_steady_state    13/13      [ok  ] overnight_session       5/5
+[ok  ] developing_story         5/5        [ok  ] saturation              0/0
+[ok  ] executive_failure        6/6        [ok  ] saturation_two_judges   2/2
+[ok  ] governed_organization    11/11
+
+CURRICULUM  [ok] portfolio_analysis v1: 6 exercises
+
+VERDICT  PASS
+```
+
+Nine scenarios, forty-six properties, the whole curriculum, and exit zero. The
+first full green verification this organization has produced.
+
+### What it does prove
+
+The organization starts, staffs itself, discovers, cross-checks, judges, grades,
+governs itself under an instrument it was given, refuses what a badly drafted
+instrument forbids, reports all of it through its Speaker, and shuts down leaving
+nothing running — nine times over, under conditions including an executive
+failure and a rule that forbids its own subject.
+
+### What it does not prove, and the difference matters
+
+**The liveness split was not exercised.** Across all nine runs:
+
+    agent_slow events    0
+    incidents            0, except the one executive_failure injects on purpose
+    agents emitting liveness   6-7 per run
+
+The signal is being emitted by every agent that runs `run_agent`. But **no agent
+was ever slow past the threshold**, so the state TQ-93 was built for never arose.
+
+That makes `no agent was respawned` passing consistent with two different worlds:
+the fix works, or the condition did not occur. This run cannot tell them apart,
+and the previous two runs failed that property *intermittently* — which is exactly
+the shape a condition takes when it depends on load and vendor latency.
+
+**A green run over a condition that never happened is not evidence about the
+condition.** This project has recorded that four times about tests (§117, §118,
+§123, §129) and twice about seams (§132, §134); this is the first time it applies
+to a whole verification.
+
+The mechanism is proven by `tests/test_agent_liveness.py`, which constructs the
+state directly: liveness fresh, progress stale, and asserts the agent is not
+marked crashed. What is unproven is the *end-to-end* claim — that a real agent
+inside a real slow model call survives a real COO cycle.
+
+### The honest close on §133
+
+§133's finding was that `HEALTH_STALE_THRESHOLD_SECONDS` depended on a rate this
+system does not control. That is resolved: it now depends on
+`LIVENESS_INTERVAL_SECONDS`, which this system sets, and `TIMING_CONSTANTS.md`
+records the margin against it.
+
+The *symptom* — an intermittent respawn — has not been observed since, and has
+also not been reproduced. Those are different statements and the second is the
+one that would close it.
+
+### Queued rather than claimed
+
+**TQ-94**: a fault that makes an agent slow rather than dead.
+`simulation/faults.py` can `kill`, `stop` and `lock_database` — all of which
+produce a *dead* agent, which is why no scenario can currently reproduce the one
+condition this organization has actually been getting wrong.
+
+Until that exists, the verification's green is honest about everything it ran and
+silent about the thing it was built to check.

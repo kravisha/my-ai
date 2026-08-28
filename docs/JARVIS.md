@@ -577,6 +577,21 @@ It prints what it cannot see with every verdict — deliberation, real prices, a
 real broker, historical operation, release and rollback. A green line therefore
 means something specific and limited, which is the only kind worth having.
 
+### Where the whole thing currently stands
+
+One command, `python -m simulation verify`, runs nine scenarios and the whole
+curriculum. As of 2026-08-28 it returns **PASS**: forty-six properties across an
+organization that starts, staffs itself, discovers, cross-checks, judges, grades,
+governs itself under an instrument, refuses what a badly drafted instrument
+forbids, and shuts down leaving nothing running.
+
+**One thing that green does not cover.** The liveness split (below) was not
+exercised — no agent was slow past the threshold in any of the nine runs, so the
+state it was built for never arose. The mechanism is proven by tests that
+construct the state directly; the end-to-end claim is not. `simulation/faults.py`
+can kill, stop and lock a database, all of which produce a *dead* agent, so no
+scenario can currently reproduce a *live but stalled* one (TQ-94).
+
 ### Liveness and progress are two signals
 
 An agent reports two things and they answer different questions. **Progress** —

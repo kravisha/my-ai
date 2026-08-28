@@ -1310,6 +1310,34 @@ Until this lands the threshold stays where a measurement put it and the property
 symptom stays where it is: **the verification is intermittently red for a real reason, which is the
 correct state for a suite to be in.**
 
+### TQ-94 — A fault that makes an agent slow rather than dead
+
+**NEED (YELLOW) · QUEUED · `SPEC_RECONCILIATION.md` §134, §135 · addendum 29 §15**
+
+`simulation/faults.py` can `kill`, `stop` and `lock_database`. **All three produce a dead agent**,
+and the condition this organization has actually been getting wrong is a *live* one: an agent inside
+a slow model call, alive and not advancing, which COO twice mistook for a crash.
+
+The first fully green verification (§135) did not exercise it. Zero `agent_slow` events across nine
+runs, because nothing was slow past the threshold — so `no agent was respawned` passing is
+consistent both with the fix working and with the condition not arising. **A green run over a
+condition that never happened is not evidence about the condition.**
+
+### What it has to do, and what it must not
+
+- **Make an agent slow without making it sick.** Pausing the process (SIGSTOP) also stops the
+  liveness thread, which produces a *dead-looking* agent and tests the wrong thing. The delay has to
+  sit where the work is, leaving the liveness clock running - which is the whole distinction TQ-93
+  drew.
+- **Assert the thing that used to fail.** `no agent was respawned`, plus an `agent_slow` event
+  raised and cleared: the fix working means the organization noticed, said so, and did nothing.
+- **Not become a way to make the suite green.** A fault that produces a slow agent nobody notices
+  would pass every property while proving nothing, which is the failure this entry exists to
+  prevent one level up.
+
+The natural mechanism is the same one `simulation/exchange.py` already uses for `slow` - a delay
+injected at a boundary the agent crosses - rather than anything that touches the process.
+
 ### TQ-85 — Signed commits, so document custody prevents rather than only detects
 
 **WANT · QUEUED · owner action required · `SPEC_RECONCILIATION.md` §122**
