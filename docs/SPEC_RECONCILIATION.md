@@ -13001,3 +13001,106 @@ What exists is the intake, the ladder, the independence rule, and an honest
 boundary at level 5 — which is the part everything else has to sit on.
 
 **15/15 mutations caught** by the test written for each. Suite **2719 passing**.
+
+## §138 — Evolution's relay, and a conflation in §119 (2026-08-28, TQ-95)
+
+TQ-95 asked one question before building anything: **what does Evolution add
+between a resolution and the Software Engineering Department?** If the answer is
+nothing, the relay is ceremony and §119's adjudication should be revisited rather
+than implemented.
+
+The answer is *something real, and almost entirely unbuildable here* — and
+answering it exposed that §119 was carrying two concerns as one.
+
+### 1. What Evolution is specified to add
+
+Addendum 30 §4 lists what an Evolution Directive carries beyond the resolution
+that authorised it:
+
+> scope · affected departments · affected agent classes · required behavioral
+> outcome · training requirements · evaluation criteria · certification criteria
+> · compatibility constraints · rollout plan · rollback plan · effective version
+
+And §23 inserts four stages between the mandate and the department: evolution
+design, the directive, impact analysis, training design.
+
+So it is not ceremony *in specification*. Evolution's contribution is **impact
+scoping and the rollout plan**.
+
+### 2. What this system can actually fill
+
+Almost none of it:
+
+| §4 field | Here |
+|---|---|
+| affected agent classes | **answerable** — `binds`, and the roles in the registry |
+| scope / compatibility | partly, as the subject an instrument governs |
+| required behavioral outcome | already the directive's `requirement` |
+| training requirements | nothing derives them from a directive |
+| evaluation / certification criteria | unbuilt |
+| **rollout and rollback plan** | **this system has neither** — the verifier lists both under what it cannot see |
+| effective version | instruments version by supersession |
+
+A relay built today would carry one field the resolution does not already carry
+and a set of empty ones. **That is the failure this project keeps recording** —
+a rule that exists and changes nothing, a metric that reports health while
+nothing happens — arriving as a whole department.
+
+### 3. §119 was carrying two concerns as one
+
+§119 §2 concluded:
+
+> *"Software Engineering shall not bypass Evolution. Addendum 46 §13's pipeline
+> shows 'Approved Directive → Software Department intake' with nothing between,
+> and that gap is where the bypass would be built by accident."*
+
+The word *bypass* is doing two jobs there.
+
+**Authority** — the department acting on something nobody sanctioned. That is
+what 30 §28's original sentence protects (*"Evolution SHALL NOT bypass Strategy
+for ordinary systemic change"*), and **TQ-83 already closed it**: intake requires
+an enacted resolution and refuses anything else.
+
+**Technical planning** — the department acting without impact analysis, training
+design or a rollback plan. That is real, entirely unaddressed, and **cannot be
+addressed until release and rollback exist** (addendum 46 §16, §18; both
+unbuilt).
+
+Those are different problems with different answers, and §119 gave them one. The
+correction: the direct-from-resolution intake is **not an authority deficiency**.
+It is a planning deficiency, and building a relay would not fix it — it would
+dress it.
+
+### 4. What was built instead
+
+The one field on §4's list this architecture can honestly fill, plus the thing
+that turned out to matter more.
+
+`impact_of()` reports who an instrument would bind, what it would displace, and
+**whether adopting it would be refused**. That last is worth more than it looks:
+without it, a proposal `governed_knowledge.adopt` will reject sits in the queue
+looking deliverable until somebody spends an approval discovering otherwise.
+
+Checked against reality rather than asserted — the test predicts the refusal at
+proposal time and then confirms the real `AdoptionRefused` at approval time. An
+impact statement that guessed would be worse than none.
+
+And it names what it does not assess, every time: training, certification,
+rollout, rollback. An impact statement silent about its own blind spots implies a
+completeness it does not have, which is §129's rule about the verifier applied one
+level down.
+
+### 5. What is not built, and why that is the answer rather than a deferral
+
+**No Evolution relay.** Not deferred — declined, for now, with the reason
+recorded: it would move a directive through a stage that adds one field this
+system can already compute and four it cannot.
+
+The entry that replaces it is not "build Evolution". It is **release and
+rollback** (TQ-96): until those exist, Evolution's genuine contribution has
+nothing to plan. When they do, the relay becomes worth building and this section
+is the argument for why it was not built sooner.
+
+`arrived_via` keeps naming the route, because the route is still a deviation from
+§119 as written — but the record now says which half of §119 it deviates from and
+which half was never in question.

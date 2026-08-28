@@ -649,6 +649,12 @@ when it cannot.
 defines as the correct outcome rather than a failure. It never approves its own
 proposal, and there is no reviewer role yet, so proposals wait for a person.
 
+Every proposal carries an impact statement: who the instrument would bind, what it
+would displace, and **whether adopting it would be refused** — caught at proposal
+time rather than after somebody spends an approval finding out. It names what it
+does not assess, because training, certification, rollout and rollback are all
+things this system has no way to plan (§138).
+
 Everything else in addendum 46 — phases 2 to 4, the complexity ladder, the
 maturity metrics, the external-dependency curve — is unbuilt.
 

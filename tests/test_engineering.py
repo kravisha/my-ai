@@ -39,12 +39,13 @@ def _enact(conn, title="A resolution", affects="organization_policy") -> int:
     return resolution
 
 
-def _directive(conn, *, requirement=None, subject="discovery_reports", title="A directive"):
+def _directive(conn, *, requirement=None, subject="discovery_reports", title="A directive",
+               binds="*"):
     return engineering.receive(
         conn, title=title, intended_outcome="Every discovery report names its source.",
         resolution_id=_enact(conn, title=f"r:{title}"),
         requirement=requirement or {"kind": "required_fields", "fields": ["summary"]},
-        subject=subject)
+        subject=subject, binds=binds)
 
 
 # --- authority requires provenance ----------------------------------------------------
@@ -252,3 +253,84 @@ def test_an_idle_department_produces_nothing(governed_conn):
     organization has asked for nothing, not that the department is broken."""
     software_engineer._engineer_work(governed_conn, "engineer-1")
     assert engineering.outcomes(governed_conn)["in_flight"] == 0
+
+
+# --- impact analysis, in the only form this architecture supports (§138) ---------------
+
+def test_a_proposal_says_who_it_would_bind(governed_conn):
+    """Addendum 30 §4 asks an Evolution Directive to name affected agent classes.
+    It is one of the few fields on that list this system can actually fill."""
+    for role, identity in (("explorer", "explorer-1"), ("analysis", "analysis-1")):
+        fi_db.register_agent(governed_conn, identity, role, 1)
+    directive = engineering.get_directive(governed_conn, _directive(governed_conn))
+    result = software_engineer.handle(governed_conn, directive, engineer="engineer-1")
+
+    impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
+    assert impact["roles_affected"] == ["analysis", "explorer"]
+    assert impact["binds"] == "*"
+
+
+def test_a_proposal_that_adoption_would_refuse_says_so_before_an_approval_is_spent(governed_conn):
+    """The piece worth having. Without it, a proposal `governed_knowledge.adopt`
+    will reject sits in the queue looking deliverable until somebody spends an
+    approval finding out.
+
+    **The prediction is checked against the real refusal**, not merely asserted —
+    an impact statement that guessed would be worse than none."""
+    first = engineering.get_directive(governed_conn, _directive(governed_conn, title="One"))
+    approved = software_engineer.handle(governed_conn, first, engineer="engineer-1")
+    engineering.approve(governed_conn, approved["work_id"], approver="coo")
+
+    second = engineering.get_directive(governed_conn, _directive(governed_conn, title="Two"))
+    result = software_engineer.handle(governed_conn, second, engineer="engineer-1")
+    impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
+
+    assert impact["would_be_refused"], "the collision was not predicted"
+    assert impact["displaces"]["level"] == "organization_policy"
+
+    with pytest.raises(governed.AdoptionRefused):
+        engineering.approve(governed_conn, result["work_id"], approver="coo")
+
+
+def test_a_clean_proposal_predicts_no_refusal(governed_conn):
+    """The other direction, so the prediction cannot be right by always saying
+    yes."""
+    directive = engineering.get_directive(governed_conn, _directive(governed_conn))
+    result = software_engineer.handle(governed_conn, directive, engineer="engineer-1")
+    impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
+
+    assert impact["would_be_refused"] is None
+    assert impact["displaces"] is None
+    engineering.approve(governed_conn, result["work_id"], approver="coo")
+
+
+def test_the_impact_statement_names_what_it_does_not_assess(governed_conn):
+    """Addendum 30 §4 asks for training requirements, evaluation and
+    certification criteria, and a rollout and rollback plan. This system has none
+    of those, and an impact statement silent about that would imply a completeness
+    it does not have."""
+    directive = engineering.get_directive(governed_conn, _directive(governed_conn))
+    result = software_engineer.handle(governed_conn, directive, engineer="engineer-1")
+    impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
+
+    unassessed = " ".join(impact["not_assessed"]).lower()
+    for absent in ("training", "certification", "rollback"):
+        assert absent in unassessed
+
+
+def test_a_directive_that_binds_one_role_affects_only_that_role(governed_conn):
+    """The other side of the conditional. Every other impact test binds `*`, so
+    a version that reported every role regardless of `binds` passed all of them —
+    mutation testing said so.
+
+    **A one-sided conditional is tested on one side**, which is the same shape as
+    a rule tested against data that cannot exercise it (§129)."""
+    for role, identity in (("explorer", "explorer-1"), ("analysis", "analysis-1")):
+        fi_db.register_agent(governed_conn, identity, role, 1)
+    directive = engineering.get_directive(
+        governed_conn, _directive(governed_conn, binds="analysis"))
+    result = software_engineer.handle(governed_conn, directive, engineer="engineer-1")
+
+    impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
+    assert impact["roles_affected"] == ["analysis"]
+    assert "explorer" not in impact["roles_affected"]

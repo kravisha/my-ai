@@ -1464,8 +1464,47 @@ resolution because Evolution does not exist — is named in every row rather tha
 
 ### TQ-95 — Evolution's directive relay
 
-**NEED (YELLOW) · QUEUED · addendum 30 §4, §23, §28 · addendum 46 §13 ·
-`SPEC_RECONCILIATION.md` §119, §137**
+**NEED (YELLOW) · DECLINED FOR NOW 2026-08-28 (`SPEC_RECONCILIATION.md` §138) · addendum 30 §4,
+§23, §28 · addendum 46 §13 · §119, §137**
+
+Asked its own question first and the answer was no. Of the fourteen fields addendum 30 §4 asks an
+Evolution Directive to carry, this system can fill **one** the resolution does not already carry —
+affected agent classes — and cannot fill training requirements, evaluation or certification
+criteria, or a rollout and rollback plan, because it has no release and no rollback.
+
+A relay built today would move a directive through a stage that adds one computable field and four
+empty ones. That is the failure this project keeps recording, arriving as a whole department.
+
+**And §119 was carrying two concerns as one.** The *authority* bypass it feared was closed by TQ-83:
+intake requires an enacted resolution. What remains is a *planning* deficiency, which a relay would
+dress rather than fix.
+
+Built instead: `engineering.impact_of` — who an instrument binds, what it displaces, and **whether
+adopting it would be refused**, checked against the real refusal rather than asserted. It names what
+it does not assess every time.
+
+### TQ-96 — Release and rollback
+
+**NEED (ORANGE) · QUEUED · addendum 46 §16, §18 · addendum 30 §14, §27 ·
+`SPEC_RECONCILIATION.md` §119, §138**
+
+The thing Evolution's contribution has nothing to plan without, and the largest item
+`simulation verify` lists among what it cannot see.
+
+Addendum 46 §18 makes rollback *"a fundamental capability rather than an emergency
+improvisation"*: a restoration point before a significant release, and a way back that preserves the
+failed version rather than erasing it. §16 pairs it with a release model in which version N keeps
+running while N+1 is prepared.
+
+**§119 already set the constraint on how it may be built.** Addendum 30 §13 says this system *"is
+not a single monolithic object that must be serialized and restarted"* and §14 makes full-system
+shutdown a last resort, so a release must not be built as a restart script: rolling restart, canary,
+version coexistence, compatibility adapters, and the COO's own handoff (30 §15).
+
+The first honest question is what a release even *is* here, given that the governed layer already
+changes behaviour without one. Rolling back an instrument is a supersession the store already
+supports; rolling back **code** is a different problem, and conflating them would be §138's mistake
+in the other direction.
 
 §119 adjudicated that Software Engineering receives directives **through Evolution**: 46 §13 draws
 *"Approved Directive → Software Department intake"* with nothing between, and that gap is where a

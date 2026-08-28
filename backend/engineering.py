@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS engineering_work (
     -- Whether the intended outcome was achieved. This is the judgement.
     outcome TEXT,
     outcome_detail TEXT,
+    -- What adopting this would do to the organization: who it binds, what it
+    -- would displace, and whether it would be refused. The one piece of
+    -- addendum 30 §4's impact analysis this system can honestly perform (§138).
+    impact TEXT,
     -- Who approved it, which may never be the engineer that produced it.
     approved_by TEXT,
     approved_at TEXT,
@@ -288,8 +292,10 @@ def propose_instrument(conn: Database, work_id: int, *, instrument: dict) -> Non
         raise EngineeringRefused(
             f"{work['assessed_level']!r} is not something this department can deliver. "
             f"Record the outcome as {OUTCOME_NEEDS_CODE!r} instead.")
-    conn.execute("UPDATE engineering_work SET proposed_instrument = ? WHERE id = ?",
-                 (json.dumps(instrument), work_id))
+    directive = get_directive(conn, work["directive_id"])
+    conn.execute(
+        "UPDATE engineering_work SET proposed_instrument = ?, impact = ? WHERE id = ?",
+        (json.dumps(instrument), json.dumps(impact_of(conn, directive)), work_id))
 
 
 def approve(conn: Database, work_id: int, *, approver: str) -> int:
@@ -338,6 +344,59 @@ def record_needs_code(conn: Database, work_id: int, *, detail: str) -> None:
         (OUTCOME_NEEDS_CODE, detail.strip(), work_id))
     conn.execute("UPDATE engineering_directives SET status = ? WHERE id = ?",
                  (STATUS_NEEDS_CODE, work["directive_id"]))
+
+
+def impact_of(conn: Database, directive: dict) -> dict:
+    """What adopting this directive's instrument would do.
+
+    **Addendum 30 §4 asks an Evolution Directive to carry scope, affected
+    departments, affected agent classes, training and evaluation criteria, and a
+    rollout and rollback plan.** Almost none of that is answerable here: this
+    system has no release, no rollback, no certification and no way to derive a
+    training requirement from a directive (§138).
+
+    What it *can* answer is who the instrument binds, what it would displace, and
+    **whether adopting it would be refused** - which is worth more than it looks.
+    Without it, a proposal that `governed_knowledge.adopt` will reject sits in
+    the queue looking deliverable until somebody spends an approval on it and
+    finds out. Catching at proposal time what would fail at adoption time is the
+    impact analysis this architecture actually supports.
+    """
+    proposed = instrument_for(directive)
+    standing = governed_knowledge.effective_item(conn, directive["subject"],
+                                                 allow_ambiguous=True)
+
+    roles = [row["role"] for row in conn.fetchall(
+        "SELECT DISTINCT role FROM agent_registry ORDER BY role")]
+    affected = roles if directive["binds"] == "*" else [directive["binds"]]
+
+    refused = None
+    if standing is not None and standing["level"] == proposed["level"]:
+        # `adopt` refuses two equal authorities on one subject unless the new one
+        # names what it replaces. An engineer proposing into an occupied level
+        # has to say so, and today nothing lets a directive express that - so the
+        # honest answer is that this proposal cannot be adopted as it stands.
+        refused = (
+            f"{directive['subject']!r} already has an instrument at {proposed['level']!r} "
+            f"(id {standing['id']}). Adopting this would put two equal authorities on one "
+            f"subject, which the store refuses.")
+
+    return {
+        "binds": directive["binds"],
+        "roles_affected": affected,
+        # Named rather than counted: "three roles" tells a reviewer nothing about
+        # whether the right three.
+        "displaces": None if standing is None else {
+            "id": standing["id"], "level": standing["level"]},
+        "would_be_refused": refused,
+        # Stated every time, so a reader never mistakes what this covers for what
+        # addendum 30 §4 asks for.
+        "not_assessed": [
+            "training requirements - nothing derives them from a directive",
+            "evaluation and certification criteria - unbuilt",
+            "rollout and rollback plan - this system has neither",
+        ],
+    }
 
 
 def get_directive(conn: Database, directive_id: int) -> dict | None:
