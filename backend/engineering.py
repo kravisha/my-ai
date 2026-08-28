@@ -109,7 +109,11 @@ CREATE TABLE IF NOT EXISTS engineering_work (
     -- Who approved it, which may never be the engineer that produced it.
     approved_by TEXT,
     approved_at TEXT,
-    adopted_instrument_id INTEGER
+    adopted_instrument_id INTEGER,
+    -- Set instead of adopting when the approval goes into a release candidate
+    -- rather than straight into force (TQ-96, §139): addendum 46 §16's Version
+    -- N+1, accumulating while Version N runs.
+    release_change_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS engineering_work_by_directive ON engineering_work (directive_id);
 """
@@ -137,11 +141,25 @@ STATUS_OPEN = "open"
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_DELIVERED = "delivered"
 STATUS_NEEDS_CODE = "needs_code"
-STATUSES = (STATUS_OPEN, STATUS_IN_PROGRESS, STATUS_DELIVERED, STATUS_NEEDS_CODE)
+# Approved into a release candidate and not yet in force. Distinct from
+# delivered on purpose: a change waiting in Version N+1 has changed nobody's
+# behaviour, and calling it delivered would be the department scoring for work
+# the organization has not received (§119 §8).
+STATUS_STAGED = "staged"
+STATUSES = (STATUS_OPEN, STATUS_IN_PROGRESS, STATUS_DELIVERED, STATUS_NEEDS_CODE,
+            STATUS_STAGED)
 
 OUTCOME_ACHIEVED = "achieved"
 OUTCOME_NEEDS_CODE = "needs_code"
 OUTCOMES = (OUTCOME_ACHIEVED, OUTCOME_NEEDS_CODE)
+
+# Derived states `delivered_outcomes` reports. They are computed from what is in
+# force right now and never stored, for the reason given there.
+STANDING_IN_FORCE = "in_force"
+STANDING_STAGED = "staged"
+STANDING_REVERSED = "reversed"
+STANDING_SUPERSEDED = "superseded"
+STANDING_NOT_DELIVERED = "not_delivered"
 
 # The only honest value today. Named in the row so a later reader cannot mistake
 # the current shortcut for the intended architecture (§119, TQ-95).
@@ -430,3 +448,104 @@ def outcomes(conn: Database) -> dict:
         "in_flight": conn.fetchone(
             "SELECT COUNT(*) AS n FROM engineering_work WHERE outcome IS NULL")["n"],
     }
+
+
+def stage_for_release(conn: Database, work_id: int, *, release_id: int, approver: str) -> int:
+    """Approve a proposal into a release candidate instead of straight into force
+    (TQ-96; addendum 46 §16; §139).
+
+    The other half of `approve`, and the difference is *when it takes effect*.
+    `approve` adopts, and the organization's behaviour changes on the spot;
+    this stages, and the change waits in Version N+1 with the rest of a set that
+    will stand or fall together.
+
+    **The same independence rule, for the same reason.** Approving into a
+    release is still approving (46 §11), so an engineer still cannot be the only
+    authority behind their own change.
+
+    **The release's resolution must be the directive's.** A change staged under
+    somebody else's authority would be reversible under somebody else's authority
+    - and addendum 30 §27's guarantee is precisely that the way back was granted
+    by the vote that granted the way forward. Two resolutions in one set is two
+    different answers to *who authorised undoing this*."""
+    from backend import release as release_module
+
+    work = get_work(conn, work_id)
+    if work is None or not work["proposed_instrument"]:
+        raise EngineeringRefused("There is nothing here to approve.")
+    if work["approved_by"] or work["release_change_id"]:
+        raise EngineeringRefused("That work has already been approved.")
+    if (approver or "").strip().lower() == work["engineer"].strip().lower():
+        raise EngineeringRefused(
+            f"{approver} produced this change and cannot also be its only approval "
+            f"(addendum 46 §11).")
+
+    directive = get_directive(conn, work["directive_id"])
+    candidate = release_module.require(conn, release_id)
+    if candidate["resolution_id"] != directive["resolution_id"]:
+        raise EngineeringRefused(
+            f"Release {release_id} is authorised by resolution "
+            f"{candidate['resolution_id']} and this directive by "
+            f"{directive['resolution_id']}. A set reversed under one resolution cannot "
+            f"contain a change authorised by another.")
+
+    change_id = release_module.stage(
+        conn, release_id, instrument=json.loads(work["proposed_instrument"]),
+        staged_by=approver.strip())
+    conn.execute(
+        "UPDATE engineering_work SET approved_by = ?, approved_at = ?, release_change_id = ?"
+        " WHERE id = ?",
+        (approver.strip(), now_iso(), change_id, work_id))
+    conn.execute("UPDATE engineering_directives SET status = ? WHERE id = ?",
+                 (STATUS_STAGED, work["directive_id"]))
+    return change_id
+
+
+def delivered_outcomes(conn: Database) -> list[dict]:
+    """What each piece of finished work is *currently* worth to the organization.
+
+    **Derived on read, never stored, and that is the whole point.** A work row
+    records that an instrument was adopted; it cannot record that the instrument
+    was later reversed by a rollback, because nothing would think to come back and
+    say so. A department scored on its stored `outcome` would therefore keep
+    credit for every change that was rolled back - §119 §8's metric trap in the
+    one dimension TQ-96 creates.
+
+    This is the same move `analysis_requests` makes about expiry: **the condition
+    is computed when somebody asks, rather than trusted to a sweeper that may not
+    have run** (§117). A reversed instrument is a superseded row; asking is one
+    query, and forgetting to ask is impossible when asking is the only way to
+    read the answer.
+
+    `standing` is the derived truth and `outcome` is what was recorded at the
+    time. Both are returned, because they answer different questions and a caller
+    that conflated them would be back where this started."""
+    rows = []
+    for work in conn.fetchall("SELECT * FROM engineering_work ORDER BY id"):
+        item_id, standing = work["adopted_instrument_id"], None
+        if work["release_change_id"] is not None:
+            change = conn.fetchone("SELECT * FROM release_changes WHERE id = ?",
+                                   (work["release_change_id"],))
+            item_id = None if change is None else change["adopted_item_id"]
+            if item_id is None:
+                standing = STANDING_STAGED
+            elif change["reversed_at"] is not None:
+                standing = STANDING_REVERSED
+        if standing is None:
+            if item_id is None:
+                standing = STANDING_NOT_DELIVERED
+            else:
+                item = governed_knowledge.get_item(conn, item_id)
+                standing = (STANDING_IN_FORCE if item and item["superseded_at"] is None
+                            else STANDING_SUPERSEDED)
+        rows.append({
+            "work_id": work["id"],
+            "directive_id": work["directive_id"],
+            "engineer": work["engineer"],
+            "assessed_level": work["assessed_level"],
+            "outcome": work["outcome"],
+            "instrument_id": item_id,
+            "standing": standing,
+            "release_change_id": work["release_change_id"],
+        })
+    return rows

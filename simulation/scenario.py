@@ -27,7 +27,7 @@ from pathlib import Path
 
 import yaml
 
-from simulation import faults as faults_module, seeding
+from simulation import faults as faults_module, governance_events, seeding
 
 SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
 
@@ -73,6 +73,12 @@ class Scenario:
     # is all of them until one is about a governed one. See simulation/seeding.py
     # for why this is a closed vocabulary over the production API rather than SQL.
     seed: list = field(default_factory=list)
+
+    # Governance that happens *during* the run rather than before it: a release
+    # applied, judged and reversed while agents are working. See
+    # simulation/governance_events.py for why this is not a fault.
+    governance_schedule: governance_events.GovernanceSchedule = field(
+        default_factory=governance_events.GovernanceSchedule)
     source_path: Path | None = None
 
     @property
@@ -153,6 +159,12 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
         seed = seeding.validate(raw.get("seed"))
     except seeding.SeedError as bad:
         raise ScenarioError(f"{where}: {bad}") from bad
+    # And again for the governance schedule: a release event nobody can spell is
+    # a run that goes green having done nothing (§136).
+    try:
+        governance = governance_events.parse(raw.get("governance_schedule"))
+    except governance_events.GovernanceEventError as bad:
+        raise ScenarioError(f"{where}: {bad}") from bad
 
     return Scenario(
         id=scenario_id,
@@ -165,6 +177,7 @@ def from_dict(raw: dict, source_path: Path | None = None) -> Scenario:
         requires_model=bool(raw.get("requires_model", False)),
         faults=schedule,
         seed=seed,
+        governance_schedule=governance,
         source_path=source_path,
     )
 

@@ -67,7 +67,16 @@ NOT_COVERED = (
     "A real broker, a real client, and the credential path to reach one (TQ-73).",
     "Historical-data operation, which addendum 46 section 27 requires and "
     "nothing implements.",
-    "Release and rollback, which no scenario can trigger because neither exists.",
+    # RE-AIMED rather than removed (SPEC_RECONCILIATION 105, 139 section 6). TQ-96
+    # built a release over governed data and `release_and_rollback` exercises it,
+    # so the old entry is no longer true - but the half of "release" this
+    # organization may not perform is still uncovered, and deleting the line would
+    # read as though it were.
+    "Code release. This organization observes its code version and cannot choose "
+    "it (SPEC_RECONCILIATION 139 section 3), so nothing here deploys, restarts, "
+    "canaries or coexists versions. Governed-data release and rollback IS covered.",
+    "Release acceptance criteria. Health is a judgement somebody records with "
+    "evidence, not a threshold anything computes (addendum 30 section 16).",
 )
 
 

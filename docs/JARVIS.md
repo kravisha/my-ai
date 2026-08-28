@@ -386,7 +386,7 @@ Specified across the addenda; mostly `TO BE DEVELOPED`. What exists:
 | Department of Education | `IMPLEMENTED` (portfolio-analysis curriculum only) | [`backend/curriculum.py`](../backend/curriculum.py), [`simulation/training.py`](../simulation/training.py) |
 | Strategy | `IMPLEMENTED` in part — the register and the strategy store | [`backend/strategy.py`](../backend/strategy.py), [`backend/register.py`](../backend/register.py) |
 | Department of Evolution | `TO BE DEVELOPED` | addendum 30 |
-| Software Engineering | `IN DEVELOPMENT` — TQ-83. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap; **writes no code** |
+| Software Engineering | `IN DEVELOPMENT` — TQ-83, TQ-96. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap, and stages approved work into a release candidate; **writes no code** |
 | Governance | `TO BE DEVELOPED` (measurement exists; the department does not) | addendum 32 §20 |
 | Security Defense, Business Continuity, Law Enforcement | `TO BE DEVELOPED` | addenda 28, 29 |
 
@@ -575,12 +575,15 @@ failures about spending that look exactly like failures about the organization �
 so the budget is checked and those scenarios are skipped (§132).
 
 It prints what it cannot see with every verdict — deliberation, real prices, a
-real broker, historical operation, release and rollback. A green line therefore
-means something specific and limited, which is the only kind worth having.
+real broker, historical operation, **code** release, and release acceptance
+criteria. A green line therefore means something specific and limited, which is
+the only kind worth having. That list is re-aimed rather than shortened: TQ-96
+closed governed-data release and rollback, and the entry narrowed to the half
+this organization may not perform rather than disappearing (§139 §6).
 
 ### Where the whole thing currently stands
 
-One command, `python -m simulation verify`, runs nine scenarios and the whole
+One command, `python -m simulation verify`, runs eleven scenarios and the whole
 curriculum. As of 2026-08-28 it returns **PASS**: forty-six properties across an
 organization that starts, staffs itself, discovers, cross-checks, judges, grades,
 governs itself under an instrument, refuses what a badly drafted instrument
@@ -704,8 +707,10 @@ data held: 0 · positions written down: none.*
 
 ## 8. Evolution, engineering, release and rollback
 
-Everything in this section is `TO BE DEVELOPED`. It is the direction addenda 46
-and 47 set, and it is written here so the shape is visible before it is built.
+Everything in this section was `TO BE DEVELOPED` until TQ-83 and TQ-96. The
+Software Engineering Department and the governed-data release are now built; the
+Department of Evolution, the sandbox and the code release are not, and each says
+so under its own heading.
 
 ### The architecture: stable machinery, evolving data
 
@@ -743,16 +748,67 @@ accident (§119).
 
 ### Release and rollback
 
-Version N keeps running while N+1 is designed, built and tested. But addendum 30
-§13 is explicit that this system *"is not a single monolithic object that must be
-serialized and restarted"*, and addendum 30 §14 makes full-system shutdown a last resort. **A
-release must not be built as a restart script** (§119): rolling restart, canary,
-version coexistence and compatibility adapters are the shape it has to take, and
-the COO needs its own handoff because everything else depends on it.
+`IMPLEMENTED` for governed data — TQ-96. [`backend/release.py`](../backend/release.py).
+**Not built, and not this organization's to build, for code.**
 
-Rollback is a first-class capability, not an improvisation, and **nothing about
-rollback erases history**. A rolled-back version stays part of organizational
-memory.
+The first question was what a release even *is* here, because the governed layer
+already changes behaviour without one: adopting an instrument changes what agents
+do immediately, so the ordinary meaning of *release* was already taken. §139
+answers it:
+
+> **A release is a named set of governed changes that stand or fall together,
+> whose way back is authorized before the way forward is taken.**
+
+That supplies the three things adoption does not. A **boundary** — `adopt` takes
+one instrument, and a refusal partway through a set leaves a state nobody
+designed, so `apply` is all or nothing. A **way back that needs no vote** — the
+store supersedes forward only, so undoing a change meant carrying a resolution
+through Parliament, which is the right cost for changing your mind and the wrong
+cost for an incident. Addendum 30 §27's *"Rollback SHALL be defined before
+rollout"* is therefore the mechanism and not the advice: the release's own
+resolution authorizes the reversal, granted at prepare time. And a **health
+verdict** — 46 §18 marks a release unhealthy, and nothing here marked anything as
+anything.
+
+**Health is `unknown` until somebody judges it with evidence, and never
+`healthy` by default.** §118's rule unmodified: absence of complaint is not
+evidence that a release is working. The judge may not be the preparer.
+
+**Reversal restores rather than re-adopts.** The superseded row is reactivated
+and the failed instrument is superseded *by the one it gave way back to* — a
+`superseded_by` pointing backwards in id order, which no ordinary supersession
+can produce. So a rollback is distinguishable from a change of mind by reading
+the table, and nothing is deleted (46 §18).
+
+**The code half is not performed here.** `backend/version.py` answers *which code
+is this?* by asking git: the organization observes its code version and cannot
+choose it, because nothing in the running system may write to the repository —
+the same prevention-by-absence that keeps agents out of `docs/` and the
+Constitution out of every table. So there is no `deploy()`, and a tripwire fails
+the suite if `release.py` ever imports `subprocess` or `os`. What is kept instead
+is the record: the code version at prepare, apply and reversal, and a divergence
+reported rather than corrected — **restoring the data under a different code
+version is not a return to the last known-good condition.**
+
+**§119 §5's constraint turned out to be satisfied by the architecture rather than
+by care.** A release must not be built as a restart script; addendum 46 §18 step
+4 asks agents to reload the previous authorized state, and this system has
+nothing to reload — `operating_context` reads the store at the point of work and
+no agent caches an instrument. A governed-data release needs no restart because
+nothing holds stale governed data; a code release needs one and is not performed
+here.
+
+The department stages into a candidate rather than adopting (46 §16's Version
+N+1), and **what a piece of engineering work is currently worth is derived on
+read, never stored** — a work row cannot know it was later reversed, so a
+department scored on its stored outcome would keep credit for every rolled-back
+change. That is §119 §8's metric trap in the dimension release created.
+
+Still absent, named so the line above means something: acceptance criteria (health
+is a judgement, not a computed threshold), a postmortem written into
+organizational knowledge (composed on demand instead — nothing reads that store
+back), and Evolution, which is the department addendum 30 §4 assigns the rollout
+plan to.
 
 ### The external dependency
 
@@ -827,7 +883,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,509 passing, 8 skipped** (2026-08-27). The skips are deliberate
+**Test suite: 2,761 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -848,7 +904,9 @@ writing down a position.
 - A real broker connection.
 - A real price.
 - A real external client.
-- A release, or a rollback.
+- A code release, or a code rollback. A **governed-data** release and rollback
+  has happened — `release_and_rollback` applies one to a running organization,
+  finds it misdrafted, and reverses it with no restart and no respawn (§139).
 - An agent proposing a change to the organization of its own accord.
 - Any Articles in force in the working database — the machinery runs, and the
   organization it would govern has not yet been given its instrument.

@@ -13104,3 +13104,210 @@ is the argument for why it was not built sooner.
 `arrived_via` keeps naming the route, because the route is still a deviation from
 §119 as written — but the record now says which half of §119 it deviates from and
 which half was never in question.
+
+## §139 — What a release is here, and the half of it this organization may not perform (2026-08-28, TQ-96)
+
+TQ-96's first question is not how to build a release. It is **what a release even
+is in a system whose governed layer already changes behaviour without one.**
+
+Adopting an instrument changes what agents do, immediately, with no deployment
+and no restart. That is addendum 46 §2's whole claim and it is executed rather
+than described (§127). So the ordinary meaning of *release* — the moment new
+behaviour reaches production — is **already taken here, and it is called
+adoption.**
+
+This section answers the question before any code was written, because the
+answer determines what gets built, and because §138 recorded the failure this is
+the mirror of: building a stage that moves something through it and adds nothing.
+
+### 1. The three things adoption does not do
+
+Measured against the store as it stands, not against what a release sounds like.
+
+**There is no boundary around a change.** `governed_knowledge.adopt` takes one
+instrument, on one subject, at one level. Three instruments that only make sense
+together are adopted one at a time, and a refusal on the second leaves the first
+in force and the third absent — **a state nobody proposed, nobody voted for and
+nobody designed.** `impact_of` predicts a refusal at proposal time (§138), which
+narrows the window and does not close it: an adoption can also be refused by
+something another engineer adopted in between.
+
+**There is no way back that does not require a vote.** The store supersedes
+forward only. An instrument is retired by adopting a *new* one that names it —
+and `_check_authorization` requires an enacted resolution whose `affects` matches
+the level. So undoing a governed change means carrying a resolution through
+Parliament. **That is the correct cost for changing your mind and the wrong cost
+for an incident**, and it is the whole of what addendum 30 §27 means by *"Rollback
+SHALL be defined before rollout."* That sentence is not procedural advice. It is
+the mechanism: the authority to reverse has to be granted by the same resolution
+that authorized the change, at the time the change was authorized, or it will not
+be available at the moment it is needed.
+
+**There is no health verdict.** Addendum 46 §18 step 2 is *"release state is
+marked unhealthy"*, and nothing in this system marks anything as anything. An
+instrument in force and an instrument in force and failing are the same row. This
+is §130's problem — a rule that forbids its own subject looks exactly like a quiet
+market — arriving one level up: a change that is quietly making the organization
+worse is indistinguishable from one that is working.
+
+### 2. The answer
+
+> **A release is a named set of governed changes that stand or fall together,
+> whose way back is authorized before the way forward is taken.**
+
+Not a deployment. Not a restart. Not the mechanism by which a rule takes effect —
+that is adoption, and anything that made a rule wait for a release window would
+break the claim that makes the governed layer worth having.
+
+Addendum 46 §16's *"Version N keeps running while N+1 is designed, implemented,
+tested, and prepared"* maps onto this exactly and without strain: **Version N is
+what is in force. N+1 is the set of proposals accumulating against it.** TQ-83
+already built the accumulation — `propose_instrument` holds what an engineer
+would adopt for somebody else to approve — and had nowhere to accumulate it *to*.
+
+Read that way, §16's ten steps are answerable in governed data. Capture the
+database state and establish a rollback checkpoint (steps 2 and 3) is *record
+what is in force on every subject this release touches*. Apply the approved
+release (step 5) is *adopt the staged set, atomically*. Roll back if acceptance
+criteria fail (step 10) is *restore the checkpoint under the authority already
+granted*.
+
+### 3. The half this organization may not perform, and why that is not a gap to close
+
+Rolling back **code** is a different problem, and TQ-96 was queued with the
+warning that conflating the two would be §138's mistake in the other direction.
+It is worse than a conflation. It is something this architecture forbids.
+
+`backend/version.py` answers *which code is this?* by asking git. The
+organization can **observe** its code version and cannot **choose** it, because
+nothing in the running system may write to the repository — the same
+prevention-by-absence that keeps agents out of `docs/` (§122) and the
+Constitution out of every table (§120). A `deploy()` on this side of that line
+would be a function that either does not work or breaches the boundary, and a
+release module carrying one would be the charter written falsely that
+`backend/charter.py` exists to avoid.
+
+So the code half of *release* is **an act by the external developer**, and what
+the organization can honestly hold about it is the record: which code version a
+release was applied under, and whether it is still the one running. Addendum 30
+§26's *mixed-version operation* and *compatibility checking* are exactly that —
+facts kept so that a mismatch is visible, not a lever.
+
+**This matters most at rollback.** Restoring the data under a different code
+version is not a return to the last known-good condition, and a rollback that
+reported success without saying so would be claiming a property it does not have.
+The code version is recorded at prepare, at apply and at reversal, and a
+divergence is reported rather than resolved.
+
+### 4. The restart that turns out not to be needed
+
+§119 §5 set the constraint: addendum 30 §13 says this system *"is not a single
+monolithic object that must be serialized and restarted"*, so **a release must not
+be built as a restart script.** That constraint was expected to be the hard part.
+
+It is not, and the reason is worth recording rather than enjoying quietly.
+Addendum 46 §18 step 4 is *"agents reload the previous authorized organizational
+state"* — and this system has nothing to reload. `operating_context.for_role` and
+`.check` read the store at the point of work; no agent caches an instrument, and
+none holds one across a cycle. The reload step is satisfied by an architecture
+that never cached, and 30 §14's rolling restart, canary and version-coexistence
+list is machinery for **code** transitions, which are not this organization's to
+perform.
+
+Stated the other way, so it is not mistaken for a general claim: **a governed-data
+release needs no restart because nothing holds stale governed data. A code
+release needs one and is not performed here.** The two halves of §119 §5's
+constraint are satisfied by different facts, and only the first is inside the
+system.
+
+### 5. What this makes buildable, and the failures it is written against
+
+The unit that does not exist and that everything else in TQ-96 needs is the
+**change set with a checkpoint**. Around it:
+
+- **Atomicity, because a partial release is the state nobody designed.** Any
+  staged instrument refused means none is adopted, which is `consolidation`'s
+  rule about a partial portfolio (§117) applied to governance.
+- **Health is `unknown` until somebody judges it.** Not `healthy`. §118's rule
+  transfers without modification: **absence of complaint is not evidence that a
+  release is working**, and a release that defaulted to healthy would be the
+  analyst that stopped asking, wearing a release manager's coat.
+- **The judge is not the preparer**, on 46 §11's independence rule and §117's
+  reason for keeping ground truth off the provider interface.
+- **Reversal restores; it does not re-adopt.** A rollback that adopted a fresh
+  copy of the old text would be a forward move needing a fresh resolution, which
+  is the cost this exists to remove. The superseded row is reactivated and the
+  failed instrument is superseded *by the one it gave way back to* — a
+  `superseded_by` pointing backwards in id order is a rollback and cannot be
+  mistaken for an ordinary supersession. Nothing is deleted, which is 46 §18's
+  closing requirement and the store's existing habit.
+- **Reversal reaches only what its own release adopted.** A rollback able to
+  deactivate an arbitrary instrument would be an unvoted repeal with a
+  maintenance name on it.
+
+### 6. What is still not a release after this, named so the green line means something
+
+The verifier's blind-spot list loses an entry and gains a narrower one, on §105's
+rule that a tripwire is re-aimed rather than deleted.
+
+- **No code release, by design** (§3 above). Nothing here deploys, restarts,
+  canaries or coexists versions.
+- **No acceptance criteria.** Addendum 30 §16 wants measurable success criteria
+  defined per evolution; health is a judgement somebody records with evidence,
+  not a threshold anything computes. Recording a number nobody measured would be
+  a policy wearing a measurement's clothes.
+- **No postmortem written into organizational knowledge.** 46 §18 steps 7–8 ask
+  for one. It is composed on demand from what the release already records rather
+  than stored as prose, because the organization model's declared gap 2 is that
+  lessons written are never read back, and adding a second unread writer would
+  grow the gap while looking like it closed one.
+- **Evolution still does not exist**, so a release is prepared by whoever holds
+  the resolution rather than planned by the department addendum 30 §4 assigns it
+  to. §138's argument for building this first is discharged, not the relay.
+
+### 7. The first run of the scenario was green and proved nothing
+
+Recorded because it is the fourth time this project has met the same shape, and
+because it was caught by running the thing rather than by reading it.
+
+`release_and_rollback` ran 150 seconds with the release applied at +40s. Every
+property passed except one: **the misdrafted release refused zero submissions.**
+The release applied, was judged, and was reversed; the instrument came out of
+force and its predecessor came back; the workforce survived. And no agent's
+behaviour ever changed, because there was no behaviour to change.
+
+Every discovery report in the run — all ten — was filed between +5s and +14s, by
+one agent. The release window from +40s onward contained no governed work at all.
+
+The cause is `ORIGINATION_COOLDOWN_SECONDS`, an hour by default (§58): a security
+whose analysis chain has completed is not re-originated on routinely similar
+evidence, because the synthetic stream clears the confidence bar nearly every
+cycle. Under an hour that means **every security originates exactly once**, so all
+governed filing is front-loaded into the first seconds of any run. It is the
+reason `misdrafted_instrument` seeds its instrument before startup rather than
+applying it during the run — a fact that was invisible until something needed to
+apply one during a run.
+
+Two things follow.
+
+**The property was right and the scenario was wrong.** The tempting fix is to
+drop the refusal assertion, since thirteen of fourteen passed and the thirteen are
+all true. That would leave a scenario certifying that a rollback restores
+behaviour, having never observed the behaviour change — §135's vacuity, arriving
+in the increment that was written to be careful about it. The scenario compresses
+the cooldown instead, which changes how often the organization reaches the filing
+site and not what the filing site checks.
+
+**The re-run is the evidence.** 300 seconds, release at +120s: eighteen reports,
+**77 refusals** while the misdrafted instrument was in force, and filing resuming
+after the reversal. Zero respawns, zero crashes, zero failed directives, and the
+COO never treated a governed refusal as a fault. That is §139's claim — a
+governed-data release changes behaviour and reverses without a restart — observed
+rather than asserted.
+
+**And a finding this increment did not go looking for.** The Speculator files a
+report once per case and then *enriches* those cases for the rest of the run.
+Enrichment reaches no governed check at all, so an instrument binding
+`discovery_reports` governs the origination and not the continuing work. That is
+not a defect of release and rollback and it is worth writing down: **the governed
+surface is narrower than the working surface**, and nothing currently says so.

@@ -93,6 +93,13 @@ def collect_from(conn, since: str | None = None) -> dict:
     }
 
 
+def _one(conn, sql: str) -> int:
+    """One COUNT, or zero. Used where the query is its own explanation and a
+    named helper for each would be four lines of ceremony per number."""
+    row = conn.fetchone(sql)
+    return (row or {}).get("n", 0)
+
+
 def _governance(conn, since: str | None = None) -> dict:
     """What governed this run, and whether anybody could tell.
 
@@ -162,6 +169,25 @@ def _governance(conn, since: str | None = None) -> dict:
         # and is not the interesting one - **a single instrument accounting for
         # every refusal is a rule that forbids its own subject**, which without
         # this number looks exactly like a quiet market.
+        # Releases, so a run can assert that one actually applied and reversed
+        # (TQ-96, §139). Counted from the release record rather than inferred
+        # from instrument rows: an instrument reactivated by a rollback is
+        # indistinguishable from one that was never displaced unless the release
+        # that displaced it says so.
+        "releases_applied": _one(
+            conn, "SELECT COUNT(*) AS n FROM releases WHERE applied_at IS NOT NULL"),
+        "releases_rolled_back": _one(
+            conn, "SELECT COUNT(*) AS n FROM releases WHERE rolled_back_at IS NOT NULL"),
+        # A release in force that nobody judged. Not a failure and not a pass -
+        # the value this project writes where a plausible default would go.
+        "releases_unjudged_in_force": _one(
+            conn, "SELECT COUNT(*) AS n FROM releases WHERE status = 'released'"
+                  " AND health = 'unknown'"),
+        # Instruments a rollback took back out of force, kept rather than deleted
+        # (addendum 46 §18). A rollback that reversed nothing would leave this at
+        # zero while the release record claimed success.
+        "instruments_reversed": _one(
+            conn, "SELECT COUNT(*) AS n FROM release_changes WHERE reversed_at IS NOT NULL"),
         "refusals": refused[0]["n"] if refused else 0,
         "refusals_by_instrument": {row["instrument_id"]: row["n"] for row in refusing},
     }

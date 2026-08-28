@@ -54,7 +54,7 @@ from backend import fi_db
 from backend import version as backend_version
 from simulation import metrics as metrics_module
 from simulation import properties as properties_module
-from simulation import faults as faults_module
+from simulation import faults as faults_module, governance_events
 from simulation import seeding
 from simulation.scenario import Scenario
 
@@ -543,7 +543,7 @@ def _hold(run: "SimulationRun", scenario: Scenario) -> None:
     Faults never raise. A target that has already died is an ordinary thing to
     find during a fault run, and the manifest records what happened rather than
     the run ending on it."""
-    if not scenario.faults:
+    if not scenario.faults and not scenario.governance_schedule:
         time.sleep(scenario.duration_seconds)
         return
 
@@ -553,6 +553,13 @@ def _hold(run: "SimulationRun", scenario: Scenario) -> None:
         for fault in scenario.faults.due(elapsed):
             outcome = faults_module.fire(fault, run.db_path)
             print(f"[harness] fault {fault.describe()}: {outcome}", flush=True)
+        # Governance events share the clock and nothing else. A release is the
+        # organization doing its job, not a fault, and the two are printed under
+        # different words so a run log cannot be misread as a failure log.
+        for event in scenario.governance_schedule.due(elapsed):
+            event.fired_at = fi_db._now()
+            event.outcome = governance_events.fire(event, run.db_path)
+            print(f"[harness] governance {event.describe()}: {event.outcome}", flush=True)
         if elapsed >= scenario.duration_seconds:
             return
         time.sleep(min(FAULT_POLL_SECONDS, scenario.duration_seconds - elapsed))
@@ -582,6 +589,7 @@ def execute(
             shutdown_detail=detail,
             exit_code=run._process.returncode if run._process else None,
             faults=scenario.faults.record(),
+            governance_events=scenario.governance_schedule.record(),
         )
         run.close()
 

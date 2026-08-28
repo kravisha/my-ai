@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import analysis_requests, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, risk, status_events, strategy, triage, workspace
+from backend import analysis_requests, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1496,6 +1496,10 @@ def init_schema(conn: Database) -> None:
     # §137). After governed_knowledge and parliament, because a directive needs
     # an enacted resolution and its delivery is an adopted instrument.
     engineering.init_schema(conn)
+    # Releases and rollback over governed data (TQ-96, §139). After
+    # governed_knowledge and parliament: a release is authorised by an enacted
+    # resolution and its whole content is instruments in that store.
+    release.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1666,7 +1670,8 @@ def apply_additive_migrations(conn: Database) -> list[str]:
          reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
          analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
-         governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA)
+         governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
+         release.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

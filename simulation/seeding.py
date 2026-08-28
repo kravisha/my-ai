@@ -39,10 +39,14 @@ that looks like a parliament and is a fixture.
 
 from __future__ import annotations
 
-from backend import governed_knowledge, parliament, portfolios
+from backend import governed_knowledge, parliament, portfolios, release
 from backend.db import Database
 
-STEPS = ("adopt_articles", "enact", "adopt_instrument")
+# A release candidate can be *prepared* before a run and applied during it, which
+# is addendum 46 §16's shape exactly: Version N runs while N+1 is prepared. The
+# applying is `simulation/governance_events.py`, because a release is an event and
+# not a starting condition.
+STEPS = ("adopt_articles", "enact", "adopt_instrument", "prepare_release", "stage_change")
 
 
 class SeedError(ValueError):
@@ -74,11 +78,17 @@ def validate(seed: list) -> list:
             raise SeedError(
                 f"seed step {index} (enact): needs a 'votes' mapping of voter to for/against/"
                 "abstain. A resolution with no votes is not carried, it is open.")
-        if name == "adopt_instrument" and "under" not in body:
+        if name in ("adopt_instrument", "prepare_release") and "under" not in body:
             raise SeedError(
-                f"seed step {index} (adopt_instrument): needs 'under', the index of the enact step "
+                f"seed step {index} ({name}): needs 'under', the index of the enact step "
                 "whose resolution authorizes it. An instrument with no authority behind it is a "
-                "state the organization cannot reach.")
+                "state the organization cannot reach - and for a release, the resolution is "
+                "also the authority the way back is spent under (addendum 30 §27).")
+        if name == "stage_change" and "into" not in body:
+            raise SeedError(
+                f"seed step {index} (stage_change): needs 'into', the index of the "
+                "prepare_release step it belongs to. A change staged into no set is a change "
+                "that cannot be reversed with one.")
     return seed
 
 
@@ -116,6 +126,46 @@ def apply(conn: Database, seed: list, *, owner_id: str = "krish") -> list[dict]:
                     f"({result['for']} for, {result['against']} against, quorum "
                     f"{'met' if result['quorum_met'] else 'not met'}). Fix the votes or the roll.")
             produced.append({"step": name, "resolution_id": resolution, "tally": result})
+        elif name == "prepare_release":
+            authority = produced[body["under"]]
+            if authority.get("step") != "enact":
+                raise SeedError(
+                    f"seed step {index} (prepare_release): 'under' points at a "
+                    f"{authority.get('step')!r} step, not an enacted resolution.")
+            candidate = release.prepare(
+                conn, name=body["name"], intent=body.get("intent", "seeded for a run"),
+                resolution_id=authority["resolution_id"],
+                prepared_by=body.get("prepared_by", "coo"))
+            produced.append({"step": name, "release_id": candidate})
+        elif name == "stage_change":
+            candidate = produced[body["into"]]
+            if candidate.get("step") != "prepare_release":
+                raise SeedError(
+                    f"seed step {index} (stage_change): 'into' points at a "
+                    f"{candidate.get('step')!r} step, not a prepared release.")
+            # The rest of the body *is* the instrument, which keeps the seed
+            # vocabulary and `governed_knowledge.adopt`'s one thing rather than two
+            # that drift. `resolution_id` and `adopted_by` are absent by
+            # construction: `release.stage` refuses a change carrying its own
+            # authority, so a seed cannot smuggle one in either.
+            instrument = {k: v for k, v in body.items()
+                          if k not in ("into", "staged_by", "replaces_step")}
+            if "replaces_step" in body:
+                # A staged instrument that displaces one an earlier step adopted
+                # names the *step*, not the row id. Writing the id would make the
+                # seed correct only against an empty database - and the first
+                # scenario that inherited a run's state would silently replace
+                # somebody else's instrument.
+                displaced = produced[body["replaces_step"]]
+                if displaced.get("step") != "adopt_instrument":
+                    raise SeedError(
+                        f"seed step {index} (stage_change): 'replaces_step' points at a "
+                        f"{displaced.get('step')!r} step, not an adopted instrument.")
+                instrument["replaces"] = displaced["instrument_id"]
+            change = release.stage(
+                conn, candidate["release_id"],
+                instrument=instrument, staged_by=body.get("staged_by", "coo"))
+            produced.append({"step": name, "change_id": change})
         else:
             authority = produced[body["under"]]
             if authority.get("step") != "enact":

@@ -45,7 +45,7 @@ from __future__ import annotations
 import sys
 
 from agents.base import run_agent
-from backend import governed_knowledge, operating_context, parliament
+from backend import governed_knowledge, operating_context, parliament, release
 
 ROLE = parliament.SPEAKER_ROLE
 
@@ -66,8 +66,15 @@ def compose_report(conn) -> dict:
     # What the organization's own rules have refused. Governance in action rather
     # than governance on paper, and the Speaker is where governance speaks (§124).
     refusing = operating_context.refusals_by_instrument(conn)
+    # A release is a set of instruments carried by a resolution, so its state is
+    # governance's business and the Speaker is where governance speaks. The case
+    # this exists for is §130's, one level up: a change quietly making the
+    # organization worse looks exactly like a change that is working, and a
+    # release marked unhealthy that nobody surfaces is a rollback nobody performs.
+    releases = release.summary(conn)
     return {
         **state,
+        "releases": releases,
         "governance_conflicts": unsettled,
         "refusals_by_instrument": refusing,
         # Named individually so a reader is not left to infer which resolutions
@@ -76,11 +83,12 @@ def compose_report(conn) -> dict:
         "articles_versions": len(parliament.articles_history(conn)),
         # The Speaker's own words about the state it found, so a surface has
         # something to render that is a statement rather than a number.
-        "says": _say(state, open_items, unsettled, refusing),
+        "says": _say(state, open_items, unsettled, refusing, releases),
     }
 
 
-def _say(state: dict, open_items: list, unsettled: list, refusing: dict) -> str:
+def _say(state: dict, open_items: list, unsettled: list, refusing: dict,
+         releases: dict) -> str:
     if not state["articles_in_force"]:
         return ("Parliament stands ready and has no Articles. There is no roll, so nothing "
                 "can be put to a vote until the owner adopts the founding text.")
@@ -103,6 +111,22 @@ def _say(state: dict, open_items: list, unsettled: list, refusing: dict) -> str:
         parts.append(
             f"Instruments in force have refused {sum(refusing.values())} submission(s); "
             f"instrument {worst} accounts for {refusing[worst]} of them.")
+    if releases["unhealthy_in_force"]:
+        # Named, and said before the unbuilt-machinery line, because this is the
+        # one thing in the report somebody has to act on today.
+        parts.append(
+            f"{len(releases['unhealthy_in_force'])} release(s) are in force and marked "
+            f"unhealthy: {', '.join(releases['unhealthy_in_force'])}. Each has a way back "
+            f"authorised already and nobody has taken it.")
+    if releases["unjudged_in_force"]:
+        # Unjudged is not passing. §118: absence of complaint is not evidence.
+        parts.append(
+            f"{len(releases['unjudged_in_force'])} release(s) are in force and nobody has "
+            f"judged whether they worked: {', '.join(releases['unjudged_in_force'])}.")
+    if releases["rolled_back"]:
+        parts.append(
+            f"{len(releases['rolled_back'])} release(s) were rolled back and are kept: "
+            f"{', '.join(releases['rolled_back'])}.")
     parts.append("Elections, ministers, committees and the weekly session are not built.")
     return " ".join(parts)
 

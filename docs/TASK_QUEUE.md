@@ -31,10 +31,14 @@ holds the queue, not the record.
 > curriculum for one verdict; the last run was **PASS**, and it was the first that exercised
 > every mechanism rather than passing over some of them.
 >
-> **Recommended next: TQ-96**, release and rollback. Queued at §138 as the thing Evolution's
-> contribution has nothing to plan without, and the largest item the verifier lists among what
-> it cannot see. Its first question is what a release *is* here, given the governed layer
-> already changes behaviour without one.
+> **TQ-96 is done (§139)** — a release here is a named set of governed changes that stand or fall
+> together, whose way back is authorized before the way forward is taken. The code half is
+> declined rather than deferred: this organization observes its code version and may not choose it.
+> Evolution's relay (TQ-95, declined at §138) is now unblocked, since a rollout plan finally has
+> something to plan.
+>
+> **Recommended next: assimilate Project Providence** (four documents supplied 2026-08-28) and
+> reconcile it, because it changes what this system is for. See TQ-97.
 >
 > **Waiting on the owner, and blocking nothing else:** the genesis Articles (§120 — Parliament
 > governs nothing until they exist), unholding TQ-75 (the condition set for it is now met), and
@@ -1475,8 +1479,45 @@ it does not assess every time.
 
 ### TQ-96 — Release and rollback
 
-**NEED (ORANGE) · QUEUED · addendum 46 §16, §18 · addendum 30 §14, §27 ·
-`SPEC_RECONCILIATION.md` §119, §138**
+**NEED (ORANGE) · DONE — `SPEC_RECONCILIATION.md` §139 · addendum 46 §16, §18 ·
+addendum 30 §14, §26, §27 · `SPEC_RECONCILIATION.md` §119, §138**
+
+**Done for governed data; declined for code, with the reason recorded.** The first
+question — what a release *is* here, given the governed layer already changes
+behaviour without one — is answered at §139: *a named set of governed changes that
+stand or fall together, whose way back is authorized before the way forward is
+taken.* `backend/release.py` supplies the boundary, the checkpoint, the health
+verdict and the reversal; `governed_knowledge.reverse` restores rather than
+re-adopts, so a rollback spends no new authority and adds no vote.
+
+**The code half is not a gap to close.** The organization observes its code
+version (`backend/version.py`) and may not choose it, because nothing in the
+running system may write to the repository. So there is no `deploy()`, a tripwire
+fails the suite if `release.py` reaches for `subprocess` or `os`, and what is kept
+is the record — a rollback under a different code version says the data is
+restored and the system is not.
+
+**§119 §5's constraint was satisfied by the architecture rather than by care.** A
+release must not be a restart script; 46 §18 step 4 asks agents to reload, and
+nothing here caches what governs it, so there is nothing to reload.
+
+Live: `release_and_rollback` applies a misdrafted release to a running
+organization at +120s, judges it unhealthy at +220s on 77 refusals, and reverses
+it at +235s. 14/14 properties, zero respawns, zero crashes, zero failed
+directives. The first attempt was **green and vacuous** — every report in the run
+was filed in its first nine seconds, so the release window contained no work at
+all; the origination cooldown is compressed in that scenario for exactly that
+reason (§139 §7).
+
+**What remains unbuilt and why**: acceptance criteria (30 §16 — health is a
+judgement with evidence, not a threshold anything computes), a postmortem written
+into organizational knowledge (composed on demand instead; nothing reads that
+store back), and Evolution's relay, which §138 declined and which is now
+unblocked.
+
+<details><summary>The entry as it was queued</summary>
+
+**Original: NEED (ORANGE) · addendum 46 §16, §18 · addendum 30 §14, §27**
 
 The thing Evolution's contribution has nothing to plan without, and the largest item
 `simulation verify` lists among what it cannot see.
@@ -1526,6 +1567,8 @@ department the correct engineering habits."*
 later.** The §8 ladder must require evidence the outcome was achieved, not evidence that code was
 avoided — TQ-80's defect in a new setting. And 46 §32's external-dependency metric must be derived
 from observed facts rather than self-reported by the party it measures.
+
+</details>
 
 ### TQ-73 — The credential envelope and the stateless fetch/analyse pipeline
 

@@ -1,0 +1,259 @@
+id: release_and_rollback
+version: 1
+lifecycle: active
+description: >
+  A release applied to a running organization, found to be wrong, and reversed -
+  without stopping anything.
+
+  Until TQ-96 this was the largest item `simulation verify` listed among what it
+  could not see, and it could not see it because neither existed. The governed
+  layer already changed behaviour without a release, so the first question was
+  what a release even is here; SPEC_RECONCILIATION §139 answers it - a named set
+  of governed changes that stand or fall together, whose way back is authorized
+  before the way forward is taken.
+
+  This scenario is that sentence, run.
+
+  Version N is the organization under a rule every producer satisfies: a
+  discovery report carries a summary. Version N+1 is prepared before startup and
+  applied at +40s, and it is deliberately misdrafted - it requires a field named
+  `provenance` that no producer has ever filed. So from +40s the organization
+  goes quiet in exactly the way §130 described: every report refused, no reports
+  filed, every agent healthy.
+
+  At +75s that is judged unhealthy, with the refusal count as the evidence. At
+  +85s the release is reversed, and the rule that was in force before it comes
+  back - not by adopting a copy of itself, which would need a second vote, but by
+  the authority granted at prepare time (addendum 30 §27).
+
+  **What this exists to show is the part no unit test can.** The organization
+  survives all of it: no respawn, no crash, no failed directive, no restart. The
+  reload step addendum 46 §18 asks for is satisfied by an architecture that never
+  cached what governs it, and the only way to know that is to change the rule
+  under a running workforce and watch.
+
+# Long enough for the whole sequence *and for work to happen in each phase*.
+# The first attempt ran 150s with the release at +40s and refused nothing: every
+# report in the run was filed in its first nine seconds, so the release window
+# contained no governed work at all and the rollback restored a behaviour nobody
+# had observed change. A green run over a condition that never happened, one
+# scenario after §136 said so.
+#
+# The cause is the origination cooldown below, and the fix is to compress it
+# rather than to weaken the property.
+duration_seconds: 300
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  # Production is an hour (agents/discovery_config.py): a security whose analysis
+  # chain finished is not re-originated on routinely similar evidence, because the
+  # synthetic stream clears the confidence bar nearly every cycle (§58). Under an
+  # hour that means **every security originates exactly once**, which front-loads
+  # all governed filing into the first few seconds of any run.
+  #
+  # Compressed here, and only here, because this scenario is the one that needs
+  # governed work happening *while* a release is in force. Shortening the cooldown
+  # does not change what the filing site checks - it changes how often the
+  # organization reaches it, which is the variable this scenario is about.
+  FI_ORIGINATION_COOLDOWN_SECONDS: 20
+
+requires_model: false
+
+# Established before the Controller starts, through the organization's own API -
+# never SQL (simulation/seeding.py). The release is *prepared* here and applied
+# during the run, which is addendum 46 §16's shape: Version N keeps running while
+# N+1 is prepared.
+seed:
+  - adopt_articles:
+      text: >
+        The organization serves its principal and its clients. It governs itself
+        under these Articles, which are subordinate to the Constitution.
+      roll:
+        broad: [coo, explorer, speculator, analysis, speaker]
+        representative: [coo, analysis]
+      quorum: "1/2"
+      ordinary_threshold: "1/2"
+
+  # Version N: the rule the organization runs under before the release.
+  - enact:
+      title: Every discovery report carries a summary
+      rationale: >
+        A lead with no summary costs a judge the time to reconstruct it from the
+        evidence, and the producer already knows what it saw.
+      affects: organization_policy
+      proposed_by: analysis
+      evidence: grading history
+      votes:
+        coo: for
+        analysis: for
+
+  - adopt_instrument:
+      under: 1
+      subject: discovery_reports
+      level: organization_policy
+      text: Every discovery report carries a summary of what was seen.
+      adopted_by: coo
+      binds: "*"
+      requires:
+        kind: required_fields
+        fields: [summary]
+
+  # The resolution that authorizes the release - and, by addendum 30 §27, the
+  # authority the way back is spent under. It is carried before the release is
+  # prepared because that is the only order in which a rollback needs no vote.
+  - enact:
+      title: Discovery reports carry their provenance
+      rationale: >
+        A judge that cannot tell where a lead came from cannot weigh it, and the
+        producer knows.
+      affects: organization_policy
+      proposed_by: analysis
+      evidence: grading history
+      votes:
+        coo: for
+        analysis: for
+
+  - prepare_release:
+      under: 3
+      name: provenance
+      intent: Every discovery report names where the lead came from.
+      prepared_by: analysis
+
+  # Misdrafted on purpose, and this is the point rather than a shortcut. A
+  # correctly drafted release would be adopted, obeyed, and never reversed - and
+  # a rollback nobody performed proves nothing about rollback. `provenance` is not
+  # a field any producer files, so the instrument forbids its own subject (§130)
+  # and the organization goes silent in the way that looks exactly like calm.
+  - stage_change:
+      into: 4
+      staged_by: analysis
+      subject: discovery_reports
+      level: organization_policy
+      text: Every discovery report names its provenance.
+      binds: "*"
+      replaces_step: 2
+      requires:
+        kind: required_fields
+        fields: [provenance]
+
+# The release happens *to* a running organization. Seeding it as a finished state
+# would assert on a database and prove nothing about a live system (§136).
+governance_schedule:
+  - at_seconds: 120
+    action: apply_release
+    release: provenance
+    actor: coo
+
+  - at_seconds: 220
+    action: judge_release
+    release: provenance
+    actor: coo
+    health: unhealthy
+    evidence: >
+      Every discovery report has been refused since the release applied. The
+      instrument requires a field no producer files.
+
+  - at_seconds: 235
+    action: roll_back_release
+    release: provenance
+    actor: coo
+    reason: >
+      The instrument forbids its own subject. Reversing to the summary rule that
+      was in force before it.
+
+expected_properties:
+  # --- the organization survived a release and a rollback -------------------
+  # First, because the most likely way this fails is not a wrong verdict but a
+  # workforce that fell over when the rule changed underneath it. If these fail
+  # the rest is noise.
+  - name: no agent was respawned
+    metric: population.respawns
+    assert: equals
+    value: 0
+    # THE property, and the one §119 §5's constraint is really about. A release
+    # built as a restart script would move this number; a governed-data release
+    # must not, because nothing caches what governs it and nothing needs to stop.
+
+  - name: no agent was marked crashed
+    metric: population.crashed
+    assert: is_empty
+
+  - name: no agent survived the run
+    metric: population.running_at_end
+    assert: is_empty
+
+  - name: no directive failed
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+    # A refusal by an instrument in force is a rule working, not a fault, and it
+    # must not surface as a failed directive - §127's rule, tested here under the
+    # one condition that produces refusals in bulk.
+
+  # --- and the release actually happened ------------------------------------
+  # Without these the run above passes in a world where nothing was ever
+  # released, which is the vacuity §135 found in the first green verification.
+  - name: a release was applied
+    metric: governance.releases_applied
+    assert: equals
+    value: 1
+
+  - name: the release was rolled back
+    metric: governance.releases_rolled_back
+    assert: equals
+    value: 1
+
+  - name: the rollback reversed an instrument
+    metric: governance.instruments_reversed
+    assert: at_least
+    value: 1
+    # Paired with the one above deliberately. A release marked rolled back that
+    # reversed nothing would satisfy `releases_rolled_back` perfectly while
+    # leaving the failed rule in force, which is the worst available outcome:
+    # the record says recovered and the organization is still broken.
+
+  - name: nothing was left in force unjudged
+    metric: governance.releases_unjudged_in_force
+    assert: equals
+    value: 0
+
+  # --- the misdrafted rule really did bite ----------------------------------
+  # The release has to have *changed behaviour*, or the rollback restored
+  # nothing and this whole scenario is a green line over an event that did not
+  # occur. Refusals are how that is visible (§130).
+  - name: the release refused work while it was in force
+    metric: governance.refusals
+    assert: at_least
+    value: 1
+
+  # --- and the organization worked before and after -------------------------
+  # A governed organization that stops working has not been governed, it has
+  # been stopped. Reports are filed in the first forty seconds and again after
+  # the reversal, so a non-zero count over the run means the rule came back.
+  - name: reports were filed
+    metric: pipeline.reports_filed
+    assert: at_least
+    value: 3
+
+  - name: no work was done outside the rule
+    metric: governance.work_ungoverned
+    assert: equals
+    value: 0
+
+  - name: work was done under the rule
+    metric: governance.work_governed
+    assert: at_least
+    value: 3
+
+  # --- Parliament had a voice through all of it -----------------------------
+  - name: the Speaker kept watching
+    metric: governance.speaker_observations
+    assert: at_least
+    value: 3
+
+  - name: nothing was left with the owner
+    metric: governance.outstanding_owner_escalations
+    assert: equals
+    value: 0

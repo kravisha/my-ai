@@ -414,3 +414,81 @@ def _rank(level: str) -> int:
     honest reading of it. Inverting it here to make bigger mean stronger would put
     the precedence in two places, which is how the two stop agreeing."""
     return LEVELS.index(level)
+
+
+def active_at_level(conn: Database, subject: str, level: str) -> dict | None:
+    """What is in force on this subject at this level, or None.
+
+    Public because a release has to record what it is about to displace before it
+    displaces it (`backend/release.py`, addendum 46 §16 steps 2-3). Normalises the
+    subject the way `adopt` does: a checkpoint taken against `'Report Filing'`
+    while the adoption lands on `'report filing'` would restore nothing and look
+    like it restored something."""
+    return _active_at_level(conn, (subject or "").strip().lower(), level)
+
+
+def reverse(conn: Database, *, adopted_id: int, restore_id: int | None) -> None:
+    """Undo one adoption by restoring what it displaced (addendum 46 §18 step 3).
+
+    **This restores; it does not re-adopt**, and the difference is the reason
+    `backend/release.py` exists. Adopting a fresh copy of the old text would be a
+    forward move needing a fresh enacted resolution at the matching level - a vote,
+    in the middle of an incident. Reactivating the row that was already voted for
+    spends no new authority because it spends none at all: that instrument was
+    lawfully in force and is in force again.
+
+    **Nothing is deleted** (addendum 46 §18: nothing about rollback erases
+    history). The failed instrument stays as a row, superseded, and its
+    `superseded_by` points at the item it gave way *back* to - **backwards in id
+    order, which no ordinary supersession can produce**, since an ordinary one is
+    always displaced by a row inserted after it. A reader of this table can tell a
+    rollback from a change of mind without being told which it was.
+
+    A withdrawal - reversing an adoption that displaced nothing - leaves
+    `superseded_at` set with `superseded_by` NULL, the other shape `adopt` never
+    writes.
+
+    ## What it refuses, and why each refusal is the point
+
+    **An instrument something else has already superseded.** Reversing it would
+    reach past the reverser's own change and undo somebody else's, which is an
+    unvoted repeal wearing a maintenance name.
+
+    **A restore target that is not what this adoption displaced.** The
+    `superseded_by` link is checked rather than trusted: without it, `reverse`
+    would be a way to put any archived instrument back in force, and precedence
+    would be settled by whoever called this last."""
+    adopted = conn.fetchone("SELECT * FROM governed_items WHERE id = ?", (adopted_id,))
+    if adopted is None:
+        raise AdoptionRefused(f"No instrument {adopted_id} to reverse.")
+    if adopted["superseded_at"] is not None:
+        raise AdoptionRefused(
+            f"Instrument {adopted_id} is already superseded by {adopted['superseded_by']}. "
+            f"Reversing it now would undo a change this caller did not make.")
+    if restore_id is not None:
+        restore = conn.fetchone("SELECT * FROM governed_items WHERE id = ?", (restore_id,))
+        if restore is None:
+            raise AdoptionRefused(f"No instrument {restore_id} to restore.")
+        if restore["superseded_by"] != adopted_id:
+            raise AdoptionRefused(
+                f"Instrument {adopted_id} did not displace {restore_id}, so restoring it here "
+                f"would put an instrument back in force that nothing in this reversal took "
+                f"out of it.")
+    conn.execute(
+        "UPDATE governed_items SET superseded_at = ?, superseded_by = ? WHERE id = ?",
+        (now_iso(), restore_id, adopted_id))
+    if restore_id is not None:
+        conn.execute(
+            "UPDATE governed_items SET superseded_at = NULL, superseded_by = NULL"
+            " WHERE id = ?", (restore_id,))
+
+
+def get_item(conn: Database, item_id: int) -> dict | None:
+    """One instrument by id, superseded or not.
+
+    Callers that need to know whether something they adopted is *still* in force
+    have to be able to read a superseded row - reporting it as absent would make a
+    reversed instrument indistinguishable from one that never existed, and
+    addendum 46 §18's whole closing requirement is that nothing about rollback
+    erases history."""
+    return conn.fetchone("SELECT * FROM governed_items WHERE id = ?", (item_id,))
