@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 142 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 144 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2800 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2819 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -151,8 +151,12 @@ Every one is recorded at `SPEC_RECONCILIATION.md` §117–§138.
 
 These have each been bought with a defect. `SPEC_RECONCILIATION.md` has the story.
 
-1. **Client portfolios are never stored** (§111). No table exists; an import
-   tripwire fails the suite if a storage module returns.
+1. **Client portfolios are never stored** (§111). No table exists; a tripwire
+   fails the suite if a storage module returns. **The tripwires were re-aimed at
+   §143** — the originals asked about a `portfolios` table and would have passed
+   forever while `client_watchlist` grew a `quantity` column. A client *profile*
+   now persists (TQ-98) and the boundary is structural: a closed 16-field
+   vocabulary, and **a watchlist entry is a symbol and nothing else.**
 2. **The Constitution is not in any store** (§120, corrected by §141). It is
    enforced by tests that fail, never by data that ranks — a store that ranks
    cannot hold something unrankable, and a rule a vote can reach is not a rule.
@@ -188,23 +192,27 @@ after the code looked right:
 
 ## What the next session should do first
 
-**TQ-98 — the client profile, and the boundary a watchlist sits on.** Every
-Providence agent is personal and binds to a `client_id`, so this gates everything
-after it.
+**TQ-99 — join the personnel record to `agent_id`.** TQ-97 introduced the id
+beside `agent_names` rather than under it, so two notions of "the durable agent"
+exist. That is the state 47 §5 forbids, held deliberately for one increment; it
+should not be held for two.
 
-**Its guard comes before its table, and that ordering is the whole entry.** §111
-forbids storing client data and a tripwire enforces it. §140 §5 draws the line: a
-profile is what the client *told* the system; a portfolio is what the client
-*owns*; and a **watchlist is the line** — symbols the client typed are a
-preference, symbols derived from a fetched portfolio are a portfolio wearing a
-preference's name, and the two are indistinguishable in the data. Re-aim the
-tripwire first (§105 — re-aimed, never deleted). Building the table first and
-re-aiming afterwards is how a constraint erodes.
+Or **TQ-101 — the Personal Usher**, which §143 §3 found is already half-built:
+`gateway/client_agent.py` has given each client a persistent named representative
+since addendum 43 §16. The missing half is conversational, and it is the first
+thing here that genuinely needs a model to read text — so the seam where a model
+answers has to be in the design from the first line, along with what happens when
+none is reachable.
 
-Then **TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left
-two notions of "the durable agent" for one increment) and **TQ-100** (*what
-refuses a persona that crosses the line — a function or a paragraph?*, which comes
-before any persona code).
+**TQ-102 — the right to appeal** is the one with an owner mandate behind it. The
+charter has declared it owed and unenforced since it was written, and on
+2026-08-28 the owner named it a fundamental right rather than a deferrable
+feature (§144). The mechanism is easy; **who adjudicates** is not, because this
+organization's only non-owner authority is a vote and an adjudicator a majority
+appoints is one a majority removes.
+
+**TQ-100 stays first among the unanswered**: *what refuses a persona that crosses
+the line — a function or a paragraph?* It comes before any persona code.
 
 Smaller alternatives: **TQ-92** (read the cooperation the organization already
 records) or **TQ-28** (a real known defect: the database-isolation guard trips

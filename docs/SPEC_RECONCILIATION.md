@@ -13854,3 +13854,266 @@ genuinely in force, and what enforces it is a person.
 Naming it here matters because the gap is invisible from inside a passing test.
 An amendment that carried at two-thirds and updated a row looks exactly like an
 amendment that was implemented.
+
+## §143 — The client profile, and what actually holds the line (2026-08-28, TQ-98)
+
+Every Providence agent is personal, and a personal agent works within *that
+client's* permissions, profile and preferences (addendum 51 §4). Nothing after
+this can be personal until there is a profile to be personal about, which is why
+51 §26 puts client binding third and both new documents block on it.
+
+It also runs straight into §111, a constraint bought with a defect and enforced
+by tripwires that fail the suite. §140 §5 drew the boundary before any code; this
+section is what building it taught.
+
+### 1. The guard was written before the table, and that ordering was the entry
+
+TQ-98 was queued with the guard first on purpose (§105: build the table, re-aim
+the guard afterwards, and the constraint erodes). Two things came out of holding
+that order.
+
+**The tempting design is provenance, and provenance is not the guarantee.** Tag
+each watchlist symbol `client_stated`, refuse anything else, done. It is worth
+having and its whole strength is the honesty of the caller: an agent holding a
+symbol it derived from a fetched portfolio can pass `client_stated`, and nothing
+here would know. A guard like that has to be described as a **convention**, on
+§110 §4.3's rule about not claiming the stronger property.
+
+**The real guarantee is smaller, structural, and worth more:**
+
+> **A watchlist entry is a symbol and nothing else.**
+
+No quantity, no cost basis, no account, no price, no value, no as-of. So a
+watchlist assembled entirely from a fetched portfolio is *still not a portfolio* -
+the facts that make positions worth protecting have nowhere to go. Storing them
+would take a schema change, and a schema change is a thing a test can watch for.
+
+That reframing only happened because the guard came first. Writing the table
+first would have produced the provenance column, a passing test, and a boundary
+whose strength nobody had measured.
+
+### 2. The tripwire is re-aimed, and §111's originals now say nothing about this
+
+§111's guards ask whether a `portfolios` or `portfolio_holdings` table is created
+or written to. They pass today and **would go on passing forever while
+`client_watchlist` grew a `quantity` column** - the danger moved the day this
+module was written, which is §105 and §110's recurring lesson arriving on
+schedule.
+
+Three guards replace them at the new location:
+
+- **The watchlist's columns are enumerated against the real initialised schema**,
+  not the source, because `init_schema` is where a column would actually arrive.
+  A position-bearing name fails; so does *any* new column, because every addition
+  here is a step toward a portfolio table under a different name.
+- **The preference vocabulary is closed** to addendum 51 §15's sixteen fields. An
+  open key-value store would make every other protection decorative: nothing
+  stops `set_preference(owner, "holdings", ...)` if any key is acceptable.
+- **No module can both read positions and write a profile**, asserted in both
+  directions over the import graph. Deriving a watchlist needs one module able to
+  do both, and prevention by absence is the only form of this that does not
+  depend on somebody's care (§120's argument about write paths).
+
+### 3. The tripwire falsified this increment's own claim on its first run
+
+The module docstring opened *"This is the first client data this system keeps."*
+It was wrong, and the guard is what said so rather than a reviewer.
+
+`gateway/client_agent.py` has held `client_agents` since addendum 43 §16: the
+named representative a client meets, its voice and visual identity, when they
+were last here and how many times. Client-scoped, durable, and older than this
+increment by months.
+
+The distinction that survives is worth more than the claim that did not:
+
+- **`client_agents` is the system's record of serving somebody.** The Gateway
+  assigns the name; the client never stated it.
+- **`client_preferences` and `client_watchlist` hold the client's own
+  statements.** Nobody derived them, and nobody may.
+
+They sit in different databases, correctly, for the reason §109 gives: the
+Gateway establishes identity and the backend holds business logic. A preference
+is business logic; a representative is identity. `forget_everything` deliberately
+does not reach `client_agents` - a backend function deleting rows from
+`gateway.db` would be §109's boundary crossed for convenience.
+
+**And there is a finding in it.** Addendum 50 §6's Personal Usher - a persistent,
+named, client-bound representative with voice and visual identity and continuity
+across meetings - is *partly built already*, under addendum 43 §16's name and
+without Providence's vocabulary. That is §131's shape exactly, where cooperation
+turned out to have been measured for months as `cross_check.unanswered_rate`.
+What is missing from the Usher is the conversational half: intent classification
+(51 §16), patience (49 §11), and having anything to say.
+
+### 4. Two rules carried over rather than re-derived
+
+**Absence is `unstated`, never a default.** A profile returning
+`preferred_tone='neutral'` for somebody who never said it would have an agent
+acting on a preference the client does not hold, *indistinguishably from one they
+do*. §100, §104, §118 and §132, and this is the setting where the failure is
+least visible.
+
+`unstated()` names what is missing rather than counting it, because addendum 49
+§11's patience rules want an Usher that finds out, and an agent that knows six
+preferences are missing cannot ask about them.
+
+**Ownership is evidence, never a parameter.** Every function takes an
+`OwnerContext` built server-side from the session subject (addendum 44 §9.2). A
+`client_id` string would let any agent read or rewrite any client's profile by
+knowing who they are - the same refusal `portfolios` has made since §99, applied
+to the first store where the data is the person's own words.
+
+### 5. Leaving is a function, because this store does not end
+
+Every other client-scoped store in the backend disappears on its own: a request
+when claimed, a report when collected, a session's rows on disconnect. This one
+persists by design, so it is the first backend data that would otherwise outlive
+the client's interest in it, and `forget_everything` exists for that rather than
+for tidiness. It returns what it removed by count: a caller told *"done"* cannot
+tell a successful deletion from a mistyped owner, and those need different next
+actions.
+
+### 6. What this does not do
+
+- **It does not stop a determined caller** from writing a derived symbol as
+  `client_stated`. Stated plainly in the module rather than implied away.
+- **Nothing reads it yet.** No agent adapts its behaviour to a preference; there
+  is no Usher and no Personal Reporter. This is the store 51 §26 blocks on, not
+  a behaviour change - and a profile nothing consults is the filing cabinet TQ-82
+  was for a fortnight (§126).
+- **Consent is a field, not a mechanism.** `consented_reference_material` is one
+  of §15's sixteen and it is prose in a column. TQ-100 owns the question of what
+  refuses a persona, and this field is where its answer will have to be checked.
+
+## §144 — What belongs in the Constitution, and the right this system already owed (2026-08-28, owner direction)
+
+§142 built the amendment mechanism and left the question it could not answer:
+*which rules belong at level 0 at all?* The threshold was specified; the criterion
+was not, and a two-thirds bar over an undefined set is a procedure without a
+subject.
+
+> *"A constitutional amendment changes an existing article in the constitution or
+> adds something new to the constitution. Any regular law or procedure that is
+> passed in the parliament is not a constitutional amendment. While regular
+> changes to laws or rules or procedures can be accomplished by a simple majority
+> the constitutional amendment needs two thirds majority due to the sanctity of
+> the law. Some laws are supposed to stand the test of time and such laws belong
+> in the constitution and need two thirds majority.*
+>
+> *Examples are such laws that establish undeniable and inalienable fundamental
+> rights such as right to vote and right to appeal an unfavorable ruling. These
+> laws are in there for a reason and should not be easily changed. Many laws are
+> situational to handle certain specific temporary situations such as the penalty
+> for an agent for taking a shortcut knowing the risks and then failing the
+> task."*
+
+### 1. The criterion, and it is durability rather than importance
+
+**Does this rule need to stand the test of time?**
+
+That is a sharper test than *is this important*, and the difference is what makes
+it usable. A penalty for an agent that took a known shortcut and failed is
+important; it is also situational, and it belongs in ordinary law where a simple
+majority can change it when the situation changes. A right to appeal is not more
+important than a penalty on any given day. It is the one that must still be true
+in five years.
+
+Two examples given, both rights: **the right to vote** and **the right to appeal
+an unfavorable ruling**. Rights are the natural inhabitants of level 0 because
+they are the rules whose whole value is that the people they constrain cannot
+easily remove them.
+
+### 2. What the mechanism already got right
+
+Nothing in §142 needs changing, and that is worth stating rather than assuming.
+
+- *"Any regular law or procedure passed in parliament is not a constitutional
+  amendment."* Enforced structurally: `propose` cannot reach either constitutional
+  level, and `propose_constitutional_amendment` is the only route. The level is
+  never a parameter anybody can pass.
+- *"Regular changes... simple majority; constitutional... two thirds."* Ordinary
+  resolutions read `ordinary_threshold` from the Articles as data;
+  `CONSTITUTIONAL_AMENDMENT_THRESHOLD` is a code constant at two-thirds.
+- *"Changes an existing article... or adds something new."* Both are expressible.
+  An amendment carries the **whole replacement text**, so changing one provision
+  and adding one are the same operation with different diffs — which is
+  deliberate: a diff-based amendment would mean the thing in force is the result
+  of applying something to something else, and *what was voted on would be
+  neither*.
+
+### 3. What it cannot do, restated because this direction makes it tempting
+
+**Code cannot read a rule and tell whether it is fundamental or situational.**
+
+§126 established the general form and §131 confirmed it against the Scripture.
+The criterion above is prose, and a classifier over it — `if "right" in text` —
+would be a parser pretending to be a reader, wrong the first time somebody
+phrased a fundamental right without the word.
+
+So the boundary stays where JARVIS.md already says it is: **the refusal covers
+what a proposal declares.** A situational penalty submitted as a constitutional
+amendment will be taken at its word and put to a two-thirds vote; a fundamental
+right submitted as an ordinary law will pass at a simple majority and sit at
+level 3. Neither is detectable here, and the guard against both is that
+**somebody has to choose the route**, which is a person's judgement and is
+recorded as such.
+
+That is not a gap to close with code. It is the same admission §123 makes one
+level up about the Constitution's contents, and writing a classifier would
+replace an honest limit with a confident one.
+
+### 4. The finding: this system already owed one of the two rights, and knew it
+
+`backend/charter.py` — *what an agent is owed and which mechanism owes it* —
+has carried this since it was written:
+
+> **"a settled matter can be appealed"** — *A ruling an agent believes wrong can
+> be reviewed by someone other than whoever made it.* Listed as **aspirational**:
+> *"no adjudicator exists... the owner is both first and last instance, which is
+> not an appeal."*
+
+One of the owner's two examples of an inalienable fundamental right is a
+protection this system declares it owes and does not provide. It was found by
+looking rather than argued for, which is the useful kind.
+
+The other example fares better: **the right to vote is built.** The roll is in the
+Articles, `cast_vote` refuses anybody not on it rather than counting-and-ignoring,
+and amending the roll costs two-thirds.
+
+**The charter's stated reason for deferring appeal no longer holds, and has been
+corrected rather than quietly rewritten.** It read *"deferred until a contested
+caseload justifies it"* — a volume argument, and a reasonable one for a discretionary
+feature. A fundamental right is not a thing that waits for demand. The entry now
+names the owner direction and points at TQ-102.
+
+This is the second time in two days that the honest thing was already recorded and
+the reasoning around it had gone stale (§141: `record_owner_decision`'s docstring
+described behaviour it never had). **The pattern is worth naming: this project's
+declared-gap lists are more reliable than the prose explaining why the gaps are
+acceptable**, because a gap is re-read every time somebody counts them and a
+justification is read once.
+
+### 5. A name that now means two things
+
+The Constitution has **articles** — numbered provisions, in the owner's usage
+above. Level 1 is **the Articles** — the organization's own highest instrument,
+addendum 46 §5's and 32 §19's.
+
+Addendum 47 §5 forbids exactly this, and §122 spent an increment fixing three such
+collisions. Flagged rather than resolved, because renaming either is the owner's:
+the corpus fixed *the Articles* at level 1, and *article* is the ordinary word for
+a constitutional provision. Nothing in code is affected today — `parliament`
+stores the Constitution as one text and has no article-level concept — and the
+day it does, one of the two words has to move.
+
+### 6. What is queued
+
+**TQ-102 — the right to appeal.** The charter names what it requires: a ruling
+reviewable *by someone other than whoever made it*. That is the same independence
+rule as addendum 46 §11 (the producer is not the approver) and §137's reviewer
+gap, arriving from a different direction — and the reviewer role that TQ-83 said
+does not exist is the same role an adjudicator would need.
+
+Not built in this increment, deliberately. It needs a decision about who
+adjudicates, and appointing an adjudicator inside an organization whose only
+non-owner authority is a vote is a governance design rather than a function.

@@ -296,13 +296,51 @@ it, which is the property that matters and is what §120 meant to say.
 | The governed-knowledge layer and precedence rules | `IMPLEMENTED` — TQ-82. [`backend/governed_knowledge.py`](../backend/governed_knowledge.py) |
 | Agents reading what governs them | `IN DEVELOPMENT` — TQ-86, TQ-87. [`backend/operating_context.py`](../backend/operating_context.py). Explorer, Speculator and the register obey governed data. **Analysis and the COO do not** |
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
-| The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted |
+| The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; three protections are listed as *unenforced* rather than quietly omitted. One of them — **appeal** — the owner named a fundamental right on 2026-08-28, so its deferral reasoning was corrected rather than left (§144 §4). TQ-102 |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
 | Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py) |
 Addendum 32 specifies elections, ministers and committees; none is required for a
 directive to be authorized, so none was built. `parliament.summary()` names them
 in the same object that reports the vote, because a status surface showing a
 working ballot and nothing else would read as a finished governance layer.
+
+### What belongs in the Constitution
+
+Owner direction, 2026-08-28 (§144). The threshold was settled at §142; this is the
+criterion, without which a two-thirds bar is a procedure with no subject.
+
+> **Does this rule need to stand the test of time?**
+
+Sharper than *is it important*, and the difference is what makes it usable. A
+penalty for an agent that took a known shortcut and failed is important and
+**situational** — it belongs in ordinary law, where a simple majority can change
+it when the situation does. A right is not more important on any given day; it is
+the one that must still be true in five years.
+
+The two examples given are both rights: **the right to vote** and **the right to
+appeal an unfavourable ruling.** Rights are level 0's natural inhabitants, because
+their whole value is that the people they constrain cannot easily remove them.
+
+**One of the two is built and the other is owed.** The right to vote works — the
+roll is in the Articles, `cast_vote` refuses anybody not on it, and amending the
+roll costs two-thirds. The right to appeal does not exist, and
+[`backend/charter.py`](../backend/charter.py) has said so since it was written:
+*"a settled matter can be appealed"* is listed as owed and unenforced, because
+*"no adjudicator exists… the owner is both first and last instance, which is not
+an appeal."* TQ-102.
+
+**And code cannot apply this criterion**, which matters because the direction
+makes it tempting to try. The refusal covers what a proposal *declares*: a
+situational penalty submitted as a constitutional amendment gets a two-thirds
+vote, and a fundamental right submitted as ordinary law passes at a simple
+majority. Choosing the route is a person's judgement (§126, §144 §3). A
+classifier over the words would replace an honest limit with a confident one.
+
+**A name now means two things.** The Constitution has *articles* — numbered
+provisions — and level 1 is *the Articles*. Addendum 47 §5 forbids exactly that,
+and it is flagged rather than resolved because renaming either is the owner's
+(§144 §5). Nothing in code is affected today; `parliament` stores the Constitution
+as one text with no article-level concept.
 
 ### The one rule a vote cannot reach
 
@@ -483,8 +521,17 @@ continuing agent has learned is its own. Collapsing them would mean an agent's
 private experience silently becoming organizational fact, or organizational fact
 being lost when an agent is released.
 
-**Client data belongs to neither.** It is held for the length of one request and
-discarded — see section 5.
+**Client data belongs to neither**, and there are now two kinds of it. What a
+client *owns* is held for the length of one request and discarded (section 5).
+What a client *told* us persists — the profile, TQ-98 — and so does the Gateway's
+record of having served them.
+
+That second store was found rather than built: `gateway/client_agent.py` has
+given each client a persistent named representative, with voice, visual identity
+and continuity across meetings, since addendum 43 §16. **Addendum 50 §6's
+Personal Usher is therefore half-built already** (§143 §3), under an older name —
+the same shape as cooperation having been measured for months before addendum 48
+asked for it. What is missing is the conversational half.
 
 ### Departments
 
@@ -493,6 +540,7 @@ Specified across the addenda; mostly `TO BE DEVELOPED`. What exists:
 | Department | Status | Where |
 |---|---|---|
 | Department of Education | `IMPLEMENTED` (portfolio-analysis curriculum only) | [`backend/curriculum.py`](../backend/curriculum.py), [`simulation/training.py`](../simulation/training.py) |
+| Personal agents (Providence) | `IN DEVELOPMENT` — TQ-97 identity, TQ-98 the client profile. The Usher is half-built in the Gateway and has no conversational half (TQ-101) | [`backend/agent_identity.py`](../backend/agent_identity.py), [`backend/client_profile.py`](../backend/client_profile.py) |
 | Strategy | `IMPLEMENTED` in part — the register and the strategy store | [`backend/strategy.py`](../backend/strategy.py), [`backend/register.py`](../backend/register.py) |
 | Department of Evolution | `TO BE DEVELOPED` | addendum 30 |
 | Software Engineering | `IN DEVELOPMENT` — TQ-83, TQ-96. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap, and stages approved work into a release candidate; **writes no code** |
@@ -540,11 +588,37 @@ TQ-72 removed the storage layer that an earlier reading had built (§116).
   client disconnects → everything for that session is discarded
 ```
 
-**The database is a transport, not a store.** A request is deleted when claimed,
-a report when collected, a session's rows on disconnect, and an expired row is
-treated as absent *on read* rather than trusting a sweeper to have run. That is
-how an agent architecture built on database queues serves a system that retains
-nothing (§117).
+**The database is a transport, not a store** — with one declared exception. A
+request is deleted when claimed, a report when collected, a session's rows on
+disconnect, and an expired row is treated as absent *on read* rather than
+trusting a sweeper to have run. That is how an agent architecture built on
+database queues serves a system that retains nothing (§117).
+
+The exception is the **client profile** (TQ-98, §143), and it is stated here
+rather than left to be discovered next to the rule it qualifies. A preference
+discarded at disconnect is not a preference; it is a question asked again every
+session, and addendum 51 §4 cannot have personal agents without one. So
+`client_preferences` and `client_watchlist` persist, and the boundary is
+structural:
+
+- **A profile is what the client *told* the system.** Sixteen fields,
+  addendum 51 §15's and no others — a closed vocabulary, because an open one is
+  where a portfolio ends up.
+- **A portfolio is what the client *owns*.** Unchanged: fetched per session,
+  never stored.
+- **A watchlist is the line.** Symbols the client typed are a preference; symbols
+  derived from a fetched portfolio are a holding. The two are identical as data,
+  so the `source` column is a **convention** and the guarantee is elsewhere: **a
+  watchlist entry is a symbol and nothing else.** No quantity, no cost basis, no
+  account, no price. A watchlist assembled entirely from a fetched portfolio is
+  still not a portfolio, because what makes positions worth protecting has
+  nowhere to go — and a test fails the suite if a column that could hold one
+  appears.
+
+Ownership is evidence here too: every call takes an `OwnerContext` resolved from
+the session, never a `client_id` a caller sent. And leaving is a function —
+`forget_everything` — because this is the first backend store that does not end
+on its own.
 
 ### What consolidation actually decides
 
@@ -937,7 +1011,8 @@ sessions — for the same reason ground truth is kept off the provider interface
 
 | Rule | Status | Mechanism |
 |---|---|---|
-| Client portfolios are never stored | `IMPLEMENTED` | No table exists; an import tripwire fails the suite if a storage module returns |
+| Client portfolios are never stored | `IMPLEMENTED` | No table exists; a tripwire fails the suite if a storage module returns. **Re-aimed at §143** — the originals asked about a `portfolios` table and would pass forever while the client watchlist grew a `quantity` column |
+| A client profile holds statements, never holdings | `IMPLEMENTED` | Closed 16-field vocabulary; a watchlist entry is a symbol and nothing else; no module may both read positions and write a profile |
 | One identical refusal for absent, foreign, and archived | `IMPLEMENTED` | A refusal that distinguishes them is a probe for what exists |
 | Ownership context is evidence, not a variable | `IMPLEMENTED` | Built from the session subject, never from caller input |
 | Closed vocabularies, fail closed on read as well as write | `IMPLEMENTED` | Unknown values are refused, not defaulted |
@@ -992,7 +1067,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,800 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,819 passing, 8 skipped** (2026-08-28). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this
@@ -1047,6 +1122,11 @@ until somebody declares it deliberately.
 1. **A producing agent never learns how its own report was judged.** Feedback
    closes at the lens level — the COO reads grades and moves the lens — so the
    organization learns while the individual agent does not.
+1a. **No agent can appeal a ruling.** Declared in the charter since it was
+   written, and named by the owner on 2026-08-28 as a fundamental right rather
+   than a deferrable feature (§144). The hard part is not the mechanism: this
+   organization's only non-owner authority is a vote, and an adjudicator a
+   majority appoints is one a majority removes. TQ-102.
 2. **Lessons written when a lens goes stale are never read back.** They are
    preserved and guarded against duplication, and no consumer exists.
 

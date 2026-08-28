@@ -155,10 +155,16 @@ PROTECTIONS = (
     ),
     Protection(
         "a settled matter can be appealed",
-        "A ruling an agent believes wrong can be reviewed by someone other than whoever made it.",
+        "A ruling an agent believes wrong can be reviewed by someone other than whoever made it. "
+        "**Named by the owner as a fundamental right** (2026-08-28): one of two examples of the "
+        "'undeniable and inalienable' kind of rule that belongs in the Constitution and needs a "
+        "two-thirds majority to change - alongside the right to vote (SPEC_RECONCILIATION 144).",
         aspirational=(
-            "no adjudicator exists and appointing one is deferred until a contested caseload justifies "
-            "it. Until then the owner is both first and last instance, which is not an appeal"
+            "no adjudicator exists, and the owner is both first and last instance, which is not an "
+            "appeal. **The reason for deferring it no longer holds.** It said 'deferred until a "
+            "contested caseload justifies it' - a volume argument, and the owner has since called "
+            "this a fundamental right, which is not a thing that waits for demand. TQ-102 owns it; "
+            "the entry that changed is recorded rather than quietly rewritten"
         ),
     ),
 )

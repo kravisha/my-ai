@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import agent_identity, analysis_requests, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, status_events, strategy, triage, workspace
+from backend import agent_identity, analysis_requests, client_profile, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1505,6 +1505,11 @@ def init_schema(conn: Database) -> None:
     # correction to `agent_names` having been that identity while also being the
     # display name - which addendum 51 §3 forbids in terms.
     agent_identity.init_schema(conn)
+    # The client profile (TQ-98; addendum 51 §4, §15; §143). **The first client
+    # data this system keeps**, and the boundary against §111 is structural: the
+    # preference vocabulary is closed and a watchlist entry is a symbol and
+    # nothing else. See backend/client_profile.py.
+    client_profile.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1676,7 +1681,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
          analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
          governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
-         release.SCHEMA, agent_identity.SCHEMA)
+         release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

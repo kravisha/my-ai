@@ -48,9 +48,12 @@ holds the queue, not the record.
 > superseded authority (§140 §3). And the persona work needs a mechanism before it needs code
 > (§140 §6).
 >
-> **Recommended next: TQ-98**, the client profile and the boundary §140 §5 draws — because every
-> other Providence increment binds to a client, and the guard has to be re-aimed before the table
-> exists rather than after.
+> **TQ-98 is done (§143).** The client profile exists, the watchlist boundary is structural rather
+> than conventional, and §111's tripwires are re-aimed at where the risk moved to.
+>
+> **Recommended next: TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
+> notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
+> found is already half-built in the Gateway.
 >
 > **Waiting on the owner, and blocking nothing else:** the genesis Articles (§120 — Parliament
 > governs nothing until they exist), unholding TQ-75 (the condition set for it is now met), and
@@ -1531,8 +1534,33 @@ unchanged, and joining the two is TQ-99.
 
 ### TQ-98 — The client profile, and the boundary a watchlist sits on
 
-**NEED (ORANGE) · QUEUED · addendum 51 §4, §13, §15 · owner direction §111 ·
-`SPEC_RECONCILIATION.md` §140 §5**
+**NEED (ORANGE) · DONE — `SPEC_RECONCILIATION.md` §143 · addendum 51 §4, §13, §15 ·
+owner direction §111 · `SPEC_RECONCILIATION.md` §140 §5**
+
+`backend/client_profile.py`. The guard went in before the table, and holding that order
+changed the design: **provenance is a convention, not the guarantee.** A caller can pass
+`client_stated` for a derived symbol and nothing would know. What the schema really
+guarantees is that **a watchlist entry is a symbol and nothing else** — no quantity, no cost
+basis, no account — so a watchlist built entirely from a fetched portfolio is still not a
+portfolio, because the facts worth protecting have nowhere to go.
+
+§111's tripwires are re-aimed rather than trusted: they ask about a `portfolios` table and
+would pass forever while `client_watchlist` grew a `quantity` column. The replacements
+enumerate the watchlist's columns against the real schema, close the preference vocabulary to
+51 §15's sixteen fields, and assert over the import graph that no module can both read
+positions and write a profile.
+
+**The tripwire falsified this increment's own claim on its first run.** The docstring said
+*"the first client data this system keeps"*; `gateway/client_agent.py` has held `client_agents`
+since addendum 43 §16. The correction is at §143 §3, and it carries a finding: **addendum 50
+§6's Personal Usher is partly built already** — a persistent, named, client-bound
+representative with voice, visual identity and continuity across meetings — under addendum 43's
+name. What is missing is the conversational half.
+
+Nothing reads the profile yet, which is named rather than implied: a store 51 §26 blocks on,
+not a behaviour change.
+
+<details><summary>The entry as it was queued</summary>
 
 Every Providence agent is personal, and a personal agent is bound to a `client_id` and works within
 that client's profile, permissions and preferences (51 §4). 51 §15 lists seventeen profile fields;
@@ -1556,6 +1584,8 @@ fails the suite if a storage module returns.
 
 Building the profile first and re-aiming the guard afterwards is how a constraint erodes, so the
 guard comes first in this entry deliberately.
+
+</details>
 
 ### TQ-99 — Join the personnel record to the agent id
 
@@ -2811,3 +2841,73 @@ the §6 scenario engine — a substantially larger increment than any detector.
   whole-organization Monte Carlo, historical validation, shadow operation. The world is at
   stages 1–2; TQ-14 is the honest next rung, and each further stage is its own increment
   gated on the one before it.
+
+### TQ-101 — The Personal Usher, and the half of it that already exists
+
+**NEED (ORANGE) · QUEUED · addendum 50 §6, §9, §10 · addendum 49 §10, §11, §12, §13 ·
+addendum 51 §15, §16, §17 · `SPEC_RECONCILIATION.md` §143 §3**
+
+The client's primary host and orchestrator, and the role both Providence documents build
+toward. **Half of it is already built and was found rather than designed** (§143 §3):
+`gateway/client_agent.py` has given each client a persistent, named, client-bound
+representative — with voice, visual identity, and continuity across meetings — since
+addendum 43 §16, without Providence's vocabulary. That is §131's shape again, where
+cooperation had been measured for months as `cross_check.unanswered_rate`.
+
+What exists: a stable identity per client, relationship continuity as two facts (last seen,
+meetings), and a client profile to be personal about (TQ-98).
+
+What does not: **the conversational half, and it is the whole difficulty.** Addendum 51 §16
+lists fifteen intent types, and the Usher must tell `FACT_REQUEST` from `THINKING_ALOUD` from
+`COMPLAINT` *before* answering. 49 §11 and §13 make that a requirement rather than a nicety —
+patience, and relationship before correction.
+
+**The question this entry owns, and it comes before the code:** intent classification is the
+first thing in this system that genuinely needs a model to read text, and §126 established
+what happens when code is asked to obey prose. `if "?" in text` is a parser pretending to be a
+reader. So either it waits for addendum 45's local intelligence, or the seam where a model
+answers is in the design from the first line — and what happens when no model is reachable is
+part of that design, not an afterthought.
+
+Do not build a persona layer here. TQ-100 owns what refuses a persona that crosses the line,
+and it is unanswered.
+
+### TQ-102 — The right to appeal an unfavourable ruling
+
+**NEED (ORANGE) · QUEUED · owner direction 2026-08-28 · addendum 32 §19 · addendum 46 §11 ·
+`SPEC_RECONCILIATION.md` §144 §4, §137**
+
+Named by the owner as one of two examples of the *"undeniable and inalienable"* fundamental
+rights that belong in the Constitution: **the right to appeal an unfavorable ruling.** The
+other, the right to vote, is built.
+
+**This system already declares it owes this and does not provide it.** `backend/charter.py`
+has carried *"a settled matter can be appealed"* as aspirational since it was written —
+*"no adjudicator exists... the owner is both first and last instance, which is not an
+appeal."* The finding is that the charter was right and the reason beside it had gone stale:
+*"deferred until a contested caseload justifies it"* is a volume argument, and a fundamental
+right does not wait for demand. Corrected in place at §144 §4.
+
+**What it requires is one sentence and one hard problem.** The charter states the requirement:
+a ruling an agent believes wrong is reviewed *by someone other than whoever made it*. That is
+addendum 46 §11's independence rule arriving from a third direction — the producer is not the
+approver (TQ-83), the grader is not the producer (§117), and now the reviewer of a ruling is
+not its author.
+
+The hard problem is **who adjudicates**. This organization's only non-owner authority is a
+vote, and:
+
+- An adjudicator appointed by simple majority can be removed by one, which makes an appeal
+  reviewable by whoever is currently winning.
+- Routing every appeal to Parliament makes the electorate the appellate court, and the
+  electorate contains whoever made the ruling.
+- Routing it to the owner is what happens today, and the charter already says that is not an
+  appeal.
+
+So this is a governance design before it is a function, and the design decision is the
+deliverable. Note that a right established constitutionally would need two-thirds to remove,
+which is the first thing in this system that would actually use §142's machinery for the
+purpose the owner described.
+
+**Related and not the same:** §137's missing reviewer role. An adjudicator and a reviewer are
+both *somebody other than the author*, and whether they are one role is part of this entry.
