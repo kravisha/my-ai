@@ -23,80 +23,47 @@ holds the queue, not the record.
 
 ## Queue, in priority order
 
-> **Checkpoint 2026-08-28.** The governance stack is complete and verified end to end:
-> Parliament (TQ-81), the governed knowledge layer (TQ-82), agents that read what binds them
-> (TQ-86, TQ-87), refusals that are counted (TQ-90), and a Software Engineering Department
-> that turns an authorized directive into governed data or names the capability the
-> architecture lacks (TQ-83). `python -m simulation verify` runs ten scenarios and the
-> curriculum for one verdict; the last run was **PASS**, and it was the first that exercised
-> every mechanism rather than passing over some of them.
+> **Checkpoint 2026-08-29.** Both halves of the organization are built. The *operating*
+> machinery is exercised; the *governing* machinery — Parliament, the governed store, agents that
+> read what binds them, releases that apply and reverse, an appeal heard by a peer, and a
+> Constitution the organization may amend at two-thirds — went from specified-and-absent to built
+> between 2026-08-27 and 2026-08-29. **None of it has any text in force**: the Articles and the
+> Constitution both wait on the owner.
 >
-> **TQ-96 is done (§139)** — a release here is a named set of governed changes that stand or fall
-> together, whose way back is authorized before the way forward is taken. The code half is
-> declined rather than deferred: this organization observes its code version and may not choose it.
-> Evolution's relay (TQ-95, declined at §138) is now unblocked, since a rollout plan finally has
-> something to plan.
+> **The system was re-scoped on 2026-08-28.** Project Providence (addenda 49–52, §140) makes the
+> product a personal AI world; financial intelligence becomes the *Personal Portfolio Manager*,
+> one of about fifteen personal agents. Market data and the broker are no longer the head of this
+> queue — agent identity, client binding and the Usher are.
 >
-> **Project Providence is assimilated and reconciled (§140)** — addenda 49-52, supplied
-> 2026-08-28. It re-scopes the system: financial intelligence becomes the *Personal Portfolio
-> Manager*, one of about fifteen personal agents in a personal AI world. **TQ-97 is done** —
-> persistent agent identity, which both new documents name as implementation priority one.
+> **Newest and least proven: the Software Department** (addendum 53, §150–§152). Five gates on an
+> issue workflow, a DBA that opens an issue when a scheduled check fails, and a loop that staffs
+> itself and stops at the one perspective that needs a judgement.
 >
-> **Two things are with the owner and one of them blocks a document.** Addendum 49 is titled
-> *Philosophy & Constitution v2.0*; whether it supersedes `JARVIS_CONSTITUTION.md` is not the
-> build's to decide, and until it is answered `JARVIS_GAP_ANALYSIS.md` may be measuring against a
-> superseded authority (§140 §3). And the persona work needs a mechanism before it needs code
-> (§140 §6).
+> **`simulation verify` is stale.** Last PASS at `579f5c4`; five increments have landed since,
+> including three new schema tables and a change to the loop every agent shares. Re-running it is
+> the next session's first task.
 >
-> **TQ-98 is done (§143)** and **TQ-102 is done (§145)** — the client profile with a structural
-> watchlist boundary, and the right to appeal, which the charter had declared owed and unenforced
-> since it was written. Two of the three unenforced protections were the same missing thing.
->
-> **TQ-102 and TQ-103 are done (§145, §146).** The right to appeal exists, is exercised, and
-> found that every grade in this organization was written by its own producer.
->
-> **TQ-104 is done and found that its own premise was false (§147)** — grading was already
-> independent, and the check that said otherwise could never return false. §146 is retracted in
-> place.
->
-> **TQ-99 is done (§148).** `agent_id` is now the key the personnel record hangs from, and a rename
-> no longer splits an agent's history.
->
-> **TQ-92 is done (§149)** — cooperation is read rather than scored, and reading it turned up two
-> more checks that could not fail.
->
-> **Addendum 53 assimilated and reconciled (§150).** The Software Department Specification, with a
-> mandatory remediation list aimed at §147's and §149's defects. **TQ-105 is done** — the Database
-> Vocabulary Contract, proven to fail on both defects that actually shipped.
->
-> **TQ-101 is frozen by 53 §7.9 until TQ-100 is answered**, which is now a specification rather
-> than a recommendation. And 53 §7.9's warning about the Gateway becoming a personality host
-> **had already happened** (§150 §4).
->
-> **TQ-106 is done (§151).** The department exists as five gates on addendum 53 §6's workflow, a
-> DBA that opens an issue when a check fails, and a QA reader that answers §5.3's *has it been
-> observed failing?* from 83 run summaries nothing had read.
->
-> **TQ-107 is done (§152).** The loop staffs itself: the DBA opens and reviews, the COO spawns the
-> reviewer an issue needs, QA files the verification view — and it **stops at the implementation
-> perspective**, which is a judgement nothing here can supply.
->
-> **Recommended next:** the remaining Definition-of-Done items at §150 §7 — chiefly that
-> `metrics.open_at_end` is re-aimed and has never been forced to fire. Or the 45 properties on
-> `simulation/property_history`'s worklist, which is where the next §149-shaped defect will be.
-> Previously: TQ-107, TQ-106, TQ-101 (read the cooperation already recorded — small, and the only actionable
-> part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
-> first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
-> notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
-> found is already half-built in the Gateway.
->
-> **Waiting on the owner, and blocking nothing else:** the genesis Articles (§120 — Parliament
-> governs nothing until they exist), unholding TQ-75 (the condition set for it is now met), and
-> signed commits (TQ-85).
+> **With the owner:** TQ-100 — *what refuses a persona that crosses the line?* — which addendum 53
+> §7.9 makes a **freeze** on TQ-101 rather than a recommendation. Also the genesis Articles and
+> Constitution (§120, §142), and `JARVIS_GAP_ANALYSIS.md`, which scores against a Constitution
+> that became v2.0 on 2026-08-28.
 >
 > **The product side has not moved since TQ-80** — no prices, no broker, no client. A deliberate
-> consequence of the chosen track rather than a defect, and the shape of the balance if it is
-> ever weighed again.
+> consequence of the chosen track, and under Providence no longer the critical path.
+>
+> **RECOMMENDED NEXT, in order:**
+>
+> 1. **Re-run `python -m simulation verify`** — stale since `579f5c4`. See `HANDOFF.md` for the
+>    two things to watch (`record_grade` now raises on an empty rationale in the hot path; the
+>    DBA makes every scenario an eight-agent run).
+> 2. **The unmet Definition-of-Done items at §150 §7** — chiefly that `metrics.open_at_end` is
+>    re-aimed and **has never been forced to fire**. Re-aimed is not proven (§136).
+> 3. **The 45 properties on `simulation/property_history.worklist()`** that have never been
+>    observed failing. A worklist, not a defect list — and where the next §149-shaped defect is.
+>
+> Blocked or with the owner: **TQ-101** (frozen by addendum 53 §7.9 until TQ-100 is answered),
+> **TQ-75/TQ-49/TQ-50** (owner action), **TQ-95** (Evolution's relay, unblocked by TQ-96 but not
+> yet argued for).
 >
 > This block states the *present*. The increment-by-increment narration is in
 > `SPEC_RECONCILIATION.md`, newest section last, which is where history belongs.

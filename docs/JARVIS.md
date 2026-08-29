@@ -8,9 +8,15 @@ the Living Documentation Standard. Written for two readers — a person, and an
 agent that needs authoritative context without reconstructing the architecture
 from source code (47 §9).
 
-**Status of this document: IN DEVELOPMENT.** It is current as of 2026-08-27 and
-covers the architecture, the organization, and the state of every major
+**Status of this document: IN DEVELOPMENT.** It is current as of **2026-08-29**
+and covers the architecture, the organization, and the state of every major
 component. It does not yet cover every module.
+
+**The system was re-scoped on 2026-08-28** by Project Providence (addenda 49–52,
+§140): the product is a personal AI world, and the financial intelligence work
+this document mostly describes is one personal agent within it. Section 1 carries
+that; the sections below it still describe the machinery in the terms it was
+built in, which remains accurate about the machinery.
 
 ---
 
@@ -1162,10 +1168,21 @@ refused into an escalation queue nothing inside the system can clear (§123).
 
 ### The honest summary
 
-The organization's *operating* machinery is built and exercised. Its *governing*
-machinery is specified and absent. Addenda 46 and 47 are about the second, which
-is why the next four pieces of work are the Articles and Parliament, the governed
-knowledge layer, and the department that will eventually take over engineering.
+**Both halves are now built.** The *operating* machinery is exercised, and the
+*governing* machinery — Parliament, the governed store, agents that read what
+binds them, releases that reverse, an appeal, and a Constitution the organization
+may amend at two-thirds — went from specified-and-absent to built between
+2026-08-27 and 2026-08-29. What none of it has is **any text in force**: the
+Articles and the Constitution both wait on the owner (§120, §142).
+
+What is now newest and least proven is the **Software Department** (addendum 53):
+five gates on an issue workflow, a DBA that opens issues from scheduled checks,
+and a loop that staffs itself and stops at the one perspective a judgement is
+needed for.
+
+And the direction changed underneath all of it. Providence makes the next work
+personal agents, client binding, and the Usher — not market data or a broker
+(§140 §9).
 
 ---
 
