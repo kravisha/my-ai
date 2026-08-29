@@ -14966,3 +14966,139 @@ That ordering is deliberate and is 53's own: §7 is headed *mandatory remediatio
 and §14's Definition of Done is about the current findings, not about staffing. A
 department created before the defects it was chartered to prevent were fixed would
 have inherited them as its first backlog.
+
+## §151 — The Software Department, and the five things it will not let you close (2026-08-29, TQ-106)
+
+Addendum 53 §1: the department *"is not merely a repair service. Its
+responsibility is to make the system progressively harder to break in the same way
+twice."*
+
+A department that recorded issues and closed them would be a ticket queue. What
+makes it §1's thing is **what it refuses**, so the design is five gates on §6's
+ten-step workflow, and each one corresponds to a defect this project has actually
+shipped.
+
+### 1. The gates
+
+1. **A root cause needs all three perspectives** (§6 step 3). §2 forbids the triad
+   working as silos, and the three questions are different in kind: is the data
+   wrong, is the implementation wrong, **why did the tests not catch it**. §149 §4
+   found three defects where the answer to the third was *the tests were built
+   from the same misreading*, and nobody was asking it.
+2. **The three perspectives come from three identities.** One agent supplying all
+   three is one belief wearing three hats. This is the **fifth** instance of a rule
+   this system already applies four times — producer is not approver
+   (`engineering.approve`), producer is not grader (`compliance.self_evaluated`),
+   preparer is not health judge (`release.judge`), author does not hear the appeal
+   (`appeal.hear`).
+3. **Closing needs a prevention, not only a correction** (§6 step 6), and they are
+   one call rather than two. Separating them makes the second optional in
+   practice, and a fix without a safeguard is the same defect available tomorrow —
+   which is §1's sentence, made mechanical.
+4. **Closing needs the name of a test observed failing** (§5.3 question 3). Not a
+   claim that verification happened: the name of a thing somebody else can run. A
+   boolean cannot answer *has it been observed failing?*
+5. **The verifier is not the corrector** (§5.2). One agent doing both derives the
+   fix and the expected values from a single assumption, which is exactly how
+   three defects passed every test.
+
+### 2. Severity 1 escalates through the queue that already exists
+
+§12 escalates a critical issue to the CEO. **There is no CEO** (§150 §2), and a
+second escalation queue would be two places where a matter waits for a person.
+
+`parliament.escalate`'s contract is already exactly right — *"Raise something to
+the owner. Nothing in this system can answer it"*, with no `resolve`, no `dismiss`
+and no expiry. Reused rather than rebuilt. An ordinary issue does **not** escalate,
+because an owner queue filling with technical debt buries the one thing that
+needed a person.
+
+### 3. The DBA, and why a failing check opens an issue
+
+Addendum 53 §11 makes the DBA the one role of the triad that runs continuously:
+its work *is* the monitoring. So it is baseline in `agents/coo.py` and the other
+two are on-demand — which is 46 §10's *work determines staffing* reading the
+specification rather than overriding it.
+
+`backend/vocabulary.py` and `compliance.self_evaluated` already answered *is the
+vocabulary intact* and *is the work independently evaluated*. **Nothing ran them
+on a schedule and nothing read the answer** — which is why `self_evaluated`
+flagged every grade for months unread (§147) and why the cooperation report has no
+consumer (§149).
+
+So a failing check opens a software issue, which cannot then be closed without a
+prevention and a proof. A check that only printed would leave the organization
+exactly as informed as it was.
+
+Idempotent by **signature**, not by cycle: the DBA runs every cycle and would
+otherwise file one defect forever. `open_issue` **returns** the existing id rather
+than raising, because a scheduled caller forced to catch an exception to make
+progress would eventually have that exception widened — and then a real refusal
+would be swallowed with it.
+
+Live in a 90-second baseline run: eight agents instead of seven, 13/13 properties,
+zero respawns, and no issues opened, because there was nothing wrong.
+
+### 4. QA answers §5.3's third question from evidence that was already on disk
+
+*"Has the tripwire actually been observed failing under that condition?"*
+
+Every scenario run has been writing a `summary.json` with each property, what it
+observed, and whether it passed. **Eighty-three runs of it were on disk and
+nothing had read them for this.** So the answer is a query rather than a survey: a
+property never observed failing across the whole history is one whose ability to
+fail is unproven.
+
+Of 74 distinct properties, **8 have been observed failing and 66 have not**; 45 of
+those have never observed more than one value.
+
+**It flags the defect §149 found.** `no cross-check was left open` — 15 passes,
+only ever `0`, because its query filtered on a status that does not exist.
+
+**And it is a worklist, not a findings list**, which is stated in the return value
+rather than left to be inferred. It cannot distinguish *correctly always zero*
+from *structurally cannot be non-zero* — `no agent was respawned` sits on the same
+list and should. Only a forced-failure proof separates them. Reporting these as
+defects would repeat §150 §6's mistake, where the first vocabulary scan produced
+37 findings and none was real.
+
+### 5. A tripwire caught this increment's own design error
+
+`observed_failures` was written inside `agents/qa_engineer.py`, and
+`test_no_agent_can_tell_it_is_in_a_simulation` refused it:
+
+> *"an agent has one code path, and what changes between training and production
+> is what answers its call."*
+
+An agent that reads `simulation/runs` knows it is being simulated. §115 made that
+structural — there is no simulation branch inside an agent and nothing there for
+one to be added to — and this would have added the first.
+
+**The tripwire was right and the design was wrong.** The capability is QA's and
+the data is the harness's, so the reader moved to
+`simulation/property_history.py` and the QA role invokes it when auditing rather
+than on a work cycle.
+
+Worth recording because it is the counter-example to §147 and §149: those were
+three tripwires that could not fail. This one fired, on the first thing that
+crossed it, in the same increment that built a department to catch such things.
+
+### 6. What is not built, and one thing that is now visible
+
+- **No librarian** (§13). Lessons are kept on the closed issue rather than written
+  into `knowledge_records`, whose declared gap 2 is that nothing reads it back. A
+  second unread writer would grow the gap while looking like it closed one.
+- **The department does not gate a release** (§10). `backend/release.py` runs
+  without it, and standing it in front before the department has handled one issue
+  would be ceremony.
+- **Nothing works an issue end to end.** The DBA opens; nothing reviews, corrects
+  or verifies. That is the honest state, and the gates mean an issue *cannot* be
+  closed by accident in the meantime.
+- **`qa_engineer` is on-demand and nothing spawns it.** The COO staffs a peer when
+  an appeal waits (§146); it does not yet staff QA when an issue reaches step 7,
+  which is the same pattern and the obvious next wiring.
+
+And the visible thing: `summary()` reports **which step each open issue is waiting
+on**, named rather than inferred from a status word — because an organization with
+no issues and one whose issues are all stuck at step 3 look identical from a single
+count (§130).

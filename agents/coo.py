@@ -77,6 +77,11 @@ BASELINE_POPULATION = {
     # not on-demand: a spokesperson who only appears when asked cannot be found
     # to have gone quiet, and its silence is the signal.
     "speaker": _baseline_target("speaker", 1),
+    # Addendum 53 §11: the DBA runs continuous database-health monitoring, unlike
+    # the Software Engineer and QA Engineer, which §11 allows to idle until there
+    # is work. So it is baseline and they are on-demand - which is 46 §10's *work
+    # determines staffing* reading the specification rather than overriding it.
+    "dba": _baseline_target("dba", 1),
 }
 
 # The role names alone. Kept because plenty of callers only ever wanted the

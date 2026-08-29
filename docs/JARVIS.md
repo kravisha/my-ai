@@ -580,7 +580,8 @@ Specified across the addenda; mostly `TO BE DEVELOPED`. What exists:
 | Personal agents (Providence) | `IN DEVELOPMENT` — TQ-97 identity, TQ-98 the client profile. The Usher is half-built in the Gateway and has no conversational half (TQ-101) | [`backend/agent_identity.py`](../backend/agent_identity.py), [`backend/client_profile.py`](../backend/client_profile.py) |
 | Strategy | `IMPLEMENTED` in part — the register and the strategy store | [`backend/strategy.py`](../backend/strategy.py), [`backend/register.py`](../backend/register.py) |
 | Department of Evolution | `TO BE DEVELOPED` | addendum 30 |
-| Software Department (addendum 53) | `IN DESIGN` — TQ-106. Three persistent agents (DBA, Software Engineer, QA Engineer), the ten-step issue workflow and background health checks are specified and absent. addendum 53 §8's vocabulary contract is built (TQ-105); **the department is deliberately second**, because one created before the defects it was chartered to prevent were fixed would inherit them as its first backlog (§150 §8) |
+| Software Department (addendum 53) | `IMPLEMENTED` in part — TQ-105, TQ-106. [`backend/software_department.py`](../backend/software_department.py), [`agents/dba.py`](../agents/dba.py), [`agents/qa_engineer.py`](../agents/qa_engineer.py). **Five gates on addendum 53 §6's ten steps**, each written against a defect this project shipped: a root cause needs three perspectives from three identities, a correction needs a prevention, closing needs the name of a test observed failing, and the verifier is not the corrector. The DBA runs continuously and opens an issue when a check fails. Nothing yet reviews, corrects or verifies one (§151) |
+| Software Department — the parts not built | `TO BE DEVELOPED`. Addendum 53 §13's librarian, 53 §10's release gating, and an agent that works an issue end to end. Named rather than omitted (§151 §6) |
 | Software Engineering | `IN DEVELOPMENT` — TQ-83, TQ-96. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap, and stages approved work into a release candidate; **writes no code** |
 | Governance | `TO BE DEVELOPED` (measurement exists; the department does not) | addendum 32 §20 |
 | Security Defense, Business Continuity, Law Enforcement | `TO BE DEVELOPED` | addenda 28, 29 |
@@ -1123,7 +1124,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,900 passing, 8 skipped** (2026-08-29). The skips are deliberate
+**Test suite: 2,926 passing, 8 skipped** (2026-08-29). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this

@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, status_events, strategy, triage, workspace
+from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -394,6 +394,56 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["ladder assessment", "instrument drafting", "naming a capability gap"],
         "work_mechanism": "engineering_directives queue, filled by an authorized resolution",
+    },
+    "dba": {
+        "agent_type": "engineering",
+        "description": (
+            "The Database Administrator (addendum 53 §3). Owns the physical and structural "
+            "health of the operational databases - not the meaning of what is stored, which "
+            "belongs to the agents that wrote it. The one role of the triad that runs "
+            "continuously, because its work IS the monitoring (53 §11)."
+        ),
+        "responsibilities": [
+            "Run the vocabulary and self-evaluation checks on a schedule (53 §3.3)",
+            "Open a software issue when a check fails, rather than reporting into nothing",
+            "Supply the database perspective on a defect under three-way review (53 §2)",
+        ],
+        "allowed": [
+            "Report a check as INCONCLUSIVE when it examined nothing - a query that "
+            "returned no rows is not a health check (53 §3.3)",
+            "Find nothing, repeatedly, which is the ordinary case",
+        ],
+        "not_allowed": [
+            "Close an issue it opened - three perspectives from three identities (53 §2)",
+            "Fix anything; correction is the Software Engineer's",
+            "Own the semantic meaning of stored knowledge (53 §3.1)",
+        ],
+        "competencies": ["vocabulary auditing", "schema drift detection", "health reporting"],
+        "work_mechanism": "scheduled health checks over the live database",
+    },
+    "qa_engineer": {
+        "agent_type": "engineering",
+        "description": (
+            "The QA / Test Engineer (addendum 53 §5). Ensures tests, tripwires and metrics "
+            "are capable of failing when the system is wrong. Passing tests are not "
+            "evidence of correctness."
+        ),
+        "responsibilities": [
+            "Verify a correction independently of whoever wrote it (53 §5.2)",
+            "Name the test observed failing under the deliberately bad state (53 §5.3)",
+            "Supply the verification perspective: why did the tests not catch this",
+        ],
+        "allowed": [
+            "Refuse to close an issue whose safeguard has not been seen to fail",
+            "Reject a tripwire that cannot be forced to fail (53 §7.4)",
+        ],
+        "not_allowed": [
+            "Verify a correction it wrote - one agent doing both derives the fix and the "
+            "expected values from a single assumption (53 §5.2)",
+            "Accept a tripwire because it has historically passed (53 §5.3)",
+        ],
+        "competencies": ["adversarial verification", "tripwire validation", "regression design"],
+        "work_mechanism": "software_issues awaiting step 7, adversarial verification",
     },
     "dummy": {
         "agent_type": "test",
@@ -1531,6 +1581,10 @@ def init_schema(conn: Database) -> None:
     # it was written. Reads no governed data by design: the right is
     # constitutional, so no ordinary instrument may gate it.
     appeal.init_schema(conn)
+    # The Software Department's issue record (TQ-106; addendum 53 §6, §12; §151).
+    # After parliament, because a severity-1 issue escalates through the queue
+    # that already exists rather than a second one beside it.
+    software_department.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1702,7 +1756,8 @@ def apply_additive_migrations(conn: Database) -> list[str]:
          workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
          analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
          governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
-         release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA)
+         release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
+         software_department.SCHEMA)
     ).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:

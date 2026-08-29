@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 150 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 151 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2900 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2926 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -204,10 +204,18 @@ thing here that genuinely needs a model to read text — so the seam where a mod
 answers has to be in the design from the first line, along with what happens when
 none is reachable.
 
-**TQ-106 — the Software Department**, or the six unmet Definition-of-Done items
-at §150 §7. The one worth carrying: **`metrics.open_at_end` is re-aimed and has
-not been forced to fire** under a run that genuinely ends with a pending
-cross-check. Re-aimed is not proven (§136's distinction).
+**Staff the department's loop.** TQ-106 built the gates and the DBA that opens
+issues; **nothing reviews, corrects or verifies one**, and the COO does not staff
+QA when an issue reaches step 7 — the same pattern it already uses for an appeal
+peer (§146).
+
+Then the remaining Definition-of-Done items at §150 §7. The one worth carrying:
+**`metrics.open_at_end` is re-aimed and has not been forced to fire** under a run
+that genuinely ends with a pending cross-check. Re-aimed is not proven.
+
+**`simulation/property_history.py` has a worklist of 45 properties never observed
+failing.** That is a worklist, not a defect list — but it is where the next
+§149-shaped defect will be found.
 
 **TQ-101 is frozen** by addendum 53 §7.9 until TQ-100 is answered — a
 specification now, not a recommendation. And 53 §7.9's warning about the Gateway

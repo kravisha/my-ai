@@ -114,6 +114,23 @@ roles:
     on_demand: true
     watched_by: coo
 
+  - id: dba
+    status: implemented
+    agent_type: engineering
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true         # continuous: its work IS the monitoring (53 §11)
+    watched_by: coo
+
+  - id: qa_engineer
+    status: implemented
+    agent_type: engineering
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # 53 §11 allows it to idle until there is work
+    watched_by: coo
+
   - id: dummy
     status: implemented
     agent_type: reference

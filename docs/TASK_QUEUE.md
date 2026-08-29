@@ -73,8 +73,14 @@ holds the queue, not the record.
 > than a recommendation. And 53 §7.9's warning about the Gateway becoming a personality host
 > **had already happened** (§150 §4).
 >
-> **Recommended next: TQ-106** (the department itself) or the six unmet Definition-of-Done items
-> at §150 §7. Previously: TQ-101, TQ-92 (read the cooperation already recorded — small, and the only actionable
+> **TQ-106 is done (§151).** The department exists as five gates on addendum 53 §6's workflow, a
+> DBA that opens an issue when a check fails, and a QA reader that answers §5.3's *has it been
+> observed failing?* from 83 run summaries nothing had read.
+>
+> **Recommended next: staff the loop** — nothing reviews, corrects or verifies an issue, and the
+> COO does not yet staff QA when one reaches step 7 (the same pattern it already uses for an
+> appeal peer, §146). Or the remaining Definition-of-Done items at §150 §7.
+> Previously: TQ-106, TQ-101, TQ-92 (read the cooperation already recorded — small, and the only actionable
 > part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
 > first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
@@ -3135,8 +3141,36 @@ run that genuinely ends with a pending cross-check. Re-aimed is not proven.
 
 ### TQ-106 — The Software Department as an operating department
 
-**NEED (ORANGE) · QUEUED · addendum 53 §1, §2, §6, §11, §12, §13 ·
+**NEED (ORANGE) · DONE — `SPEC_RECONCILIATION.md` §151 · addendum 53 §1, §2, §5, §6, §11, §12 ·
 `SPEC_RECONCILIATION.md` §150 §1, §150 §8**
+
+`backend/software_department.py`, `agents/dba.py`, `agents/qa_engineer.py`,
+`simulation/property_history.py`.
+
+**The design is five gates on §6's ten steps**, and each corresponds to a defect this project
+shipped: a root cause needs all three perspectives, from three identities; a correction needs a
+prevention in the same call; closing needs the *name* of a test observed failing; and the verifier
+is not the corrector — the fifth instance of a rule already applied four times.
+
+Severity 1 escalates through `parliament.escalate` rather than a second owner queue: there is no
+CEO (§150 §2), and its contract — nothing in the system can answer it, no resolve, no expiry — is
+already right.
+
+**The DBA is baseline and runs continuously** (53 §11); a failing check *opens an issue* rather
+than printing, because `compliance.self_evaluated` flagged every grade for months unread. Live:
+eight agents, 13/13, zero issues opened because nothing was wrong.
+
+**QA answers §5.3's third question from evidence already on disk** — 83 run summaries nothing had
+read. 8 properties have been observed failing, 66 have not, and it flags the §149 defect (15
+passes, only ever `0`). It is a **worklist, not a findings list**, and says so.
+
+**A tripwire caught this increment's own design error**: `test_no_agent_can_tell_it_is_in_a_simulation`
+refused the history reader inside the QA agent. The reader moved to `simulation/`. §151 §5 —
+the counter-example to §147 and §149.
+
+Not built: the librarian (§13), release gating (§10), and nothing works an issue end to end.
+
+<details><summary>The entry as it was queued</summary>
 
 TQ-105 built the safeguard the remediation list demanded. This is the department itself, and it
 is deliberately second: a department created before the defects it was chartered to prevent were
@@ -3156,3 +3190,5 @@ What is *not* settled is whether they are three processes or one type occupying 
 **Two things to carry in:** there is no CEO (§150 §2 — the boot function 53 §22 describes is the
 COO's, and the naming is unreconciled), and §13's librarian does not exist, so lessons have
 nowhere to go that anything reads.
+
+</details>

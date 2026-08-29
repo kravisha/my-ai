@@ -108,6 +108,17 @@ ROLE_WORK_KIND = {
     # exists would be the first-draft-wearing-a-decision's-clothes this budget
     # names.
     "software_engineer": "architectural",
+    # Operational, deliberately, and NOT analytical. The DBA runs the same
+    # checks every cycle and reports what they found; interpreting a finding is
+    # the three-way review's job (addendum 53 §2), and a DBA given an analytical
+    # budget would reach a conclusion before the other two perspectives exist -
+    # which is the silo §2 forbids, arriving through a budget.
+    "dba": "operational",
+    # Architectural, for the same reason the engineer's is: §5.3 asks QA to
+    # establish what test data would trigger a failure and whether the tripwire
+    # has been observed failing. That is exploring alternatives and saying what
+    # was rejected, not executing a checklist.
+    "qa_engineer": "architectural",
 }
 
 # What the Gateway's assistant does. Not a role in agent_registry - it is the

@@ -67,7 +67,8 @@ COO_ROLE = "coo"
 # Watcher -> the roles it is responsible for noticing the silence of.
 WATCHES = {
     CONTROLLER_ROLE: (COO_ROLE,),
-    COO_ROLE: ("explorer", "speculator", "analysis", "dummy", "speaker", CONTROLLER_ROLE),
+    COO_ROLE: ("explorer", "speculator", "analysis", "dummy", "speaker", "dba",
+               "qa_engineer", CONTROLLER_ROLE),
 }
 
 # The inverse, which is the question actually asked: who is watching this role?
