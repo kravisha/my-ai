@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 151 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 152 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2926 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2936 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -204,12 +204,7 @@ thing here that genuinely needs a model to read text — so the seam where a mod
 answers has to be in the design from the first line, along with what happens when
 none is reachable.
 
-**Staff the department's loop.** TQ-106 built the gates and the DBA that opens
-issues; **nothing reviews, corrects or verifies one**, and the COO does not staff
-QA when an issue reaches step 7 — the same pattern it already uses for an appeal
-peer (§146).
-
-Then the remaining Definition-of-Done items at §150 §7. The one worth carrying:
+**The remaining Definition-of-Done items at §150 §7.** The one worth carrying:
 **`metrics.open_at_end` is re-aimed and has not been forced to fire** under a run
 that genuinely ends with a pending cross-check. Re-aimed is not proven.
 

@@ -379,8 +379,12 @@ def summary(conn: Database) -> dict:
              "status": row["status"],
              # Which of §6's steps it is waiting on, named rather than inferred
              # from a status word.
+             # Names the missing perspective rather than saying "review". An
+             # issue waiting on the implementation view and one waiting on all
+             # three are different situations, and a single phrase hides which.
              "waiting_on": (
-                 "three-perspective review" if row["root_cause"] is None
+                 f"review: {', '.join(missing_perspectives(conn, row['id']))}"
+                 if row["root_cause"] is None
                  else "correction and prevention" if row["correction"] is None
                  else "adversarial verification")}
             for row in unclosed],
@@ -393,3 +397,50 @@ def summary(conn: Database) -> dict:
             "without it",
         ],
     }
+
+
+# --- staffing (addendum 53 §11; addendum 46 §10) ----------------------------------------
+
+# Which of §2's perspectives each role is the one to supply. The DBA answers the
+# database question, QA answers *why did the tests not catch it*, and the engineer
+# answers whether the implementation is wrong.
+PERSPECTIVE_ROLE = {
+    PERSPECTIVE_DATA: "dba",
+    PERSPECTIVE_VERIFICATION: "qa_engineer",
+    PERSPECTIVE_IMPLEMENTATION: "software_engineer",
+}
+
+
+def missing_perspectives(conn: Database, issue_id: int) -> list[str]:
+    """Which of the three nobody has filed yet, in §2's order."""
+    filed = {row["perspective"] for row in reviews(conn, issue_id)}
+    return [p for p in PERSPECTIVES if p not in filed]
+
+
+def roles_needed(conn: Database) -> list[str]:
+    """Roles with work waiting in this department (addendum 46 §10, 53 §11).
+
+    **The staffing signal, and the same shape `appeal.roles_awaiting_a_peer`
+    already has** - which is how the COO learned to spawn an appeal's adjudicator
+    (§146). An issue nobody can review is the department's version of an appeal
+    nobody can hear: the machinery is right and the workforce is one agent short.
+
+    At most one of each role however many issues wait. One reviewer files one
+    perspective on every open issue, and a role per issue would ask for five
+    agents to do one agent's work (46 §9)."""
+    needed = []
+    for issue in open_issues(conn):
+        if issue["root_cause"] is None:
+            for perspective in missing_perspectives(conn, issue["id"]):
+                role = PERSPECTIVE_ROLE[perspective]
+                if role not in needed:
+                    needed.append(role)
+        elif issue["correction"] is None:
+            if "software_engineer" not in needed:
+                needed.append("software_engineer")
+        elif issue["status"] != STATUS_CLOSED:
+            # Awaiting step 7. The verifier may not be the corrector, so this is
+            # QA's whether or not an engineer is already staffed.
+            if "qa_engineer" not in needed:
+                needed.append("qa_engineer")
+    return needed

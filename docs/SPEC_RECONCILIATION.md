@@ -15102,3 +15102,109 @@ And the visible thing: `summary()` reports **which step each open issue is waiti
 on**, named rather than inferred from a status word — because an organization with
 no issues and one whose issues are all stuck at step 3 look identical from a single
 count (§130).
+
+## §152 — The department staffs itself, and stops where it should (2026-08-29, TQ-107)
+
+§151 left the department with gates and nobody working them: the DBA opened
+issues, nothing reviewed, corrected or verified. This staffs the loop.
+
+The whole increment is one judgement made repeatedly — **which parts of §6's
+workflow are facts and which are judgements** — and the value is in what was left
+alone.
+
+### 1. Two perspectives are facts; the third is not
+
+§2's three questions are not equally answerable by code.
+
+**The database perspective is transcription.** The DBA's scheduled check already
+established which column, which value, which contract; the perspective is that
+fact stated for the other two reviewers. An agent inventing a *conclusion* there
+would be pre-empting the review it is one third of. It files only on issues it
+opened — a database opinion about work this agent has not examined is the same
+error one column along.
+
+**The verification perspective is answerable from the backend, narrowly.** *Why
+did the tests not catch it* has one fact behind it: was the column contracted at
+all, and is there a validated write path. An uncontracted component is one no
+audit could have covered, which is a complete answer.
+
+Where neither applies, QA says **the question is open** rather than producing a
+sentence. *A fabricated verification perspective is worse than a missing one:
+it satisfies the gate that exists to make somebody look.*
+
+**The implementation perspective is a judgement and nothing supplies it.** It
+requires reading code and tracing a defect to its cause, and TQ-83 already
+established that this system's engineer writes no code. So the loop reaches two of
+three and stops.
+
+### 2. What stopping looks like, live
+
+A forced self-evaluated grade in a fresh organization:
+
+```
+[dba] self_evaluated: issue 1 - Report 1 was graded by explorer-1, which filed it
+[dba] filed the database perspective on 1 issue(s)
+      waiting_on = review: implementation, verification
+
+COO   roles_needed: ['software_engineer', 'qa_engineer']
+      spawn qa_engineer: "has a software issue waiting on its perspective -
+                          staffing the reviewer the three-way review needs"
+
+[qa]  filed the verification perspective:
+      "No vocabulary contract covers backend/compliance.py, so no audit could
+       have caught this. Whether a test should have is open and needs somebody
+       to look."
+
+      missing: ['implementation']
+      root cause refused: Issue 1 has no implementation review.
+```
+
+**An issue now reaches two of three perspectives by itself instead of sitting at
+step 1 forever, and then stops at a wall that says what it needs.** That is
+strictly better than both alternatives: leaving it at step 1 hides the progress,
+and fabricating the third would close the gate that exists to prevent exactly the
+defect this department was chartered against.
+
+### 3. Staffing reuses the signal one department along
+
+`software_department.roles_needed` is `appeal.roles_awaiting_a_peer` one
+department along, and the COO reads it in the same place, in the same shortfall
+machinery. **An issue nobody can review is an appeal nobody can hear**: the
+machinery is right and the workforce is one agent short.
+
+At most one of each role however many issues wait — one reviewer files one
+perspective on every open issue, and a role per issue would ask for five agents to
+do one agent's work (46 §9).
+
+On-demand roles carry a standing target of **zero**, so this is what brings them
+into existence at all rather than extra capacity on a population that idles. That
+is 46 §10's *work determines staffing* rather than a department that exists in
+case.
+
+### 4. Two things the increment got wrong first
+
+**The directive reason recorded the generic cause.** Every on-demand role has
+never been spawned until something asks for one, so the `members == 0` branch won
+and the log said *"establishing initial population"* for an agent staffed because
+an issue needed it. The demand-driven reasons now come first: the cause is the
+whole value of the directive log, and the generic fact was crowding it out.
+
+**And `ALL_STAFFABLE_ROLES` was a module-level snapshot.** Built from
+`BASELINE_POPULATION` at import, so a scenario or test changing a target was
+silently ignored — `tests/test_slot_allocation.py` went red immediately, which is
+the tripwire working. Computed on call now. One source, read when it is needed.
+
+Worth recording together: both were the same mistake in different clothes —
+**a value captured once where the thing it describes can change.** That is
+§149 §4's literal-in-a-query with a different surface.
+
+### 5. What is still not done
+
+- **Nothing corrects and nothing verifies.** Steps 5 to 7 need an agent that can
+  read and write code. The gates hold in the meantime, which is the point of
+  having them.
+- **The librarian and release gating** remain unbuilt (§151 §6).
+- **`summary().waiting_on` now names the missing perspective**, so an issue
+  waiting on the implementation view and one waiting on all three are
+  distinguishable — which they were not an hour ago, and which is §130's rule
+  about one number hiding two situations.

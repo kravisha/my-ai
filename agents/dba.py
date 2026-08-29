@@ -114,11 +114,36 @@ def health_check(conn) -> list[dict]:
     return findings
 
 
+def _review_own_findings(conn, identity: str) -> int:
+    """File the database perspective on issues this role's checks produced.
+
+    **Transcription, not judgement.** The check already established the database
+    fact - which column, which value, which contract - and the perspective is that
+    fact stated for the other two reviewers. An agent inventing a *conclusion*
+    here would be pre-empting the three-way review it is one third of.
+
+    Only issues this DBA opened. A perspective on somebody else's finding would be
+    a database opinion about work this agent has not examined, which is the same
+    error one column along."""
+    filed = 0
+    for issue in software_department.open_issues(conn):
+        if issue["root_cause"] is not None or issue["opened_by"] != identity:
+            continue
+        if software_department.PERSPECTIVE_DATA not in software_department.missing_perspectives(
+                conn, issue["id"]):
+            continue
+        software_department.review(
+            conn, issue["id"], perspective=software_department.PERSPECTIVE_DATA,
+            reviewer=identity,
+            finding=(f"{issue['observed']} Expected {issue['expected']}. "
+                     f"Established by the scheduled check that opened this issue; "
+                     f"evidence: {issue['evidence']}"))
+        filed += 1
+    return filed
+
+
 def _dba_work(conn, identity: str) -> None:
-    findings = health_check(conn)
-    if not findings:
-        return
-    for finding in findings:
+    for finding in health_check(conn):
         issue = software_department.open_issue(
             conn,
             observed=finding["observed"], evidence=finding["evidence"],
@@ -126,6 +151,9 @@ def _dba_work(conn, identity: str) -> None:
             signature=finding["signature"], classification=finding["classification"],
             severity=finding["severity"], opened_by=identity)
         print(f"[dba] {finding['kind']}: issue {issue} - {finding['observed'][:90]}")
+    reviewed = _review_own_findings(conn, identity)
+    if reviewed:
+        print(f"[dba] filed the database perspective on {reviewed} issue(s)")
 
 
 def main() -> None:  # pragma: no cover - process entry point

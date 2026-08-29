@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import appeal, fi_db, status_events, remediation, risk, strategy
+from backend import appeal, fi_db, software_department, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -87,6 +87,23 @@ BASELINE_POPULATION = {
 # The role names alone. Kept because plenty of callers only ever wanted the
 # names, and widening all of them to carry counts they ignore would be churn.
 BASELINE_ROLES = list(BASELINE_POPULATION)
+
+# Every role the COO may bring up, baseline or on demand. On-demand roles carry a
+# target of zero, so they exist only while something is waiting for them - which
+# is 46 §10's *work determines staffing* rather than a standing population that
+# happens to idle.
+ON_DEMAND_ROLES = ("software_engineer", "qa_engineer")
+
+
+def staffable_roles() -> dict:
+    """Every role the COO may bring up, with its standing target.
+
+    **Computed on call, not snapshotted at import.** A module-level dict built
+    from `BASELINE_POPULATION` would freeze the targets at import time, so a
+    scenario or a test that changes one would be silently ignored - and it was:
+    `tests/test_slot_allocation.py` patches `BASELINE_POPULATION` and went red the
+    moment this was a snapshot. One source, read when it is needed."""
+    return {**BASELINE_POPULATION, **{role: 0 for role in ON_DEMAND_ROLES}}
 
 # How long to wait after a spawn directive completes before checking whether
 # the target agent actually established itself (registered a heartbeat)
@@ -177,8 +194,14 @@ def _ensure_baseline_population(conn) -> None:
     # One peer per role however many appeals wait: one agent hears all of them,
     # and a role per appeal would ask for five agents to do one agent's work.
     awaiting_peer = appeal.roles_awaiting_a_peer(conn)
+    # The same signal one department along (TQ-107, addendum 53 §11). An issue
+    # nobody can review is an appeal nobody can hear: the machinery is right and
+    # the workforce is one agent short. Read here rather than given its own spawn
+    # path, for the reason the appeal case gives - a second way to ask for an
+    # agent is a second way to ask for two.
+    needed_by_department = software_department.roles_needed(conn)
 
-    for role, target in BASELINE_POPULATION.items():
+    for role, target in staffable_roles().items():
         staffing = fi_db.staffing(conn, role)
 
         # Retirement genuinely leaves a role short. A dormant member still holds
@@ -186,6 +209,11 @@ def _ensure_baseline_population(conn) -> None:
         # replaced - otherwise COO would quietly spawn a substitute and undo a
         # decision the Controller took.
         effective_target = max(0, target - staffing["dormant"])
+        if role in needed_by_department:
+            # On-demand roles have a baseline target of zero, so this is what
+            # brings them into existence at all - not extra capacity on top of a
+            # standing population.
+            effective_target += 1
         if role in awaiting_peer:
             # Raised rather than special-cased into its own spawn path: the
             # shortfall machinery below already handles in-flight spawns, dormant
@@ -205,13 +233,20 @@ def _ensure_baseline_population(conn) -> None:
         # being refilled is a crash to investigate, and a new slot is capacity
         # being added on purpose.
         for index in range(shortfall):
-            if staffing["members"] == 0:
+            # The demand-driven reasons come FIRST. "Never been spawned" is true
+            # of every on-demand role until something asks for one, so checking it
+            # first would record the generic fact and lose the specific cause -
+            # and the cause is the whole value of the directive log.
+            if role in awaiting_peer:
+                what = ("has an appeal waiting for somebody other than its author to hear it - "
+                        "staffing the peer that hearing needs")
+            elif role in needed_by_department:
+                what = ("has a software issue waiting on its perspective - staffing the "
+                        "reviewer the three-way review needs (addendum 53 §2)")
+            elif staffing["members"] == 0:
                 what = "has never been spawned - establishing initial population"
             elif staffing["awaiting_process"] > index:
                 what = "has a slot with no process - refilling it under the same identity"
-            elif role in awaiting_peer:
-                what = ("has an appeal waiting for somebody other than its author to hear it - "
-                        "staffing the peer that hearing needs")
             else:
                 what = "needs more agents than it has slots - adding capacity"
             reason = (

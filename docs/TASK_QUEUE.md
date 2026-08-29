@@ -77,10 +77,14 @@ holds the queue, not the record.
 > DBA that opens an issue when a check fails, and a QA reader that answers §5.3's *has it been
 > observed failing?* from 83 run summaries nothing had read.
 >
-> **Recommended next: staff the loop** — nothing reviews, corrects or verifies an issue, and the
-> COO does not yet staff QA when one reaches step 7 (the same pattern it already uses for an
-> appeal peer, §146). Or the remaining Definition-of-Done items at §150 §7.
-> Previously: TQ-106, TQ-101, TQ-92 (read the cooperation already recorded — small, and the only actionable
+> **TQ-107 is done (§152).** The loop staffs itself: the DBA opens and reviews, the COO spawns the
+> reviewer an issue needs, QA files the verification view — and it **stops at the implementation
+> perspective**, which is a judgement nothing here can supply.
+>
+> **Recommended next:** the remaining Definition-of-Done items at §150 §7 — chiefly that
+> `metrics.open_at_end` is re-aimed and has never been forced to fire. Or the 45 properties on
+> `simulation/property_history`'s worklist, which is where the next §149-shaped defect will be.
+> Previously: TQ-107, TQ-106, TQ-101 (read the cooperation already recorded — small, and the only actionable
 > part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
 > first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
@@ -3192,3 +3196,33 @@ COO's, and the naming is unreconciled), and §13's librarian does not exist, so 
 nowhere to go that anything reads.
 
 </details>
+
+### TQ-107 — Staff the department's loop
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §152 · addendum 53 §2, §6, §11 ·
+addendum 46 §10 · `SPEC_RECONCILIATION.md` §146, §151**
+
+§151 left the department with gates and nobody working them. The whole increment is one
+judgement made repeatedly — **which parts of §6's workflow are facts and which are judgements** —
+and the value is in what was left alone.
+
+**Two perspectives are facts.** The DBA's database view is transcription of what its check
+already established, filed only on issues it opened. QA's verification view answers *why did the
+tests not catch it* from one backend fact: was the column contracted at all. Where neither
+applies QA says **the question is open** rather than producing a sentence — *a fabricated
+verification perspective is worse than a missing one, because it satisfies the gate that exists
+to make somebody look.*
+
+**The implementation perspective is a judgement and nothing supplies it**, so the loop reaches
+two of three and stops at a wall that says what it needs. Live: the DBA opens and reviews, the
+COO staffs QA naming the reason, QA files, and `record_root_cause` refuses.
+
+**Staffing reuses `appeal.roles_awaiting_a_peer`'s shape** in the same shortfall machinery: an
+issue nobody can review is an appeal nobody can hear. On-demand roles carry a target of zero, so
+this is what brings them into existence at all.
+
+**Two mistakes worth keeping** (§152 §4): the directive reason recorded *"establishing initial
+population"* for an agent staffed because an issue needed it, and `ALL_STAFFABLE_ROLES` was a
+module-level snapshot that silently ignored a changed target — caught immediately by
+`tests/test_slot_allocation.py`. Both are the same error in different clothes: **a value captured
+once where the thing it describes can change.**

@@ -242,7 +242,14 @@ def test_the_summary_names_which_step_each_issue_is_waiting_on(conn):
     with no issues and one whose issues are all stuck at step 3 both look quiet
     from a single count."""
     issue = _issue(conn)
-    assert dept.summary(conn)["open"][0]["waiting_on"] == "three-perspective review"
+    # Which perspective is missing, not merely "review". An issue waiting on the
+    # implementation view and one waiting on all three are different situations.
+    assert dept.summary(conn)["open"][0]["waiting_on"] == (
+        "review: database, implementation, verification")
+
+    dept.review(conn, issue, perspective=dept.PERSPECTIVE_DATA, reviewer=DBA, finding="f")
+    assert dept.summary(conn)["open"][0]["waiting_on"] == (
+        "review: implementation, verification")
 
     _reviewed(conn, issue)
     assert dept.summary(conn)["open"][0]["waiting_on"] == "correction and prevention"
@@ -409,3 +416,150 @@ def test_qa_surfaces_what_awaits_verification_and_does_not_verify_it(conn, capsy
     assert "awaits adversarial verification" in capsys.readouterr().out
     assert dept.require(conn, issue)["status"] == dept.STATUS_CORRECTED, (
         "QA closed an issue it only looked at")
+
+
+# --- staffing the loop (TQ-107; addendum 53 §11, addendum 46 §10) --------------------------
+
+def test_an_issue_names_the_roles_it_is_waiting_on(conn):
+    """The same signal `appeal.roles_awaiting_a_peer` gives one department along.
+    An issue nobody can review is an appeal nobody can hear: the machinery is
+    right and the workforce is one agent short."""
+    assert dept.roles_needed(conn) == []
+    issue = _issue(conn)
+    # In §2's perspective order - database, implementation, verification - not
+    # alphabetical, because the order a reader wants is the order they are asked
+    # for rather than the order they are spelled.
+    assert dept.roles_needed(conn) == ["dba", "software_engineer", "qa_engineer"]
+
+    dept.review(conn, issue, perspective=dept.PERSPECTIVE_DATA, reviewer=DBA, finding="f")
+    assert dept.roles_needed(conn) == ["software_engineer", "qa_engineer"]
+
+
+def test_many_issues_ask_for_one_of_each_role(conn):
+    """One reviewer files one perspective on every open issue. A role per issue
+    would ask for five agents to do one agent's work (46 §9)."""
+    for n in range(4):
+        _issue(conn, signature=f"vocabulary:x.py:{n}")
+    assert dept.roles_needed(conn) == ["dba", "software_engineer", "qa_engineer"]
+
+
+def test_an_issue_awaiting_verification_asks_for_qa_not_the_engineer(conn):
+    """The verifier may not be the corrector, so step 7 is QA's whether or not an
+    engineer is already staffed."""
+    issue = _issue(conn)
+    _reviewed(conn, issue)
+    _corrected(conn, issue)
+    assert dept.roles_needed(conn) == ["qa_engineer"]
+
+
+def test_the_coo_staffs_the_reviewer_the_three_way_review_needs(conn):
+    """Read from what the COO actually enqueues. On-demand roles have a baseline
+    target of zero, so this is what brings them into existence at all."""
+    from agents import coo
+
+    _issue(conn)
+    coo._ensure_baseline_population(conn)
+
+    reasons = {row["target_role"]: (row["reason"] or "") for row in conn.fetchall(
+        "SELECT target_role, reason FROM coo_directives")}
+    assert "qa_engineer" in reasons, f"QA was not staffed; directives: {list(reasons)}"
+    assert "waiting on its perspective" in reasons["qa_engineer"]
+
+
+def test_the_coo_staffs_nobody_extra_when_the_department_is_quiet(conn):
+    """Otherwise on-demand becomes a standing population that happens to idle,
+    which is what 46 §10 is written against."""
+    from agents import coo
+
+    coo._ensure_baseline_population(conn)
+    staffed = {row["target_role"] for row in conn.fetchall(
+        "SELECT target_role FROM coo_directives")}
+    assert "qa_engineer" not in staffed and "software_engineer" not in staffed
+
+
+# --- the two perspectives that are facts, and the one that is not -------------------------
+
+def test_the_dba_files_the_database_perspective_on_its_own_findings(conn):
+    """Transcription, not judgement: the check already established the database
+    fact, and the perspective is that fact stated for the other two reviewers."""
+    fi_db.register_agent(conn, "explorer-1", "explorer", pid=1)
+    report = fi_db.enqueue_report(conn, "explorer-1", "t0", "lead", "SYN1",
+                                  summary="s", evidence_ids=[])
+    result = fi_db.record_analysis_result(conn, "analysis-1", "t0", report, "SYN1",
+                                          "thesis", "e", 0.5, "u")
+    fi_db.record_grade(conn, "explorer-1", "t0", report, result, .2, .2, .2, False, .2, "thin")
+
+    dba._dba_work(conn, DBA)
+    issue = dept.open_issues(conn)[0]
+
+    filed = {row["perspective"]: row for row in dept.reviews(conn, issue["id"])}
+    assert set(filed) == {dept.PERSPECTIVE_DATA}
+    assert filed[dept.PERSPECTIVE_DATA]["reviewer"] == DBA
+    assert "graded by" in filed[dept.PERSPECTIVE_DATA]["finding"]
+
+
+def test_the_dba_does_not_review_somebody_elses_finding(conn):
+    """A database opinion about work this agent has not examined is the same error
+    one column along."""
+    _issue(conn)  # opened by DBA in the fixture
+    conn.execute("UPDATE software_issues SET opened_by = 'somebody-else'")
+    dba._review_own_findings(conn, DBA)
+    assert dept.reviews(conn, 1) == []
+
+
+def test_qa_files_the_verification_perspective_and_never_the_implementation(conn):
+    """**The wall.** QA answers *why did the tests not catch it* from what the
+    backend can establish. It does not supply the implementation view and does not
+    correct — an agent that did both would derive the fix and the expected values
+    from one assumption (§5.2)."""
+    from agents import qa_engineer
+
+    issue = _issue(conn)
+    qa_engineer._qa_work(conn, QA)
+
+    filed = {row["perspective"] for row in dept.reviews(conn, issue)}
+    assert filed == {dept.PERSPECTIVE_VERIFICATION}
+    assert dept.PERSPECTIVE_IMPLEMENTATION in dept.missing_perspectives(conn, issue)
+
+
+def test_the_loop_stops_at_the_implementation_perspective(conn):
+    """**The honest wall, and the point of this increment.** An issue now reaches
+    two of three perspectives by itself instead of sitting at step 1 forever — and
+    stops, because the third needs an agent that can read code and this system has
+    none (TQ-83: the engineer writes no code).
+
+    A fabricated implementation perspective would satisfy the gate that exists to
+    make somebody look."""
+    from agents import qa_engineer
+
+    fi_db.register_agent(conn, "explorer-1", "explorer", pid=1)
+    report = fi_db.enqueue_report(conn, "explorer-1", "t0", "lead", "SYN1",
+                                  summary="s", evidence_ids=[])
+    result = fi_db.record_analysis_result(conn, "analysis-1", "t0", report, "SYN1",
+                                          "thesis", "e", 0.5, "u")
+    fi_db.record_grade(conn, "explorer-1", "t0", report, result, .2, .2, .2, False, .2, "thin")
+
+    for _ in range(3):
+        dba._dba_work(conn, DBA)
+        qa_engineer._qa_work(conn, QA)
+
+    issue = dept.open_issues(conn)[0]
+    assert dept.missing_perspectives(conn, issue["id"]) == [dept.PERSPECTIVE_IMPLEMENTATION]
+    assert issue["root_cause"] is None, "an issue advanced without all three perspectives"
+    assert dept.summary(conn)["open"][0]["waiting_on"] == "review: implementation"
+
+
+def test_qa_says_the_question_is_open_rather_than_inventing_a_reason(conn):
+    """A fabricated verification perspective is worse than a missing one: it
+    satisfies the gate that exists to make somebody look."""
+    from agents import qa_engineer
+
+    issue = dept.open_issue(
+        conn, observed="o", evidence="nothing recognisable", component="app/unknown.py",
+        expected="x", signature="odd:1", classification="observability",
+        severity=dept.SEVERITY_NORMAL, opened_by=DBA)
+    qa_engineer._qa_work(conn, QA)
+
+    finding = dept.reviews(conn, issue)[0]["finding"]
+    assert "open and needs somebody to look" in finding
+    assert "does not guess" in finding

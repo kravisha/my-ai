@@ -38,6 +38,10 @@ def _qa_work(conn, identity: str) -> None:
     **It does not verify.** §6 step 7 requires somebody to construct the bad state
     and observe the failure; an agent that marked a safeguard proven because a
     scan completed would be manufacturing the evidence the scan looks for."""
+    reviewed = _review_waiting_issues(conn, identity)
+    if reviewed:
+        print(f"[qa] filed the verification perspective on {reviewed} issue(s)")
+
     waiting = [row for row in software_department.open_issues(conn)
                if row["status"] == software_department.STATUS_CORRECTED]
     for issue in waiting:
@@ -59,3 +63,59 @@ def main() -> None:  # pragma: no cover - process entry point
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
+
+def _verification_perspective(conn, issue) -> str:
+    """Why the tests did not catch this — from facts, never from a guess.
+
+    §2's third question is the one nobody was asking (§149 §4), and it is also the
+    easiest to answer with a plausible sentence. So this answers only what the
+    backend can establish:
+
+    - **was the column contracted at all?** `vocabulary.allowed` knows. An
+      uncontracted column is one no audit could have covered, which is a complete
+      and useful answer to *why did nothing catch it*.
+    - **is there a validated write path?** A vocabulary that is only checked on
+      read is one the write side is free to invent, which is how `'answered'`
+      survived.
+
+    Where neither applies, it says the question is open rather than inventing a
+    reason. **A fabricated verification perspective is worse than a missing one**:
+    it satisfies the gate that exists to make somebody look."""
+    from backend import vocabulary
+
+    evidence = issue["evidence"] or ""
+    for (table, column) in vocabulary.CONTRACT:
+        if table in evidence or table in (issue["component"] or ""):
+            return (
+                f"{table}.{column} is in the vocabulary contract and the audit covers it, so a "
+                f"literal outside the contract fails the suite. If this issue was opened by that "
+                f"audit, the safeguard worked; if not, the audit does not reach this shape and "
+                f"that is the gap.")
+    return (
+        f"No vocabulary contract covers {issue['component']}, so no audit could have caught this. "
+        f"Whether a test *should* have is open and needs somebody to look - this perspective "
+        f"reports what the backend can establish and does not guess at the rest.")
+
+
+def _review_waiting_issues(conn, identity: str) -> int:
+    """File the verification perspective where one is missing.
+
+    Never the implementation perspective, and never a correction: QA that wrote
+    the fix could not then verify it (§5.2), and this agent exists on the other
+    side of that line."""
+    from backend import software_department
+
+    filed = 0
+    for issue in software_department.open_issues(conn):
+        if issue["root_cause"] is not None:
+            continue
+        if software_department.PERSPECTIVE_VERIFICATION not in \
+                software_department.missing_perspectives(conn, issue["id"]):
+            continue
+        software_department.review(
+            conn, issue["id"],
+            perspective=software_department.PERSPECTIVE_VERIFICATION,
+            reviewer=identity, finding=_verification_perspective(conn, issue))
+        filed += 1
+    return filed
