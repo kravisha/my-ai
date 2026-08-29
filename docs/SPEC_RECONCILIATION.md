@@ -14648,3 +14648,136 @@ identities, seven spans, none unkeyed, no disagreement.
   the open span rather than a source of truth. Not removed: SQLite makes dropping
   a column awkward, and a column nothing reads is cheaper than a migration nobody
   needs. It is named here so a later reader does not mistake it for authority.
+
+## §149 — Cooperation read rather than scored, and two more things that could not fail (2026-08-29, TQ-92)
+
+Addendum 48 §3 makes cooperation a measured property and a condition of
+leadership; addendum 37 O9 has said the same since it was assimilated. Both were
+read as unbuilt because nothing scored cooperation.
+
+**The evidence was already being written.** `cross_check_requests` has recorded
+one agent asking another for help and the answer coming back or not since long
+before either addendum arrived, and `cross_check.unanswered_rate` has been a
+scenario property for months — under a *timing* rationale, as a diagnostic for a
+drifting timeout constant. It was always also a record of one agent leaving
+another waiting.
+
+§131 spotted that and queued this. `backend/cooperation.py` discharges it, and
+nothing in it is a new measurement.
+
+### 1. The refusal is the design
+
+Addendum 48 §12 forbids *"empty activity, performative work, needless conflict,
+and actions that create work without creating value."* **A cooperation score is
+the shortest route to all four**: an agent answering every cross-check with
+nothing, instantly, would score perfectly and cooperate not at all.
+
+So the module produces **no score and no ranking** — not "not yet", but no
+function, asserted over the parsed module the way `appeal`'s absent `dismiss` is.
+A second test checks that nothing reached for `competency.rank`, which already
+exists one import away; *this module has no ranking* and *nobody ranks on this*
+are different claims and both are wanted.
+
+What it reports instead is **composition**: answers with a finding, answers that
+were honestly empty, and how often the agent was itself left waiting. Those
+cannot be collapsed without deciding what the right mix is — and **what counts as
+sufficient cooperation depends on what the agent does.** A Speculator asked about
+a quiet security *should* answer *no evidence* most of the time; the same rate in
+a loud market means something else. A threshold nobody measured would be a policy
+wearing a measurement's clothes (§128), so there is none.
+
+**An honestly empty answer is an answer.** Treating *no evidence* as a non-answer
+would push agents toward manufacturing findings — 48 §12's empty activity
+arriving through the measurement written to discourage it.
+
+### 2. Activity against outcome
+
+TQ-92 named the hard part: measure whether the asker was *helped*, not how busy
+the responder was. Two facts carry it and neither rises by answering more:
+
+- **`left_waiting` is counted against the asker.** It is the only unambiguous
+  failure here, and it has nobody to blame: a cross-check names the *role* it is
+  addressed to and acquires a responder only when somebody answers, so an
+  unanswered request is a fact about staffing rather than about an individual's
+  willingness. Attributing it to a person would be inventing a culprit.
+- **`answers_used`** counts answers a filed report was built on. An empty answer
+  never becomes a report, so volume cannot inflate it.
+
+`answers_used` is **not a quality score**, and the module says so: an honest *no
+evidence* is cooperation and will never be used.
+
+### 3. Two more checks that could not fail
+
+Reading the existing evidence meant looking closely at it, and that turned up two
+defects of the shape §147 found two days ago.
+
+**The schema comment named a value nothing has ever written.** Beside
+`cross_check_requests.outcome`:
+
+> `-- 'answered' | 'no_evidence' | 'unanswered'`
+
+The constants are `CROSS_CHECK_EVIDENCE = "evidence"`, `no_evidence`,
+`unanswered`. **`'answered'` has never been written by anything.** The first
+draft of `cooperation.py` trusted the comment, and every query keyed on it
+matched nothing — a module that returned zeroes and looked like an organization
+that never cooperates.
+
+That is the failure mode a wrong comment produces and a wrong constant does not:
+a literal spelled into SQL has no compiler to catch it. Fixed by naming the
+constants in the comment rather than restating their values, and by having
+`cooperation` import the vocabulary from `fi_db` instead of declaring its own.
+Both are pinned.
+
+**And `open_at_end` counted a status that does not exist.**
+`simulation/metrics.py` read `WHERE status = 'open'`; the cross-check status
+vocabulary is `pending` | `resolved` | `consumed`. So the number was
+**structurally always zero**, and `baseline_steady_state`'s property —
+
+> `[PASS] no cross-check was left open: 0 == 0`
+
+— has been asserting a tautology in every run this project has ever made.
+Verified across eight run databases: not one row of any status other than
+`consumed`, and the query returning zero in all of them for the wrong reason.
+
+Re-aimed at `CROSS_CHECK_PENDING`. The property still passes, now because ten
+requests were consumed rather than because the query could not match.
+
+### 4. Three in two days is a pattern, not three coincidences
+
+§147 found `compliance.self_evaluated` comparing two fields that are one identity
+by construction. This section found a comment naming a value never written and a
+metric filtering on a status that does not exist.
+
+All three are the same shape and it is **not** the one this project has recorded
+five times. The recorded lesson is *a tripwire aimed where the risk used to be*
+— decay. These did not decay. **They were wrong on the day they were written and
+passed every test, because the tests were built from the same misreading.**
+
+What they have in common is more specific and more useful: **a string or a column
+name written by hand into a query, where nothing checks that it corresponds to
+anything.** `'answered'`, `'open'`, and `analysis_results.producer_identity`
+were all plausible, all wrong, and all silent. A constant would have failed at
+import; a literal fails by returning nothing, which reads as good news.
+
+The habit that follows, and it is cheap: **when a query filters on a literal, use
+the constant — and when there is no constant, ask why the vocabulary has no
+single definition.** §128's rule is the test-side of the same thing (a fixture
+that can only construct one answer measures the fixture); this is the
+production-side.
+
+### 5. What this does not measure
+
+Named in `report()` itself, every time, because a reader arriving with addendum
+48 §3 in mind is looking for a leadership criterion and will not find one:
+
+- whether an answer was any *good* — only whether it came, and whether a report
+  was built on it;
+- whether an honestly empty answer should have found something, which depends on
+  the market and not on the agent;
+- maturity, good faith, patience and reciprocity — addendum 48's other
+  conditions, which are prose nothing here can check (§131);
+- any threshold for sufficient cooperation.
+
+And nothing reads this yet. It is a report with no consumer, which is the state
+TQ-82's governed store was in for a fortnight (§126) — worth saying plainly rather
+than leaving to be discovered.

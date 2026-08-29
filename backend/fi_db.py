@@ -851,10 +851,16 @@ CREATE TABLE IF NOT EXISTS cross_check_requests (
     requester_finding TEXT NOT NULL,
     requester_confidence REAL,
     status TEXT NOT NULL DEFAULT 'pending',
-    -- 'answered' | 'no_evidence' | 'unanswered'. Deliberately NOT
-    -- 'corroborated'/'contradicted': whether two findings agree is a reasoning
-    -- judgment, and Explorer and Speculator are procedural. Analysis reads both
-    -- findings and concludes. See agents/analysis.py.
+    -- CROSS_CHECK_EVIDENCE | CROSS_CHECK_NO_EVIDENCE | CROSS_CHECK_UNANSWERED,
+    -- which are 'evidence' | 'no_evidence' | 'unanswered'. Named by constant
+    -- rather than spelled out again: this comment said 'answered' for the first
+    -- of them until TQ-92, which is a value nothing has ever written, and a
+    -- reader who trusted it would have built a query that silently matched
+    -- nothing (SPEC_RECONCILIATION 149).
+    --
+    -- Deliberately NOT 'corroborated'/'contradicted': whether two findings agree
+    -- is a reasoning judgment, and Explorer and Speculator are procedural.
+    -- Analysis reads both findings and concludes. See agents/analysis.py.
     outcome TEXT,
     responder_identity TEXT,
     responder_spawned_at TEXT,

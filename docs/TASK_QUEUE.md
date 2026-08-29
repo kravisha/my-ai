@@ -62,7 +62,11 @@ holds the queue, not the record.
 > **TQ-99 is done (§148).** `agent_id` is now the key the personnel record hangs from, and a rename
 > no longer splits an agent's history.
 >
-> **Recommended next: TQ-92** (read the cooperation already recorded — small, and the only actionable
+> **TQ-92 is done (§149)** — cooperation is read rather than scored, and reading it turned up two
+> more checks that could not fail.
+>
+> **Recommended next: TQ-101** (the Personal Usher, half-built in the Gateway) — though **TQ-100**
+> (what refuses a persona) is unanswered and sits in front of it. Previously: TQ-92 (read the cooperation already recorded — small, and the only actionable
 > part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
 > first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
@@ -1256,8 +1260,27 @@ organization works — which is nearly all of what the owner asked for and is ch
 
 ### TQ-92 — Read the cooperation the organization already records
 
-**NEED (GREEN) · QUEUED · addendum 48 §3, §13 · addendum 37 §9, O9 ·
-`SPEC_RECONCILIATION.md` §131**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §149 · addendum 48 §3, §12, §13 ·
+addendum 37 §9, O9 · `SPEC_RECONCILIATION.md` §131**
+
+`backend/cooperation.py`, and **the refusal is the design**: no score and no ranking, asserted over
+the parsed module, because addendum 48 §12 forbids exactly what a cooperation score produces. It
+reports *composition* — answers with a finding, answers honestly empty, and how often the agent was
+itself left waiting — and refuses to collapse them, because what counts as enough depends on what
+the agent does.
+
+`left_waiting` is counted against the **asker**: an unanswered cross-check names a role and never
+acquires a responder, so attributing it to a person would be inventing a culprit.
+
+**Reading the existing evidence found two more checks that could not fail** (§149 §3): the schema
+comment beside `outcome` named `'answered'`, a value nothing has ever written — the first draft
+trusted it and matched nothing — and `metrics.open_at_end` filtered on `status = 'open'`, which is
+not in the vocabulary, so `baseline_steady_state`'s *"no cross-check was left open"* has been
+asserting a tautology in every run ever made. Both re-aimed.
+
+Nothing reads the report yet, which is named rather than left to be found.
+
+<details><summary>The entry as it was queued</summary>
 
 Addendum 48 §3 makes cooperation a measured property and a condition of leadership. Addendum 37 O9
 has said the same since it was assimilated: *"No agent may qualify for leadership without
@@ -1286,6 +1309,8 @@ cross-check with nothing to raise its number would score perfectly and cooperate
 The measure has to be of *outcomes* — was the asker helped — rather than of *activity*. That is the
 same distinction §118 drew between detecting something and no longer claiming to know, and it is
 the hard part of this entry.
+
+</details>
 
 ### TQ-93 — A liveness signal that does not wait for the work to finish
 

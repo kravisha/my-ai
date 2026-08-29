@@ -900,10 +900,22 @@ that field exists to make visible. Its influence runs through three channels and
 no others: the external developer, the agents' own prompts, and code that happens
 to embody it.
 
-One part of it is already measured under a different name. Cooperation is a
-condition of leadership in both addendum 48 §3 and addendum 37 O9, and both were
-read as unbuilt — while `cross_check.unanswered_rate` has been recording one agent
-leaving another waiting since long before either was assimilated (TQ-92).
+One part of it is already measured under a different name, and TQ-92 now reads it
+as what it is (§149). Cooperation is a condition of leadership in both addendum 48
+§3 and addendum 37 O9, and both were read as unbuilt — while
+`cross_check.unanswered_rate` had been recording one agent leaving another waiting
+since long before either was assimilated.
+
+[`backend/cooperation.py`](../backend/cooperation.py) reports **composition and
+never a score**: answers with a finding, answers honestly empty, and how often an
+agent was itself left waiting. There is no ranking function and a test asserts
+there is none — addendum 48 §12 forbids *"empty activity, performative work…"*,
+and an agent answering everything with nothing would score perfectly and cooperate
+not at all. `left_waiting` is counted against the **asker**, because an unanswered
+cross-check names a role and never acquires a responder; attributing it to a
+person would be inventing a culprit.
+
+Nothing reads the report yet.
 
 ### The Department of Education
 
@@ -1109,7 +1121,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,873 passing, 8 skipped** (2026-08-29). The skips are deliberate
+**Test suite: 2,888 passing, 8 skipped** (2026-08-29). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this

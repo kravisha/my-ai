@@ -475,8 +475,19 @@ def _cross_check(conn, since: str | None = None) -> dict:
     }
     total = sum(outcomes.values())
     unanswered = outcomes.get("unanswered", 0)
+    # RE-AIMED at TQ-92 (§149). This read `status = 'open'`, and the cross-check
+    # status vocabulary is `pending` | `resolved` | `consumed` - `'open'` has never
+    # been one of them. So `open_at_end` was **structurally always zero**, and
+    # `baseline_steady_state`'s property *"no cross-check was left open: 0 == 0"*
+    # has been asserting a tautology.
+    #
+    # Second instance in two days of the same shape (§147 was the first): not a
+    # tripwire aimed where the risk used to be, but one aimed where the answer
+    # cannot be anything else. A literal spelled into a query has no compiler to
+    # catch it, which is why the constant is used here.
     open_requests = conn.fetchone(
-        "SELECT COUNT(*) AS n FROM cross_check_requests WHERE status = 'open'"
+        "SELECT COUNT(*) AS n FROM cross_check_requests WHERE status = ?",
+        (fi_db.CROSS_CHECK_PENDING,),
     )["n"]
     return {
         "total": total,
