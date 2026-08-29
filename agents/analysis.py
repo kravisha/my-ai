@@ -510,13 +510,10 @@ def _analysis_work(conn, identity: str, spawned_at: str) -> None:
     # judgment agent safe: reading the queue and analysing without one leaves a
     # twenty-second window in which two agents own the same report.
     #
-    # Released claims come first, so a report abandoned by an agent that died
-    # mid-analysis is back in this pass's queue rather than stuck out of
-    # circulation - and stuck matters more than it sounds, because
-    # has_pending_report still counts it, so that security would go silent.
-    reclaimed = fi_db.release_stale_claims(conn)
-    if reclaimed:
-        print(f"[analysis] returned {reclaimed} abandoned report(s) to the queue")
+    # Abandoned claims are returned to the queue by the COO, not here. This
+    # agent used to do it, and that made the recovery of the analysis queue
+    # depend on a running Analysis agent - which is precisely the condition it
+    # exists to recover from. See agents/coo.py's call to release_stale_claims.
 
     # Hearing a peer's appeal, and deliberately not conditional on there being
     # work: the early return below would otherwise skip it on every idle cycle,

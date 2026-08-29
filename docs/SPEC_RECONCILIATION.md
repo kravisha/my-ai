@@ -15472,3 +15472,96 @@ prior validated state"* makes agent persistence a Phase 1 concern rather than a
 Phase 3 one. The identity to hang it from exists (TQ-97, TQ-99); nothing yet
 carries experience across a restart, and the review recorded that as a partial.
 
+---
+
+## §154 — The queue was recovered by the thing that breaks (2026-08-29, TQ-108)
+
+First increment of Phase 1, authorized by directive §21.11. The readiness review
+listed five foundation items; four are coverage gaps and this one was a defect.
+
+### 1. The dependency
+
+`release_stale_claims` exists because claiming introduced a way to lose work:
+an agent that dies mid-analysis holds its report forever, `has_pending_report`
+still counts it, and that security goes silent. The function was written
+carefully — the timeout is measured against an observed 42s worst case rather
+than guessed, and its docstring says so.
+
+Its only caller was `agents/analysis.py`, at the top of the judgment cycle.
+
+So an abandoned report came back **only while an Analysis agent was running**.
+That is fine for the failure it was written against — one agent of several dies,
+the others sweep. It is not fine for the failure the healing specification is
+written against. Addendum 02 §7 is a defect affecting *all instances of one agent
+type*, and Scenario C makes it an acceptance test: disable the type, preserve
+state, repair, restore. During that window nothing sweeps, and the reports
+belonging to the agents being repaired are exactly the ones stranded.
+
+**The recovery path had a dependency on the thing it was recovering.** Every test
+passed throughout, because every test called the function directly.
+
+### 2. Where it belongs, and why that is not a new argument
+
+Moved into `_coo_work`, two lines below `recompute_source_reliability`.
+
+The COO cycle already carries two sweeps that live there for one stated reason —
+*the producer of an opportunity must not be the judge of its risk*, and *the
+producer of evidence must not be the judge of its own sources*. This is that rule
+one column along:
+
+> **The recovery of a queue must not depend on a worker of that queue.**
+
+The COO is a valid home for a reason that has been demonstrated rather than
+assumed: the Controller watches it and restarts it, and `executive_failure` kills
+`coo-1` and asserts the organization continues. The sweeper is itself covered by a
+recovery that does not depend on it. Putting it in the Controller would also work
+and would be one layer further from the work; the COO already runs every
+cross-cutting sweep in the system, and splitting them would be the drift 47 §5
+forbids.
+
+### 3. What the tests were actually asserting
+
+Five tests exercised `release_stale_claims`: an abandoned claim returns, a live
+claim is left alone, the timeout exceeds a real cycle, a released report can be
+re-claimed. All five would have passed against a build where **nothing called it
+at all.**
+
+That is §134 exactly — *a function tested in isolation is not a function that
+runs* — and it is the second time this project has found it. So the increment adds
+two assertions over the source: Analysis must not reach the sweep, and the COO
+must. Written against the AST rather than by running a scenario, because §136
+applies too: the condition that would expose the defect is every Analysis instance
+being down, which is the one state in which no Analysis code runs to be observed.
+
+**Both were observed failing before being trusted.** Reverting the move in a
+scratch tree — the call back in Analysis, removed from the COO — turns both red;
+restoring turns both green. A tripwire that has never been seen to fail is the
+§149 shape, and this project has now found six of those.
+
+### 4. Live, with the condition made producible
+
+A green suite is not evidence. `FI_CLAIM_TIMEOUT_SECONDS=25` puts the claim
+timeout below a real judgment cycle, so claims go stale during ordinary work:
+
+```
+[COO] returned 1 abandoned report(s) to the queue
+[COO] returned 1 abandoned report(s) to the queue
+
+baseline_steady_state   properties: 13/13 passed
+  [PASS] the queue was not abandoned: 0.2 >= 0.1
+```
+
+Twice across 96 COO cycles, with every property still passing.
+
+The production constant is untouched at 180s. Lowering it for the run is the same
+move `slow_agent` makes by stalling a model call for ninety seconds: the condition
+is not waited for, it is produced. Before this increment that same run would have
+shown the identical two lines under `[analysis]`, which is why the log was never
+going to be what found this.
+
+### 5. What this does not do
+
+It does not give the other three channels a lease. `coo_directives`,
+`engineering_work` and `software_issues` still strand work on crash (review
+**B6**), and the fix is the shared lease service, not four more copies of this
+function. This increment moved one caller; it did not build **S2**.

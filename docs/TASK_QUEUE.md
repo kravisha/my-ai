@@ -3193,3 +3193,36 @@ population"* for an agent staffed because an issue needed it, and `ALL_STAFFABLE
 module-level snapshot that silently ignored a changed target — caught immediately by
 `tests/test_slot_allocation.py`. Both are the same error in different clothes: **a value captured
 once where the thing it describes can change.**
+
+### TQ-108 — Recover the queue from something that is not working it
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §154 · `ARCHITECTURE_READINESS_REVIEW.md` B7 ·
+directive §21.11 · addendum 02 §7 and Scenario C · `SPEC_RECONCILIATION.md` §134, §136**
+
+First Phase 1 increment after the readiness review, and the only one of the five that was a
+defect rather than a coverage gap.
+
+`release_stale_claims` returns an abandoned report to the queue, and its sole caller was
+`agents/analysis.py` — so **the recovery of the analysis queue ran only while an Analysis agent
+was alive.** The single case in which nothing sweeps is every instance of that role being down,
+which is exactly the agent-type failure the healing specification is written to survive. The
+recovery path had a dependency on the thing it recovers.
+
+**Moved to the COO**, which is the third application of one rule this system already makes twice
+in the same function: lens health and source standings are the COO's because *the producer must
+not be the judge*. This is the same shape one column along — **the recovery of a queue must not
+depend on a worker of that queue.** COO qualifies as the home because the Controller watches and
+restarts it, and `executive_failure` already asserts the organization survives losing it, so the
+sweeper is covered by a recovery that does not depend on it.
+
+**The existing tests said the function works and nothing said it runs** (§134). Five tests called
+`release_stale_claims` directly and all five would have passed with no caller at all. Two source
+assertions now name the caller, and **both were observed failing** against a deliberately
+reverted tree before being trusted — the rule §149 exists to enforce.
+
+**Live, with the condition forced.** `FI_CLAIM_TIMEOUT_SECONDS=25` puts the timeout below a real
+judgment cycle so claims go stale on demand; `baseline_steady_state` then logged
+`[COO] returned 1 abandoned report(s) to the queue` twice across 96 COO cycles, 13/13 properties
+passing. The production constant is unchanged at 180s, measured against a 42s worst case — the
+run lowered it the way `slow_agent` stalls a model call, because **a green run over a condition
+that never happened is not evidence about the condition.**

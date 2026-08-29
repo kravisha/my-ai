@@ -613,6 +613,24 @@ def _coo_work(conn) -> None:
     # same reason lens health is COO's: the producer of evidence must not be
     # the judge of its own sources (addendum 11 §8).
     fi_db.recompute_source_reliability(conn)
+    # Abandoned report claims are returned to the queue here, and this is the
+    # third application of the same rule one column along: *the recovery of a
+    # queue must not depend on a worker of that queue.*
+    #
+    # This ran inside agents/analysis.py until §154. A report claimed by an
+    # Analysis agent that then died came back only because another Analysis
+    # agent swept it at the top of its cycle - so the single case where nothing
+    # sweeps is the case where every instance of that role is down, which is
+    # exactly the agent-type failure the healing specification is written to
+    # survive (addendum 02 §7, Scenario C). The recovery path had a dependency
+    # on the thing it was recovering.
+    #
+    # COO is the right home because the Controller watches it and restarts it -
+    # `executive_failure` kills coo-1 and asserts the organization continues -
+    # so the sweeper is itself covered by a recovery that does not depend on it.
+    reclaimed = fi_db.release_stale_claims(conn)
+    if reclaimed:
+        print(f"[COO] returned {reclaimed} abandoned report(s) to the queue")
     # One line, not the whole performance card. This ran every cycle dumping a
     # dict repr of every agent - invisible while agent stdout was block-buffered
     # into the log redirect, and ~1.5KB/s of noise the moment that was fixed.

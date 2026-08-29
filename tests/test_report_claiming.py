@@ -147,6 +147,60 @@ def test_a_released_report_can_be_claimed_by_another_agent(db):
     assert fi_db.claim_next_report(db, "analysis-2", "spawn-2") is not None
 
 
+# -- who performs the recovery ------------------------------------------------
+#
+# Every test above calls release_stale_claims directly, which says the function
+# works and says nothing about whether it runs. That gap was the defect: the sweep
+# lived in agents/analysis.py, so the queue recovered only while an Analysis agent
+# was alive - and the one case where nothing sweeps is every instance of that role
+# being down, which is the agent-type failure the healing specification exists to
+# survive. A function tested in isolation is not a function that runs (§134).
+
+
+def _calls_release_stale_claims(module) -> bool:
+    """Whether this module's source actually reaches the sweep."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(module))
+    return any(
+        (node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", ""))
+        == "release_stale_claims"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    )
+
+
+def test_the_judgment_agent_does_not_recover_its_own_queue():
+    """The recovery of a queue must not depend on a worker of that queue.
+
+    Asserted against the source rather than by running a scenario, because the
+    condition that would expose it - every Analysis instance down - is the one
+    state in which no Analysis code executes to be observed (§136)."""
+    from agents import analysis
+
+    assert not _calls_release_stale_claims(analysis), (
+        "agents/analysis.py reaches release_stale_claims. A report abandoned by a "
+        "dead Analysis agent would then be recovered only by another Analysis "
+        "agent, so an agent-type failure strands the queue it is failing in "
+        "(SPEC_RECONCILIATION §154)."
+    )
+
+
+def test_the_coo_recovers_the_queue_it_does_not_work():
+    """The sweeper has to be something a failure of the judgment role leaves running.
+
+    COO qualifies because the Controller watches and restarts it - `executive_failure`
+    kills coo-1 and asserts the organization continues - so the recovery path is
+    itself covered by a recovery that does not depend on it."""
+    from agents import coo
+
+    assert _calls_release_stale_claims(coo), (
+        "nothing calls release_stale_claims from a continuously-supervised agent, so "
+        "abandoned report claims are never returned to the queue."
+    )
+
+
 # -- additive migrations ------------------------------------------------------
 
 def test_a_column_missing_from_an_existing_database_is_added(db):
