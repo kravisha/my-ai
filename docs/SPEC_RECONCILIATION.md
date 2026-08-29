@@ -14781,3 +14781,188 @@ Named in `report()` itself, every time, because a reader arriving with addendum
 And nothing reads this yet. It is a report with no consumer, which is the state
 TQ-82's governed store was in for a fortnight (§126) — worth saying plainly rather
 than leaving to be discovered.
+
+## §150 — Addendum 53 reconciled, and the drift turned into one rule (2026-08-29, TQ-105)
+
+Addendum 53, the *Software Department Specification*, assimilated verbatim. It
+arrives with a remediation list aimed at the three defects §147 and §149 found,
+and a Definition of Done for them.
+
+This is the intake step, and §111's rule governs it: a new specification agreeing
+with the implementation says nothing about whether it agrees with the
+specifications that implementation was following. Three conflicts, one prediction
+that turned out to be already true, and an assessment of the sixteen boxes.
+
+### 1. Conflict — three named persistent agents, against one general type
+
+Addendum 46 §9: *"The Software Department should not begin with a large collection
+of narrowly specialized permanent agents."* §11: *"Governance does not require
+dozens of specialized agent classes. It requires independent responsibility."*
+§119 §3 adjudicated in favour of that and reinterpreted 30 §25's forty-agent
+catalog as responsibilities rather than headcount.
+
+Addendum 53 §2 names three persistent agents: DBA, Software Engineer, QA Engineer.
+
+**Adjudicated in favour of 53, and the argument is not that three is fewer than
+dozens.** It is that 53 §2 describes exactly what 46 §11 asks for. The three are
+three *perspectives on one defect* — is the data wrong, is the implementation
+wrong, why did the tests not catch it — and §2 forbids them working as silos in
+the same breath as naming them.
+
+**And the separation is the fix for the defect that prompted the specification.**
+§149 §4 found that three defects survived because *the tests were built from the
+same misreading as the code*. Addendum 53 §5.2 forbids precisely that:
+*"avoid deriving both implementation and expected test values from the same
+mistaken assumption."* An engineer who writes the fix and the test writes both
+from one belief. **QA's independence is load-bearing here, not organizational
+decoration**, and it is the fourth instance of the rule this system already
+applies three times: producer is not approver, producer is not grader, preparer is
+not health judge (§145 §2).
+
+What is *not* settled is whether they are three processes or one type occupying
+three roles. 46 §10's *work determines staffing* answers that when the work
+exists; nothing here needs three processes today.
+
+### 2. Conflict — the CEO
+
+53 §22 and §11: *"The Software Department is started as a background
+organizational function by the CEO during system startup."*
+
+**There is no CEO.** The Controller is the process and owns lifecycle; the COO
+directs the organization and spawns agents. Addendum 11 — held privately — names
+a CEO, so the concept is canonical and unbuilt.
+
+**Adjudicated: the function 53 describes is the COO's**, which is what starts
+departments at boot today, and the CEO naming is recorded as unreconciled rather
+than silently mapped. A specification that says CEO and a system that means COO is
+the collision 47 §5 forbids, and §122 spent an increment on three of them. This
+one is flagged, not fixed: renaming an office is the owner's.
+
+### 3. Not a conflict — §7.8 forbids the fix I would otherwise have made
+
+§149 ended by noting nothing reads the cooperation report. The obvious next move
+is a consumer.
+
+53 §7.8 forbids it: *"The Software Department must not automatically create a
+consumer merely to make the report appear useful… Unused reporting is acceptable
+during staged development. Performative plumbing is not required."*
+
+Recorded because it is a **direction I would have taken and should not have**.
+The honest state — a report with no consumer, named as such — is now the
+specified state rather than a deficiency, and the requirement is to identify the
+intended consumer and the decisions it may make *before* connecting anything.
+
+### 4. The prediction that was already true
+
+53 §7.9 asks, of the Personal Usher: *"separate persona behavior from Gateway
+identity/authentication responsibilities; prevent the Gateway from becoming a
+general business-logic or personality host by accident."*
+
+**It already has.** `gateway/client_agent.py` stores `voice` and `visual` — a
+presentation layer — in `gateway.db`, under addendum 43 §16's authority. Owner
+direction §109 is explicit that *"Gateway only does authentication. Back end does
+authorization and all business logic."*
+
+So the accident 53 §7.9 warns against happened before the warning arrived, which
+is the same shape as §143 §3's finding that the Usher was half-built. Not
+corrected here: 53 §7.9 says to preserve existing safe work and not delete working
+code until TQ-100 is answered. Named, and queued with TQ-101.
+
+### 5. What was built: the contract, and why it is a rule rather than three repairs
+
+53 §8 asks for one authoritative definition per closed vocabulary so that
+*"'open', 'answered', 'evidence', 'pending', and similar words cannot drift
+independently."* `backend/vocabulary.py` is that, and three properties matter.
+
+**It points at the constants; it does not restate them.** A contract that spelled
+the values again would be a fourth place to drift — the disease presenting as the
+cure — and 53 §7.7 ranks the domain contract above comments precisely so there is
+one authority. A test asserts no value is spelled literally in the contract block.
+
+**It audits in both directions.** `audit_literals` reads the *source* for query
+literals outside the contract; `audit_stored_values` reads the *database* for
+values outside it. The distinction is the one that mattered: a value absent from a
+database may simply not have happened yet, while a value absent from the contract
+can never be written. **Only the contract can tell those apart**, which is why the
+first naive scan — comparing literals against values a run happened to contain —
+produced 37 findings of which none was a defect.
+
+**A scan that resolved nothing is not a pass.** `check()` returns `INCONCLUSIVE`
+when it examined no literals and no rows, reports the count of literals it
+resolved and the rows it examined **per column**, and names what the contract does
+not cover. That is 53 §3.3 and §9 rules 1–3, and it is `simulation/verification`'s
+three-valued verdict applied one level down.
+
+**And the write side can no longer invent a value.** `answer_cross_check`
+validates the outcome, so a value that would be written successfully and never
+match a query again is refused instead. That direction was entirely missing, and
+it is how `'answered'` survived: nothing would have rejected it.
+
+### 6. The tripwire is proven to fail, on the defects that actually shipped
+
+53 §5.3 asks five questions of every tripwire and refuses one accepted merely
+because it has historically passed. The answers are in
+`tests/test_vocabulary_contract.py`, and the one that matters is question 3 —
+*has it been observed failing under that condition?*
+
+`test_the_audit_catches_both_defects_that_shipped` reconstructs
+`status = 'open'` and `outcome = 'answered'` exactly as they were written, and
+asserts both are caught. **The live-codebase test passes only because §147 and
+§149 fixed them**, and it would be worthless without the reconstruction: a clean
+scan over a clean tree is the same output as a scan that cannot see.
+
+The audit was then run over the whole repository. It resolved literals against
+contracted columns and found **no further violations** — which is a claim worth
+something only because the same scan demonstrably fails on the two that existed.
+
+An earlier, table-agnostic version of the scan flagged 37 sites; every one was a
+value the code can legitimately write that a single run had not produced. That
+version is not kept. **A tripwire that fires on everything is turned off within a
+week**, which is the failure mode opposite to the one being fixed and just as
+final.
+
+### 7. The Definition of Done, assessed honestly
+
+53 §14 lists sixteen conditions. Ten are met by this increment and §147/§149;
+six are not, and saying which is the point of assessing rather than declaring.
+
+**Met:** one authoritative cross-check vocabulary; the `answered`/`evidence`
+disagreement eliminated; `status='open'` gone; `open_at_end` defined against
+`CROSS_CHECK_PENDING`; every affected tripwire proven capable of failing;
+magic literals replaced by constants; other query tripwires audited for silent
+empty-result success; cooperation logic unchanged and still consistent with 48
+§12; no agent blamed for an unanswered request; the regression suite passes.
+
+**Not met, and named:**
+
+- **Known-bad pending data causing the relevant tripwire to fail.** The
+  vocabulary tripwire is proven; `metrics.open_at_end` is re-aimed and has *not*
+  been forced to fire under a run that genuinely ends with a pending cross-check.
+  Re-aimed is not proven, and this is the same distinction §136 drew.
+- **Tests no longer deriving truth solely from the implementation.** True of the
+  new tests — `test_the_contract_matches_the_values_the_code_actually_writes`
+  derives from the database after exercising production paths — and **not
+  audited across the existing suite**, which is where §147's defect lived.
+- **Database health checks passing on meaningful populated fixtures.** They pass
+  on a real run database, which is better than a fixture; they have not been run
+  as a scheduled function, because no such function exists.
+- **Release/rollback readiness verified.** `simulation verify` passed on
+  2026-08-29 before this increment; it has not been re-run since.
+- **TQ-100 before TQ-101.** Unchanged — TQ-100 is with the owner, and the freeze
+  is now specified rather than recommended.
+- **Root cause and lessons captured for the knowledge base.** Recorded here and
+  in the module, not submitted to `knowledge_records` — the librarian interface
+  of 53 §13 does not exist, and writing lessons into a store whose declared gap 2
+  is that nothing reads them back would grow the gap.
+
+### 8. What is not built
+
+**The department itself.** Three persistent agents, the ten-step issue workflow,
+severity levels, scheduled health checks and background operation are all
+specified and absent. This increment built the safeguard the remediation list
+demanded and the contract the rest depends on; TQ-106 carries the department.
+
+That ordering is deliberate and is 53's own: §7 is headed *mandatory remediation*
+and §14's Definition of Done is about the current findings, not about staffing. A
+department created before the defects it was chartered to prevent were fixed would
+have inherited them as its first backlog.

@@ -3865,7 +3865,16 @@ def answer_cross_check(
 ) -> None:
     """Record the responder's independent finding. The responder states what it
     observed; it does not declare whether that agrees with the requester. That
-    judgment is Analysis's - see the `outcome` column comment in SCHEMA."""
+    judgment is Analysis's - see the `outcome` column comment in SCHEMA.
+
+    **The outcome is validated against the vocabulary contract** (addendum 53 §7.2,
+    §9 rule 5). An outcome outside it would be written successfully and never match
+    a query again - which is exactly how `'answered'` survived in a comment for
+    months while nothing could ever have read it (§147, §149). A value that can
+    only be got wrong at read time is one the write side is free to invent."""
+    from backend import vocabulary
+
+    vocabulary.validate("cross_check_requests", "outcome", outcome)
     conn.execute(
         "UPDATE cross_check_requests SET status = ?, outcome = ?, responder_identity = ?, "
         "responder_spawned_at = ?, responder_finding = ?, responder_confidence = ?, answered_at = ? "

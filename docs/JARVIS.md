@@ -23,7 +23,7 @@ exist and none of them replaces this one:
 |---|---|---|
 | **This document** | The current truth. What exists, what it does, what state it is in. | Always first. |
 | [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | The change record. Numbered sections, append-only, in the order decisions were made. Every `§` reference in this document points there. | When you need *why*, or what was believed before. |
-| [`addenda/`](addenda/) | Provenance. Forty-six supplied specifications, kept unedited. **Five more are held privately** and named without links (the Constitution — addendum 49 — and addenda 5, 11, 15, 22). | When you need the owner's exact words. |
+| [`addenda/`](addenda/) | Provenance. Forty-seven supplied specifications, kept unedited. **Five more are held privately** and named without links (the Constitution — addendum 49 — and addenda 5, 11, 15, 22). | When you need the owner's exact words. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
 | [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped, and what to do first. Nothing else — it points here rather than repeating this. | Starting a session. |
@@ -298,6 +298,7 @@ it, which is the property that matters and is what §120 meant to say.
 | Strategic Priority Register (proposals, petitions, mandates) | `IMPLEMENTED` — [`backend/register.py`](../backend/register.py), §54 |
 | The agent charter — what an agent is owed | `IMPLEMENTED` — [`backend/charter.py`](../backend/charter.py). Every protection names the mechanism that enforces it, and a test resolves every name; **two** are listed as *unenforced* rather than quietly omitted. TQ-102 discharged appeal (§145) and deliberately did **not** discharge *"an agent is told what is found about it"* — the read path exists and nothing reads it, and being told is passive in a way that having a right is not |
 | Governance self-measurement | `IMPLEMENTED` — [`backend/governance.py`](../backend/governance.py). Read-only, because a module that measures the governors must not act on them |
+| Database Vocabulary Contract | `IMPLEMENTED` — TQ-105, addendum 53 §8. [`backend/vocabulary.py`](../backend/vocabulary.py). One authoritative definition per closed vocabulary, **pointing at the constants rather than restating them**; audits the source for query literals outside the contract and the database for values outside it; refuses a write that would invent one. Proven to fail on both defects that shipped |
 | Compliance checking | `IMPLEMENTED` — [`backend/compliance.py`](../backend/compliance.py). `self_evaluated` was **re-aimed at §147**: it compared the grader to the analysis result's producer, which is one identity by construction, so it flagged every grade and could never return false |
 Addendum 32 specifies elections, ministers and committees; none is required for a
 directive to be authorized, so none was built. `parliament.summary()` names them
@@ -579,6 +580,7 @@ Specified across the addenda; mostly `TO BE DEVELOPED`. What exists:
 | Personal agents (Providence) | `IN DEVELOPMENT` — TQ-97 identity, TQ-98 the client profile. The Usher is half-built in the Gateway and has no conversational half (TQ-101) | [`backend/agent_identity.py`](../backend/agent_identity.py), [`backend/client_profile.py`](../backend/client_profile.py) |
 | Strategy | `IMPLEMENTED` in part — the register and the strategy store | [`backend/strategy.py`](../backend/strategy.py), [`backend/register.py`](../backend/register.py) |
 | Department of Evolution | `TO BE DEVELOPED` | addendum 30 |
+| Software Department (addendum 53) | `IN DESIGN` — TQ-106. Three persistent agents (DBA, Software Engineer, QA Engineer), the ten-step issue workflow and background health checks are specified and absent. addendum 53 §8's vocabulary contract is built (TQ-105); **the department is deliberately second**, because one created before the defects it was chartered to prevent were fixed would inherit them as its first backlog (§150 §8) |
 | Software Engineering | `IN DEVELOPMENT` — TQ-83, TQ-96. [`backend/engineering.py`](../backend/engineering.py), [`agents/software_engineer.py`](../agents/software_engineer.py). Delivers directives as governed data or names the capability gap, and stages approved work into a release candidate; **writes no code** |
 | Governance | `TO BE DEVELOPED` (measurement exists; the department does not) | addendum 32 §20 |
 | Security Defense, Business Continuity, Law Enforcement | `TO BE DEVELOPED` | addenda 28, 29 |
@@ -1121,7 +1123,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,888 passing, 8 skipped** (2026-08-29). The skips are deliberate
+**Test suite: 2,900 passing, 8 skipped** (2026-08-29). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this

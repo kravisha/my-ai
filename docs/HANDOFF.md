@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 149 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 150 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2888 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2900 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -204,9 +204,15 @@ thing here that genuinely needs a model to read text — so the seam where a mod
 answers has to be in the design from the first line, along with what happens when
 none is reachable.
 
-**TQ-101 — the Personal Usher**, half-built in the Gateway (§143 §3). **TQ-100**
-(what refuses a persona that crosses the line) is unanswered and sits in front of
-it.
+**TQ-106 — the Software Department**, or the six unmet Definition-of-Done items
+at §150 §7. The one worth carrying: **`metrics.open_at_end` is re-aimed and has
+not been forced to fire** under a run that genuinely ends with a pending
+cross-check. Re-aimed is not proven (§136's distinction).
+
+**TQ-101 is frozen** by addendum 53 §7.9 until TQ-100 is answered — a
+specification now, not a recommendation. And 53 §7.9's warning about the Gateway
+becoming a personality host **had already happened**: `gateway/client_agent.py`
+stores voice and visual, which §109 puts on the backend's side (§150 §4).
 
 **Read §149 §4 before writing a query.** Three defects in two days were the same
 shape: a literal written by hand into SQL where nothing checks it corresponds to

@@ -65,8 +65,16 @@ holds the queue, not the record.
 > **TQ-92 is done (§149)** — cooperation is read rather than scored, and reading it turned up two
 > more checks that could not fail.
 >
-> **Recommended next: TQ-101** (the Personal Usher, half-built in the Gateway) — though **TQ-100**
-> (what refuses a persona) is unanswered and sits in front of it. Previously: TQ-92 (read the cooperation already recorded — small, and the only actionable
+> **Addendum 53 assimilated and reconciled (§150).** The Software Department Specification, with a
+> mandatory remediation list aimed at §147's and §149's defects. **TQ-105 is done** — the Database
+> Vocabulary Contract, proven to fail on both defects that actually shipped.
+>
+> **TQ-101 is frozen by 53 §7.9 until TQ-100 is answered**, which is now a specification rather
+> than a recommendation. And 53 §7.9's warning about the Gateway becoming a personality host
+> **had already happened** (§150 §4).
+>
+> **Recommended next: TQ-106** (the department itself) or the six unmet Definition-of-Done items
+> at §150 §7. Previously: TQ-101, TQ-92 (read the cooperation already recorded — small, and the only actionable
 > part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
 > first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
@@ -3096,3 +3104,55 @@ organization with no grades at all and a clean `self_evaluated` report. That is 
 exactly — the analyst that stopped asking, and every complaint disappeared.
 
 </details>
+
+### TQ-105 — The Database Vocabulary Contract, and the audits that keep it true
+
+**NEED (ORANGE) · DONE — `SPEC_RECONCILIATION.md` §150 · addendum 53 §3.3, §7.2, §7.3, §7.4,
+§7.6, §7.7, §8, §9 · `SPEC_RECONCILIATION.md` §147, §149**
+
+Addendum 53's mandatory remediation, and the systemic fix for the three defects §147 and §149
+found. `backend/vocabulary.py`.
+
+**It points at the constants rather than restating them** — a contract that spelled the values
+again would be a fourth place to drift. **It audits in both directions**: the source, for query
+literals outside the contract; the database, for values outside it. That distinction is the one
+that mattered — a value absent from a database may not have happened yet, while a value absent
+from the contract can never be written, and only the contract tells them apart.
+
+**A scan that resolved nothing is not a pass.** `check()` returns `INCONCLUSIVE`, reports
+literals resolved and rows examined per column, and names what it does not cover (53 §3.3, §9).
+
+**And the write side can no longer invent a value** — `answer_cross_check` validates the
+outcome. That direction was entirely missing, and is how `'answered'` survived.
+
+Proven to fail on the two defects that actually shipped, reconstructed as written (53 §5.3
+question 3). The live-codebase scan then found no further violations — a claim worth something
+only because the same scan demonstrably fails on the two that existed.
+
+**Six of §14's sixteen conditions are not met and are named at §150 §7**, including the one
+worth carrying: `metrics.open_at_end` is re-aimed and has **not** been forced to fire under a
+run that genuinely ends with a pending cross-check. Re-aimed is not proven.
+
+### TQ-106 — The Software Department as an operating department
+
+**NEED (ORANGE) · QUEUED · addendum 53 §1, §2, §6, §11, §12, §13 ·
+`SPEC_RECONCILIATION.md` §150 §1, §150 §8**
+
+TQ-105 built the safeguard the remediation list demanded. This is the department itself, and it
+is deliberately second: a department created before the defects it was chartered to prevent were
+fixed would have inherited them as its first backlog.
+
+What it owes: the three persistent agents (DBA, Software Engineer, QA Engineer), 53 §6's ten-step
+issue workflow, §12's severity levels, §11's background operation and scheduled health checks,
+and §13's librarian interface.
+
+**§150 §1 adjudicated the staffing question and left one part open.** Three perspectives that
+must be independently held is what addendum 46 §11 asks for, and **QA's independence is
+load-bearing rather than organizational** — §149 §4 found three defects that survived because the
+tests were built from the same misreading as the code, which is exactly what 53 §5.2 forbids.
+What is *not* settled is whether they are three processes or one type occupying three roles;
+46 §10's *work determines staffing* answers that when the work exists.
+
+**Two things to carry in:** there is no CEO (§150 §2 — the boot function 53 §22 describes is the
+COO's, and the naming is unreconciled), and §13's librarian does not exist, so lessons have
+nowhere to go that anything reads.
