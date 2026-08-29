@@ -3342,3 +3342,59 @@ a name: `Database.Contended`, subclassing `sqlite3.OperationalError` so existing
 untouched. `database is locked` reaching an agent is indistinguishable from that agent being
 broken, and at Providence's population it would present as several unrelated agents failing at
 once — §93's liveness/progress argument, one subsystem along.
+
+### TQ-112 — The Demonstration Engine, and the demo it cannot give you
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §158 · Demonstration Engine Specification ·
+`SPEC_RECONCILIATION.md` §113, §149, §153, §155, §156**
+
+A subsystem that shows what this system can actually do, orchestrating the real thing. Taking the
+specification's own rule seriously — *"if a feature is not implemented, the demo must not pretend
+that it exists"* — is most of the increment.
+
+**The flagship demonstration cannot be run.** The specification's trading flow is Explorer →
+Speculator → Analyst → **Trader** → Evaluator with entry, exit, P&L and attribution. There is no
+Trader, no trade is placed, no position is held, and every price is synthetic against identifiers
+like `JE-000001` (§113). The organization implements the first three roles and stops at judgment.
+That, plus eight more absences, is the first output of the engine rather than a footnote.
+
+**No second event table.** `status_events` already carries eleven of the specification's eighteen
+demo-event fields and is written during ordinary operation, so the specification's own *"avoid
+invasive instrumentation where ordinary telemetry is sufficient"* settles it. `backend/demonstration.py`
+records only what did not exist: which acts ran and which real run each used. **It holds no
+results** — every number is read from the run's own database, because a demo table of metrics is a
+second answer to *what happened*.
+
+**The witness is the design.** A scenario can pass every property while the thing an act set out
+to show never happened, so an act does not claim its capability because it ran: it asks a question
+of the finished run's metrics and reports `not_observed` when the answer is no. Every witness is
+asserted to return false against a database in which nothing happened.
+
+**The registry's absent half is the one that rots.** A capability claimed and missing fails
+loudly; one listed as absent and since built fails silently forever. So each `ABSENT` entry names
+the module or table whose absence makes it true — observed failing by adding a `trades` table.
+
+**Deliberately not built:** the Superuser 0-10 score (directive §10 wants feedback attached to five
+subjects, and a demo-only table is the wrong shape for four of them), narration, the live
+presentation layer, and six of nine demo modes. **Nothing is marked client-safe**, and a test holds
+that until somebody decides otherwise.
+
+**Not adopted:** the specification's Definition of Done making demo coverage part of "done". Two of
+the acts it would immediately demand cannot be written — the Software Department has no production
+caller able to file it work (§155), and the Knowledge Store is the thin store §153 describes.
+
+**Two defects found by running it, recorded at §159.** The first full run failed on act 7 — the
+restart-and-continue the specification calls its major success criterion — with every role up
+except the COO. `reconcile_on_start` and `respawn_coo` judged a COO alive from **heartbeat age
+alone**, and a clean shutdown leaves a heartbeat seconds old beside a `process_state` of `stopped`.
+Carrying that database into a new run, which is what persistence *is*, presented a COO that looked
+alive and was not; the organization ran with **no executive** until the heartbeat aged out. Both
+facts were in the same row and only one was read — §93's shape a third time. Adoption now requires
+a fresh heartbeat *and* a running process; the unclean-death case that the guard exists for is
+unchanged and a test holds it. Two of the three new tests were observed failing against the
+unfixed code.
+
+The second was the Demo Engine's own: the failing act **crashed the demonstration** instead of
+being recorded, so five shown acts were reported as nothing at all. A failing act and a failing
+witness are now both recorded and the run continues — withholding a finding is the one dishonesty
+the specification cannot tolerate.

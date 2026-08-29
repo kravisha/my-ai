@@ -15932,3 +15932,218 @@ recording as a fact about reviews rather than about this one: **B6 named three
 channels and all three were wrong, B3's blocker was a conflation the review did
 not see, and N8 was right about the defect and one instance short on the count.**
 The review was still what caused all five to be looked at.
+
+---
+
+## §158 — The Demonstration Engine, and the demo it cannot give you (2026-08-29, TQ-112)
+
+The Demonstration Engine Specification asks for a subsystem that shows, at any
+time, what this system can actually do — orchestrating the real thing rather than
+mocking it, and never pretending a capability exists.
+
+Taking that last rule seriously is most of this section, because **the
+specification's flagship demonstration cannot be run.**
+
+### 1. The demo the specification wants, and why it is not available
+
+The specification's trading demonstration is *"Explorer → Speculator → Analyst →
+Trader → Evaluator"*, showing entry timing, position details, exit timing, profit
+and loss, and an attribution distinguishing a bad idea from bad timing.
+
+This organization implements the first three and stops at judgment. There is **no
+Trader**, no trade of any kind is placed, no position is held, and no P&L exists
+to attribute. Compounding it, every price in the system is synthetic against a
+security master whose identifiers are `JE-000001` rather than `AAPL` (§113), so a
+position could not be marked even if one were opened.
+
+That is not a gap to be worked around. Under the specification's own rule —
+*"If a feature is not implemented, the demo must not pretend that it exists"* —
+it is the single most important output of this increment. The demo names it
+first, and eight other things beside it.
+
+### 2. The demo event model already exists under another name
+
+The specification proposes an eighteen-field demo event. `status_events` already
+carries eleven of them — event id, timestamp, source department, source engine,
+source agent, event type, severity, status, message, task id, correlation id —
+and it is written by the real system during ordinary operation.
+
+The specification's own rule settles it: *"avoid invasive instrumentation where
+ordinary system telemetry is sufficient."* So no demo event table was built.
+What genuinely did not exist is the record of a **demonstration** as a thing —
+which acts were performed and which real run each one used — and that is all
+`backend/demonstration.py` holds.
+
+**It holds no results.** An act points at a run id and a run directory, and every
+number is read back out of that run's own database by `simulation/metrics.py`.
+Copying metrics into a demo table would create a second answer to *what
+happened*, and the demo's entire claim is that it shows the real system rather
+than a retelling of it.
+
+### 3. The witness, which is the whole design
+
+A scenario can pass every property while the thing a demo act set out to show
+never happened. `baseline_steady_state` with no cross-checks is green and
+demonstrates nothing about collaboration.
+
+So an act does not claim its capability because it ran. It declares a **witness**
+— a question asked of the finished run's own metrics — and reports
+`not_observed` when the answer is no. `tests/test_demonstration_registry.py`
+asserts every witness returns false against a database in which the organization
+did nothing, because a witness that cannot fail would make every act report
+success and turn the demo into exactly the mockup the specification forbids.
+
+Four outcomes, and the middle two are the point: `shown`, `not_observed` (it ran
+and the thing did not happen), `failed` (the demo broke), `unavailable` (not
+attempted, because what it shows does not exist).
+
+### 4. The half of the registry that rots
+
+The capability registry has two halves and they decay differently.
+
+A capability **claimed and absent** produces a demo that fails loudly; somebody
+notices inside one run. A capability listed as **absent and since built** produces
+nothing at all — the demo silently never shows it, the registry keeps saying it is
+missing, and the system reads as less capable than it is, for as long as nobody
+rereads the file.
+
+So every `ABSENT` entry names the module or table whose absence makes it true, and
+the suite fails the day that thing appears. Observed failing by adding a `trades`
+table: the `pnl` entry went red and said to move it. Same shape as
+`agent_identity.REACHABLE_STATES` and TQ-109's claim registry — a list somebody
+would have to remember to update becomes a list the suite updates them about.
+
+**Discovery where discovery is possible**, as the specification asks: roles come
+from `organization.yaml` (asserted role by role against the code), persistence
+surfaces from `migrations.stores()` (complete since §156), scenarios from the
+library. What is not derivable is the judgement connecting a capability to the act
+that shows it — that is declared, and declared things are tested.
+
+### 5. What was deliberately not built
+
+- **The Superuser score.** The specification asks for a 0–10 rating stored on the
+  demo run. Directive §10 asks for feedback attached to *"the relevant system
+  state, feature, department, demo, or change"* — five subjects, of which a demo
+  is one. A demo-only score table would be the wrong shape for the other four and
+  would have to be replaced, so it is named as absent rather than half-built.
+- **Narration and the presentation layer.** The specification wants a live
+  operations broadcast. What exists is a sequenced textual report. Narration that
+  *"must not invent events that did not occur"* is a constraint on a component
+  nothing here implements yet.
+- **Six of the nine demo modes.** Department, agent, capability, randomized,
+  historical replay and client modes are unbuilt. Historical replay is blocked on
+  historical-data operation, which nothing implements; client mode is blocked on
+  a presentation boundary that has never been exercised, which is why **nothing is
+  marked client-safe** and a test holds that until somebody decides otherwise.
+
+### 6. What the demonstration actually shows
+
+Seven acts, 390 seconds of scenario time plus startup — longer than the
+specification's five-minute target, and the number is reported rather than
+trimmed by shortening scenarios whose durations were chosen for other reasons.
+
+The organization starts and staffs itself; Explorer and Speculator go looking; one
+agent asks another and waits; Analysis grades what they produced; a rule carried
+by vote changes what agents do with no code change; the organization loses its
+executive and carries on; and then it is **stopped, restarted from its own
+database, and continues**.
+
+That last act is the specification's stated major success criterion, and it is the
+only one needing two runs: the second inherits the first's database, so the
+restart is real rather than described. Continuity is checked on `agent_id` and
+never the display name — the durable thing being the name is precisely the defect
+TQ-97 corrected — plus the COO's creation timestamp, the set of agent identities,
+and the knowledge record count.
+
+### 7. What this does not settle
+
+The specification's Definition of Done says a capability is not integrated until
+the Demo Engine can exercise it. That is a good rule and this increment does not
+adopt it, because two of the things it would immediately demand — a demo act for
+the Software Department, and one for the Knowledge Store — cannot be written: the
+first has no production caller able to file it work (§155), and the second is the
+thin store §153 describes rather than the one the Knowledge Store specification
+asks for.
+
+Adopting the rule before those exist would mean either blocking every increment or
+writing acts that demonstrate nothing, and the second is how a demo becomes a
+mockup one honest-looking act at a time.
+
+---
+
+## §159 — The demonstration's first run found a way to restart without an executive (2026-08-29, TQ-112)
+
+The Demonstration Engine's first full run failed on its seventh act — the
+restart-and-continue that the specification calls its major success criterion —
+and the failure was real. Recorded separately from §158 because it is a defect in
+the organization, not in the demo.
+
+### 1. What happened
+
+Act 7 restarts `baseline_steady_state` from the previous act's database, so the
+organization comes up against state a previous organization left behind. It never
+established itself:
+
+```
+organization did not establish itself within 60.0s.
+Running roles: ['analysis', 'controller', 'dba', 'dummy', 'explorer', 'speaker', 'speculator']
+expected  ['analysis', 'controller', 'coo', 'dba', 'dummy', 'explorer', 'speaker', 'speculator']
+```
+
+Every role but the COO. And in the log, one line explains it:
+
+```
+[controller] reconciled on start: {'coo': 'adopted', 'heartbeat_age_seconds': 1.3}
+```
+
+### 2. Why
+
+`reconcile_on_start` and `respawn_coo` both judge whether a COO is already alive
+**from its heartbeat age alone**. That guard was written for a real case and the
+reasoning is sound: an unclean death leaves the Controller dead and its COO
+running — subprocess children outlive their parent — and spawning a second
+produced three concurrent processes under one identity, which is the defect
+`respawn_coo` exists to prevent.
+
+But a **clean** shutdown writes `process_state = 'stopped'` and the COO's final
+heartbeat is a second or two old. Carrying that database into a new run — which
+is what persistence *is* — presents a COO that looks alive and is not. The
+Controller adopted it, `bootstrap_coo` read the refusal to spawn as a successful
+adoption, and the organization ran **with no executive at all** until the dead
+COO's heartbeat crossed the staleness threshold.
+
+**Both facts were in the same row and only one was read.** The heartbeat says when
+the process last spoke; `process_state` says whether anybody ended it. This is
+§93's shape a third time: two signals answering different questions, and a
+decision made from one of them.
+
+### 3. The fix, and the case it must not break
+
+Adoption now requires a fresh heartbeat **and** `process_state == running`. In the
+unclean case nothing wrote a stop, so the row still says running and adoption is
+unchanged — the duplication guard is intact, and a test holds it. In the clean
+case the row says stopped and a COO is started.
+
+A fresh heartbeat on a stopped process gets its own verdict, `stopped`, rather
+than being folded into `stale`. They need opposite readings: stale means nobody
+has heard from it, stopped means somebody ended it deliberately.
+
+Three tests, and **two were observed failing against the unfixed code**: a
+cleanly-stopped COO is not adopted, a restart from a stopped organization starts
+one, and an unclean death still adopts the survivor.
+
+### 4. What this says about the demonstration
+
+The demo found this on its first run, in the act the specification singles out,
+against a condition no scenario in the library produces — because every scenario
+starts from an empty database and the only thing that chains them is
+`simulation chain`, which nothing routinely runs.
+
+It also exposed a defect in the Demo Engine itself: the act **crashed the
+demonstration** instead of being recorded. Five acts had been shown and none of
+them were reported, because the process died before the summary. That is the one
+shape of dishonesty the specification cannot tolerate — not dressing a failure up,
+but withholding it — so a failing act is now recorded as `failed` and the
+demonstration continues.
+
+*A green suite is not evidence.* The suite was green at 2,954 tests when this ran.

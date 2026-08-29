@@ -44,3 +44,8 @@ model_performance.db
 model_performance.db-wal
 model_performance.db-shm
 simulation/runs/
+
+# Demo run summaries. Like simulation/runs, these are the output of a run
+# rather than part of the system: reproducible from the run directories they
+# point at, and different on every machine.
+demo_summary.json

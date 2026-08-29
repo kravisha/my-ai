@@ -85,7 +85,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from backend import (agent_identity, analysis_requests, appeal, client_profile,
-                     coo_identity, curriculum, engineering, governed_knowledge,
+                     coo_identity, curriculum, demonstration, engineering, governed_knowledge,
                      identifiers, missions, observations, operating_context,
                      parliament, reference_data, release, risk,
                      register as register_store, software_department,
@@ -484,6 +484,7 @@ for _name, _schema in (
     ("appeal", appeal.SCHEMA),
     ("client_profile", client_profile.SCHEMA),
     ("curriculum", curriculum.SCHEMA),
+    ("demonstration", demonstration.SCHEMA),
     ("engineering", engineering.SCHEMA),
     ("governed_knowledge", governed_knowledge.SCHEMA),
     ("identifiers", identifiers.SCHEMA),

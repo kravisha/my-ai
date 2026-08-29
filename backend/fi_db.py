@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, coo_identity, curriculum, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
+from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, coo_identity, curriculum, demonstration, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -1585,6 +1585,7 @@ def init_schema(conn: Database) -> None:
     # After parliament, because a severity-1 issue escalates through the queue
     # that already exists rather than a second one beside it.
     software_department.init_schema(conn)
+    demonstration.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1736,7 +1737,7 @@ SCHEMA_SOURCES = (
     analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
     governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
     release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
-    software_department.SCHEMA,
+    software_department.SCHEMA, demonstration.SCHEMA,
 )
 
 

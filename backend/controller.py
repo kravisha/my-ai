@@ -509,7 +509,19 @@ class Controller:
         if agent is not None:
             age = fi_db.heartbeat_age_seconds(agent)
             threshold = watch.silence_threshold_seconds(watch.COO_ROLE, COO_SILENCE_THRESHOLD_SECONDS)
-            if age is not None and age < threshold:
+            # A fresh heartbeat means a live process **only if nothing stopped
+            # it** (§159). The case this guard was written for is an unclean
+            # death, where the COO outlives the Controller and nothing writes a
+            # stop - so the row still says `running` and adoption is right.
+            #
+            # A clean shutdown writes `stopped` and leaves a heartbeat seconds
+            # old. Carrying that database into a new run - which is what
+            # persistence *is* - then refused to start a COO on the strength of a
+            # heartbeat from a process the previous shutdown had ended, and the
+            # organization ran without an executive until the heartbeat aged out.
+            # Both facts were in the same row; only one was read.
+            if (age is not None and age < threshold
+                    and agent["process_state"] == fi_db.PROCESS_RUNNING):
                 raise RuntimeError(
                     f"refusing to spawn a second {identity}: one is alive with a "
                     f"{round(age, 1)}s-old heartbeat"
@@ -544,8 +556,23 @@ class Controller:
 
         age = fi_db.heartbeat_age_seconds(agent)
         threshold = watch.silence_threshold_seconds(watch.COO_ROLE, COO_SILENCE_THRESHOLD_SECONDS)
-        if age is not None and age < threshold:
+        # A fresh heartbeat is not a running process, and the difference is the
+        # whole of §159. Adoption exists for the unclean shutdown: this Controller
+        # died, its COO kept running, and spawning a second would duplicate it -
+        # in that case nothing wrote a stop, so the row still says `running`.
+        #
+        # A *clean* shutdown writes `stopped` and the COO's last heartbeat is
+        # seconds old, so a database carried into a new run - which is what
+        # persistence means - presented a COO that looked alive and was not. The
+        # evidence was in the same row and was not consulted.
+        if (age is not None and age < threshold
+                and agent["process_state"] == fi_db.PROCESS_RUNNING):
             return {"coo": "adopted", "heartbeat_age_seconds": round(age, 1)}
+        if age is not None and age < threshold:
+            # Fresh heartbeat, and the process was stopped on purpose. Named
+            # separately from `stale` because they need opposite readings: stale
+            # means nobody has heard from it, this means somebody ended it.
+            return {"coo": "stopped", "heartbeat_age_seconds": round(age, 1)}
         if agent["lifecycle_state"] == fi_db.LIFECYCLE_DORMANT:
             return {"coo": "dormant"}
         return {"coo": "stale", "heartbeat_age_seconds": None if age is None else round(age, 1)}

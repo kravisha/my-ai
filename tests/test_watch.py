@@ -443,3 +443,61 @@ def test_watchers_do_not_close_each_others_incidents(conn):
 
     [incident] = fi_db.list_incidents(conn)
     assert incident["status"] == "open", "the Controller's incident is the Controller's to close"
+
+
+# -- restarting from a database the previous organization left behind -----------
+#
+# Adoption exists for the *unclean* death: this Controller dies, its COO keeps
+# running, and spawning a second would duplicate it. Nothing writes a stop in
+# that case, so the row still says `running`.
+#
+# A clean shutdown writes `stopped` and leaves a heartbeat seconds old. Carrying
+# that database into a new run is what persistence means, and it presented a COO
+# that looked alive and was not - so the organization ran without an executive
+# until the heartbeat aged out. Both facts were in the same row; only one was
+# read (§159). Found by the Demonstration Engine's first full run, on its
+# restart-and-continue act.
+
+
+def test_a_cleanly_stopped_coo_is_not_adopted_however_fresh_its_heartbeat(controller):
+    """The defect. A heartbeat says when the process last spoke; process_state
+    says whether anybody ended it. Adoption needs both."""
+    fi_db.register_agent(controller.conn, "coo-1", "coo", 999)
+    fi_db.record_heartbeat(controller.conn, "coo-1")
+    fi_db.mark_process_stopped(controller.conn, "coo-1")
+
+    verdict = controller.reconcile_on_start()
+
+    assert verdict["coo"] == "stopped", (
+        "a COO the previous shutdown stopped was adopted on the strength of the "
+        "heartbeat it wrote on its way out")
+
+
+def test_a_restart_from_a_stopped_organization_starts_a_coo(controller):
+    """The consequence, which is what actually broke: no executive at all.
+
+    Without this the Controller refuses to spawn, `bootstrap_coo` reads the
+    refusal as a successful adoption, and the organization runs leaderless until
+    the dead COO's heartbeat crosses the staleness threshold."""
+    fi_db.register_agent(controller.conn, "coo-1", "coo", 999)
+    fi_db.record_heartbeat(controller.conn, "coo-1")
+    fi_db.mark_process_stopped(controller.conn, "coo-1")
+
+    controller.bootstrap_coo()
+
+    assert any("agents.coo" in " ".join(args) for args in controller.spawned), (
+        "no COO was started against a database whose organization had shut down")
+
+
+def test_an_unclean_death_still_adopts_the_survivor(controller):
+    """The other side, and the reason the guard cannot simply be removed.
+
+    An unclean death leaves the COO running and nothing writes a stop, so the row
+    still says `running`. Spawning here is the duplication that produced three
+    concurrent processes under one identity."""
+    fi_db.register_agent(controller.conn, "coo-1", "coo", 999)
+    fi_db.record_heartbeat(controller.conn, "coo-1")
+
+    assert controller.reconcile_on_start()["coo"] == "adopted"
+    controller.bootstrap_coo()
+    assert controller.spawned == [], "a live COO must not be duplicated"
