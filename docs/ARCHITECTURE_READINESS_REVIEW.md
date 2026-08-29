@@ -17,7 +17,15 @@ no addendum number.
 > survive and still need a decision: **T1** — the deploy mechanism must exist
 > before the policy that would use it — and **T2** — directive §2 forbids the data
 > repair that doc 02's H1/H2 are built on. The **NO-GO** in §12 stands until those
-> two are answered; **Phase 1 is now explicitly authorized** and underway.
+> two are answered.
+>
+> **Phase 1 is complete** — §154, §155, §156, §157 (TQ-108 through TQ-111).
+> Four of its five items found something this review got wrong, and those
+> corrections are recorded where the findings are, not silently: **B6** named
+> three channels and all three were wrong; **B3**'s real blocker was a
+> conflation this review did not see; **B2** posed a false dilemma with a third
+> option available; **N8** was right about the defect and one instance short on
+> the count. Read each finding with its § before acting on it.
 
 **Method:** the specifications were read in full, then every claim they make
 about the existing system was checked against the source rather than against

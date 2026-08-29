@@ -29,6 +29,7 @@ Internal rationale: INT-PHIL-0018
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 from backend import fi_db, status_events, strategy
@@ -533,6 +534,21 @@ def _population(conn, since: str | None = None) -> dict:
     return {
         "registered": len(rows),
         "roles": sorted({row["role"] for row in rows}),
+        # Per role, because the total cannot answer a question about one role.
+        # `saturation_two_judges` asserted "two judgment agents were staffed" as
+        # `registered at_least 7` - true of the baseline population without any
+        # judgment agent at all once the Speaker and the DBA joined it, so the
+        # property passed with zero and could no longer fail (§157).
+        #
+        # **Zero-filled across every known role**, which is not the plausible
+        # default §100 forbids: the registry is the complete list of registered
+        # agents, so a role absent from it genuinely has none. Leaving it absent
+        # would make a property about that role fail with "no metric at ..."
+        # rather than "0 >= 2" - still a failure, and one that reads as a broken
+        # scenario instead of the staffing failure it is.
+        "registered_by_role": {
+            role: 0 for role in fi_db.ROLE_CHARTERS
+        } | dict(Counter(row["role"] for row in rows)),
         "running_at_end": sorted(r["identity"] for r in rows if r["process_state"] == "running"),
         "crashed": sorted(r["identity"] for r in rows if r["process_state"] == "crashed"),
         "dormant": sorted(r["identity"] for r in rows if r["lifecycle_state"] == "dormant"),

@@ -32,10 +32,19 @@ requires_model: true
 
 expected_properties:
   - name: two judgment agents were staffed
-    metric: population.registered
+    metric: population.registered_by_role.analysis
     assert: at_least
-    value: 7
-    # controller, coo, dummy, explorer, speculator and two analysis agents.
+    value: 2
+    # Asserted on the judgment role alone, because this scenario exists to
+    # compare one judge against two and the total population cannot answer that.
+    #
+    # It read `population.registered at_least 7` until §157, with a comment
+    # enumerating "controller, coo, dummy, explorer, speculator and two analysis
+    # agents". That enumeration was correct when written and stopped being so
+    # when the Speaker and then the DBA joined the baseline: the floor without
+    # any judgment agent at all became seven, so the property passed with zero
+    # analysis agents staffed and could no longer fail. The one property that
+    # exists to observe the thing the scenario is named for.
 
   - name: no report was analysed twice
     metric: pipeline.ungraded_analyses

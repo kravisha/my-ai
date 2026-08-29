@@ -3313,3 +3313,32 @@ real startup. On an earlier run's database, `detector_events` stamps set to 3 an
 
 **Still zero migrations.** The engine has 22 registered stores and no steps — the Knowledge Store
 expansion is unblocked and will be `fi_db`'s 1 → 2, the first real rung outside a test.
+
+### TQ-111 — Re-aim a property that could not fail, and measure the write ceiling
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §157 · `ARCHITECTURE_READINESS_REVIEW.md` N8, N2, R3 ·
+directive §19, §21.11 · `SPEC_RECONCILIATION.md` §149, §93**
+
+Phase 1 items 4 and 5, closing the phase. Both are one idea from opposite ends: **a clean result
+means nothing until you know a dirty one was possible.**
+
+`saturation_two_judges` asserted *"two judgment agents were staffed"* as `population.registered
+at_least 7`, enumerating six baseline roles plus two judges. Correct when written; the Speaker and
+then the DBA raised the floor **without** any judgment agent to seven, so the property passed with
+zero analysis agents. Re-aimed at `population.registered_by_role.analysis at_least 2` — live it
+reports `2 >= 2`, at the boundary, where it previously reported `9 >= 7` on the wrong quantity.
+Sixth instance of the §149 shape. The new metric is zero-filled across known roles so an unstaffed
+role fails with `0 >= 2` rather than *"no metric at ..."*, which would read as a broken scenario.
+
+`simulation/contention.py` measures what SQLite's single writer leaves: N real subprocesses, each
+opening the production `Database` against one file. **8/16/24 writers × 300 writes: zero contended,
+zero lost, zero duplicated, ~3000 writes/sec.** That zero was not reported until the instrument was
+shown to detect the condition — with `FI_DB_BUSY_TIMEOUT_MS=0`, the same run produced **6443
+contended, 757 landed, 0 unaccounted, 0 duplicated**, which also proves the invariant holds while
+contention is happening.
+
+**Nothing acts on the number** (directive §19 wants evidence, not a preference). The one change is
+a name: `Database.Contended`, subclassing `sqlite3.OperationalError` so existing handlers are
+untouched. `database is locked` reaching an agent is indistinguishable from that agent being
+broken, and at Providence's population it would present as several unrelated agents failing at
+once — §93's liveness/progress argument, one subsystem along.

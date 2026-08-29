@@ -20,6 +20,7 @@ except backend/fi_db.py, and every agent module only ever calls fi_db.*
 functions, passing the connection object through opaquely.
 """
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -42,12 +43,56 @@ def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
+# How long a statement waits for SQLite's single writer before giving up.
+#
+# Five seconds is the operating value and is not a guess: it is far longer than
+# any write this system performs, so reaching it means a queue rather than a slow
+# statement. Overridable because a measurement that has never observed the
+# condition it reports cannot say whether it would notice one - the same reason
+# `slow_agent` can stall a model call on demand (§157).
+BUSY_TIMEOUT_MS = int(os.environ.get("FI_DB_BUSY_TIMEOUT_MS", "5000"))
+
+
+class Contended(sqlite3.OperationalError):
+    """A write lost the race for SQLite's single writer.
+
+    A subclass of `sqlite3.OperationalError` rather than a new exception type, so
+    every existing caller that already handles OperationalError keeps handling
+    this unchanged. What it adds is a *name*.
+
+    SQLite admits one writer at a time. Under contention a statement waits up to
+    `busy_timeout` and then raises "database is locked" - which, reaching an
+    agent, is indistinguishable from that agent being broken. At eight agents
+    this never happens. At the population Providence implies it will, and it will
+    present as several unrelated agents becoming unreliable at once, which is the
+    most expensive possible way to learn about write contention.
+
+    So the condition gets a name and can be counted separately. **Naming is all
+    it does.** Nothing retries, nothing backs off, and no caller behaves
+    differently - `simulation/contention.py` measures how often it happens and
+    the number is evidence for a storage decision (directive §19), not a reason
+    to add a retry nobody has justified yet.
+
+    Internal rationale: INT-PHIL-0018
+    """
+
+
+def _as_contended(exc: sqlite3.OperationalError) -> sqlite3.OperationalError:
+    """Re-raise a lock/busy failure under its own name, leaving everything else
+    exactly as it was. SQLite reports both as OperationalError with a message,
+    and the message is the only thing that distinguishes them."""
+    text = str(exc).lower()
+    if "locked" in text or "busy" in text:
+        return Contended(str(exc))
+    return exc
+
+
 class Database:
     def __init__(self, path: str | Path):
-        self._conn = sqlite3.connect(path, timeout=5.0)
+        self._conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._conn.execute("PRAGMA busy_timeout=5000;")
+        self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
         self._in_transaction = False
 
     @contextmanager
@@ -92,16 +137,22 @@ class Database:
     def execute(self, sql: str, params: tuple = ()) -> None:
         """For INSERT/UPDATE/DELETE where the caller doesn't need the new
         row's id back - see execute_returning_id for INSERTs that do."""
-        self._conn.execute(sql, params)
-        self._commit()
+        try:
+            self._conn.execute(sql, params)
+            self._commit()
+        except sqlite3.OperationalError as exc:
+            raise _as_contended(exc) from exc
 
     def execute_returning_id(self, sql: str, params: tuple = ()) -> int:
         """For INSERTs where the caller needs the new row's id - hides
         cursor.lastrowid, SQLite's mechanism for this (a future Postgres
         backend would use INSERT ... RETURNING id instead; that difference
         stays contained to this one method)."""
-        cursor = self._conn.execute(sql, params)
-        self._commit()
+        try:
+            cursor = self._conn.execute(sql, params)
+            self._commit()
+        except sqlite3.OperationalError as exc:
+            raise _as_contended(exc) from exc
         return cursor.lastrowid
 
     def execute_returning_rowcount(self, sql: str, params: tuple = ()) -> int:
@@ -111,8 +162,11 @@ class Database:
         where a rowcount of zero means another process got there first. Without
         this the caller cannot distinguish "I claimed it" from "somebody else
         did", which is the whole point of an atomic claim."""
-        cursor = self._conn.execute(sql, params)
-        self._commit()
+        try:
+            cursor = self._conn.execute(sql, params)
+            self._commit()
+        except sqlite3.OperationalError as exc:
+            raise _as_contended(exc) from exc
         return cursor.rowcount
 
     def fetchone(self, sql: str, params: tuple = ()) -> dict | None:

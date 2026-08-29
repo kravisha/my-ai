@@ -15827,3 +15827,108 @@ has ever walked outside a test.
 One cosmetic thing left alone: the `status` CLI mangles `§` on a Windows console.
 Pre-existing, in the note text, and not worth a code change in an increment about
 data integrity.
+
+---
+
+## §157 — A property that could not fail, and a measurement that had to prove it could see (2026-08-29, TQ-111)
+
+Phase 1 items 4 and 5, which closes the phase. Both are about the same thing from
+opposite ends: a check that reports a clean result says nothing until you know it
+could have reported a dirty one.
+
+### 1. The property that could not fail
+
+`saturation_two_judges` exists to compare one judgment agent against two. Its
+first property — *"two judgment agents were staffed"* — asserted
+`population.registered at_least 7`, with a comment enumerating *"controller, coo,
+dummy, explorer, speculator and two analysis agents"*.
+
+That enumeration was correct when it was written. Then the Speaker joined the
+baseline (§124), and then the DBA (§150), and **the floor without any judgment
+agent at all became seven.** The property passed with zero analysis agents
+staffed. The one property that exists to observe the thing the scenario is named
+for had stopped being able to see it.
+
+This is the §149 shape, and it is the sixth instance. It is also the second of
+the three ways this project keeps getting it wrong showing up in the same place:
+*a test over data does not test the rule that produced the data* (§117), and a
+total population cannot answer a question about one role.
+
+Re-aimed at `population.registered_by_role.analysis at_least 2` — the role the
+scenario is about, at the number it is configured for. Live it reports
+`2 >= 2`: exactly at the boundary, so one judge fewer fails it. Before, the same
+run reported `9 >= 7`, two units of slack on a quantity nobody was asking about.
+
+**Zero-filled across every known role**, which is not §100's forbidden plausible
+default: the registry is the complete list of registered agents, so a role absent
+from it genuinely has none. Left absent, a property about an unstaffed role would
+fail with *"no metric at ..."* — still a failure, and one that reads as a broken
+scenario rather than the staffing failure it is. `tests/test_simulation_metrics.py`
+caught that immediately, against an empty database, which is what that test is for.
+
+### 2. The measurement, and the reason it needed proving
+
+Every agent is a separate OS process against one SQLite file, and SQLite admits
+**one writer**. Nobody had measured how much room that leaves. Directive §19 says
+an infrastructure change needs *"evidence for the change"*, so this is the
+evidence and deliberately nothing else.
+
+`simulation/contention.py` runs N real subprocesses, each opening its own
+`Database` against one file — the production class, the production PRAGMAs, the
+production timeout. A harness with its own connections would measure the harness.
+
+At the operating timeout:
+
+```
+ 8 writers x 300   0 contended   0 lost   0 duplicated   0.84s   ~2850 writes/s
+16 writers x 300   0 contended   0 lost   0 duplicated   1.59s   ~3010 writes/s
+24 writers x 300   0 contended   0 lost   0 duplicated   2.16s   ~3340 writes/s
+```
+
+**That zero is exactly the kind of result this project has learned not to
+believe.** A harness that cannot detect contention reports the same zero as one
+that genuinely found none. So `FI_DB_BUSY_TIMEOUT_MS` makes the wait removable —
+the same move `slow_agent` makes by stalling a model call — and with it at 0:
+
+```
+24 writers x 300   6443 contended   757 landed   0 unaccounted   0 duplicated
+```
+
+The instrument sees the condition. So the zero above is a real zero, and the
+invariant holds *while contention is happening*: every write either landed or
+said it failed, and none landed twice.
+
+**Nothing acts on this.** No retry, no backoff, no pooling. Those are answers to
+a question that has not been asked, and choosing one before the number exists is
+how a system acquires machinery it cannot justify. The number is now on the
+record for the day §19's question is actually put.
+
+### 3. One thing did change, and it is a name
+
+`database is locked` reaching an agent is indistinguishable from that agent being
+broken. At eight agents it never happens; at the population Providence implies it
+will, and it will present as **several unrelated agents becoming unreliable at
+once** — which is the most expensive possible way to learn about write
+contention.
+
+So `Database.Contended` names it. It subclasses `sqlite3.OperationalError`, so
+every existing handler keeps working unchanged, and **naming is all it does**.
+This is §93's argument one subsystem along: a busy agent and a dead one needed
+two signals because one number could not tell them apart, and a contended write
+and a broken agent need the same.
+
+### 4. Phase 1 is closed
+
+| | |
+|---|---|
+| Register the stores | §156 — 22 registered, row stamps separated from store versions |
+| The lease service | §155 — not built; one queue needed it, two never had a claim |
+| Move the sweep | §154 — recovery no longer depends on the role it recovers |
+| Re-aim the property | this section |
+| Measure contention | this section |
+
+Four of the five found something the readiness review had wrong, which is worth
+recording as a fact about reviews rather than about this one: **B6 named three
+channels and all three were wrong, B3's blocker was a conflation the review did
+not see, and N8 was right about the defect and one instance short on the count.**
+The review was still what caused all five to be looked at.
