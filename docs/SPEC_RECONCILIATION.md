@@ -15208,3 +15208,267 @@ Worth recording together: both were the same mistake in different clothes —
   waiting on the implementation view and one waiting on all three are
   distinguishable — which they were not an hour ago, and which is §130's rule
   about one number hiding two situations.
+
+---
+
+## §153 — The owner answers the readiness review, and two contradictions survive it (2026-08-29)
+
+The Architecture Readiness Review (`docs/ARCHITECTURE_READINESS_REVIEW.md`, commit
+`6690597`) put five decisions to the owner and returned NO-GO on the four
+specifications of 2026-08-29. The **Software Department and Self-Evolution
+Implementation Directive** is the answer. It resolves four of the five, changes
+five things already built, and leaves two contradictions that are genuinely policy
+rather than engineering — which its own §21.5 asks to have named rather than
+absorbed.
+
+Nothing in this section is implemented. It is the reconciliation; the increments
+follow.
+
+### 1. The review offered three options and the answer was a fourth
+
+**C1 — what mediates a code change.** The review presented (a) the department
+authors and something external applies, (b) a sandbox, (c) the organization
+deploys its own code, and asked which. The directive does not choose. §1 defines
+an approval spectrum — Mode 0 full human approval through Mode 3 full automatic
+with guardrails — and §20 states the constraint that makes it one architecture
+rather than four:
+
+> *"The system should be built so that increasing autonomy is a POLICY CHANGE, not
+> a REWRITE."*
+
+So (a) is Mode 0, (b) is roughly Mode 2, (c) is Mode 3, and **the mechanism is
+constant while the policy moves.** §1 sets Mode 0 as the initial state and says
+why: *"we do not yet know whether human approval will create a meaningful
+bottleneck."* That is the right initial state and it is not the interesting part.
+
+The interesting part is a consequence the directive does not state. **If the deploy
+mechanism does not exist, moving from Mode 1 to Mode 2 is a rewrite** — which §20
+forbids. The mechanism therefore has to be built while the policy that would use it
+is switched off. Building a code-deployment path into a system operating at Mode 0
+is exactly what `tests/test_release.py`'s forbidden-import list and the
+no-writes-into-`docs/` scan deny.
+
+That is **T1** below, and it is the one thing here that is not mine to decide.
+
+**§3 removes the other half of the question.** *"Do not permanently prohibit the
+Software Engineering Department from modifying particular areas of source code…
+Risk should be managed through classification, testing, approval, rollback, and
+monitoring rather than by creating code areas that can never evolve."* The review
+recommended against option (c) on the grounds that an organization able to rewrite
+the tests constraining it has no constraints. §3 does not contradict that — it
+relocates the control from *what may be touched* to *what must be satisfied before
+touching it*. The distinction is real and it is the better design: a permanent
+exclusion is a rule that cannot adapt, and this system has spent thirteen sections
+learning that rules which cannot adapt get walked around rather than obeyed.
+
+### 2. Three decisions closed here rather than sent back
+
+§21.6 is explicit that ordinary implementation matters should not return to the
+Superuser. Three of the review's questions turn out to be that.
+
+**C2 — knowledge validation.** §14 requires revisability and lists what the store
+must keep. It does not name a validating authority, and it does not need to: this
+project has applied producer-is-not-approver four times — approval, grading, health
+judgement, appeal — and the fifth follows the same shape. A validator is any
+identity that did not contribute the record.
+
+The migration was the harder half, and **the review posed a false dilemma.** It
+offered `active → VALIDATED` (forbidden by doc 01 §18) or `active → CANDIDATE`
+(withdraws the records Analysis reads before every judgment) and concluded neither
+was available. There is a third target that is neither: existing rows become
+**`unvalidated`** — a bootstrap state that reads exactly as `active` reads today
+and asserts no judgment about the content. §18 is satisfied because nothing is
+converted *to validated*. `open_questions_for` is preserved because the rows are
+untouched and still readable. The state is honest about what it is: knowledge
+written before the organization had a way to validate anything.
+
+This is the same move as `agent_identity.REACHABLE_STATES` — name the specified
+vocabulary in full, and be truthful about which values this system can currently
+produce.
+
+**C3 — lifecycle axes.** Not addressed by the directive, which makes it ordinary
+under §21.6. Two axes, as the review recommended: addendum 51 §6's lifecycle
+unchanged, and a separate recovery condition carrying `degraded`, `quarantined`,
+`temporarily_disabled` and `restarting`. Doc 02 §6's own closing sentence is the
+authority for the split.
+
+**X9 — who assesses the self-reliance gate.** §1's *"we will measure actual
+experience"*, §20's *"earn autonomy through demonstrated competence… measurable
+outcomes"*, and §10's Superuser feedback together answer it: the assessor is
+measured outcome plus the Superuser, and never the department about itself. That is
+§119's rule surviving contact with the thing it was written about.
+
+### 3. One decision closed by the directive outright
+
+**B8 — does simulation-earned knowledge reach the live store.** Yes, and firmly.
+§12 makes simulation a learning environment whose whole purpose is that lessons
+survive it; §14 lists *"Simulation outcomes"* and *"Real-world outcomes"* as
+separate items the store must keep. Separate items means both are kept and the
+provenance distinguishes them.
+
+**§115 survives intact**, because what crosses the database boundary is an export
+performed on the run's behalf, not a flag any agent reads. *Isolation is still the
+database.* No agent acquires a code path that differs between training and
+production, which was the whole of §115's argument — the export is not agent code.
+
+**C4 — multiprocessing.** Resolved almost verbatim. §18: *"Where multiprocessing
+already exists in the current implementation, preserve and improve it rather than
+pretending the system is purely single-process."* The review's N1/X4 finding is
+accepted, and doc 03 §5's conversion sequence is now an audit sequence.
+
+### 4. Five things already built that this changes
+
+1. **`register.queue_order` sorts by doctrine and says so** — *"by the doctrine's
+   own rules rather than a score"* — with a note that a priority score was deferred
+   *"until something consumes it"*. Directive §7 requires a transparent scoring
+   system over impact, urgency, risk, effort, strategic fit, expected benefit and
+   dependencies, inspectable by the Superuser. **Not a contradiction: a deferred
+   item coming due.** The doctrine ordering does not disappear — Needs before Wants
+   is a constraint on the score, not a rival to it.
+
+2. **`engineering_work` has an outcome and no baseline.** The column comment says
+   *"whether the intended outcome was achieved. This is the judgement."* Directive
+   §9 requires a baseline, a stated objective, a success metric, a measurement
+   period and a post-change evaluation. Four of the five are absent. This is a
+   schema extension, and it lands behind a migration engine that does not yet
+   govern this store (review **B3**).
+
+3. **Two lifecycles now describe one loop.** Addendum 53 §6's ten steps and
+   directive §8's twenty are the same workflow at two resolutions, and §8 is a
+   **superset, not a replacement**. What it adds has no place in §6: the baseline
+   (step 3), the explicit *is a software change actually required* decision (step
+   5), the approval-policy application (step 14), and steps 16–20 — monitor,
+   measure whether the intended result occurred, record, learn, reopen. The five
+   gates built at §151 sit inside §8 untouched.
+
+4. **Nothing records Superuser feedback.** §10 makes it first-class: thumbs, a 0–10
+   score, comments, a direct statement of dissatisfaction — persisted, attached to
+   the system state or change it concerns, and **revisable** as more behaviour is
+   observed. There is no such store. §10's last line is the one that matters for
+   design: *"Objective metrics do not invalidate Superuser judgment."* So this is
+   not a metric input to be averaged with others; it is its own signal.
+
+5. **§17 is the first thing in this project that argues against change.** *"If a
+   subsystem is consistently meeting its targets… the system should be able to
+   classify it as stable"*, and stable systems are not rewritten because an
+   alternative exists. This is worth having on its own merits, and it partly
+   answers the review's **R9** — a specification set that grows forever — by giving
+   a subsystem a way to say it is finished.
+
+### 5. Two contradictions that remain, named rather than absorbed
+
+Directive §21.4: *"Do not silently overwrite conflicting requirements."* §21.5:
+*"Clearly identify any remaining true contradiction that still requires Superuser
+policy input."* These are those.
+
+#### T1 — the deploy mechanism must exist before the policy that would use it
+
+Stated in §1 above. §20 requires that raising autonomy be a configuration change;
+a mechanism that does not exist cannot be configured on. But the mechanism is a
+write path from the running system into its own repository, and three tripwires
+deny it — `test_release.py`'s forbidden imports, the `docs/` write scan, and
+`backend/version.py` observing the code version without being able to choose it.
+
+**Recommended resolution, not applied.** Build the mechanism in two pieces that
+cannot be recombined by policy alone:
+
+- **Inside the runtime**, the department produces an *approved change record* — the
+  patch, its tests, its review, its baseline and metric, and the approval the active
+  mode requires. This is data. `release.py` keeps its forbidden-import tripwire
+  unchanged, because a governed-data release is still not a code release and §2's
+  code/data separation reinforces that rather than weakening it.
+- **Outside the runtime**, a separate applier entry point consumes an approved
+  record and performs the filesystem write. It is not importable by any agent or
+  backend module, and a tripwire asserts that. What the approval mode changes is
+  *who triggers the applier* — a person at Mode 0, the system at Mode 3.
+
+That satisfies §20 exactly: Mode 0 → Mode 3 becomes a policy change, because the
+mechanism is whole in both and only the trigger moves. And prevention-by-absence
+survives *inside the agent runtime*, which is where it was doing its work.
+
+**What it costs, stated plainly.** The guarantee weakens from *nothing in this
+system can deploy code* to *nothing in the agent runtime can, and one audited
+component outside it can under the active policy.* That is a smaller claim. It is
+also the smallest claim compatible with §20, and pretending otherwise would be the
+charter-written-falsely problem `backend/charter.py` exists to avoid.
+
+**Why this is not mine to decide:** it changes what a standing tripwire guarantees,
+and the review's own **R1** names the failure mode — a tripwire deleted mid-build
+because it failed and read as an obstacle. Doing that by inference, in the same
+session that recommended against it, is exactly the shape of the error.
+
+#### T2 — the directive forbids most of what the healing specification is made of
+
+Directive §2: the department *"must NOT directly edit operational, business,
+portfolio, training, historical, simulation, user, or other application data as a
+normal method of fixing problems"*, and any legitimate correction must occur
+*"through the appropriate application or data-governance mechanism"*.
+
+The healing specification is largely that. §5.1's H1 is `IDENTIFY BAD DATA →
+VALIDATE EXPECTED STATE → REPAIR DATA`. §5.2's H2 is data and state repair plus
+rerun. §15 is a database/state repair flow that captures records, applies a
+*"controlled correction"* and verifies dependent objects. Scenario A is *"Corrupt
+one noncritical data record. Expected: H1 repair with no process restart."*
+
+**Two owner documents dated the same day, and the later forbids the earlier's
+central mechanism.** The word *"uncontrolled"* in §2 leaves room, but §2's
+substance is that code and data are different responsibilities, and H1 as written
+puts both in one department.
+
+**Recommended resolution, not applied.** Keep doc 02's flows and change the actor:
+the Software Engineering Department **detects, diagnoses and specifies** the
+correction; the domain that owns the data **performs** it through its own API. Doc
+02's H1 and H2 survive as diagnostic and coordinating flows rather than as write
+paths.
+
+This is the rare reconciliation that makes the system simpler. The review's **S9**
+asked for a repair authorization boundary — enumerated operations, audit records,
+review by severity — because a general repair path could write any table, and *a
+repair operation that can write any table can write a portfolio into one*. Under
+this resolution there is no general repair path to authorize. §2 does S9's work by
+removing its subject.
+
+**What it costs.** H1's promise of *"no unnecessary process shutdown"* now depends
+on the owning domain exposing a correction API. Where none exists, H1 is
+unavailable and the honest answer is that the domain needs one — which is itself a
+software change, and therefore precisely the department's job under §2. Doc 02's
+Scenario A is not runnable until some domain has such an API.
+
+This narrows doc 02 substantially, so it is recorded rather than performed.
+
+### 6. Still open, and smaller
+
+**N10 — numbering and classification, now covering five documents.** The four
+specifications and this directive remain outside the repository. The classification
+question sharpened rather than resolved: directive §4 and §11 name revenue targets,
+viewership, trading desks, execution attribution and an advertising department, and
+§5 works a worked example through a television station's audience. The boundary
+rule puts strategic rationale on the private side and technical *what* and *how* on
+the public one, and these documents are genuinely both. Nothing has been committed,
+and no addendum number has been claimed.
+
+### 7. What the roadmap becomes
+
+**Phase 0 shrinks to three items** — T1, T2, N10 — from five.
+
+**Phase 1 is unchanged and now explicitly authorized** by §21.11. Its fifth item
+gains a purpose it did not have: §19 makes measured SQLite contention the *evidence*
+for a controlled migration to PostgreSQL, rather than a number recorded for its own
+sake. The review recommended measuring before it is needed; §19 says what the
+measurement is for.
+
+**Four items join the roadmap from the directive**, none blocked by T1 or T2:
+
+| From | Work | Phase |
+|---|---|---|
+| §1, §20 | Approval policy as external, configurable state; the lifecycle identical under every mode | 2 |
+| §7 | A transparent, inspectable priority score over the register's existing doctrine ordering | 2 |
+| §9 | Baseline, objective, metric, measurement period and post-change evaluation on engineering work | 3 |
+| §10 | The Superuser feedback store — persisted, attached, revisable | 3 |
+| §17 | Stability classification, so a subsystem can be declared finished | 5 |
+
+**One thing moves up.** §13's *"an agent that restarts should continue from its
+prior validated state"* makes agent persistence a Phase 1 concern rather than a
+Phase 3 one. The identity to hang it from exists (TQ-97, TQ-99); nothing yet
+carries experience across a restart, and the review recorded that as a partial.
+

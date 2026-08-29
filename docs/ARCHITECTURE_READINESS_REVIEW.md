@@ -9,6 +9,16 @@ and against the system that exists.
 been written. The four documents remain unassimilated in `~/Downloads` and carry
 no addendum number.
 
+> **ANSWERED, 2026-08-29 — read [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) §153 with this.**
+> The owner's *Software Department and Self-Evolution Implementation Directive*
+> resolves **C1** (an approval spectrum, not one of the three options offered),
+> **B8** (simulation knowledge does reach the live store), **C4**, and **X9**.
+> **C2** and **C3** were closed in §153 rather than returned. Two contradictions
+> survive and still need a decision: **T1** — the deploy mechanism must exist
+> before the policy that would use it — and **T2** — directive §2 forbids the data
+> repair that doc 02's H1/H2 are built on. The **NO-GO** in §12 stands until those
+> two are answered; **Phase 1 is now explicitly authorized** and underway.
+
 **Method:** the specifications were read in full, then every claim they make
 about the existing system was checked against the source rather than against
 `JARVIS.md`. Where this review contradicts `JARVIS.md`, the source was read and
