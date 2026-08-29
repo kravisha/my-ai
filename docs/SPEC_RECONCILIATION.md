@@ -15565,3 +15565,130 @@ It does not give the other three channels a lease. `coo_directives`,
 `engineering_work` and `software_issues` still strand work on crash (review
 **B6**), and the fix is the shared lease service, not four more copies of this
 function. This increment moved one caller; it did not build **S2**.
+
+---
+
+## §155 — One claim was unrecoverable, two were never claims, and the review named the wrong table (2026-08-29, TQ-109)
+
+Phase 1 item 2. The readiness review called this *S2, the shared lease service*,
+and said three channels strand work on crash. Investigating properly found
+something narrower and something worse: **one** channel strands, and the review
+had named the wrong table for it.
+
+### 1. What B6 actually got wrong
+
+The review listed `coo_directives`, `engineering_work` and `software_issues` as
+channels with a claim and no expiry. Read against the code, all three are wrong in
+different ways.
+
+**`coo_directives` has no claim.** It goes `pending` → completed, and the archive
+trigger moves the row out. The Controller fetches and completes inside one cycle,
+so a death leaves the row `pending`, which is the *safe* resting state — the
+restarted Controller picks it up. There is nothing to expire.
+
+**`software_issues` has no claim either.** Its statuses are `open` → `reviewed` →
+`corrected` → `closed`, and each is a *completed step* rather than an ownership
+marker. A death leaves the issue at its last finished state, visible to anyone.
+
+**`engineering_work` is the wrong table.** The work row is the engineer's output.
+The thing that gets claimed is `engineering_directives`, and that one is real:
+`claim_next` is a guarded UPDATE setting `status='in_progress'` and `claimed_by`,
+and there was **no `claimed_at` and no sweep.** An engineer that died between
+claiming and delivering left the directive in_progress forever, naming a process
+that no longer existed, invisible to `open_directives`.
+
+So the count is one, not three — and the one that is real was not the one named.
+
+**A review is not evidence either.** This is §136's rule applied to the review
+itself: it read the schema and reasoned about claim expiry without tracing who
+transitions each status. Three of three conclusions were wrong in a document whose
+own §10 warns that a check aimed at the wrong thing passes for the wrong reason.
+
+### 2. The fix, and why it is not a lease service
+
+`engineering_directives` gains `claimed_at`, written by `claim_next` and swept by
+`release_stale_claims` from the COO cycle — the same home and the same rule as
+§154: *the recovery of a queue must not depend on a worker of that queue.*
+
+**No shared lease service was built**, because with two claimed queues and a third
+recovering by row expiry, a service would have two users and three shapes. This
+project's standing rule is that machinery with no user does not get built, and the
+review's S2 assumed three users that do not exist.
+
+**The timeouts deliberately differ, and that is the design.** `fi_db`'s 180s is
+sized against a *measured* judgment cycle — ~19.5s of model call, one observed 42s
+outlier. Engineering's 60s is sized against database work, because `handle` makes
+**no model call**: the ladder's question is answered by the registry that already
+knows whether a mechanism exists (§119). The only unbounded wait in the path is
+SQLite lock contention, capped at `busy_timeout=5000` per statement. Copying 180s
+here would have been inheriting a justification that does not apply, so a test
+asserts the two cannot quietly converge on one number fitting neither.
+
+### 3. What actually lasts: the claim registry
+
+A third sweep function would not have prevented this and will not prevent the
+next one. `discovery_reports` learned about abandoned claims at TQ-45;
+`engineering_directives` was written afterwards, with `claimed_by` and no
+`claimed_at`, and nothing noticed for two increments — including a readiness
+review looking directly for this defect.
+
+So `tests/test_claim_recovery.py` **scans the DDL for claim-shaped columns and
+requires every table carrying one to declare how its claims come back.** A future
+table that grows `claimed_*` fails the suite until somebody says how an abandoned
+claim recovers. The failure mode being silent is exactly why the guard has to fire
+when the claim is *introduced* rather than when someone notices a queue went
+quiet.
+
+Three properties make it more than a list:
+
+- **The registry may not name a table that has no claim.** A registry
+  accumulating dead entries keeps passing while describing a system that no
+  longer exists — §149's shape, which this file exists to prevent rather than add.
+  It also makes the scan non-vacuous: a scanner that found nothing would fail
+  here, because all three entries would read as stale.
+- **Every entry states what its timeout was sized against.** Three timing
+  constants in this project have been wrong by being guessed.
+- **The COO must call both sweeps**, asserted by AST over its source, with the
+  module set compared exactly — dropping one while keeping the other still
+  satisfies a bare membership check.
+
+`portfolio_analysis_requests` is declared with **no sweep and a reason**: it
+recovers by row expiry, and that is correct there rather than a gap. A client
+request that outlived its session must not be resurrected and served — §111's rule
+that the database is a transport, not a store.
+
+**One schema list, two readers.** The scan needs every module's DDL, and
+`apply_additive_migrations` already maintained exactly that tuple. A second
+hand-maintained copy in the test would drift, and drift here means a table whose
+claim nobody checks — so the tuple became `fi_db.SCHEMA_SOURCES` and both read it.
+The migration walker keeps it honest under a different pressure: a module missing
+from it silently loses column migrations.
+
+### 4. Live, and the part that could not be shown
+
+`FI_ENGINEERING_CLAIM_TIMEOUT_SECONDS=30`, `baseline_steady_state`: 96 COO cycles,
+both sweeps called every cycle, no errors, 13/13 properties. The additive
+migration was then run against a **real database created before the column
+existed** — one of this morning's run directories — and `claimed_at` was added to
+it, which is the failure `apply_additive_migrations` exists for and the one that
+would have surfaced at runtime as *no such column*.
+
+**The abandoned-directive condition itself was not produced live, and the reason
+is worth more than the fix.**
+
+`engineering.receive` — the only way a directive enters the department — **has no
+production caller.** Nothing in the running organization files one. The engineer
+is an on-demand role staffed only when a directive waits, and no directive can
+arrive, so the agent is never spawned. The department's whole intake is reachable
+from tests and from nowhere else.
+
+This is consistent with what was already recorded — §119 established that
+directives arrive through Evolution and that Evolution does not exist — but the
+practical consequence is sharper than the documentation states, and it is stated
+here: **the Software Engineering Department has never been exercised by a running
+organization.** Every scenario in the library runs without it. The stranding fixed
+in this increment was real in the code and unreachable in production, and both
+halves of that sentence matter.
+
+So this increment fixed a defect that could not yet bite, and found that the
+department it belongs to is not connected to anything. The second is the finding.

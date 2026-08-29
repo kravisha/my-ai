@@ -3226,3 +3226,44 @@ judgment cycle so claims go stale on demand; `baseline_steady_state` then logged
 passing. The production constant is unchanged at 180s, measured against a 42s worst case — the
 run lowered it the way `slow_agent` stalls a model call, because **a green run over a condition
 that never happened is not evidence about the condition.**
+
+### TQ-109 — Make every claim recoverable, and keep it that way
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §155 · `ARCHITECTURE_READINESS_REVIEW.md` B6, S2 ·
+directive §21.11 · `SPEC_RECONCILIATION.md` §134, §136, §149, §154**
+
+Phase 1 item 2, and the review was wrong about all three channels it named.
+
+`coo_directives` has **no claim** — pending → completed in one Controller cycle, so a death
+leaves the safe state. `software_issues` has **no claim** — its statuses are completed steps, not
+ownership. And the claimed table in engineering is `engineering_directives`, not
+`engineering_work`: `claim_next` set `status='in_progress'` and `claimed_by` with **no
+`claimed_at` and no sweep**, so an engineer that died holding a directive stranded it forever,
+invisible to `open_directives`. One real defect, and not the one named — *a review is not
+evidence either* (§136).
+
+**Fixed** with `claimed_at` plus `release_stale_claims`, swept from the COO cycle on §154's rule.
+**No lease service was built:** two claimed queues and a third recovering by row expiry is not
+three users, and machinery with no user does not get built. The timeouts differ deliberately —
+180s is sized against a measured 42s model call, 60s against database work, because `handle`
+makes no model call at all. A test asserts they cannot converge on one number fitting neither.
+
+**The durable part is the claim registry.** `tests/test_claim_recovery.py` scans the DDL for
+`claimed_*` columns and fails until every table carrying one declares how its claims come back.
+It is guarded against being vacuous from both directions: the registry may not name a table with
+no claim, so a scanner finding nothing goes red rather than green. `fi_db.SCHEMA_SOURCES` now
+serves both the scan and the additive-migration walker, because a second hand-maintained copy
+would drift and drift here is a claim nobody checks.
+
+**The finding is bigger than the fix.** `engineering.receive` has **no production caller** —
+nothing in the running organization files a directive, the engineer is on-demand and therefore
+never spawned, and no scenario touches the department at all. §119 recorded that directives
+arrive through an Evolution department that does not exist; the consequence, stated plainly for
+the first time, is that **the Software Engineering Department has never been exercised by a
+running organization.** This increment fixed something real in the code and unreachable in
+production.
+
+**Live:** 96 COO cycles with both sweeps called and no errors, 13/13 properties; and the additive
+migration run against a real pre-change database from an earlier run, which is the *no such
+column* failure it exists to prevent. The abandoned-directive condition itself could not be
+produced live, for the reason above.

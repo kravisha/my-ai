@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import appeal, fi_db, software_department, status_events, remediation, risk, strategy
+from backend import appeal, engineering, fi_db, software_department, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -631,6 +631,14 @@ def _coo_work(conn) -> None:
     reclaimed = fi_db.release_stale_claims(conn)
     if reclaimed:
         print(f"[COO] returned {reclaimed} abandoned report(s) to the queue")
+    # The same rule, one queue along (§155). An engineer that dies holding a
+    # directive leaves it 'in_progress' with claimed_by naming a process that is
+    # gone, and `open_directives` stops seeing it - so an authorized directive silently
+    # stops being worked. The timeout differs from the report one by design:
+    # engineering makes no model call, so it is sized against database work.
+    released = engineering.release_stale_claims(conn)
+    if released:
+        print(f"[COO] returned {released} abandoned engineering directive(s) to the queue")
     # One line, not the whole performance card. This ran every cycle dumping a
     # dict repr of every agent - invisible while agent stdout was block-buffered
     # into the log redirect, and ~1.5KB/s of noise the moment that was fixed.

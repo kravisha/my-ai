@@ -1717,6 +1717,24 @@ def _reconcile_triggers(conn: Database) -> list[str]:
     return changed
 
 
+# Every module's DDL, in one place.
+#
+# The additive-column walker needs it because a module missing from this tuple
+# silently loses migration support - a column added to its schema reaches fresh
+# databases and no deployed one. `tests/test_claim_recovery.py` needs the same
+# list to find tables carrying a claim, and a second hand-maintained copy there
+# would drift out of step with this one. One tuple, two readers (§155).
+SCHEMA_SOURCES = (
+    SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
+    reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
+    workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
+    analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
+    governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
+    release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
+    software_department.SCHEMA,
+)
+
+
 def apply_additive_migrations(conn: Database) -> list[str]:
     """Add columns that SCHEMA declares but an existing database does not have.
 
@@ -1750,15 +1768,7 @@ def apply_additive_migrations(conn: Database) -> list[str]:
     Strategic Priority Register did; status_events.SCHEMA joined it the day
     the status event stream did."""
     applied = _reconcile_triggers(conn)
-    for table, columns in _declared_columns(
-        (SCHEMA, identifiers.SCHEMA, observations.SCHEMA, risk.SCHEMA, strategy.SCHEMA,
-         reference_data.SCHEMA, missions.SCHEMA, register.SCHEMA, status_events.SCHEMA,
-         workspace.SCHEMA, coo_identity.SCHEMA, migrations.SCHEMA,
-         analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
-         governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
-         release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
-         software_department.SCHEMA)
-    ).items():
+    for table, columns in _declared_columns(SCHEMA_SOURCES).items():
         existing = {row["name"] for row in conn.fetchall(f"PRAGMA table_info({table})")}
         if not existing:
             continue  # table did not exist; executescript just created it in full

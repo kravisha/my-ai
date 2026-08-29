@@ -12,6 +12,8 @@ from __future__ import annotations
 import inspect
 import json
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from agents import software_engineer
@@ -334,3 +336,69 @@ def test_a_directive_that_binds_one_role_affects_only_that_role(governed_conn):
     impact = json.loads(engineering.get_work(governed_conn, result["work_id"])["impact"])
     assert impact["roles_affected"] == ["analysis"]
     assert "explorer" not in impact["roles_affected"]
+
+
+# -- abandoned claims ---------------------------------------------------------
+#
+# `claim_next` is a guarded UPDATE, which is what makes two engineers safe. It
+# also introduced a way to lose a directive that did not exist before it: an
+# engineer that dies between claiming and delivering leaves the row in_progress
+# with claimed_by naming a process that is gone, and `open_directives` stops seeing it.
+# The organization's own authorized directive then stops being worked, silently.
+
+
+def _age_claim(conn, directive_id: int, seconds: float) -> None:
+    stale = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    conn.execute("UPDATE engineering_directives SET claimed_at = ? WHERE id = ?",
+                 (stale, directive_id))
+
+
+def test_an_abandoned_directive_returns_to_the_open_queue(governed_conn):
+    directive_id = _directive(governed_conn)
+    engineering.claim_next(governed_conn, "engineer-1")
+    _age_claim(governed_conn, directive_id, engineering.CLAIM_TIMEOUT_SECONDS + 30)
+
+    assert engineering.release_stale_claims(governed_conn) == 1
+    assert [d["id"] for d in engineering.open_directives(governed_conn)] == [directive_id]
+    assert engineering.get_directive(governed_conn, directive_id)["claimed_by"] is None
+
+
+def test_a_directive_still_within_the_timeout_is_left_alone(governed_conn):
+    """Taking a working engineer's directive would produce two proposals for one
+    decision - the exact duplication the guarded claim exists to prevent."""
+    directive_id = _directive(governed_conn)
+    engineering.claim_next(governed_conn, "engineer-1")
+    _age_claim(governed_conn, directive_id, engineering.CLAIM_TIMEOUT_SECONDS / 2)
+
+    assert engineering.release_stale_claims(governed_conn) == 0
+    assert engineering.open_directives(governed_conn) == []
+
+
+def test_a_released_directive_can_be_claimed_by_another_engineer(governed_conn):
+    directive_id = _directive(governed_conn)
+    engineering.claim_next(governed_conn, "engineer-1")
+    _age_claim(governed_conn, directive_id, engineering.CLAIM_TIMEOUT_SECONDS + 30)
+    engineering.release_stale_claims(governed_conn)
+
+    reclaimed = engineering.claim_next(governed_conn, "engineer-2")
+    assert reclaimed is not None and reclaimed["claimed_by"] == "engineer-2"
+
+
+def test_claiming_records_when_the_claim_was_taken(governed_conn):
+    """claimed_by without claimed_at is a claim nothing can age out. The column
+    existed alone until §155, which is why the stranding was invisible."""
+    directive_id = _directive(governed_conn)
+    engineering.claim_next(governed_conn, "engineer-1")
+
+    assert engineering.get_directive(governed_conn, directive_id)["claimed_at"] is not None
+
+
+def test_the_engineering_timeout_is_not_the_judgment_timeout(governed_conn):
+    """Sized against database work, because `handle` makes no model call.
+
+    fi_db's 180s is justified against a measured 42s model call; copying it here
+    would inherit a justification that does not apply. Asserted so the two cannot
+    quietly converge on one number that fits neither."""
+    assert engineering.CLAIM_TIMEOUT_SECONDS < fi_db.CLAIM_TIMEOUT_SECONDS
+    # Well above `Database`'s 5s busy_timeout, the only unbounded wait in the path.
+    assert engineering.CLAIM_TIMEOUT_SECONDS > 5 * 5

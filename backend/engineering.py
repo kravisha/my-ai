@@ -59,6 +59,8 @@ Sits below `fi_db`, so it must not import it.
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timedelta, timezone
 
 from backend import governed_knowledge, parliament
 from backend.db import Database, now_iso
@@ -84,7 +86,12 @@ CREATE TABLE IF NOT EXISTS engineering_directives (
     -- honest value says Evolution's relay does not exist.
     arrived_via TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
-    claimed_by TEXT
+    claimed_by TEXT,
+    -- When the claim was taken, so an abandoned one can be recognised. Without
+    -- this an engineer that died holding a directive left it 'in_progress'
+    -- forever: claimed_by named an agent that no longer exists, and nothing
+    -- looked. See release_stale_claims below (§155).
+    claimed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS engineering_directives_open ON engineering_directives (status, id);
 
@@ -270,12 +277,54 @@ def claim_next(conn: Database, engineer: str) -> dict | None:
             "SELECT * FROM engineering_directives WHERE status = ? ORDER BY id",
             (STATUS_OPEN,)):
         won = conn.execute_returning_rowcount(
-            "UPDATE engineering_directives SET status = ?, claimed_by = ?"
+            "UPDATE engineering_directives SET status = ?, claimed_by = ?, claimed_at = ?"
             " WHERE id = ? AND status = ?",
-            (STATUS_IN_PROGRESS, engineer, row["id"], STATUS_OPEN))
+            (STATUS_IN_PROGRESS, engineer, now_iso(), row["id"], STATUS_OPEN))
         if won:
             return get_directive(conn, row["id"])
     return None
+
+
+# How long a claim on a directive may stand before it is treated as abandoned.
+#
+# Justified structurally rather than measured, because there is nothing here to
+# measure: `handle` makes **no model call**. The ladder's question is answered by
+# the registry that already knows whether a mechanism exists (§119), so the whole
+# claim-to-completion path is database work. The only unbounded wait in it is
+# SQLite lock contention, and `Database` caps that at `busy_timeout=5000` per
+# statement; `handle` issues a handful. Sixty seconds is an order of magnitude
+# above that structural worst case and still returns an abandoned directive
+# within a minute.
+#
+# Deliberately far below `fi_db.CLAIM_TIMEOUT_SECONDS` (180s), and the difference
+# is the point: that one is sized against a measured 42s model call. Copying it
+# here would be inheriting a justification that does not apply.
+CLAIM_TIMEOUT_SECONDS = float(os.environ.get("FI_ENGINEERING_CLAIM_TIMEOUT_SECONDS", "60"))
+
+
+def release_stale_claims(conn: Database, timeout_seconds: float | None = None) -> int:
+    """Return directives abandoned mid-work to the open queue.
+
+    `claim_next` is a guarded UPDATE, which makes two engineers safe and
+    introduced a way to lose a directive that did not exist before: an engineer
+    that dies between claiming and delivering leaves the row `in_progress` with
+    `claimed_by` naming a process that is gone. `open_directives` does not see it, so
+    the organization's own authorized directive stops being worked and nothing
+    reports it.
+
+    Called from the COO cycle, never from an engineer - the recovery of a queue
+    must not depend on a worker of that queue (§154). This is the second
+    application of that rule and the reason the first one was worth generalising.
+
+    Resolved at call time rather than bound as a default argument, so changing
+    the constant does not require a reimport."""
+    if timeout_seconds is None:
+        timeout_seconds = CLAIM_TIMEOUT_SECONDS
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+    return conn.execute_returning_rowcount(
+        "UPDATE engineering_directives SET status = ?, claimed_by = NULL, claimed_at = NULL"
+        " WHERE status = ? AND claimed_at IS NOT NULL AND claimed_at < ?",
+        (STATUS_OPEN, STATUS_IN_PROGRESS, cutoff))
 
 
 def record_assessment(conn: Database, directive_id: int, *, engineer: str,
