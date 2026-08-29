@@ -3267,3 +3267,49 @@ production.
 migration run against a real pre-change database from an earlier run, which is the *no such
 column* failure it exists to prevent. The abandoned-directive condition itself could not be
 produced live, for the reason above.
+
+### TQ-110 — Register every store, and separate the two things called schema_version
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §156 · `ARCHITECTURE_READINESS_REVIEW.md` B3, S3 ·
+directive §21.11 · addendum 42 §9, §23 · `SPEC_RECONCILIATION.md` §89**
+
+Phase 1 item 1, the largest, and blocked by something the review did not see.
+
+The engine registered **2 stores against 66 tables**, so `status()` reported a complete picture
+of 8% of the database. Registering the rest was blocked because `Store`'s version contract was
+implemented over the **per-row `schema_version` column** — `MAX` for one store, `MIN` for the
+other, and a writer issuing `UPDATE <table> SET schema_version = ?` across every row.
+
+**Those are two different things wearing one name.** `fi_db.SCHEMA_VERSION`'s own comment says
+bump it *"when the meaning of newly-written rows changes in a way a future reader/grader needs to
+distinguish from older rows"* — rows at 2, 3 and 7 coexist on purpose, because a v3
+`detector_event` names the lens that produced it and a v2 one does not. Extending the existing
+pattern to those tables would restamp every historical row on the first migration and destroy
+exactly what a grader reads them for. A duller consequence of the same confusion: `SCHEMA_VERSION`
+is 7 while those tables have never been migrated, so registering it as `code_version` would send
+the runner hunting six rungs that do not exist.
+
+**`store_schema_versions` now holds the store version and nothing touches the row stamps.**
+Twenty-two stores, one per module rather than one per table, with table lists derived from each
+module's DDL so they cannot drift. `fi_db` registers itself because `migrations` sits below it;
+the engine's own two tables are deliberately not a store, since an engine that versioned its own
+audit trail would need itself working to repair itself.
+
+**Backfill refuses to guess.** `BACKFILL_VERSION` is a constant and not `code_version`: stamping
+whatever the code says would assert an unknown database is already current. Once any store moves
+past 1 an untracked database could be anywhere between, and either guess corrupts — so
+`AmbiguousVersion` is raised. The guard cannot fire today; it is written for the day it can.
+
+**A distinction that was true by accident** is now true on purpose: `created` and `present` were
+one question while the version was an aggregate over rows, because an empty table had no
+`MAX(schema_version)`. `present` is now computed from whether any table holds a row.
+
+**Two tripwires, both observed failing.** Unregistering `parliament` names all six of its tables;
+restoring the row-stamp writer fails the stamp test over rows at 3 and 7.
+
+**Live:** 13/13 properties, and the run's own database carries 22 store versions all written by a
+real startup. On an earlier run's database, `detector_events` stamps set to 3 and 7 came out
+`[(3, 31), (7, 32)]` unchanged with `fi_db` at store version 1.
+
+**Still zero migrations.** The engine has 22 registered stores and no steps — the Knowledge Store
+expansion is unblocked and will be `fi_db`'s 1 → 2, the first real rung outside a test.

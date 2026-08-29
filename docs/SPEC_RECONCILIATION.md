@@ -15692,3 +15692,138 @@ halves of that sentence matter.
 
 So this increment fixed a defect that could not yet bite, and found that the
 department it belongs to is not connected to anything. The second is the finding.
+
+---
+
+## §156 — Two things were called schema_version, and the engine governed 8% of the database (2026-08-29, TQ-110)
+
+Phase 1 item 1, and the largest. The readiness review's **B3**: the migration
+engine registered two stores while sixty-six tables existed, so the first real
+migration — the Knowledge Store expansion — would have run against an
+unregistered store, and `status()` reported a complete picture of 8% of the
+database with nothing saying so.
+
+Registering the rest turned out to be blocked by something else, and that is most
+of this section.
+
+### 1. The conflation
+
+`Store` requires `read_version` and `write_version`. Both existing stores
+implemented them over the **per-row `schema_version` column**:
+
+```
+_workspace_version : SELECT MAX(schema_version) FROM workspace_state
+_identity_version  : SELECT MIN(schema_version) FROM coo_identity
+write              : UPDATE <table> SET schema_version = ?
+```
+
+Two aggregates, already disagreeing with each other, and a writer that rewrites
+every row. On a one-row identity that is harmless. Extended to `fi_db` it is not,
+and `fi_db.SCHEMA_VERSION`'s own comment says exactly why:
+
+> *"Bump only when the **meaning** of newly-written rows changes in a way a future
+> reader/grader needs to distinguish from older rows."*
+
+Rows at 2, 3 and 7 coexist **deliberately**. A v3 `detector_event` records which
+lens produced it and a v2 one records only a threshold value, and a grader
+reading old rows depends on telling them apart. Applying the existing pattern to
+those tables would restamp every historical row with today's number on the first
+migration — destroying the provenance the column exists to carry, silently, and
+visibly wrong only to a grader months later.
+
+**They are two different things wearing one name.** A row stamp is heterogeneous
+by design and never rewritten. A store version is one value for a body of state,
+rewritten on migration. So `store_schema_versions` now holds the second, and
+nothing touches the first.
+
+There is a second, duller consequence of the same confusion.
+`fi_db.SCHEMA_VERSION` is **7**, and its tables have never been migrated once.
+Registering the row stamp as `code_version` would have sent the runner looking
+for six rungs that do not exist and — correctly — refusing to start, about a
+question nobody had asked.
+
+### 2. One store per module
+
+Twenty-two stores, not sixty-six. A module's tables are created by one
+`executescript` and change together; twenty-two is a registry somebody reads and
+sixty-six is a wall. Table lists are **derived from each module's DDL** rather
+than typed out, because a hand-kept list drifts and drift here is a table the
+engine does not know it is versioning.
+
+`fi_db` registers itself, because `migrations` sits below it and must not import
+it. The engine's own two tables are deliberately **not** a store: a migration
+engine that versioned its own audit trail would need itself working in order to
+repair itself.
+
+### 3. Backfill, and refusing to guess
+
+An existing database has tables and no recorded version. Something has to decide
+what version it is at, and the honest answer is available only because of a fact
+that will not stay true: **every registered store is at code version 1 with no
+steps**, so a database that predates version tracking genuinely is at 1 — there
+has never been a migration for it to have missed.
+
+So `BACKFILL_VERSION` is a constant, deliberately **not** `store.code_version`.
+Stamping "whatever the code says" would assert that an unknown database is
+already current, which is the one assumption a migration engine must never make.
+And the moment a store's code version passes the backfill version, an untracked
+database could be anywhere between the two — either guess corrupts, one by
+skipping a conversion and one by re-applying it — so `AmbiguousVersion` is raised
+instead. The guard cannot fire today. It is written for the day it can.
+
+### 4. A distinction that was true by accident
+
+`status()` reported `created` (the table is here) and `present` (there is state
+in it). Those were one question while the version was `MAX(schema_version)` over
+rows: an empty table had no aggregate, so *no data* and *no version* were the
+same answer — correct, and for the wrong reason.
+
+Separating the version separated them, and both are worth keeping: a store
+created and empty is the ordinary state of most of this database, and a store
+whose tables are missing is the upgrade case the engine exists for. `present` is
+now computed from whether any of the store's tables holds a row, which is what it
+always meant.
+
+### 5. The tripwire
+
+`test_every_module_that_owns_tables_is_a_registered_store` compares the tables in
+`fi_db.SCHEMA_SOURCES` against the tables the registry claims, and fails on any
+that belong to no store. **Observed failing** by unregistering `parliament`,
+which named all six of its tables.
+
+`test_a_migration_does_not_touch_the_row_stamps` is the finding encoded: it
+migrates a store wired the way every registered store now is, over rows stamped 3
+and 7, and asserts the stamps come out untouched while the store's version moves
+1 → 3. **Observed failing** by restoring the old row-stamp writer.
+
+Both matter more than the registration itself. Registration is a state; these are
+what keep it true.
+
+### 6. Live
+
+`baseline_steady_state`, 13/13 properties, and afterwards the run's own database
+carries **22 store versions, all `source='backfill'`** — written by a real
+organization starting up, not by a test. `python -m backend.migrations status`
+against that database reports all twenty-two, distinguishing *up to date* from
+*no state stored yet*.
+
+Separately, on a database from an earlier run today: rows in `detector_events`
+were set to stamps 3 and 7, `init_schema` was run, and the stamps came out
+`[(3, 31), (7, 32)]` — unchanged — with `fi_db` recorded at store version 1. That
+is the defect this section is about, tested against real data rather than a
+fixture.
+
+### 7. What this does not do
+
+No store declares a migration step, because none has changed shape. The engine
+still has no real user; it has twenty-two registered stores waiting to become
+one, which is twenty more than yesterday and the same number of actual migrations
+as before: zero.
+
+The **Knowledge Store expansion is now unblocked** — it was B3's whole purpose —
+and when it lands it will be `fi_db`'s 1 → 2, the first genuine rung this project
+has ever walked outside a test.
+
+One cosmetic thing left alone: the `status` CLI mangles `§` on a Windows console.
+Pre-existing, in the note text, and not worth a code change in an increment about
+data integrity.

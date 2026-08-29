@@ -272,16 +272,89 @@ def test_a_dry_run_changes_nothing(conn, probe):
 
 
 def test_the_registered_stores_are_up_to_date_and_say_why(conn):
-    """Both real stores are at version 1 with no steps. "No migrations
-    registered" and "migrations forgotten" look identical from an empty dict,
-    so each store carries a note saying which it is."""
+    """Every store is at version 1 with no steps. "No migrations registered" and
+    "migrations forgotten" look identical from an empty dict, so each carries a
+    note saying which it is."""
     report = {entry["store"]: entry for entry in migrations.status(conn)}
-    assert set(report) == {"workspace", "coo_identity"}
-    assert report["coo_identity"]["stored_version"] == coo_identity.SCHEMA_VERSION
+    assert {"workspace", "coo_identity", "fi_db", "parliament"} <= set(report)
     assert report["coo_identity"]["needs_migration"] is False
-    for entry in report.values():
-        assert entry["note"], "a store with no migrations must say why it has none"
+    for name, entry in report.items():
+        assert entry["note"], f"{name} has no migrations and does not say why"
+        assert entry["stored_version"] == migrations.get(name).code_version, (
+            f"{name} is not at the version this build expects")
     assert migrations.pending(conn) == []
+
+
+def test_the_store_version_is_not_the_row_stamp(conn):
+    """The distinction §156 exists for, pinned so it cannot quietly collapse.
+
+    `fi_db.SCHEMA_VERSION` is 7 and means *what the code meant when it wrote this
+    row* - rows at 2, 3 and 7 coexist deliberately, because a v3 detector_event
+    records which lens produced it and a v2 one does not. The store version says
+    what shape the tables are in, and they have never been migrated. Registering
+    the row stamp as the store version would send the runner looking for six
+    rungs that do not exist."""
+    assert fi_db.SCHEMA_VERSION > 1, "this test is pointless if the two cannot differ"
+    assert migrations.get("fi_db").code_version == 1
+
+
+def test_every_module_that_owns_tables_is_a_registered_store(conn):
+    """The tripwire the readiness review asked for (B3).
+
+    A module that creates tables and is not registered is a body of state the
+    engine cannot version, validate, back up or migrate - and nothing would say
+    so. It reported a complete picture of two stores out of twenty-two before
+    TQ-110, which is the failure mode: a status command that looks comprehensive
+    and covers 8% of the database."""
+    registered_tables = set()
+    for store in migrations.stores():
+        registered_tables.update(store.tables or (store.table,))
+
+    declared = set()
+    for schema in fi_db.SCHEMA_SOURCES:
+        declared.update(migrations.tables_in(schema))
+
+    # The engine's own bookkeeping is deliberately not a store: a migration
+    # engine that versioned its own audit trail would need itself working in
+    # order to repair itself.
+    declared -= set(migrations.tables_in(migrations.SCHEMA))
+
+    assert not declared - registered_tables, (
+        f"tables belong to no registered store: {sorted(declared - registered_tables)}. "
+        "The migration engine cannot version, validate or back up what it does not "
+        "know about, and status() would report a complete picture without them.")
+
+
+def test_a_migration_does_not_touch_the_row_stamps(conn, probe):
+    """The defect the store-version table was introduced to prevent.
+
+    The first two stores kept their version in the same per-row column that
+    carries provenance, so writing a version meant `UPDATE ... SET schema_version`
+    across every row. On a one-row identity that is harmless; on fi_db's tables it
+    would restamp historical rows with today's number and destroy the thing a
+    grader reads them for - silently, and only visibly wrong months later.
+
+    So this migrates a store wired the way every registered store now is, over
+    rows whose stamps genuinely differ, and asserts the stamps come out untouched
+    while the store's own version moves."""
+    _with(probe,
+          read_version=migrations._recorded_version("probe", ("probe",)),
+          write_version=migrations._record_version("probe"))
+    conn.execute("UPDATE probe SET schema_version = 3 WHERE id = 1")
+    conn.execute("INSERT INTO probe (id, value, schema_version) VALUES (2, 'later', 7)")
+    migrations._record_version("probe", source="backfill")(conn, 1)
+    before = [r["schema_version"] for r in
+              conn.fetchall("SELECT schema_version FROM probe ORDER BY id")]
+    assert before == [3, 7], "the fixture must have heterogeneous stamps or this proves nothing"
+
+    results = migrations.migrate(conn, store_name="probe", backup=False)
+
+    assert results[0]["action"] == "migrated"
+    after = [r["schema_version"] for r in
+             conn.fetchall("SELECT schema_version FROM probe ORDER BY id")]
+    assert after == before, "a migration rewrote row stamps that carry provenance"
+    assert conn.fetchone(
+        "SELECT version FROM store_schema_versions WHERE store = 'probe'")["version"] == 3
 
 
 def test_a_store_with_no_state_is_not_a_store_that_needs_migrating(conn):
@@ -384,7 +457,7 @@ def test_reset_clears_state_at_a_development_stage(conn, monkeypatch, tmp_path):
 
     outcome = migrations.reset(conn, backup=False)
 
-    assert set(outcome["cleared"]) == {"workspace", "coo_identity"}
+    assert {"workspace", "coo_identity"} <= set(outcome["cleared"])
     assert coo_identity.load(conn) is None
     assert workspace.load(conn)["restored"] is False
 
@@ -575,3 +648,62 @@ def test_a_successful_heartbeat_lands_in_both_places(conn):
     )["last_heartbeat_at"] is not None
     card = {row["identity"]: row for row in fi_db.get_performance_card(conn)}
     assert card["dummy-10"]["heartbeat_count"] == 1
+
+
+# --- backfilling a database that predates version tracking --------------------------
+
+
+def test_backfill_records_version_one_for_stores_that_already_exist(conn):
+    """Every registered store is at code version 1 with no steps, so a database
+    that predates this tracking genuinely is at 1 - there has never been a
+    migration for it to have missed."""
+    conn.execute("DELETE FROM store_schema_versions")
+
+    recorded = migrations.backfill_store_versions(conn)
+
+    assert "fi_db" in recorded and "parliament" in recorded
+    rows = conn.fetchall("SELECT store, version, source FROM store_schema_versions")
+    assert {r["version"] for r in rows} == {1}
+    assert {r["source"] for r in rows} == {"backfill"}
+
+
+def test_backfill_leaves_a_recorded_version_alone(conn):
+    """It runs on every startup. A backfill that overwrote what it found would
+    reset a migrated store to 1 on the next boot, which is the corruption this
+    whole module exists to prevent."""
+    migrations._record_version("fi_db")(conn, 1)
+    conn.execute("UPDATE store_schema_versions SET version = 4 WHERE store = 'fi_db'")
+
+    migrations.backfill_store_versions(conn)
+
+    assert conn.fetchone(
+        "SELECT version FROM store_schema_versions WHERE store = 'fi_db'")["version"] == 4
+
+
+def test_backfill_refuses_to_guess_once_a_store_has_moved(conn, probe):
+    """The guard that keeps `BACKFILL_VERSION` honest.
+
+    Stamping 1 is only correct while every store is *at* 1. Once a store's code
+    version is past the backfill version, an untracked database could be anywhere
+    between the two - and either guess corrupts: assume the top and a conversion
+    is skipped, assume the bottom and one is re-applied."""
+    conn.execute("DELETE FROM store_schema_versions")
+    _with(probe,
+          read_version=migrations._recorded_version("probe", ("probe",)),
+          write_version=migrations._record_version("probe"))
+
+    with pytest.raises(migrations.AmbiguousVersion, match="probe"):
+        migrations.backfill_store_versions(conn)
+
+
+def test_a_store_whose_tables_are_absent_is_not_backfilled(conn):
+    """Absence is not version 1. A store that has never existed here has no
+    version, and inventing one would claim a conversion history it never had."""
+    conn.execute("DELETE FROM store_schema_versions")
+    conn.execute("DROP TABLE appeals")
+
+    recorded = migrations.backfill_store_versions(conn)
+
+    assert "appeal" not in recorded
+    assert conn.fetchone(
+        "SELECT 1 FROM store_schema_versions WHERE store = 'appeal'") is None

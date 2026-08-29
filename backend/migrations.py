@@ -80,10 +80,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from backend import coo_identity, status_events, workspace
+from backend import (agent_identity, analysis_requests, appeal, client_profile,
+                     coo_identity, curriculum, engineering, governed_knowledge,
+                     identifiers, missions, observations, operating_context,
+                     parliament, reference_data, release, risk,
+                     register as register_store, software_department,
+                     status_events, strategy, workspace)
 from backend.db import Database, now_iso
 from backend.version import code_version
 
@@ -122,6 +128,33 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 CREATE INDEX IF NOT EXISTS schema_migrations_by_store ON schema_migrations (store, id);
+
+-- What shape each store is in *now*. One row per store, written only by the
+-- runner after validation (§23's activation moment).
+--
+-- This exists because the per-row `schema_version` column that most tables
+-- carry is **a different thing wearing the same name**, and using it as a store
+-- version destroys what it is for. `fi_db.SCHEMA_VERSION` says so in terms:
+-- bump it "when the *meaning* of newly-written rows changes in a way a future
+-- reader/grader needs to distinguish from older rows". Rows at v2, v3 and v7
+-- coexist deliberately - a v3 detector_event records which lens produced it and
+-- a v2 one does not, and a grader reading old rows depends on being able to
+-- tell. A store version is the opposite: one value for the whole table, rewritten
+-- on migration.
+--
+-- The first two registered stores conflated them, and their writers issue
+-- `UPDATE <table> SET schema_version = ?` across every row. On a single-row
+-- identity that is harmless. Applied to fi_db's tables it would restamp every
+-- historical row with today's number and erase the provenance the column exists
+-- to carry - silently, and only visibly wrong to a grader months later (§156).
+CREATE TABLE IF NOT EXISTS store_schema_versions (
+    store TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    -- How this store's version came to be known: 'backfill' for a database that
+    -- predates version tracking, 'migration' for one the runner moved.
+    source TEXT NOT NULL
+);
 """
 
 
@@ -177,6 +210,11 @@ class Store:
     inspect: Callable[[Database], list[dict]]
     migrations: dict[int, Callable[[Database], None]] = field(default_factory=dict)
     note: str = ""
+    # Every table this store owns, when it owns more than one. `table` stays the
+    # representative - the one whose presence answers "has this store ever
+    # existed here" - because a module's tables are created together by one
+    # executescript, so any of them existing means all of them do.
+    tables: tuple[str, ...] = ()
 
 
 _REGISTRY: dict[str, Store] = {}
@@ -197,20 +235,125 @@ def get(name: str) -> Store:
     return _REGISTRY[name]
 
 
-# --- the two real stores ---------------------------------------------------------
+# --- store versions, kept apart from row stamps -----------------------------------
+#
+# See `store_schema_versions` in SCHEMA above for why these are two different
+# things. Everything registered below reads and writes its version here; nothing
+# touches a row's own `schema_version`, ever.
+
+# What a store is assumed to be at when its tables exist and the engine has never
+# recorded a version for it. Deliberately a constant rather than the store's
+# `code_version`: stamping "whatever the code says" would assert that an unknown
+# database is already current, which is the one assumption a migration engine
+# must never make.
+BACKFILL_VERSION = 1
+
+
+class AmbiguousVersion(RuntimeError):
+    """A store's tables exist, no version was ever recorded, and the code is past
+    the backfill version - so the database could be at any version between them.
+
+    Refused rather than guessed, on §23's rule. The remedy is a person deciding
+    which version this database is actually at and recording it."""
+
+
+def _recorded_version(store_name: str, tables: tuple[str, ...]):
+    """Read a store's version from `store_schema_versions`.
+
+    Returns None when the store has never existed in this database, which the
+    runner reads as "nothing to migrate" rather than as a fault."""
+
+    def read(conn: Database) -> int | None:
+        if not any(table_exists(conn, name) for name in tables):
+            return None
+        row = conn.fetchone(
+            "SELECT version FROM store_schema_versions WHERE store = ?", (store_name,))
+        return None if row is None else int(row["version"])
+
+    return read
+
+
+def _record_version(store_name: str, source: str = "migration"):
+    def write(conn: Database, version: int) -> None:
+        conn.execute(
+            "INSERT INTO store_schema_versions (store, version, recorded_at, source) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(store) DO UPDATE SET version = excluded.version, "
+            "recorded_at = excluded.recorded_at, source = excluded.source",
+            (store_name, version, now_iso(), source))
+
+    return write
+
+
+def _rows_in(tables: tuple[str, ...]):
+    def inspect(conn: Database) -> list[dict]:
+        out = []
+        for name in tables:
+            if table_exists(conn, name):
+                out.append({"table": name, "rows": conn.fetchone(
+                    f"SELECT COUNT(*) AS n FROM {name}")["n"]})
+        return out
+
+    return inspect
+
+
+def _tables_present(store_name: str, tables: tuple[str, ...]):
+    """The honest generic validator: the tables this store declares are there.
+
+    Deliberately shallow. A validator that invented content rules it had not been
+    asked for would fail databases that are fine, and `migrate` refuses to
+    proceed on a validation failure - so a wrong validator here is an outage, not
+    a warning. The two stores with real content invariants keep their own."""
+
+    def validate(conn: Database) -> list[str]:
+        missing = [name for name in tables if not table_exists(conn, name)]
+        if missing and len(missing) != len(tables):
+            return [f"{store_name}: tables created together are not all present: {missing}"]
+        return []
+
+    return validate
+
+
+def backfill_store_versions(conn: Database) -> list[str]:
+    """Record `BACKFILL_VERSION` for registered stores whose tables exist and
+    whose version was never tracked.
+
+    Run at startup, once per database. Every store registered today is at code
+    version 1 with no migration steps, so a database that predates this tracking
+    genuinely is at 1 - there has never been a migration for it to have missed.
+    That is only true while `code_version` is 1, which is why the alternative is
+    refused rather than assumed."""
+    recorded = []
+    for store in stores():
+        names = store.tables or (store.table,)
+        if not any(table_exists(conn, name) for name in names):
+            continue  # store has never existed here; nothing to backfill
+        if conn.fetchone("SELECT 1 FROM store_schema_versions WHERE store = ?", (store.name,)):
+            continue
+        if store.code_version > BACKFILL_VERSION:
+            raise AmbiguousVersion(
+                f"{store.name} exists in this database with no recorded schema version, and this "
+                f"build is at version {store.code_version}. The database could be at any version "
+                f"between {BACKFILL_VERSION} and {store.code_version}, and guessing either way "
+                "would hand new code an old shape or skip a conversion. Record the correct "
+                "version in store_schema_versions before starting."
+            )
+        _record_version(store.name, source="backfill")(conn, BACKFILL_VERSION)
+        recorded.append(store.name)
+    return recorded
+
+
+# --- the two stores with content invariants ---------------------------------------
 #
 # Both at version 1 with no steps, because neither has changed shape yet. Said
 # in `note` rather than left to be inferred from an empty dict: "no migrations
 # registered" and "migrations forgotten" look identical otherwise.
-
-
-def _workspace_version(conn: Database) -> int | None:
-    row = conn.fetchone("SELECT MAX(schema_version) AS v FROM workspace_state")
-    return None if row is None or row["v"] is None else int(row["v"])
-
-
-def _workspace_write_version(conn: Database, version: int) -> None:
-    conn.execute("UPDATE workspace_state SET schema_version = ?", (version,))
+#
+# Their `validate` and `inspect` are specific because there is something real to
+# check - one COO, parseable payloads. Their version reading is not: it moved to
+# `store_schema_versions` with everything else, because the readers they had
+# aggregated a per-row column (MAX for one, MIN for the other - already
+# inconsistent) and the writers overwrote every row's stamp.
 
 
 def _workspace_validate(conn: Database) -> list[str]:
@@ -227,15 +370,6 @@ def _workspace_validate(conn: Database) -> list[str]:
 def _workspace_inspect(conn: Database) -> list[dict]:
     return conn.fetchall(
         "SELECT surface, schema_version, revision, updated_at, payload FROM workspace_state")
-
-
-def _identity_version(conn: Database) -> int | None:
-    row = conn.fetchone("SELECT MIN(schema_version) AS v FROM coo_identity")
-    return None if row is None or row["v"] is None else int(row["v"])
-
-
-def _identity_write_version(conn: Database, version: int) -> None:
-    conn.execute("UPDATE coo_identity SET schema_version = ?", (version,))
 
 
 def _identity_validate(conn: Database) -> list[str]:
@@ -266,9 +400,10 @@ def _identity_inspect(conn: Database) -> list[dict]:
 register(Store(
     name="workspace",
     table="workspace_state",
+    tables=("workspace_state",),
     code_version=workspace.SCHEMA_VERSION,
-    read_version=_workspace_version,
-    write_version=_workspace_write_version,
+    read_version=_recorded_version("workspace", ("workspace_state",)),
+    write_version=_record_version("workspace"),
     validate=_workspace_validate,
     inspect=_workspace_inspect,
     migrations={},
@@ -281,15 +416,95 @@ register(Store(
 register(Store(
     name="coo_identity",
     table="coo_identity",
+    tables=("coo_identity", "coo_identity_history"),
     code_version=coo_identity.SCHEMA_VERSION,
-    read_version=_identity_version,
-    write_version=_identity_write_version,
+    read_version=_recorded_version("coo_identity", ("coo_identity", "coo_identity_history")),
+    write_version=_record_version("coo_identity"),
     validate=_identity_validate,
     inspect=_identity_inspect,
     migrations={},
     note="No migrations registered: Kumbhakarnan's row has not changed shape since it was "
          "created at version 1 (§88).",
 ))
+
+
+# --- every other store that owns tables -------------------------------------------
+#
+# Registered because a store whose first registration happens on the day it
+# migrates is a store whose registration is untested - the same argument that put
+# this whole module in place before anything needed it, extended one step. Until
+# TQ-110 the engine governed two of twenty-three, so `status()` reported a
+# complete picture of 8% of the database and nothing said so.
+#
+# All at code version 1 with no steps. `code_version` here is **not** the module's
+# `SCHEMA_VERSION`: that constant is the row stamp (see `store_schema_versions`),
+# and fi_db's is at 7 while its tables have never been migrated once. Conflating
+# them would make the runner try to walk 1 -> 7 through six rungs that do not
+# exist, and correctly refuse to start.
+
+
+def tables_in(schema: str) -> tuple[str, ...]:
+    """The tables a module's DDL creates, in declaration order.
+
+    Derived rather than listed, because a hand-kept list drifts the moment
+    somebody adds a table - and drift here is a table the engine does not know it
+    is versioning."""
+    return tuple(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", schema))
+
+
+def register_module(name: str, schema: str, *, note: str) -> Store:
+    """Register a module's tables as one store.
+
+    One store per module rather than per table, because a module's tables are
+    created by one `executescript` and change together; twenty-three stores is a
+    registry somebody reads, and sixty-six is a wall."""
+    names = tables_in(schema)
+    if not names:
+        raise ValueError(f"{name} declares no tables; nothing to register")
+    return register(Store(
+        name=name,
+        table=names[0],
+        tables=names,
+        code_version=1,
+        read_version=_recorded_version(name, names),
+        write_version=_record_version(name),
+        validate=_tables_present(name, names),
+        inspect=_rows_in(names),
+        migrations={},
+        note=note,
+    ))
+
+
+_NEVER_MIGRATED = ("No migrations registered: this store has not changed shape since "
+                   "version 1.")
+
+for _name, _schema in (
+    ("agent_identity", agent_identity.SCHEMA),
+    ("analysis_requests", analysis_requests.SCHEMA),
+    ("appeal", appeal.SCHEMA),
+    ("client_profile", client_profile.SCHEMA),
+    ("curriculum", curriculum.SCHEMA),
+    ("engineering", engineering.SCHEMA),
+    ("governed_knowledge", governed_knowledge.SCHEMA),
+    ("identifiers", identifiers.SCHEMA),
+    ("missions", missions.SCHEMA),
+    ("observations", observations.SCHEMA),
+    ("operating_context", operating_context.SCHEMA),
+    ("parliament", parliament.SCHEMA),
+    ("reference_data", reference_data.SCHEMA),
+    ("register", register_store.SCHEMA),
+    ("release", release.SCHEMA),
+    ("risk", risk.SCHEMA),
+    ("software_department", software_department.SCHEMA),
+    ("status_events", status_events.SCHEMA),
+    ("strategy", strategy.SCHEMA),
+):
+    register_module(_name, _schema, note=_NEVER_MIGRATED)
+
+# `fi_db` is registered from fi_db itself: this module sits below it and must not
+# import it. `migrations.SCHEMA`'s own two tables are deliberately not a store -
+# they are the engine's bookkeeping, and a migration engine that versioned its own
+# audit trail would need itself working in order to repair itself.
 
 
 # --- reading the situation --------------------------------------------------------
@@ -302,6 +517,19 @@ def table_exists(conn: Database, table: str) -> bool:
     "not created here" rather than an exception dressed up as corruption."""
     return conn.fetchone(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)) is not None
+
+
+def _has_state(conn: Database, store: Store) -> bool:
+    """Whether any of this store's tables holds a row.
+
+    Asked separately from the version since §156 split them. Cheap enough for a
+    CLI: one `LIMIT 1` per table, stopping at the first hit."""
+    for name in (store.tables or (store.table,)):
+        if not table_exists(conn, name):
+            continue
+        if conn.fetchone(f"SELECT 1 FROM {name} LIMIT 1") is not None:
+            return True
+    return False
 
 
 def plan(store: Store, stored: int) -> list[tuple[int, int]]:
@@ -356,12 +584,18 @@ def status(conn: Database) -> list[dict]:
             continue
 
         entry.update({"stored_version": stored, "readable": True})
+        # `created` is "the tables are here"; `present` is "there is state in
+        # them". They were one question while the version was an aggregate over
+        # rows - an empty table had no MAX(schema_version), so "no data" and "no
+        # version" were the same answer by accident. With the version in its own
+        # table they separate, and both are worth reporting: a store created and
+        # empty is the ordinary state of most of this database, and a store whose
+        # tables are missing is an upgrade case (§156).
+        entry["created"] = True
+        entry["present"] = _has_state(conn, store)
         if stored is None:
-            entry.update({"present": False, "created": True, "needs_migration": False,
-                          "steps": [], "problems": []})
+            entry.update({"needs_migration": False, "steps": [], "problems": []})
         else:
-            entry["present"] = True
-            entry["created"] = True
             try:
                 steps = plan(store, stored)
                 entry.update({"needs_migration": bool(steps), "steps": steps, "problem": None})

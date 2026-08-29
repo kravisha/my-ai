@@ -1628,6 +1628,11 @@ def init_schema(conn: Database) -> None:
     # and any future reader might is a second source of truth for whose money
     # this is, which is exactly what a system that stores nothing must not grow.
     apply_additive_migrations(conn)
+    # Stamp a store version for anything created before the engine tracked one.
+    # After additive migrations, so a database being brought up to date is
+    # recorded at the version it has actually reached rather than the one it had
+    # on arrival (TQ-110).
+    migrations.backfill_store_versions(conn)
     _seed_static_metadata(conn)
 
 
@@ -1733,6 +1738,24 @@ SCHEMA_SOURCES = (
     release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
     software_department.SCHEMA,
 )
+
+
+# This module's own tables, as a migration store (TQ-110).
+#
+# Registered here rather than in `migrations` because that module sits below this
+# one and must not import it.
+#
+# `code_version=1` and **not** `SCHEMA_VERSION`, which is 7. The two numbers mean
+# different things and the distinction is the whole of §156: `SCHEMA_VERSION` is
+# the stamp written onto each row saying what the code meant when it wrote it, and
+# rows at 2, 3 and 7 coexist on purpose. The store version says what shape these
+# tables are in, and they have never been migrated. Registering 7 here would make
+# the runner look for six rungs that do not exist and refuse to start - correctly,
+# about a question nobody asked.
+migrations.register_module(
+    "fi_db", SCHEMA,
+    note="No migrations registered: these tables have never changed shape. Note that "
+         "SCHEMA_VERSION is 7 and is a per-row stamp, not this store's version.")
 
 
 def apply_additive_migrations(conn: Database) -> list[str]:
