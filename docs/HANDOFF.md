@@ -15,7 +15,7 @@ went stale).
 | **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. It is maintained under addendum 47 and kept honest by `tests/test_living_documentation.py`. |
 | **This file** | Where the last session stopped and what to do next. Nothing else. |
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 147 sections, newest last. |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 148 sections, newest last. |
 
 ## Run these first
 
@@ -26,7 +26,7 @@ git status --porcelain
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **2862 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
+Expect **2873 passed, 8 skipped, 5 deselected**. Use `.venv/Scripts/python.exe`,
 never bare `python` — the system Python has no dependencies.
 
 The 8 skips are deliberate and named where they are declared.
@@ -204,9 +204,9 @@ thing here that genuinely needs a model to read text — so the seam where a mod
 answers has to be in the design from the first line, along with what happens when
 none is reachable.
 
-**TQ-99 — join the personnel record to `agent_id`.** TQ-97 introduced the id
-beside `agent_names` rather than under it, so two notions of "the durable agent"
-have now coexisted for several increments. That is the state 47 §5 forbids.
+**TQ-92 — read the cooperation the organization already records**, or **TQ-101**
+(the Personal Usher, half-built in the Gateway). TQ-99 is done (§148): `agent_id`
+is now the key the personnel record hangs from.
 
 **Read §147 before trusting anything in §146.** TQ-104 found that its own
 premise was false: grading was already independent, and

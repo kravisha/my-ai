@@ -529,6 +529,13 @@ another agent** — enforced against the whole history rather than the current
 binding, because a name that changes hands makes every older sentence about it
 ambiguous.
 
+The personnel record hangs from `agent_id` since TQ-99 (§148): `agent_names`,
+`agent_assignments` and `personnel_events` all carry it, and **a renamed agent
+keeps one continuous history** where before a rename split the folder in two.
+Existing bindings are backfilled on registration, backdated to when the name was
+bound — an identity dated at backfill would report every agent as created the
+moment somebody restarted the system.
+
 The last name is **derived, never stored**. Addendum 51 §2's *"Jack Explore Agent
 1"* is a first name plus the desk's designation, so *Jack Explorer Agent 1*
 becomes *Jack Reporter Agent 1* by moving desk — addendum 50 §12's career path,
@@ -1102,7 +1109,7 @@ constructed. [`model_registry.yaml`](model_registry.yaml) records what has been
 
 ## 12. Where the system actually stands
 
-**Test suite: 2,862 passing, 8 skipped** (2026-08-28). The skips are deliberate
+**Test suite: 2,873 passing, 8 skipped** (2026-08-29). The skips are deliberate
 and named.
 
 A green suite is not evidence the system works. Every real defect found in this

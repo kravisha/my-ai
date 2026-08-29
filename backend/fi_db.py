@@ -1062,6 +1062,11 @@ CREATE TABLE IF NOT EXISTS agent_names (
     assigned_to_identity TEXT UNIQUE,
     assigned_at TEXT,
     reserved INTEGER NOT NULL DEFAULT 0,
+    -- The agent that holds this name (TQ-99, addendum 51 §3). **The durable key.**
+    -- The name is what a person calls the agent and is changeable; this is not.
+    -- Backfilled lazily on registration, like the assignment span below and for
+    -- the same reason - see agent_identity.ensure_for_name.
+    agent_id TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -1088,6 +1093,10 @@ CREATE TABLE IF NOT EXISTS agent_names (
 -- resuming it must not need a fresh assignment.
 CREATE TABLE IF NOT EXISTS agent_assignments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Who held the desk, durably (TQ-99). `name` stays beside it because the
+    -- span is also a historical record of what the agent was *called* at the
+    -- time, and a rename must not rewrite what the record said then.
+    agent_id TEXT,
     name TEXT NOT NULL,
     identity TEXT NOT NULL,
     role TEXT NOT NULL,
@@ -1123,6 +1132,7 @@ CREATE INDEX IF NOT EXISTS agent_assignments_by_name ON agent_assignments (name,
 -- log has gaps.
 CREATE TABLE IF NOT EXISTS personnel_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT,
     name TEXT NOT NULL,
     event_kind TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -2608,9 +2618,10 @@ def open_assignment(
             "silently evict an agent."
         )
     return conn.execute_returning_id(
-        "INSERT INTO agent_assignments (name, identity, role, started_at, ended_at, reason, schema_version) "
-        "VALUES (?, ?, ?, ?, NULL, ?, ?)",
-        (name, identity, role or _role_of(conn, identity), started_at or _now(), reason, SCHEMA_VERSION),
+        "INSERT INTO agent_assignments (agent_id, name, identity, role, started_at, ended_at, "
+        "reason, schema_version) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+        (agent_id_for_name(conn, name), name, identity, role or _role_of(conn, identity),
+         started_at or _now(), reason, SCHEMA_VERSION),
     )
 
 
@@ -2667,7 +2678,19 @@ def current_assignment(
 
 
 def assignment_history(conn: Database, name: str) -> list[dict]:
-    """Every span this agent has held, oldest first. The open one is last."""
+    """Every span this agent has held, oldest first. The open one is last.
+
+    **Read through the durable id where there is one** (TQ-99), so an agent that
+    was renamed keeps one continuous history instead of two partial ones under
+    two names. Falls back to the name for a database whose spans have not been
+    backfilled yet - which is the state until that agent next registers, and
+    returning nothing in the meantime would lose the history rather than defer
+    it."""
+    agent_id = agent_id_for_name(conn, name)
+    if agent_id:
+        return [dict(row) for row in conn.fetchall(
+            "SELECT * FROM agent_assignments WHERE agent_id = ? ORDER BY started_at, id",
+            (agent_id,))]
     return [
         dict(row)
         for row in conn.fetchall(
@@ -2718,6 +2741,10 @@ def personnel_record(conn: Database, name: str) -> dict | None:
 
     return {
         "name": name,
+        # The durable key (TQ-99). A folder identified only by a name is one that
+        # a rename splits in two, which is why addendum 51 §3 asks for an
+        # identifier independent of the display name.
+        "agent_id": row["agent_id"],
         "current": {
             "identity": current["identity"] if current else None,
             "role": current["role"] if current else None,
@@ -2925,6 +2952,9 @@ def assign_agent_name(conn: Database, identity: str, role: str | None = None) ->
         # Backfill path as well as the respawn path. A database created before
         # agent_assignments existed has bindings but no spans, and this is where
         # they acquire one - on the next registration, without a migration step.
+        # TQ-99 adds the second backfill for the same reason: bindings older than
+        # `agent_identities` acquire their durable id here.
+        _ensure_identity(conn, existing["name"])
         _ensure_assignment(conn, existing["name"], identity, role)
         return existing["name"]
 
@@ -2946,8 +2976,54 @@ def assign_agent_name(conn: Database, identity: str, role: str | None = None) ->
     confirmed = conn.fetchone("SELECT name FROM agent_names WHERE assigned_to_identity = ?", (identity,))
     if confirmed is None:
         return None
+    _ensure_identity(conn, confirmed["name"])
     _ensure_assignment(conn, confirmed["name"], identity, role)
     return confirmed["name"]
+
+
+def _ensure_identity(conn: Database, name: str) -> str:
+    """Give this name's agent a durable id, if it does not have one yet (TQ-99).
+
+    **The correction TQ-97 deferred for one increment and owed for five.** That
+    increment introduced `agent_id` *beside* `agent_names` rather than under it,
+    so two answers to "which is the durable agent" coexisted - the state addendum
+    47 §5 forbids, and §122 spent a whole increment undoing three cases of.
+
+    Backdated to when the name was actually bound, never to now. The reason is
+    `_ensure_assignment`'s, one layer along: an identity created at backfill time
+    would report every agent as having come into existence the moment somebody
+    restarted the system, and the creation date is exactly the fact a persistent
+    identity exists to carry (addendum 51 §5).
+
+    Idempotent, and it has to be: this runs on every registration and every
+    respawn."""
+    from backend import agent_identity
+
+    row = conn.fetchone("SELECT agent_id, assigned_at FROM agent_names WHERE name = ?", (name,))
+    if row is None:
+        raise ValueError(f"no agent named {name!r}")
+    if row["agent_id"]:
+        return row["agent_id"]
+
+    agent_id = agent_identity.ensure_for_name(conn, name, created_at=row["assigned_at"])
+    conn.execute("UPDATE agent_names SET agent_id = ? WHERE name = ?", (agent_id, name))
+    # Spans and personnel events written before this column existed belong to the
+    # same agent. Stamped here rather than left NULL, because a history half
+    # keyed by id and half by name is the drift this increment exists to end.
+    for table in ("agent_assignments", "personnel_events"):
+        conn.execute(f"UPDATE {table} SET agent_id = ? WHERE name = ? AND agent_id IS NULL",
+                     (agent_id, name))
+    return agent_id
+
+
+def agent_id_for_name(conn: Database, name: str) -> str | None:
+    """The durable id behind a name, or None if the name is unheld.
+
+    The one resolver. Callers that hold a name and need the agent go through
+    this rather than joining `agent_names` themselves, so there is one place the
+    two are related."""
+    row = conn.fetchone("SELECT agent_id FROM agent_names WHERE name = ?", (name,))
+    return row["agent_id"] if row and row["agent_id"] else None
 
 
 def _ensure_assignment(conn: Database, name: str, identity: str, role: str | None) -> None:

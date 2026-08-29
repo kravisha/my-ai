@@ -14551,3 +14551,100 @@ case cannot detect that the rule is a tautology.
 `test_the_real_pipeline_does_not_trip_the_check` is now pinned for exactly that:
 the shape the organization actually produces, which the shipped check would have
 failed.
+
+## §148 — The personnel record joined to the durable id, and a debt held four increments too long (2026-08-29, TQ-99)
+
+TQ-97 introduced `agent_id` **beside** `agent_names` rather than under it. The
+queue entry said so at the time and said why: *"held deliberately for one
+increment so the identity could be built and tested without a migration in the
+same change."*
+
+It was held for five — through TQ-98, TQ-102, TQ-103 and TQ-104. Two answers to
+*which is the durable agent* coexisted the whole time, which is the state addendum
+47 §5 forbids and the one §122 spent an entire increment undoing three cases of.
+**Recording the length of the hold matters more than recording the fix**: a
+deliberate deviation with a stated expiry is a reasonable trade, and the same
+deviation four increments later is drift with a good story attached.
+
+### 1. What the join actually buys
+
+One property, and it could not hold before:
+
+> **A renamed agent keeps one continuous personnel history.**
+
+`assignment_history` was keyed by the display name, so a rename split an agent's
+folder in two: the spans stayed under the old name and nothing under the new one
+found them. Addendum 51 §3 asks for an identifier *independent of display name*
+for exactly this reason, and until now this system had the identifier and did not
+join the history to it.
+
+`agent_names`, `agent_assignments` and `personnel_events` all carry `agent_id`
+now, `assignment_history` and `personnel_record` read through it, and
+`agent_id_for_name` is the one place a name and an agent are related.
+
+### 2. The backfill follows the pattern this file already had
+
+No migration store, no converter. `_ensure_identity` runs on registration, exactly
+where `_ensure_assignment` already ran, and for the reason that function gives:
+*"they acquire one on the next registration, without a migration step."*
+
+**Backdated to when the name was bound, never to now.** `_ensure_assignment`
+records what the alternative costs — spans starting at backfill time place every
+prior hour of work outside every span, attributed to nobody — and an identity
+dated at backfill would make the same claim about the agent itself, reporting
+every agent as having come into existence the moment somebody restarted the
+system. The creation date is precisely the fact a persistent identity exists to
+carry (addendum 51 §5).
+
+`ensure_for_name` deliberately does **not** go through `create()`, which refuses
+a name any agent has ever held. That rule is right for a fresh assignment and
+wrong here: a name in `agent_names` with no identity behind it is not a reused
+name, it is a name from before identities existed, and refusing it would make the
+backfill impossible.
+
+### 3. What a rename now moves, and what it must not
+
+A rename moves the **pool binding** — `agent_names.agent_id` and the desk — so
+`agent_id_for_name` answers for the name the agent actually holds. Without it the
+resolver would answer for a name the agent had left and answer nothing for the
+one it had taken, which is the drift in a new place rather than the drift fixed.
+
+It moves **nothing else**. Spans and personnel events keep the name they were
+written under, because *what the record said at the time is a fact*, and they are
+found by `agent_id`. That is the existing rule about work provenance — no work row
+is denormalised against a name, and personnel history is derived by intersecting
+timestamps with the span that contained them — extended to the personnel record
+itself.
+
+And the released name is **not returned to the pool**. A name that changed hands
+would make every older sentence about it ambiguous.
+
+`test_work_stays_attributed_across_a_rename` pins both halves: a rename must not
+move work and must not lose it.
+
+### 4. One denormalisation, with the invariant asserted
+
+`agent_names.agent_id` and `agent_identities.first_name` are two views of one
+fact. That is the arrangement 47 §5 warns about, and it is kept rather than
+eliminated because the pool is a real separate concern — *which of the forty names
+exist and which are spent* is not the same question as *what is this agent
+called*.
+
+So the invariant is a test rather than an assumption, exercised across a
+registration, a rename and a second agent, because a check over one row cannot
+show the two staying in step. Live in a baseline run: seven agents, seven
+identities, seven spans, none unkeyed, no disagreement.
+
+### 5. What this does not do
+
+- **Nothing renames anything in production.** `rename` exists and is exercised
+  only by tests; the property it protects is available and unexercised, which is
+  the same honest state TQ-102's right to appeal is in.
+- **`agent_identities` still carries only identity.** Addendum 47 §14's role
+  history, experience, training history and performance history remain unbuilt —
+  the anchor exists and has nothing hanging from it beyond the assignment spans
+  this increment joined to it.
+- **`agent_names.assigned_to_identity` is still written**, and is now a cache of
+  the open span rather than a source of truth. Not removed: SQLite makes dropping
+  a column awkward, and a column nothing reads is cheaper than a migration nobody
+  needs. It is named here so a later reader does not mistake it for authority.

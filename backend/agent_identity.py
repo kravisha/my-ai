@@ -238,6 +238,31 @@ def rename(conn: Database, agent_id: str, *, first_name: str, reason: str) -> No
             "INSERT INTO agent_name_history (agent_id, first_name, held_from, reason)"
             " VALUES (?, ?, ?, ?)",
             (agent_id, first_name, stamp, reason.strip()))
+        # The name pool moves with the agent (TQ-99). `agent_names` records which
+        # of the forty names are taken and by whom; leaving the binding on the old
+        # row would make `fi_db.agent_id_for_name` answer for a name this agent no
+        # longer holds and answer nothing for the one it does.
+        #
+        # The old row keeps `agent_id` NULL and is **not** returned to the pool:
+        # `create` refuses a name any agent has ever held, so a released name stays
+        # spent. That is deliberate - a name that changed hands would make every
+        # older sentence about it ambiguous.
+        desk = conn.fetchone(
+            "SELECT assigned_to_identity FROM agent_names WHERE agent_id = ?", (agent_id,))
+        conn.execute(
+            "UPDATE agent_names SET agent_id = NULL, assigned_to_identity = NULL"
+            " WHERE agent_id = ?", (agent_id,))
+        conn.execute(
+            "INSERT INTO agent_names (name, assigned_to_identity, assigned_at, reserved,"
+            " agent_id, schema_version) VALUES (?, ?, ?, 0, ?, 1)"
+            " ON CONFLICT (name) DO UPDATE SET assigned_to_identity = excluded.assigned_to_identity,"
+            " assigned_at = excluded.assigned_at, agent_id = excluded.agent_id",
+            (first_name, desk["assigned_to_identity"] if desk else None, stamp, agent_id))
+        # Spans and personnel events keep the name they were written under - what
+        # the record said at the time is a fact - and are found by `agent_id`.
+        conn.execute("UPDATE agent_assignments SET agent_id = ? WHERE agent_id IS NULL"
+                     " AND name = (SELECT first_name FROM agent_identities WHERE agent_id = ?)",
+                     (agent_id, agent_id))
 
 
 def set_lifecycle(conn: Database, agent_id: str, state: str) -> None:
@@ -351,3 +376,54 @@ def names_of(conn: Database, agent_id: str) -> list[dict]:
 def roster(conn: Database) -> list[dict]:
     return conn.fetchall(
         "SELECT * FROM agent_identities WHERE retired_at IS NULL ORDER BY created_at, agent_id")
+
+
+def ensure_for_name(conn: Database, first_name: str, *, created_at: str | None = None) -> str:
+    """The agent called this, creating it if the name predates identities (TQ-99).
+
+    **The lazy-backfill path**, and it is the shape `fi_db._ensure_assignment`
+    already uses for the same reason: a database whose names were bound before
+    `agent_identities` existed acquires its ids on the next registration, without
+    a migration step and without a converter that has to be right on its first
+    ever run.
+
+    `created_at` backdates the identity to when the name was actually bound.
+    Left to `now()`, every agent that predates TQ-97 would appear to have been
+    created at the moment somebody happened to restart the system - and
+    `_ensure_assignment` records what that costs: spans starting at backfill time
+    place every prior hour of work outside every span, attributed to nobody.
+
+    Idempotent by construction: `by_name` answers first, so this is safe to call
+    on every registration, which is exactly where it is called from."""
+    first_name = (first_name or "").strip()
+    if not first_name:
+        raise IdentityRefused("A name is needed to find or create the agent called it.")
+    existing = by_name(conn, first_name)
+    if existing is not None:
+        return existing["agent_id"]
+
+    # Not `create()`: that refuses a name any agent has *ever* held, which is the
+    # right rule for a fresh assignment and the wrong one here. A name in
+    # `agent_names` with no identity is not a reused name - it is a name from
+    # before identities existed, and the agent that holds it is the one being
+    # given an id now. Refusing it would make the backfill impossible.
+    prior = conn.fetchone(
+        "SELECT agent_id FROM agent_name_history WHERE first_name = ? AND held_until IS NULL",
+        (first_name,))
+    if prior is not None:
+        return prior["agent_id"]
+
+    agent_id = str(uuid.uuid4())
+    stamp = created_at or now_iso()
+    conn.execute(
+        "INSERT INTO agent_identities (agent_id, first_name, created_at, lifecycle_state)"
+        " VALUES (?, ?, ?, ?)",
+        (agent_id, first_name, stamp, STATE_ACTIVE))
+    conn.execute(
+        "INSERT INTO agent_name_history (agent_id, first_name, held_from, reason)"
+        " VALUES (?, ?, ?, ?)",
+        (agent_id, first_name, stamp, "adopted an existing name on registration"))
+    conn.execute(
+        "UPDATE agent_identities SET activated_at = ? WHERE agent_id = ? AND activated_at IS NULL",
+        (stamp, agent_id))
+    return agent_id

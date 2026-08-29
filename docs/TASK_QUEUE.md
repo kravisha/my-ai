@@ -59,7 +59,12 @@ holds the queue, not the record.
 > independent, and the check that said otherwise could never return false. §146 is retracted in
 > place.
 >
-> **Recommended next: TQ-99** (join the personnel record to `agent_id` — TQ-97 deliberately left two
+> **TQ-99 is done (§148).** `agent_id` is now the key the personnel record hangs from, and a rename
+> no longer splits an agent's history.
+>
+> **Recommended next: TQ-92** (read the cooperation already recorded — small, and the only actionable
+> part of addendum 48) or **TQ-101** (the Personal Usher, half-built in the Gateway). **TQ-100 stays
+> first among the unanswered.** Previously: TQ-99 (join the personnel record to `agent_id` — TQ-97 deliberately left two
 > notions of "the durable agent" for one increment) or **TQ-101**, the Personal Usher, which §143 §3
 > found is already half-built in the Gateway.
 >
@@ -1597,7 +1602,26 @@ guard comes first in this entry deliberately.
 
 ### TQ-99 — Join the personnel record to the agent id
 
-**NEED (GREEN) · QUEUED · addendum 51 §3, §5 · `SPEC_RECONCILIATION.md` §140 §4**
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §148 · addendum 51 §3, §5 ·
+`SPEC_RECONCILIATION.md` §140 §4**
+
+Done, and the debt is worth naming: TQ-97 said the deviation would be held **one** increment
+and it was held **five**. A deliberate deviation with a stated expiry is a reasonable trade; the
+same deviation four increments later is drift with a good story attached (§148).
+
+The property it buys could not hold before: **a renamed agent keeps one continuous personnel
+history.** `assignment_history` was keyed by the display name, so a rename split the folder in
+two — which is exactly what addendum 51 §3's *independent of display name* exists to prevent.
+
+Backfill follows `_ensure_assignment`'s own pattern — on registration, no migration store — and is
+**backdated to when the name was bound**, because an identity dated at backfill would report every
+agent as created the moment somebody restarted the system.
+
+A rename moves the pool binding and the desk, and nothing else: spans keep the name they were
+written under, because what the record said at the time is a fact. Live: seven agents, seven
+identities, seven spans, none unkeyed, no disagreement between the pool and the identity.
+
+<details><summary>The entry as it was queued</summary>
 
 TQ-97 introduced `agent_id` beside `agent_names` rather than under it, so nothing broke and two
 notions of "the durable agent" now exist. That is the state 47 §5 forbids, held deliberately for
@@ -1607,6 +1631,8 @@ What this owes: `agent_names` and `agent_assignments` keyed by `agent_id`, `pers
 `attributed_work` reading through it, and the existing bindings backfilled with ids — backdated to
 when the name was actually bound, for the reason `_ensure_assignment` already gives about spans
 starting at backfill time orphaning every prior hour of work.
+
+</details>
 
 ### TQ-100 — What refuses a persona that crosses the line
 
