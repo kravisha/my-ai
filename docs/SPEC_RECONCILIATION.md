@@ -16293,3 +16293,67 @@ a booked client.
 opens a new day the moment the last one closes, so the station churns rather than
 running a day. Recorded rather than tuned — a day length is a Stage 3 decision and
 nothing about completeness depends on it.
+
+---
+
+## §161 — The rundown declared durations nothing read (2026-08-30, TQ-114)
+
+§160 §8 recorded fourteen broadcast days in one 180-second run as an oddity and
+left it. It was not an oddity. It was a column nothing read.
+
+### 1. The defect
+
+Every segment in `run_of_show` carries `planned_seconds` — Market Open sixty, The
+Desk ninety, a commercial break thirty. **Nothing consulted it.** The anchor aired
+the next segment on its next work cycle, so a 695-second rundown played in
+thirteen cycles, the day signed off in seconds, and the COO opened another one
+because its only condition was *is a day running*.
+
+That is §149's shape one more time: a value written, carried, and read by
+nothing. It had been visible on the surface the whole time — the run reported
+`days_opened 14` and `stories_filed 206` for a station with nine programmes — and
+was recorded as a curiosity rather than chased, which is the second lesson.
+
+### 2. The clock
+
+A segment now occupies its declared duration from the moment it airs, divided by
+`FI_BROADCAST_TIME_SCALE`. The rundown still declares real seconds; only the
+clock reading them moves. That is the separation of real from simulated time the
+Demonstration Engine specification asks for rather than a fudge — the schedule is
+not shortened to fit a test, it is played faster.
+
+`FI_BROADCAST_DAY_GAP_SECONDS` keeps the station off air after sign-off, because
+the executive reopening the instant a day closed was the other half of the churn.
+
+**A news flash is exempt**, and the exemption is the point: breaking news that
+queued behind a ninety-second programme would not be breaking.
+
+**A dropped segment consumes no airtime.** A programme that does not air does not
+occupy its slot, so the schedule moves up. Provisional — a real station fills the
+hole — and correct enough that nothing about completeness depends on it.
+
+### 3. What the fix exposed
+
+Two of the unit tests walked a whole broadcast day and now sat through it, which
+is the honest consequence of making a duration real. They run at a scale where a
+day fits in a test rather than having the durations weakened, so the thing under
+test is unchanged.
+
+Four new tests, two of them the pair that matters: a segment waits for the
+previous one, **and** a news flash does not; the station does not come straight
+back on air, **and** the gap does eventually pass. Each is written both ways
+because a one-sided guard is how a gap that nothing can wait out would read as
+correct — a station that goes off air once and never returns passes every
+assertion about not churning.
+
+### 4. Live, and the numbers that say it worked
+
+`days_opened` asserted as **`equals 1`**, not `at_least 1`. A lower bound would
+have passed throughout the fourteen-day churn and said nothing about it, which is
+exactly how the original property let this through.
+
+17 of 17. One broadcast day, six programmes, three commercial breaks, one
+sign-off, seven scripts, twenty-eight stories — against fourteen days, seventy-nine
+programmes and two hundred and six stories from the same scenario an hour
+earlier. Breaking news still interrupted, the schedule still resumed, the anchor
+still asked, and the fallback still fired.

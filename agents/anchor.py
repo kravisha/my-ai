@@ -51,6 +51,11 @@ def _anchor_work(conn, identity: str) -> None:
     if aired is None:
         print(f"[anchor] {day['day_id']}: off air")
         return
+    if aired["kind"] == "waiting":
+        # Mid-segment. Silent on purpose: a line per cycle while a ninety-second
+        # programme plays is the log noise §COO's own performance card was
+        # trimmed for.
+        return
 
     guests = ", ".join(aired.get("guests") or []) or "no guests"
     marker = " (fallback presenter)" if is_fallback else ""

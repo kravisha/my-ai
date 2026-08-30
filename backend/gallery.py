@@ -270,6 +270,15 @@ def present_next(conn: Database, day_id: str, *, anchor_identity: str) -> dict |
     agent doing this inside its own work cycle - a presenter that blocked until
     sign-off would stop being an agent and start being a script."""
     broadcast.record_presenter(conn, day_id, anchor_identity)
+
+    # The rundown plays at the pace it declares. Without this every segment aired
+    # on the anchor's next work cycle, so a 695-second day was over in thirteen
+    # seconds and the station churned fourteen of them through one run.
+    due, remaining = broadcast.segment_is_due(conn, day_id)
+    if not due:
+        return {"segment_id": None, "kind": "waiting", "title": "on air",
+                "detail": f"{remaining:.0f}s of the current segment remaining"}
+
     segment = broadcast.next_segment(conn, day_id)
     if segment is None:
         broadcast.close_day(conn, day_id)

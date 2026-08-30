@@ -26,6 +26,17 @@ config:
   FI_SOCIAL_PROVIDER_SEED: 7
   FI_FORCE_ANOMALY_SECURITIES: ""
   FI_BROADCAST_ENABLED: "1"
+  # One broadcast day, played at the pace its rundown declares.
+  #
+  # The day is 695 planned seconds. At scale 5 that is ~139s of wall clock, which
+  # fits inside this run with room for the fault at 45s to land mid-programme.
+  # The rundown still declares real durations; only the clock reading them moves,
+  # which is the separation of real from simulated time rather than a fudge.
+  FI_BROADCAST_TIME_SCALE: "5"
+  # Long enough that the station cannot come back on air inside this run. Before
+  # this the executive reopened the moment sign-off landed and one run produced
+  # fourteen days.
+  FI_BROADCAST_DAY_GAP_SECONDS: "3600"
 
 requires_model: true
 
@@ -45,9 +56,18 @@ faults:
 
 expected_properties:
   # -- the station exists and ran --------------------------------------------
-  - name: the station went on air
+  - name: the station ran exactly one broadcast day
     metric: broadcast.days_opened
-    assert: at_least
+    assert: equals
+    value: 1
+    # `equals`, not `at_least`. Before the rundown had a clock, every segment
+    # aired on the anchor's next work cycle and a 695-second day was over in
+    # thirteen - so one run churned fourteen bulletins. A lower bound would have
+    # passed throughout and said nothing about it.
+
+  - name: the day reached sign-off rather than being cut short
+    metric: broadcast.days_closed
+    assert: equals
     value: 1
 
   - name: a dedicated anchor presented, not an executive

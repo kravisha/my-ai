@@ -616,7 +616,7 @@ def _schedule_broadcast(conn) -> None:
     if not BROADCAST_ENABLED:
         return
     try:
-        if broadcast.current_day(conn) is None:
+        if broadcast.ready_for_a_new_day(conn):
             day_id = f"day-{now_iso()[:19].replace(':', '').replace('-', '')}"
             broadcast.open_day(conn, day_id)
             print(f"[COO] station on air: {day_id}")

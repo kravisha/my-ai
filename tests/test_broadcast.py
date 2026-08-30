@@ -25,6 +25,17 @@ from agents import anchor, coo, producer
 from backend import broadcast, fi_db, gallery, newsroom
 
 
+@pytest.fixture(autouse=True)
+def fast_clock(monkeypatch):
+    """Run the rundown at a scale where a whole day fits in a unit test.
+
+    The clock is real by default: a programme billed at ninety seconds occupies
+    ninety, which is what stopped a 695-second day airing in thirteen. A test
+    walking a full day would otherwise sit through it, so the scale moves and
+    nothing else does - the rundown still declares the same durations."""
+    monkeypatch.setenv("FI_BROADCAST_TIME_SCALE", "100000")
+
+
 @pytest.fixture
 def conn(tmp_path):
     connection = fi_db.get_connection(str(tmp_path / "tv.db"))
@@ -334,3 +345,74 @@ def test_the_station_runs_from_open_to_sign_off(conn):
     day = conn.fetchone("SELECT * FROM broadcast_days WHERE day_id = 'day-1'")
     assert day["status"] == broadcast.DAY_CLOSED
     assert day["anchor_identity"] == "anchor-1", "the day was not billed to its presenter"
+
+
+# -- the broadcast clock ---------------------------------------------------------
+#
+# `planned_seconds` was a decorative column: every segment declared a duration and
+# nothing read one, so a 695-second rundown aired in thirteen work cycles and a
+# three-minute run produced fourteen broadcast days. A column nothing reads is
+# §149's shape, and these are what make it mean something.
+
+
+def test_a_segment_waits_for_the_previous_one_to_finish(conn, monkeypatch):
+    monkeypatch.setenv("FI_BROADCAST_TIME_SCALE", "1")
+    _staff(conn, ("anchor-1", "anchor"))
+    broadcast.open_day(conn, "day-1")
+    segment = broadcast.segments_of(conn, "day-1")[0]
+    broadcast.write_script(conn, segment_id=segment["id"], prepared_by="producer-1",
+                           headline="h", body="b", story_ids=[])
+
+    first = gallery.present_next(conn, "day-1", anchor_identity="anchor-1")
+    assert first["kind"] == broadcast.SEGMENT_PROGRAMME
+
+    second = gallery.present_next(conn, "day-1", anchor_identity="anchor-1")
+    assert second["kind"] == "waiting", (
+        "the next segment aired immediately; the rundown's declared durations are "
+        "not being honoured")
+    due, remaining = broadcast.segment_is_due(conn, "day-1")
+    assert due is False and remaining > 0
+
+
+def test_breaking_news_does_not_wait_for_the_schedule(conn, monkeypatch):
+    """A flash that queued behind a ninety-second programme would not be
+    breaking. The exemption is the whole point of the segment."""
+    monkeypatch.setenv("FI_BROADCAST_TIME_SCALE", "1")
+    _staff(conn, ("anchor-1", "anchor"), ("producer-1", "producer"), ("analysis-1", "analysis"))
+    broadcast.open_day(conn, "day-1")
+    segment = broadcast.segments_of(conn, "day-1")[0]
+    broadcast.write_script(conn, segment_id=segment["id"], prepared_by="producer-1",
+                           headline="h", body="b", story_ids=[])
+    gallery.present_next(conn, "day-1", anchor_identity="anchor-1")
+    assert broadcast.segment_is_due(conn, "day-1")[0] is False
+
+    conn.execute(
+        "INSERT INTO incidents (subject_identity, subject_role, detected_by, detected_at,"
+        " symptom, status, schema_version) VALUES ('analysis-1','analysis','coo-1',?,"
+        "'heartbeat stopped moving','open',1)", (fi_db._now(),))
+    gallery.produce(conn, "day-1", producer_identity="producer-1")
+
+    assert broadcast.segment_is_due(conn, "day-1")[0] is True, (
+        "breaking news waited for the schedule")
+
+
+def test_the_station_does_not_come_straight_back_on_air(conn, monkeypatch):
+    """The executive reopening the instant sign-off landed is what turned one
+    broadcast day into fourteen."""
+    monkeypatch.setenv("FI_BROADCAST_TIME_SCALE", "1")
+    monkeypatch.setenv("FI_BROADCAST_DAY_GAP_SECONDS", "3600")
+    broadcast.open_day(conn, "day-1")
+    assert broadcast.ready_for_a_new_day(conn) is False, "a day is already running"
+    broadcast.close_day(conn, "day-1")
+    assert broadcast.ready_for_a_new_day(conn) is False, (
+        "the station went straight back on air after sign-off")
+
+
+def test_the_gap_does_eventually_pass(conn, monkeypatch):
+    """The other side. A gap nothing can wait out is a station that goes off air
+    once and never returns."""
+    monkeypatch.setenv("FI_BROADCAST_TIME_SCALE", "1")
+    monkeypatch.setenv("FI_BROADCAST_DAY_GAP_SECONDS", "0")
+    broadcast.open_day(conn, "day-1")
+    broadcast.close_day(conn, "day-1")
+    assert broadcast.ready_for_a_new_day(conn) is True

@@ -46,8 +46,10 @@ as what they are, and both exercised deliberately rather than waited for.
 from __future__ import annotations
 
 import json
+import os
+from datetime import timedelta
 
-from backend.db import Database, now_iso
+from backend.db import Database, now_iso, parse_timestamp
 
 SCHEMA = """
 -- The programme catalogue. A format, not an episode.
@@ -236,6 +238,26 @@ DAY_CLOSED = "closed"
 
 AD_BREAK_SECONDS = 30
 
+# How fast the broadcast clock runs against the wall clock.
+#
+# `planned_seconds` was a decorative column until this: every segment declared a
+# duration and nothing read one, so a 695-second rundown aired in thirteen
+# cycles and the station churned fourteen days through a three-minute run. A
+# column nothing reads is the §149 shape, and this is what makes it mean
+# something.
+#
+# 1.0 is real time - a programme billed at ninety seconds occupies ninety. A
+# scenario compresses it so a full day fits inside a short run, which is the
+# separation of real from simulated time the Demonstration Engine specification
+# asks for rather than a fudge: the rundown still declares real durations and
+# only the clock reading them is scaled.
+BROADCAST_TIME_SCALE = float(os.environ.get("FI_BROADCAST_TIME_SCALE", "1"))
+
+# How long the station stays off air between days. Without it the executive
+# reopens the moment sign-off lands, which is what produced fourteen days where
+# there should have been one.
+DAY_GAP_SECONDS = float(os.environ.get("FI_BROADCAST_DAY_GAP_SECONDS", "300"))
+
 
 # --- the schedule -------------------------------------------------------------------
 #
@@ -411,6 +433,61 @@ def next_programme(conn: Database, day_id: str) -> dict | None:
         "SELECT * FROM run_of_show WHERE day_id = ? AND status = ? AND kind = ?"
         " ORDER BY sequence LIMIT 1",
         (day_id, SEGMENT_SCHEDULED, SEGMENT_PROGRAMME))
+
+
+def _scale() -> float:
+    """Read at call time, so a scenario or a test can change the clock without a
+    reimport - the convention every other tunable here follows."""
+    return max(0.001, float(os.environ.get("FI_BROADCAST_TIME_SCALE",
+                                           str(BROADCAST_TIME_SCALE))))
+
+
+def segment_is_due(conn: Database, day_id: str) -> tuple[bool, float]:
+    """Whether the next segment may go to air yet, and how long until it may.
+
+    A segment occupies its `planned_seconds` from the moment it airs, divided by
+    the broadcast clock's scale. So the rundown plays at the pace it declares
+    instead of as fast as the anchor's work cycle happens to turn.
+
+    **A news flash is exempt.** Breaking news that waited for the schedule would
+    not be breaking - the whole point of the segment is that it does not wait."""
+    pending = next_segment(conn, day_id)
+    if pending is None:
+        return True, 0.0
+    if pending["kind"] == SEGMENT_NEWS_FLASH:
+        return True, 0.0
+
+    last = conn.fetchone(
+        "SELECT aired_at, planned_seconds FROM run_of_show"
+        " WHERE day_id = ? AND aired_at IS NOT NULL ORDER BY aired_at DESC LIMIT 1",
+        (day_id,))
+    if last is None:
+        # Nothing has aired yet; the day goes on air as soon as it is opened.
+        return True, 0.0
+
+    occupies = timedelta(seconds=last["planned_seconds"] / _scale())
+    due_at = parse_timestamp(last["aired_at"]) + occupies
+    now = parse_timestamp(now_iso())
+    remaining = (due_at - now).total_seconds()
+    return remaining <= 0, max(0.0, remaining)
+
+
+def ready_for_a_new_day(conn: Database) -> bool:
+    """Whether the station may go back on air.
+
+    False while a day is running, and false during the gap after one closes. The
+    executive reopening the instant sign-off landed is what turned a broadcast
+    day into a fourteen-times-repeated bulletin."""
+    if current_day(conn) is not None:
+        return False
+    last = conn.fetchone(
+        "SELECT closed_at FROM broadcast_days WHERE closed_at IS NOT NULL"
+        " ORDER BY id DESC LIMIT 1")
+    if last is None:
+        return True
+    gap = float(os.environ.get("FI_BROADCAST_DAY_GAP_SECONDS", str(DAY_GAP_SECONDS)))
+    elapsed = (parse_timestamp(now_iso()) - parse_timestamp(last["closed_at"])).total_seconds()
+    return elapsed >= gap / _scale()
 
 
 def next_segment(conn: Database, day_id: str) -> dict | None:

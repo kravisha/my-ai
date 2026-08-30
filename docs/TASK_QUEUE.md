@@ -3442,3 +3442,29 @@ is produced rather than waited for.
 planning agent, ad slots unsold with `advertiser` null. Fourteen broadcast days in 180s is recorded
 as an oddity — the COO reopens the moment a day closes — and left alone, because a day length is a
 Stage 3 decision.
+
+### TQ-114 — Make the rundown's declared durations real
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §161 · §160 §8 · `SPEC_RECONCILIATION.md` §149**
+
+§160 recorded fourteen broadcast days in one 180-second run as an oddity. It was a column nothing
+read: every segment declares `planned_seconds` and the anchor aired the next one on its next work
+cycle, so a 695-second rundown played in thirteen and the executive reopened the moment each day
+closed. §149's shape again, and visible on the surface the whole time — `days_opened 14` for a
+station with nine programmes.
+
+**A segment now occupies its declared duration**, divided by `FI_BROADCAST_TIME_SCALE`. The rundown
+still declares real seconds; only the clock reading them moves, so the schedule is played faster
+rather than shortened to fit. `FI_BROADCAST_DAY_GAP_SECONDS` keeps the station off air after
+sign-off. **A news flash is exempt** — breaking news that queued behind a ninety-second programme
+would not be breaking. A dropped segment consumes no airtime.
+
+**Four tests, written in pairs**, because a one-sided guard is how a gap nothing can wait out reads
+as correct: a segment waits *and* a flash does not; the station does not come straight back *and*
+the gap does eventually pass.
+
+**`days_opened` is asserted `equals 1`**, not `at_least 1` — a lower bound passed throughout the
+churn and said nothing, which is how the original property let it through.
+
+**Live: 17/17.** One day, six programmes, three breaks, one sign-off, seven scripts, 28 stories —
+against 14 days, 79 programmes and 206 stories from the same scenario an hour earlier.
