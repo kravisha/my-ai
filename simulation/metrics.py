@@ -40,6 +40,9 @@ FAMILIES = (
     # discover and a test will not check the shape of - which is why the omission
     # failed the suite rather than passing quietly.
     "governance",
+    # Added in §160. The station is a capability of the organization, so what it
+    # did is read the same way everything else is - out of the run's own database.
+    "broadcast",
 )
 
 
@@ -91,6 +94,7 @@ def collect_from(conn, since: str | None = None) -> dict:
         "resource": _resource(conn, since),
         "incidents": _incidents(conn, since),
         "governance": _governance(conn, since),
+        "broadcast": _broadcast(conn, since),
     }
 
 
@@ -568,6 +572,76 @@ def _population(conn, since: str | None = None) -> dict:
         )),
         "heartbeats": _scoped_count(conn, "health_metrics", "timestamp", since),
     }
+
+
+def _broadcast(conn, since: str | None = None) -> dict:
+    """What the television station did.
+
+    Stage 2's question is *did every expected kind of action happen* - not
+    whether it happened well - so these count kinds of occurrence rather than
+    scoring anything. A `dropped` segment and a `substituted` guest are counted
+    beside the ones that went to plan, because philosophy §11 is explicit that a
+    fallback firing may show the system is *more* complete, and a metric that
+    hid them would make the fallback paths unobservable."""
+    segments = _rows_or_empty(conn, "SELECT kind, status FROM run_of_show")
+    appearances = _rows_or_empty(
+        conn, "SELECT outcome, substitute_for FROM appearances")
+    stories = _rows_or_empty(conn, "SELECT kind, urgency, status FROM stories")
+    scripts = _rows_or_empty(conn, "SELECT provisional FROM scripts")
+    ads = _rows_or_empty(conn, "SELECT status FROM ad_slots")
+    days = _rows_or_empty(conn, "SELECT status, anchor_identity FROM broadcast_days")
+    presenters = {d["anchor_identity"] for d in days if d["anchor_identity"]}
+    enquiries = _rows_or_empty(
+        conn, "SELECT id FROM uqi_requests WHERE asked_by LIKE 'anchor-%'")
+    resumed = _rows_or_empty(
+        conn, "SELECT id FROM run_of_show WHERE resumed_at IS NOT NULL")
+
+    def count(rows, field, value):
+        return sum(1 for r in rows if r[field] == value)
+
+    aired = [r for r in segments if r["status"] == "aired"]
+    return {
+        "days_opened": len(days),
+        "days_closed": count(days, "status", "closed"),
+        "segments_aired": len(aired),
+        "programmes_aired": sum(1 for r in aired if r["kind"] == "programme"),
+        "news_flashes_aired": sum(1 for r in aired if r["kind"] == "news_flash"),
+        "ad_breaks_aired": sum(1 for r in aired if r["kind"] == "ad_break"),
+        "signed_off": sum(1 for r in aired if r["kind"] == "sign_off"),
+        # Fallbacks, counted as first-class outcomes rather than as errors.
+        "segments_dropped": count(segments, "status", "dropped"),
+        "segments_interrupted": count(segments, "status", "interrupted"),
+        "segments_resumed": len(resumed),
+        "scripts_prepared": len(scripts),
+        "guests_appeared": count(appearances, "outcome", "appeared"),
+        "guests_substituted": count(appearances, "outcome", "substituted"),
+        "guests_unavailable": count(appearances, "outcome", "unavailable"),
+        "stories_filed": len(stories),
+        "stories_aired": count(stories, "status", "aired"),
+        "story_kinds": sorted({r["kind"] for r in stories}),
+        "breaking_stories": count(stories, "urgency", "breaking"),
+        "ad_slots": len(ads),
+        "ad_slots_unsold": count(ads, "status", "unsold"),
+        # The separation the Dedicated Anchor specification exists for. A day
+        # presented by the COO is the fallback working; a day presented *only* by
+        # the COO across every run would be the coupling back again, which is why
+        # this reports who rather than how many.
+        "presenters": sorted(presenters),
+        "presented_by_anchor": sorted(p for p in presenters if p.startswith("anchor-")),
+        "presented_by_fallback": sorted(p for p in presenters if not p.startswith("anchor-")),
+        # §10.8: the Anchor could ask for more when the brief was not enough.
+        "anchor_enquiries": len(enquiries),
+    }
+
+
+def _rows_or_empty(conn, sql: str, params: tuple = ()) -> list[dict]:
+    """A database written before the station existed has none of its tables, and
+    reporting nothing about a subsystem that is not there is the correct answer
+    rather than a collection failure."""
+    try:
+        return conn.fetchall(sql, params)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def _intelligence(conn) -> dict:

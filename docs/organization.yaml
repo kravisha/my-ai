@@ -131,6 +131,51 @@ roles:
     on_demand: true              # 53 §11 allows it to idle until there is work
     watched_by: coo
 
+  - id: producer
+    status: implemented
+    agent_type: broadcast
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # exists while a broadcast day is open, not otherwise
+    watched_by: coo
+
+  - id: anchor
+    status: implemented
+    agent_type: broadcast
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # exists while a broadcast day is open, not otherwise
+    watched_by: coo
+
+  - id: education_head
+    status: implemented
+    agent_type: department
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # speaks for its department when the station is on air
+    watched_by: coo
+
+  - id: strategy_head
+    status: implemented
+    agent_type: department
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # speaks for its department when the station is on air
+    watched_by: coo
+
+  - id: personnel_head
+    status: implemented
+    agent_type: department
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: false
+    on_demand: true              # speaks for its department when the station is on air
+    watched_by: coo
+
   - id: dummy
     status: implemented
     agent_type: reference

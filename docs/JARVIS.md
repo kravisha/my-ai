@@ -488,8 +488,46 @@ not named, fails the suite.
 | **Portfolio Analyst** | on-demand | subprocess | **no** — on demand | The only role that works for a *client*. Tasked through the Gateway; produces nothing when nobody has asked |
 | **Speaker** | spokesperson | subprocess | yes | Parliament's voice. Reads the state of Parliament and files a report; the console renders *that*, never its own query |
 | **Dummy** | reference | subprocess | yes | The reference implementation the lifecycle machinery is tested against |
+| **Anchor** | broadcast | subprocess | **no** — on demand | The station's public face. Presents the run of show, introduces guests, and asks a running agent for more when the brief is short. A **dedicated** role: an executive that also anchors couples internal coordination to public presentation |
+| **Producer** | broadcast | subprocess | **no** — on demand | The control room. Reads what the organization did, files stories against the records that prove them, writes the scripts, books the guests, and cuts in a news flash. Never presents |
+| **Education Head** | department | subprocess | **no** — on demand | Speaks for the Department of Education from `curriculum_results`, including the exercises that did not pass |
+| **Strategy Head** | department | subprocess | **no** — on demand | Speaks for Strategy from the adopted strategies and the Strategic Priority Register |
+| **Personnel Head** | department | subprocess | **no** — on demand | Speaks for Personnel and Training from assignments and personnel events, keyed on the durable `agent_id` |
 
 All `IMPLEMENTED`.
+
+### The television station
+
+A real capability of the organization, not a simulation feature, and the newest
+thing here. It reports on the organization's own activity: `backend/newsroom.py`
+reads thirteen kinds of event out of the tables the organization already writes,
+and **every story carries the table and row it came from** — a story with no
+source is the one thing a newsroom must not air.
+
+`backend/broadcast.py` holds the schedule, the run of show, the scripts, the
+appearances and the commercial inventory. `backend/gallery.py` splits producing
+from presenting, and the split is the point: **the Anchor is a dedicated role**
+under the Dedicated Anchor specification, which supersedes the earlier design
+making the COO the permanent presenter. An executive that also anchors couples
+decision-making, scheduling and agent management to public presentation, and the
+Anchor does not need to run the organization in order to explain it.
+
+The COO keeps the executive half: it *schedules* the broadcast day and then has
+nothing further to do with it. It may present only as a recorded fallback, and a
+test asserts `agents/coo.py` never reaches `present_next`.
+
+What is deliberately provisional, and marked so in the record it produces:
+scripts are template-composed rather than model-written (a rough script is a
+Stage 3 problem and a missing one is a Stage 1 problem, and templates keep the
+station on air when the model budget is gone); the schedule is a fixed rota
+rather than a planning agent; ad breaks are real airtime reported as **unsold**,
+because an advertiser placeholder would read as a booked client.
+
+Fallbacks are counted as completeness rather than failure: a booked guest that
+cannot appear is substituted by one of its own role, a segment that reaches air
+with no script is dropped and the schedule continues, and a substitution makes
+the Anchor *ask* the stand-in for its own account rather than let it characterise
+work it did not do.
 
 **The Speaker reports; it does not legislate.** It cannot propose, vote, close a
 resolution or adopt Articles, and a test asserts the module never reaches those

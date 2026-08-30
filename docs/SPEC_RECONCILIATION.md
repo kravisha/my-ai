@@ -16147,3 +16147,149 @@ but withholding it — so a failing act is now recorded as `failed` and the
 demonstration continues.
 
 *A green suite is not evidence.* The suite was green at 2,954 tests when this ran.
+
+---
+
+## §160 — The television station, and the executive that no longer reads the news (2026-08-30, TQ-113)
+
+The station is a real capability of the organization, tested through simulation
+rather than being a simulation feature. It reports on the organization's own
+activity, and the Dedicated Anchor specification arrived mid-build and changed
+who reads it.
+
+### 1. What the station is
+
+`backend/newsroom.py` reads **thirteen kinds of event** out of tables the
+organization already writes, and every story carries the table and row it came
+from. That provenance is a NOT NULL column, and the reason is the one rule a
+newsroom cannot bend: *a story with no source is something somebody made up.*
+
+`backend/broadcast.py` holds the schedule, the run of show, scripts, appearances
+and commercial inventory. `backend/gallery.py` splits producing from presenting.
+`backend/departments.py` gives three departments a head who can speak for them.
+
+**Nine programmes**, each with a remit and a standing expert — its beat. Market
+Open, The Desk, Under Review, The House, Systems Watch, Class Notes, The Forward
+Plan, The Roster, Closing Bell. The beat is what puts the Speaker on Parliament's
+programme and the Education head on the curriculum's: a governance story is about
+the organization rather than about one agent, so it names no subject and would
+otherwise book nobody.
+
+### 2. The specification that landed mid-build
+
+The station was built with **the COO as anchor**, because the TV-station
+specification §3 said the CEO or COO could present. The Dedicated Anchor
+specification supersedes that in terms, and its §13 is the rule: *executive
+agents run the organization, the Anchor explains what the organization is doing,
+and the two are not to be coupled again.*
+
+So the presenting half moved out of `agents/coo.py` entirely and into
+`agents/anchor.py`. The COO kept the executive half and only that: it **schedules**
+the broadcast day — §2 lists scheduling among what the executive keeps — and then
+has nothing further to do with it.
+
+**A test asserts the COO's source never reaches `present_next`.** Asserted against
+source rather than behaviour because this coupling is re-introduced by *adding a
+call*, and the moment it is added is the moment to fail. Its mirror asserts the
+Anchor does present, since a role that exists and never presents is not a
+separation but a deletion.
+
+The CEO required no work: **this organization has no CEO**, and the owner
+confirmed on 2026-08-30 that the Superuser is currently the CEO and a dedicated
+one will be created later. §2's separation is therefore recorded as a constraint
+for the day that role arrives, not implemented as code today.
+
+### 3. Presentation is a role, not an identity
+
+§9 asks for a role that can later carry a financial anchor, a technology anchor,
+a breaking-news anchor. Nothing names an identity: `resolve_presenter` reads
+whichever anchors are running, so a **backup anchor is a position in that list**
+rather than a different kind of agent.
+
+Below that, a fallback chain — speaker, then COO — for §8's requirement that the
+station must not fail because one Anchor is unavailable. Every fallback
+appearance is flagged `is_fallback`, and the metric reports *who* presented
+rather than how many, because a day presented by the COO is the fallback working
+and a run of days presented only by the COO would be the coupling back again.
+
+### 4. Fallbacks counted as completeness
+
+Philosophy §11: a fallback firing may show the system is *more* complete. So the
+metrics count `segments_dropped`, `guests_substituted` and `guests_unavailable`
+beside the ones that went to plan, and the scenario asserts a fallback path was
+exercised rather than asserting none was needed.
+
+A booked guest that cannot appear is substituted by one of its own role. A
+segment that reaches air with no script is dropped and the schedule continues.
+And a substitution makes the Anchor **ask** the stand-in for its own account,
+because §6 forbids the Anchor from inventing another agent's experience — and a
+substitute characterising work it did not do is that error wearing a colleague's
+face.
+
+### 5. Four defects, all found by running it
+
+Three were design faults in the station and one was in what it was allowed to
+say. None came from a failing test.
+
+**Breaking news was absorbed instead of interrupting.** Scripting the programmes
+first let a breaking story be picked up by whichever programme covered its remit,
+so an agent going down became a calm item inside Systems Watch. Interrupting
+first was worse: it marks the pending programme `interrupted`, the scripting loop
+skips it, and it reaches air with nothing to read. The rule that works is both —
+`stories_for_remit` never hands a programme a breaking story, and the
+interruption is applied after every programme has its script.
+
+**A programme was dropped before its own airtime.** Closing Bell recaps what
+aired, so at the moment the rundown is first produced it is empty by definition
+and was being killed before the day had happened. A programme is now dropped at
+air time, by the presenter, which is the only moment the answer is final.
+
+**A flash pre-empted an ad break.** Live, `news_flashes_aired` was 1 and
+`segments_resumed` was 0: the flash cut into whatever segment was next, which was
+a commercial break, so nothing was cut away from and nothing had to be returned
+to. A flash now pre-empts the next *programme*.
+
+**The Anchor never asked anything.** The live enquiry fired only on substitution,
+and recovery was fast enough that a substitute was rarely needed. §7 supplies the
+answer: *"for breaking or interactive situations, the Anchor may query the
+knowledge system or relevant agents in real time"* — a flash is that situation by
+definition, so the Anchor now puts the question live rather than reading a
+prepared line about an event still developing.
+
+The last two were **found by a property failing on a live run** — 14 of 16 —
+which is what a completeness checklist is for. Both would have passed a suite.
+
+### 6. The condition is produced, not waited for
+
+`tv_station` kills `analysis-1` at 45 seconds so breaking news has something to
+break about. Waiting for an incident is how a completeness test reports a green
+run over a condition that never occurred (§93); the interruption path is expected
+behaviour, so it is produced deliberately — the same reason `slow_agent` stalls a
+model call.
+
+`analysis-1` rather than the COO: the executive schedules the day, and killing it
+would test the Controller's recovery instead of the newsroom's.
+
+### 7. Live
+
+**16 of 16 properties.** 14 broadcast days, 78 programmes, 41 ad breaks all
+reported unsold, 13 sign-offs, 206 stories across seven kinds, 82 scripts, one
+agent failure that became breaking news, one flash that interrupted, one schedule
+that resumed, 45 dropped segments and one live enquiry. Presented throughout by
+`anchor-1`, with zero failed directives — §10.10's requirement that the executive
+keeps running the organization while the Anchor presents.
+
+### 8. What is provisional, and says so
+
+Scripts are template-composed rather than model-written, and stored
+`provisional=1`. A rough script is a Stage 3 problem and a missing one is a Stage
+1 problem — and templates keep the station on air when the model budget is gone,
+which is when a newsroom most needs to keep going. The schedule is a fixed rota
+rather than a planning agent. Ad breaks are real airtime reported **unsold**,
+with `advertiser` left null rather than carrying a placeholder that would read as
+a booked client.
+
+**Fourteen broadcast days in one 180-second run** is the honest oddity: the COO
+opens a new day the moment the last one closes, so the station churns rather than
+running a day. Recorded rather than tuned — a day length is a Stage 3 decision and
+nothing about completeness depends on it.

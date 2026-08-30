@@ -3398,3 +3398,47 @@ The second was the Demo Engine's own: the failing act **crashed the demonstratio
 being recorded, so five shown acts were reported as nothing at all. A failing act and a failing
 witness are now both recorded and the run continues — withholding a finding is the one dishonesty
 the specification cannot tolerate.
+
+### TQ-113 — The television station, with a dedicated Anchor
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §160 · TV-station specification ·
+Dedicated Anchor specification · Development Philosophy §1, §2, §11 · `SPEC_RECONCILIATION.md` §93, §158**
+
+A financial news channel reporting on the organization's own activity. Nine programmes with
+remits and beats, scheduled runs of show, scripted segments, agent guests, breaking-news
+interruptions, ad breaks and a sign-off. Thirteen kinds of event read out of tables the
+organization already writes, **every story carrying the table and row it came from** — a story with
+no source is the one thing a newsroom must not air.
+
+**The Dedicated Anchor specification landed mid-build and moved the presenter.** The station was
+built with the COO anchoring, per the earlier TV-station spec; the new one supersedes that and
+§13 forbids re-coupling. Presenting moved wholly into `agents/anchor.py`; the COO kept scheduling
+the broadcast day and nothing else. A test asserts the COO's source never reaches `present_next` —
+source rather than behaviour, because the coupling returns by somebody *adding a call*. No CEO
+work was needed: this organization has none, and the owner confirmed the Superuser is currently
+the CEO, so §2 is recorded as a constraint for when that role arrives.
+
+**Presentation is a role, not an identity** (§9): `resolve_presenter` reads whichever anchors are
+running, so a backup is a position in the list. Below it a fallback chain — speaker, then COO —
+every fallback appearance flagged, and the metric reporting *who* presented rather than how many.
+
+**Three departments gained a head** who speaks only from that department's own records: Education
+from `curriculum_results` including the exercises that failed, Strategy from adopted strategies and
+the Register, Personnel from assignments and personnel events keyed on the durable `agent_id`.
+
+**Four defects, all found by running it**, none by a failing test: breaking news absorbed into a
+programme instead of interrupting; a programme dropped before its own airtime (Closing Bell recaps
+what aired, so it is empty by definition when the rundown is produced); a flash pre-empting an ad
+break so nothing had to be resumed; and the Anchor never asking anything, because the enquiry fired
+only on substitution and recovery was too fast to need one. The last two were caught by
+**properties failing on a live run — 14 of 16** — and both would have passed a suite.
+
+**Live: 16/16.** 14 days, 78 programmes, 41 unsold ad breaks, 13 sign-offs, 206 stories across
+seven kinds, one failure that became breaking news, one interruption, one resume, 45 dropped
+segments, one live enquiry, zero failed directives. `analysis-1` is killed at 45s so the condition
+is produced rather than waited for.
+
+**Provisional and marked:** template-composed scripts (`provisional=1`), a fixed rota rather than a
+planning agent, ad slots unsold with `advertiser` null. Fourteen broadcast days in 180s is recorded
+as an oddity — the COO reopens the moment a day closes — and left alone, because a day length is a
+Stage 3 decision.

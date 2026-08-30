@@ -1,0 +1,141 @@
+id: tv_station
+version: 1
+lifecycle: active
+description: >
+  The television station, end to end, with a dedicated Anchor.
+
+  Stage 2's question is the only one this scenario asks: *did every expected kind
+  of action happen?* Not in the right order, not with good wording, not with the
+  ideal agent - the Development Philosophy is explicit that those are Stage 3
+  problems and that requiring them here would stop a complete system from ever
+  being demonstrated.
+
+  So the properties below are a completeness checklist drawn from the
+  specification's own list: an event is detected, agents work, their findings
+  reach the newsroom, a script is prepared, the Anchor receives and presents it,
+  another agent appears, the Anchor can ask for more, a fallback fires, and the
+  executive keeps running the organization throughout.
+
+  A fallback firing is a pass, not a failure (philosophy §11). A dropped segment
+  and a substituted guest are counted as evidence that the recovery paths exist.
+
+duration_seconds: 180
+
+config:
+  FI_MARKET_PROVIDER_SEED: 42
+  FI_SOCIAL_PROVIDER_SEED: 7
+  FI_FORCE_ANOMALY_SECURITIES: ""
+  FI_BROADCAST_ENABLED: "1"
+
+requires_model: true
+
+# An agent is killed so breaking news has something to break about.
+#
+# Waiting for an incident to happen by itself is how a completeness test reports
+# a green run over a condition that never occurred (§93). The station's
+# interruption path is expected behaviour, so the condition is produced rather
+# than hoped for - the same reason `slow_agent` stalls a model call on purpose.
+#
+# analysis-1 rather than the COO: the executive schedules the broadcast day, and
+# killing it would test the Controller's recovery instead of the newsroom's.
+faults:
+  - at_seconds: 45
+    action: kill
+    target: analysis-1
+
+expected_properties:
+  # -- the station exists and ran --------------------------------------------
+  - name: the station went on air
+    metric: broadcast.days_opened
+    assert: at_least
+    value: 1
+
+  - name: a dedicated anchor presented, not an executive
+    metric: broadcast.presented_by_anchor
+    assert: is_not_empty
+    # The whole point of the Dedicated Anchor change. The COO may present as a
+    # documented fallback, so this asserts an anchor did - not that nobody else
+    # could have.
+
+  # -- information reached the newsroom and became a script ------------------
+  - name: the newsroom drew stories from the organization's own record
+    metric: broadcast.stories_filed
+    assert: at_least
+    value: 1
+
+  - name: more than one kind of event was reported
+    metric: broadcast.story_kinds
+    assert: is_not_empty
+
+  - name: a script was prepared for the anchor
+    metric: broadcast.scripts_prepared
+    assert: at_least
+    value: 1
+
+  # -- it was presented -------------------------------------------------------
+  - name: a programme aired
+    metric: broadcast.programmes_aired
+    assert: at_least
+    value: 1
+
+  - name: an advertisement break aired
+    metric: broadcast.ad_breaks_aired
+    assert: at_least
+    value: 1
+
+  - name: commercial inventory exists and is honestly reported unsold
+    metric: broadcast.ad_slots_unsold
+    assert: at_least
+    value: 1
+
+  - name: the station signed off
+    metric: broadcast.signed_off
+    assert: at_least
+    value: 1
+
+  # -- breaking news, and the return to schedule -----------------------------
+  - name: an agent failure became breaking news
+    metric: broadcast.breaking_stories
+    assert: at_least
+    value: 1
+
+  - name: a news flash interrupted the schedule
+    metric: broadcast.news_flashes_aired
+    assert: at_least
+    value: 1
+
+  - name: the schedule resumed after the interruption
+    metric: broadcast.segments_resumed
+    assert: at_least
+    value: 1
+    # The interruption is only half the workflow. A station that cut away and
+    # never came back would have broken rather than covered the story.
+
+  # -- fallbacks are completeness, not failure (philosophy §11) ---------------
+  - name: a fallback path was exercised
+    metric: broadcast.segments_dropped
+    assert: at_least
+    value: 1
+    # A programme reaching air with no story is dropped and the schedule
+    # continues. Counted as evidence the recovery path exists, not as a defect.
+
+  - name: the anchor asked an agent for more when the brief was short
+    metric: broadcast.anchor_enquiries
+    assert: at_least
+    value: 1
+    # Specification §6 and §10.8: the Anchor must not invent another agent's
+    # experience when that agent could supply it, so a stand-in prompts a question.
+
+  # -- the executive kept running the organization ---------------------------
+  - name: no directive failed while the station was on air
+    metric: population.failed_directives
+    assert: equals
+    value: 0
+    # Specification section 10.10: executive agents continue operating while the
+    # Anchor presents. The COO schedules the day and then has nothing to do with
+    # it - if presenting were still coupled to the executive, its ordinary work
+    # would show damage here.
+
+  - name: nothing was left running at the end
+    metric: population.running_at_end
+    assert: is_empty

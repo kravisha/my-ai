@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, coo_identity, curriculum, demonstration, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
+from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, broadcast, coo_identity, curriculum, demonstration, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -420,6 +420,129 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["vocabulary auditing", "schema drift detection", "health reporting"],
         "work_mechanism": "scheduled health checks over the live database",
+    },
+    "education_head": {
+        "agent_type": "department",
+        "description": (
+            "Head of the Department of Education. Speaks for the department from its own records and from "
+            "nothing else - the curriculum, its exercises and how they were graded. A head that summarised an impression rather than "
+            "the record would be the charter-written-falsely problem in a suit."
+        ),
+        "responsibilities": [
+            "Summarise the department's current state each cycle",
+            "Appear to discuss it, including what did not go well",
+        ],
+        "allowed": [
+            "Say nothing when the department's tables say nothing",
+            "Report a failure on its own record",
+        ],
+        "not_allowed": [
+            "Speak to another department's records",
+            "Present the news; the Anchor does that",
+        ],
+        "competencies": ["curriculum reporting"],
+        "work_mechanism": "reads its department's tables and publishes a summary",
+    },
+    "strategy_head": {
+        "agent_type": "department",
+        "description": (
+            "Head of Strategy. Speaks for the department from its own records and from "
+            "nothing else - adopted strategies and what the Strategic Priority Register says is needed next. A head that summarised an impression rather than "
+            "the record would be the charter-written-falsely problem in a suit."
+        ),
+        "responsibilities": [
+            "Summarise the department's current state each cycle",
+            "Appear to discuss it, including what did not go well",
+        ],
+        "allowed": [
+            "Say nothing when the department's tables say nothing",
+            "Report a failure on its own record",
+        ],
+        "not_allowed": [
+            "Speak to another department's records",
+            "Present the news; the Anchor does that",
+        ],
+        "competencies": ["strategy reporting"],
+        "work_mechanism": "reads its department's tables and publishes a summary",
+    },
+    "personnel_head": {
+        "agent_type": "department",
+        "description": (
+            "Head of Personnel and Training. Speaks for the department from its own records and from "
+            "nothing else - assignments and personnel events, keyed on the durable agent id so a renamed agent keeps one continuous history. A head that summarised an impression rather than "
+            "the record would be the charter-written-falsely problem in a suit."
+        ),
+        "responsibilities": [
+            "Summarise the department's current state each cycle",
+            "Appear to discuss it, including what did not go well",
+        ],
+        "allowed": [
+            "Say nothing when the department's tables say nothing",
+            "Report a failure on its own record",
+        ],
+        "not_allowed": [
+            "Speak to another department's records",
+            "Present the news; the Anchor does that",
+        ],
+        "competencies": ["personnel reporting"],
+        "work_mechanism": "reads its department's tables and publishes a summary",
+    },
+    "anchor": {
+        "agent_type": "broadcast",
+        "description": (
+            "The station's public face. Presents news, reports and briefings; introduces "
+            "reporters, analysts and guests; keeps continuity between segments. It is a "
+            "dedicated role because presentation and executive work are different jobs: an "
+            "executive that also anchors couples internal coordination to public "
+            "presentation, and the Anchor does not need to run the organization in order "
+            "to explain what it is doing (Dedicated Anchor specification §4)."
+        ),
+        "responsibilities": [
+            "Present the scripts and rundowns the producer prepares",
+            "Introduce and moderate the agents who appear as guests",
+            "Ask an operational agent for more when the brief is not enough",
+            "Maintain continuity across segments, including after an interruption",
+        ],
+        "allowed": [
+            "Adapt wording for presentation while preserving the factual meaning (§7)",
+            "Query a running agent live when a booked guest cannot appear",
+            "Hand over to another anchor; the role supports more than one instance (§9)",
+        ],
+        "not_allowed": [
+            "Decide what is newsworthy - the producer builds the run of show",
+            "Speak for an agent that could have spoken for itself (§6)",
+            "Run the organization; executive work belongs to the COO",
+        ],
+        "competencies": ["presentation", "continuity", "moderation", "live enquiry"],
+        "work_mechanism": "airs the next segment of the open broadcast day, one per cycle",
+    },
+    "producer": {
+        "agent_type": "broadcast",
+        "description": (
+            "The station's control room. Reads what the organization has actually done, "
+            "files stories against the records that prove them, writes the scripts the "
+            "anchor is handed, books the agent each story is about, and cuts a news flash "
+            "into the schedule when something breaking arrives. It never presents: an "
+            "anchor that also decided what was newsworthy would be reporting on itself."
+        ),
+        "responsibilities": [
+            "Assemble the run of show: scripts, guests, breaks and interruptions",
+            "Draw every story from a record, with the table and row on the story",
+            "Drop a programme with no story rather than padding it",
+        ],
+        "allowed": [
+            "Compose a script from templates, marked provisional - a rough script is a "
+            "quality problem and a missing one is a completeness problem",
+            "Interrupt the schedule when the record already says something is breaking",
+            "Substitute a guest of the same role when the booked one cannot appear",
+        ],
+        "not_allowed": [
+            "Present, anchor or read anything on air",
+            "File a story with no source record",
+            "Decide that something is breaking; urgency is derived from the record",
+        ],
+        "competencies": ["running order", "scripting", "booking", "story provenance"],
+        "work_mechanism": "reads the organization's own tables each cycle; writes the run of show",
     },
     "qa_engineer": {
         "agent_type": "engineering",
@@ -1586,6 +1709,7 @@ def init_schema(conn: Database) -> None:
     # that already exists rather than a second one beside it.
     software_department.init_schema(conn)
     demonstration.init_schema(conn)
+    broadcast.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1737,7 +1861,7 @@ SCHEMA_SOURCES = (
     analysis_requests.SCHEMA, curriculum.SCHEMA, parliament.SCHEMA,
     governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
     release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
-    software_department.SCHEMA, demonstration.SCHEMA,
+    software_department.SCHEMA, demonstration.SCHEMA, broadcast.SCHEMA,
 )
 
 

@@ -39,7 +39,8 @@ import sys
 from collections import Counter
 
 from agents.base import run_agent
-from backend import appeal, engineering, fi_db, software_department, status_events, remediation, risk, strategy
+from backend.db import now_iso
+from backend import appeal, broadcast, departments, engineering, fi_db, software_department, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -92,7 +93,8 @@ BASELINE_ROLES = list(BASELINE_POPULATION)
 # target of zero, so they exist only while something is waiting for them - which
 # is 46 §10's *work determines staffing* rather than a standing population that
 # happens to idle.
-ON_DEMAND_ROLES = ("software_engineer", "qa_engineer")
+ON_DEMAND_ROLES = ("software_engineer", "qa_engineer", "producer", "anchor",
+                   *("education_head", "strategy_head", "personnel_head"))
 
 
 def staffable_roles() -> dict:
@@ -200,6 +202,17 @@ def _ensure_baseline_population(conn) -> None:
     # path, for the reason the appeal case gives - a second way to ask for an
     # agent is a second way to ask for two.
     needed_by_department = software_department.roles_needed(conn)
+    # And once more for the station. A broadcast day that is open is work: the
+    # run of show does not write itself, and the anchor is deliberately not
+    # allowed to write it. Same shape as the two signals above - a shortfall
+    # expressed as a target, not a third path to a spawn.
+    # A broadcast day that is open needs both: somebody to build the run of show
+    # and somebody to read it. They are separate roles because the Dedicated
+    # Anchor specification §4 forbids coupling presentation to the work being
+    # presented - and the COO, which used to anchor, now does neither.
+    needed_on_air = (
+        ("producer", "anchor", *departments.HEAD_ROLES)
+        if broadcast.current_day(conn) is not None else ())
 
     for role, target in staffable_roles().items():
         staffing = fi_db.staffing(conn, role)
@@ -213,6 +226,8 @@ def _ensure_baseline_population(conn) -> None:
             # On-demand roles have a baseline target of zero, so this is what
             # brings them into existence at all - not extra capacity on top of a
             # standing population.
+            effective_target += 1
+        if role in needed_on_air:
             effective_target += 1
         if role in awaiting_peer:
             # Raised rather than special-cased into its own spawn path: the
@@ -583,7 +598,34 @@ def _strategy_corrective_items(conn) -> list[remediation.CorrectiveItem]:
     return items
 
 
+# Whether this organization runs a television station. Off by default so every
+# existing scenario is unchanged, and turned on by the scenario that tests it.
+# Provisional and reversible: a station that is always on is a later decision,
+# and this is the switch that makes it one line.
+BROADCAST_ENABLED = os.environ.get("FI_BROADCAST_ENABLED", "0") == "1"
+
+
+def _schedule_broadcast(conn) -> None:
+    """Open a broadcast day when the station is on and none is running.
+
+    **Scheduling, not presenting.** Deciding that the station goes on air is
+    executive work - the Dedicated Anchor specification §2 lists scheduling and
+    prioritization among what the executive keeps - while reading the news is the
+    Anchor's. The COO opens the day and then has nothing further to do with it.
+    """
+    if not BROADCAST_ENABLED:
+        return
+    try:
+        if broadcast.current_day(conn) is None:
+            day_id = f"day-{now_iso()[:19].replace(':', '').replace('-', '')}"
+            broadcast.open_day(conn, day_id)
+            print(f"[COO] station on air: {day_id}")
+    except Exception as exc:  # noqa: BLE001 - the station is not the company
+        print(f"[COO] could not open a broadcast day, continuing: {exc}")
+
+
 def _coo_work(conn) -> None:
+    _schedule_broadcast(conn)
     _evaluate_agent_health(conn)
     # After the crash check, because an agent marked crashed this cycle is not a
     # slow one - the two states are exclusive and the order says so.
