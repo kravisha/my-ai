@@ -26,8 +26,9 @@ git log --oneline -3
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Expect **3020 passed, 8 skipped, 8 deselected**. HEAD is `6bf14a8`, and `master`
-and `tq-78-consolidation` are identical and both pushed.
+Expect **3020 passed, 8 skipped, 8 deselected**. HEAD is `3d36ec3` — this
+checkpoint — and the last increment before it is `6bf14a8`. `master` and
+`tq-78-consolidation` are identical and both pushed.
 
 The 8 deselections are the `simulation` and `real_llm` markers — real processes
 and real API calls, excluded from the default run. Run the contention harness
