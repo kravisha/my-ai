@@ -50,7 +50,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, broadcast, coo_identity, curriculum, demonstration, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, status_events, strategy, triage, workspace
+from backend import agent_identity, analysis_requests, appeal, client_profile, competency, compliance, broadcast, coo_identity, curriculum, demonstration, engineering, governed_knowledge, identifiers, iteration, migrations, missions, novelty, observations, operating_context, parliament, reference_data, register, release, risk, software_department, sectors, status_events, strategy, trading, triage, workspace
 from backend import db as db_module
 from backend.db import Database
 
@@ -486,6 +486,36 @@ ROLE_CHARTERS = {
         ],
         "competencies": ["personnel reporting"],
         "work_mechanism": "reads its department's tables and publishes a summary",
+    },
+    "trader": {
+        "agent_type": "trading",
+        "description": (
+            "A trader with a book of their own. Reads the analyst's judgement, decides "
+            "whether it is worth acting on and when to get out, and owns the result. The "
+            "positions are the agent's personal record, keyed on its durable agent_id, "
+            "and it goes on air to talk about them - the calls that worked, the ones that "
+            "did not, and what is still open."
+        ),
+        "responsibilities": [
+            "Decide execution and timing on the analyst's idea (directive §11)",
+            "Size by the conviction the analyst recorded, not by its own view of the thesis",
+            "Close what has run its course, so every judgement gets a result",
+        ],
+        "allowed": [
+            "Decline an idea below its conviction floor - a desk that took every "
+            "judgement handed to it would not be deciding anything",
+            "Lose money; a sound decision may still lose",
+            "Talk about its own book on air, including the bad calls",
+        ],
+        "not_allowed": [
+            "Re-do the analysis; a trader that second-guessed the thesis would be a "
+            "second analyst and attribution would have nothing left to separate",
+            "Touch a client's positions - a client portfolio is somebody else's "
+            "property and is never stored (§111)",
+            "Judge its own trades; attribution is recorded by somebody else",
+        ],
+        "competencies": ["execution", "timing", "position sizing", "own-book reporting"],
+        "work_mechanism": "reads analysis_results, places and closes orders on its own book",
     },
     "anchor": {
         "agent_type": "broadcast",
@@ -1710,6 +1740,8 @@ def init_schema(conn: Database) -> None:
     software_department.init_schema(conn)
     demonstration.init_schema(conn)
     broadcast.init_schema(conn)
+    trading.init_schema(conn)
+    sectors.init_schema(conn)
     # The status event stream (addendum 38 §4.3/§4.6, §73) owns status_events:
     # the durable narration the COO's live feed renders and its chat answers
     # from. Created here for the same reason as every module above - this
@@ -1862,6 +1894,7 @@ SCHEMA_SOURCES = (
     governed_knowledge.SCHEMA, operating_context.SCHEMA, engineering.SCHEMA,
     release.SCHEMA, agent_identity.SCHEMA, client_profile.SCHEMA, appeal.SCHEMA,
     software_department.SCHEMA, demonstration.SCHEMA, broadcast.SCHEMA,
+    trading.SCHEMA, sectors.SCHEMA,
 )
 
 

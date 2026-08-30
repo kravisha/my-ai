@@ -140,6 +140,14 @@ roles:
     on_demand: true              # exists while a broadcast day is open, not otherwise
     watched_by: coo
 
+  - id: trader
+    status: implemented
+    agent_type: trading
+    reports_to: coo
+    process: subprocess
+    spawned_by_coo: true
+    watched_by: coo
+
   - id: anchor
     status: implemented
     agent_type: broadcast

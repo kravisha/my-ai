@@ -43,6 +43,9 @@ FAMILIES = (
     # Added in §160. The station is a capability of the organization, so what it
     # did is read the same way everything else is - out of the run's own database.
     "broadcast",
+    # Added in §162. The desk is part of the organization now, so what it did is
+    # read the same way everything else is - out of the run's own database.
+    "trading",
 )
 
 
@@ -95,6 +98,7 @@ def collect_from(conn, since: str | None = None) -> dict:
         "incidents": _incidents(conn, since),
         "governance": _governance(conn, since),
         "broadcast": _broadcast(conn, since),
+        "trading": _trading(conn, since),
     }
 
 
@@ -631,6 +635,40 @@ def _broadcast(conn, since: str | None = None) -> dict:
         "presented_by_fallback": sorted(p for p in presenters if not p.startswith("anchor-")),
         # §10.8: the Anchor could ask for more when the brief was not enough.
         "anchor_enquiries": len(enquiries),
+    }
+
+
+def _trading(conn, since: str | None = None) -> dict:
+    """What the desk did, and how it was judged.
+
+    Verdicts are reported as a breakdown rather than a score. A trader with three
+    bad-idea losses executed correctly three times, and collapsing that into one
+    number charges them for the analyst's judgement - which is the attribution
+    directive §11 asks for, thrown away at the last step.
+
+    `is_priced` is false and stays false. Every level comes from a generated
+    surface, so a P&L here measures the process rather than money (§113)."""
+    orders = _rows_or_empty(conn, "SELECT id, agent_id, status, side FROM trader_orders")
+    fills = _rows_or_empty(conn, "SELECT kind FROM trader_fills")
+    verdicts: dict[str, int] = {}
+    realised = 0.0
+    for row in _rows_or_empty(
+            conn, "SELECT verdict, COUNT(*) AS n, SUM(pnl_vol_points) AS pnl"
+                  " FROM trader_attributions GROUP BY verdict"):
+        verdicts[row["verdict"]] = row["n"]
+        realised += row["pnl"] or 0.0
+    return {
+        "orders": len(orders),
+        "open": sum(1 for o in orders if o["status"] == "open"),
+        "closed": sum(1 for o in orders if o["status"] == "closed"),
+        "entries": sum(1 for f in fills if f["kind"] == "entry"),
+        "exits": sum(1 for f in fills if f["kind"] == "exit"),
+        "traders": sorted({o["agent_id"] for o in orders}),
+        "sides": sorted({o["side"] for o in orders}),
+        "attributed": sum(verdicts.values()),
+        "verdicts": verdicts,
+        "realised_vol_points": round(realised, 6),
+        "is_priced": False,
     }
 
 

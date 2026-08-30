@@ -102,6 +102,11 @@ ROLE_WORK_KIND = {
     # A spokesperson given an analytical budget starts interpreting the body it
     # speaks for.
     "speaker": "operational",
+    # Operational, and deliberately not analytical. The desk applies its own rule
+    # to a judgement somebody else reached - conviction floor, size, exit - and a
+    # trader given an analytical budget would start re-deriving the thesis, which
+    # is the second analyst the attribution has nothing left to separate.
+    "trader": "operational",
     # Architectural, and the fit is exact: §8's ladder IS "explore alternatives
     # before choosing one, and say what was rejected and why". An engineer that
     # reported a data solution without having considered whether the mechanism

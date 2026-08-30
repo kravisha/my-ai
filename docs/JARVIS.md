@@ -488,6 +488,7 @@ not named, fails the suite.
 | **Portfolio Analyst** | on-demand | subprocess | **no** — on demand | The only role that works for a *client*. Tasked through the Gateway; produces nothing when nobody has asked |
 | **Speaker** | spokesperson | subprocess | yes | Parliament's voice. Reads the state of Parliament and files a report; the console renders *that*, never its own query |
 | **Dummy** | reference | subprocess | yes | The reference implementation the lifecycle machinery is tested against |
+| **Trader** | trading | subprocess | yes | A character with a book of their own. Decides whether the analyst's judgement is worth acting on and when to get out; the positions are the agent's personal record, keyed on its durable `agent_id`, and it goes on air to talk about them |
 | **Anchor** | broadcast | subprocess | **no** — on demand | The station's public face. Presents the run of show, introduces guests, and asks a running agent for more when the brief is short. A **dedicated** role: an executive that also anchors couples internal coordination to public presentation |
 | **Producer** | broadcast | subprocess | **no** — on demand | The control room. Reads what the organization did, files stories against the records that prove them, writes the scripts, books the guests, and cuts in a news flash. Never presents |
 | **Education Head** | department | subprocess | **no** — on demand | Speaks for the Department of Education from `curriculum_results`, including the exercises that did not pass |
@@ -495,6 +496,31 @@ not named, fails the suite.
 | **Personnel Head** | department | subprocess | **no** — on demand | Speaks for Personnel and Training from assignments and personnel events, keyed on the durable `agent_id` |
 
 All `IMPLEMENTED`.
+
+### The desk
+
+`backend/trading.py` holds one trader's own book. **It is not a portfolio and the
+difference is structural**: §111 says client portfolios are the clients' property
+and are never stored, and nothing here touches that. A trader's positions are the
+agent's own record, keyed on `agent_id`, which is what a persistent agent carries
+alongside its identity and history (addendum 47 §14). Every position belongs to an agent
+and **no row carries a client** — a test scans the schema and fails if a
+`client_id`, `owner_id` or `session_id` appears, because that is how §111 would
+actually be undone.
+
+What is traded is implied volatility, in vol points, from the same surface
+provider the Explorer reads. Not a simplification: it is what this organization
+detects. **Every figure is synthetic and says so** — `is_priced` stays false,
+because a P&L against a generated surface measures the process rather than money.
+
+The trader decides execution and timing and never re-does the analysis; a trader
+that second-guessed the thesis would be a second analyst and attribution would
+have nothing left to separate. **The COO records the attribution**, because a
+trader does not judge its own trades — the fifth application of
+producer-is-not-approver. The verdict distinguishes `bad_idea`, `bad_timing`,
+`bad_data`, `market_randomness` and `sound_and_profitable`, which is the
+self-evolution directive's requirement that poor performance be diagnosed rather than charged to
+whichever role is nearest.
 
 ### The television station
 
@@ -515,6 +541,14 @@ Anchor does not need to run the organization in order to explain it.
 The COO keeps the executive half: it *schedules* the broadcast day and then has
 nothing further to do with it. It may present only as a recorded fallback, and a
 test asserts `agents/coo.py` never reaches `present_next`.
+
+**Eleven programmes.** Nine report the organization's own record; *The Long and
+the Short* is the trader discussing their own book; and *Where Nobody Is Looking*
+is the only one reporting on a subject rather than on a record — overlooked
+areas where low-cost, locally-buildable technology delivers disproportionate
+benefit. That last one is kept honest by `backend/sectors.py`: the catalogue is
+the record, each item goes to air with its standing, and every current entry is a
+**premise this organization has not investigated** rather than a finding.
 
 What is deliberately provisional, and marked so in the record it produces:
 scripts are template-composed rather than model-written (a rough script is a

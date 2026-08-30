@@ -148,6 +148,30 @@ DEMONSTRABLE = (
                  "from the first run's database, with knowledge_records intact",
     ),
     Capability(
+        id="trading",
+        name="A trader takes a position on the analysis and owns the result",
+        scenario="baseline_steady_state",
+        evidence="trader_orders and trader_fills: one order per analysis result, keyed on "
+                 "the trader's durable agent_id, entry and exit levels from the same "
+                 "surface provider every other agent reads",
+    ),
+    Capability(
+        id="pnl",
+        name="Trades have a result, in vol points and never in money",
+        scenario="baseline_steady_state",
+        evidence="trading.pnl_vol_points, derived from the fills rather than stored; "
+                 "book_summary reports is_priced false and origin synthetic, because "
+                 "every level comes from a generated surface (§113)",
+    ),
+    Capability(
+        id="attribution",
+        name="A losing trade is diagnosed rather than blamed on the nearest role",
+        scenario="baseline_steady_state",
+        evidence="trader_attributions: bad_idea, bad_timing, bad_data, market_randomness "
+                 "or sound_and_profitable, recorded by the COO because a trader does not "
+                 "judge its own trades",
+    ),
+    Capability(
         id="training",
         name="Agents are examined against a curriculum",
         scenario=None,  # the curriculum is its own runner
@@ -160,30 +184,6 @@ DEMONSTRABLE = (
 # --- what the specification asks for and this system does not have ------------------
 
 ABSENT = (
-    Absent(
-        id="trading",
-        name="Trader, trade execution, entry and exit",
-        why="There is no Trader role and no trade of any kind is placed. The "
-            "specification's headline flow is Explorer -> Speculator -> Analyst -> "
-            "Trader -> Evaluator; this organization implements the first three and "
-            "stops at judgment.",
-        missing_modules=("agents.trader",),
-    ),
-    Absent(
-        id="pnl",
-        name="Profit and loss",
-        why="Nothing is bought or sold, so there is nothing to value. Compounded by "
-            "the absence of real prices: every observation in the market data store "
-            "is synthetic (§113), so even a held position could not be marked.",
-        missing_tables=("trades", "positions", "pnl"),
-    ),
-    Absent(
-        id="attribution",
-        name="Performance attribution - bad idea against bad timing",
-        why="It requires a trade to attribute. The evaluator that exists grades "
-            "reports, not outcomes, because no outcome is ever realised.",
-        missing_tables=("trade_attributions",),
-    ),
     Absent(
         id="real_prices",
         name="Real market data",

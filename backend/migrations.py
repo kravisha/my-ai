@@ -89,7 +89,7 @@ from backend import (agent_identity, analysis_requests, appeal, broadcast, clien
                      identifiers, missions, observations, operating_context,
                      parliament, reference_data, release, risk,
                      register as register_store, software_department,
-                     status_events, strategy, workspace)
+                     sectors, status_events, strategy, trading, workspace)
 from backend.db import Database, now_iso
 from backend.version import code_version
 
@@ -497,9 +497,11 @@ for _name, _schema in (
     ("register", register_store.SCHEMA),
     ("release", release.SCHEMA),
     ("risk", risk.SCHEMA),
+    ("sectors", sectors.SCHEMA),
     ("software_department", software_department.SCHEMA),
     ("status_events", status_events.SCHEMA),
     ("strategy", strategy.SCHEMA),
+    ("trading", trading.SCHEMA),
 ):
     register_module(_name, _schema, note=_NEVER_MIGRATED)
 

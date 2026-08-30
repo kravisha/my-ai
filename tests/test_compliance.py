@@ -11,6 +11,8 @@ present, makes the record look complete, and carries no independent information
 at all.
 """
 
+import re
+
 import pytest
 
 from backend import compliance, fi_db
@@ -438,7 +440,8 @@ def test_the_blocked_count_is_pinned():
 def test_the_detection_layer_cannot_change_anything():
     """Investigation cannot punish, because investigation cannot write.
 
-    The governing framework asks for investigation, prosecution, adjudication and
+    Addendum 37's separation of investigation from sanction needs investigation,
+    reputation assessment and
     retirement authority to be separated. With six roles and no adjudicator, the
     one separation that can be made real today is this one - and it is made real
     by construction rather than by policy, since a module containing no write
@@ -479,10 +482,17 @@ def test_no_role_charter_grants_adjudication():
     live finding. COO already manages the workforce and acts for the vacant CEO;
     adding adjudication would concentrate manager, investigator, reputation
     assessor and retirement authority in one agent."""
+    # Matched on word stems rather than as bare substrings. `convict` inside
+    # `conviction` is a false positive - the trader's conviction floor is how sure
+    # the analyst was, which is the opposite of a power to convict anybody - and a
+    # check that fires on an unrelated word gets weakened by whoever meets it
+    # next. Re-aimed rather than relaxed: every real form is still caught.
+    forbidden = re.compile(
+        r"\b(adjudicat\w*|sanction\w*|punish\w*|convict(?:s|ed|ing)?)\b")
     for role, charter in fi_db.ROLE_CHARTERS.items():
         granted = " ".join(charter["allowed"]).lower()
-        for word in ("adjudicat", "sanction", "punish", "convict"):
-            assert word not in granted, f"{role}'s charter grants {word!r}"
+        found = forbidden.search(granted)
+        assert not found, f"{role}'s charter grants {found.group(0)!r}"
 
 
 def test_most_objection_grounds_need_a_checker_rather_than_a_judge():

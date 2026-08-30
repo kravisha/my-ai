@@ -290,6 +290,18 @@ PROGRAMME_CATALOGUE = (
      "planned_seconds": 60, "books_guest": 1, "guest_role": "strategy_head"},
     {"slug": "the_roster", "name": "The Roster", "remit": "personnel",
      "planned_seconds": 60, "books_guest": 1, "guest_role": "personnel_head"},
+    # The trader talks their own book: the calls that worked, the ones that did
+    # not, and what is still open. A programme about one agent's record rather
+    # than about the organization's, which is why its guest is the desk itself.
+    {"slug": "the_long_and_short", "name": "The Long and the Short", "remit": "trading",
+     "planned_seconds": 90, "books_guest": 1, "guest_role": "trader"},
+    # The one programme that reports on subjects rather than on the
+    # organization's own record. Its guest is the head of strategy, because an
+    # under-examined sector is a strategy question - and the beat keeps it
+    # sourced: every item is a row in `emerging_sectors`, never an improvisation.
+    {"slug": "where_nobody_is_looking", "name": "Where Nobody Is Looking",
+     "remit": "sectors", "planned_seconds": 90, "books_guest": 1,
+     "guest_role": "strategy_head"},
     {"slug": "closing_bell", "name": "Closing Bell", "remit": "summary",
      "planned_seconds": 45, "books_guest": 0, "guest_role": None},
 )

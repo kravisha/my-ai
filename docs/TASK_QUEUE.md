@@ -3468,3 +3468,45 @@ churn and said nothing, which is how the original property let it through.
 
 **Live: 17/17.** One day, six programmes, three breaks, one sign-off, seven scripts, 28 stories —
 against 14 days, 79 programmes and 206 stories from the same scenario an hour earlier.
+
+### TQ-115 — The desk: a trader with a book of their own
+
+**NEED (GREEN) · DONE — `SPEC_RECONCILIATION.md` §162 · Demonstration Engine specification ·
+self-evolution directive · `SPEC_RECONCILIATION.md` §111, §113, §149**
+
+Closes the largest absence the Demonstration Engine reported. The specification's headline flow is
+Explorer, Speculator, Analyst, **Trader**, Evaluator, and this organization stopped at judgment.
+
+**A trader's book is the agent's own record**, keyed on `agent_id` — which settles §111 rather than
+skirting it: a client portfolio is somebody else's property and is never stored; a trader's
+positions are personal data a persistent agent carries. **No row carries a client**, and a test
+scans the schema for `client_id`/`owner_id`/`session_id`, because that is how §111 would actually
+be undone — not by re-creating `portfolios` but by adding an owner column to a table that already
+exists. The word `portfolio` appears in no name here (addendum 47 §5: one concept, one name).
+
+**Implied volatility in vol points**, from the surface provider the Explorer already reads.
+`is_priced` is false and a property asserts it: a P&L against a generated surface measures the
+process, not money.
+
+**Five attribution verdicts** — `bad_data`, `market_randomness`, `bad_idea`, `bad_timing`,
+`sound_and_profitable` — recorded by the COO, never the trader. Fifth application of
+producer-is-not-approver, asserted on the trader's own source.
+
+**The constant that made the role inert.** The first live run placed zero orders against three
+analyses: `CONVICTION_FLOOR` was a guessed 0.5, and across **414 analyses** this organization's
+confidence runs min 0.12, median 0.22, p75 0.25, max 0.60 — only 4 ever reached 0.5. The floor sat
+above the entire working distribution, so the desk declined every idea while appearing to judge.
+Re-set to the observed upper quartile.
+
+**Two more found by running it:** breaking news was a race on when the newsroom happened to look,
+now breaking on first sight; and the scenario was shorter than its own claim, since judgment
+latency at p50 ~143s leaves no time for a position to close and be judged inside 180s.
+
+**A tripwire was passing vacuously.** Re-aiming the adjudication check to word stems was right;
+delivering it through a shell heredoc turned `\b` into a literal backspace byte, so the regex
+matched nothing and the suite went green because the check had stopped checking. Caught by testing
+the pattern against a real grant instead of trusting the green.
+
+**Live: 20/20.** Two trades placed, closed and attributed, alongside one broadcast day, six
+programmes, three unsold breaks, and a failure carried into breaking news that interrupted and
+resumed.

@@ -16357,3 +16357,127 @@ sign-off, seven scripts, twenty-eight stories — against fourteen days, seventy
 programmes and two hundred and six stories from the same scenario an hour
 earlier. Breaking news still interrupted, the schedule still resumed, the anchor
 still asked, and the fallback still fired.
+
+---
+
+## §162 — The desk, and the constant that made a role inert (2026-08-30, TQ-115)
+
+The Demonstration Engine has reported *Trader, trade execution, entry and exit*
+as absent since §158. It is the largest hole in the specification's headline flow
+— Explorer, Speculator, Analyst, **Trader**, Evaluator — and this closes it.
+
+### 1. Whose positions these are
+
+A trader here is a character with a book of their own, and the owner settled it
+mid-build: *"a trader is an imaginary character with his or her own portfolio and
+this is part of the agent's personal data, and the Agent talks about it on the
+show."*
+
+That is what keeps §111 whole rather than merely adjacent to it. §111 says client
+portfolios are the clients' property and that this system holds none of them. A
+trader's positions are **the agent's own record**, keyed on `agent_id` — what a
+persistent agent carries alongside its identity and history (addendum 47 §14) —
+and never on a display name, because a rename changes the desk and not the person.
+
+The boundary is enforced rather than described:
+
+- **No row carries a client.** A test scans the schema for `client_id`,
+  `owner_id`, `owner_type` or `session_id` and fails if one appears, because that
+  is how §111 would actually be undone: not by re-creating `portfolios`, but by
+  somebody adding an owner column to a table that already exists and calling it
+  multi-tenancy.
+- **The trader cannot reach a client position.** Asserted on its imports.
+- **The word `portfolio` appears in no name here.** Not to slip past the
+  tripwires at `test_backend_portfolios.py` — those are untouched — but because
+  in this codebase that word already means the client's property, and addendum 47
+  §5 wants one concept to keep one name. A trader has a book.
+
+### 2. What is traded, and what the numbers are not
+
+Implied volatility, in vol points, from the same surface provider the Explorer
+reads. Not a simplification: it is what this organization actually detects, and a
+spot price would have to be invented.
+
+Every figure is synthetic and says so. `is_priced` is false, `origin` is
+`synthetic`, and a scenario property asserts it. A P&L against a generated
+surface measures the *process*, and labelling it as money would be the first real
+lie this system told.
+
+### 3. Attribution, and who is allowed to make it
+
+The specification asks a demo to expose the evaluator's attribution rather than
+merely show final P&L, and the self-evolution directive asks that poor
+performance be diagnosed rather than charged to whichever role is nearest. So a
+closed trade gets one of five verdicts, in this order:
+
+`bad_data` when the desk had no level to trade against — neither the analyst's
+fault nor the trader's. `market_randomness` when the move was inside the noise
+floor, because attributing noise to a person is how a metric starts punishing
+correct behaviour. `bad_idea` when volatility moved against the thesis: the desk
+executed the judgement it was given. `bad_timing` when it moved *with* the thesis
+and the trade still lost — the distinction the whole mechanism exists for.
+Otherwise `sound_and_profitable`.
+
+**The COO records it, not the trader.** The fifth application of
+producer-is-not-approver, and a test asserts `agents/trader.py` never calls
+`attribute`.
+
+### 4. The constant that made the role inert
+
+The first live run placed **zero** orders against three analyses. The desk was
+working exactly as designed: `CONVICTION_FLOOR` was 0.5, and the three analyses
+carried 0.25, 0.18 and 0.30.
+
+Measured across the project's whole run history — 414 analyses — the conviction
+this organization actually produces is min 0.12, median 0.22, p75 0.25, max 0.60,
+and **only 4 of 414 ever reached 0.5**. The floor had been guessed, and it sat
+above the entire working distribution: the desk declined every idea it was ever
+shown while looking like it was exercising judgement.
+
+Re-set to 0.25, the observed upper quartile, so the desk acts on roughly the top
+quarter of what the organization believes. That is this project's own standard
+for a constant, applied to one that had not met it: *a number chosen against
+something this system does not control is a guess wearing the costume of a
+policy.*
+
+### 5. Two more defects the run found
+
+**Breaking news was a race.** Urgency was derived from an incident's *current*
+status, so an agent that went down and was recovered between two newsroom passes
+filed as `notable` and interrupted nothing — whether a failure was breaking news
+depended on when the newsroom happened to look. An agent failing is news when you
+first learn of it; whether it has since recovered belongs in the story rather
+than in the decision to run it. Breaking on first sight now, and the duplicate
+guard stops it re-breaking on a later pass.
+
+**The scenario was too short for its own claim.** With judgment latency at a p50
+of roughly 143 seconds, an analysis reaches the desk late in a three-minute run:
+the position opens and the run ends before it can close and be judged. The run is
+now 240 seconds, because the flow the specification asks for is Explorer *through
+to* attribution and it needs longer than one leg of it.
+
+### 6. A tripwire that was passing vacuously, and how
+
+`test_no_role_charter_grants_adjudication` scans charters for `adjudicat`,
+`sanction`, `punish`, `convict` as bare substrings. The trader's *conviction
+floor* contains `convict`, so the check began failing on a word that means the
+opposite of a power to convict anybody.
+
+Re-aiming it to word stems was correct. **Writing it was not**: the replacement
+was delivered through a shell heredoc, `\b` arrived as a literal backspace byte,
+and the regex became one that matches nothing. The suite went green because the
+check had stopped checking — and a second botched edit overwrote an unrelated
+docstring with the regex text.
+
+Caught by testing the pattern against a real grant rather than trusting the
+green. It now fires on *sanction a desk that misses its target* and ignores
+*conviction floor*, both demonstrated. Worth recording because the failure mode
+is this project's oldest one arriving by a new route: **the tooling, not the
+reasoning, turned a check into a tautology.**
+
+### 7. Live
+
+**20 of 20.** The desk acted on two analyses, both closed and both attributed by
+somebody other than the trader, in a run that also opened one broadcast day, ran
+six programmes and three unsold breaks, carried a failure into breaking news that
+interrupted and resumed, and signed off with nothing left running.

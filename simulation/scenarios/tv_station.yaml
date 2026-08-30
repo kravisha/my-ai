@@ -19,7 +19,12 @@ description: >
   A fallback firing is a pass, not a failure (philosophy §11). A dropped segment
   and a substituted guest are counted as evidence that the recovery paths exist.
 
-duration_seconds: 180
+# 240s rather than 180s, and measured rather than chosen. Judgment latency in
+# this organization runs to a p50 of ~143s, so an analysis reaches the desk late
+# in a three-minute run - the position opens and the run ends before it can close
+# and be judged. The full flow the specification asks for is Explorer through to
+# attribution, and it needs longer than one leg of it.
+duration_seconds: 240
 
 config:
   FI_MARKET_PROVIDER_SEED: 42
@@ -145,6 +150,25 @@ expected_properties:
     value: 1
     # Specification §6 and §10.8: the Anchor must not invent another agent's
     # experience when that agent could supply it, so a stand-in prompts a question.
+
+  # -- the desk, and the show about it ---------------------------------------
+  - name: the desk acted on the analysis
+    metric: trading.orders
+    assert: at_least
+    value: 1
+    # The flow the specification's headline demo asks for, reaching the step it
+    # used to stop at: Explorer, Speculator, Analyst, Trader.
+
+  - name: a trade was closed and judged by somebody other than the trader
+    metric: trading.attributed
+    assert: at_least
+    value: 1
+
+  - name: nothing on the desk claims to be priced
+    metric: trading.is_priced
+    assert: is_false
+    # Every level comes from a generated surface. A P&L labelled as money would
+    # be the first real lie this system told.
 
   # -- the executive kept running the organization ---------------------------
   - name: no directive failed while the station was on air

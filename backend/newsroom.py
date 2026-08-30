@@ -40,7 +40,7 @@ employer would have.
 
 from __future__ import annotations
 
-from backend import broadcast, departments
+from backend import broadcast, departments, sectors, trading
 from backend.db import Database
 
 KIND_DETECTION = "detection"
@@ -56,6 +56,8 @@ KIND_RELEASE = "release"
 KIND_CURRICULUM = "curriculum"
 KIND_STRATEGY = "strategy"
 KIND_PERSONNEL = "personnel"
+KIND_TRADE = "trade"
+KIND_SECTOR = "sector"
 
 # Which programme remit each kind feeds. A kind with no remit would be a story
 # the schedule has nowhere to put, so the mapping is total by construction and a
@@ -74,6 +76,8 @@ REMIT_OF_KIND = {
     KIND_CURRICULUM: "curriculum",
     KIND_STRATEGY: "strategy",
     KIND_PERSONNEL: "personnel",
+    KIND_TRADE: "trading",
+    KIND_SECTOR: "sectors",
 }
 
 STORY_KINDS = tuple(REMIT_OF_KIND)
@@ -146,19 +150,27 @@ def gather(conn: Database, day_id: str, *, limit_per_kind: int = 3) -> list[int]
 
     # -- incidents ---------------------------------------------------------------
     #
-    # The only kind that reaches `breaking`, and only while it is open. Derived
-    # from the record's own status: an agent that is down is news, and one that
-    # came back is the follow-up.
+    # The only kind that reaches `breaking`, and it is breaking **on first
+    # sight** rather than only while the incident is still open.
+    #
+    # Deriving it from the current status made the interruption a race: an agent
+    # that went down and was recovered between two newsroom passes filed as
+    # `notable` and never interrupted anything, so whether a failure was breaking
+    # news depended on when the newsroom happened to look. An agent failing is
+    # news when you first learn of it, and whether it has since recovered belongs
+    # in the story rather than in the decision to run it.
+    #
+    # `file` refuses a second story from the same row, so this cannot re-break
+    # the same incident on a later pass.
     for row in _rows(conn, "SELECT id, subject_identity, symptom, status, action"
                            " FROM incidents ORDER BY id DESC LIMIT ?", (limit_per_kind,)):
-        breaking = row["status"] == "open"
+        still_down = row["status"] == "open"
         file(KIND_INCIDENT,
-             f"{row['subject_identity']} {'is down' if breaking else 'recovered'}",
-             f"{row['symptom']}. " + (row["action"] or
-                                      ("The Controller is acting on it." if breaking
-                                       else "Service was restored.")),
-             "incidents", row["id"],
-             broadcast.URGENCY_BREAKING if breaking else broadcast.URGENCY_NOTABLE,
+             f"{row['subject_identity']} went down",
+             f"{row['symptom']}. " + (row["action"] or "") + (
+                 " The Controller is acting on it." if still_down
+                 else " Service has since been restored."),
+             "incidents", row["id"], broadcast.URGENCY_BREAKING,
              row["subject_identity"])
 
     # -- governance --------------------------------------------------------------
@@ -232,6 +244,50 @@ def gather(conn: Database, day_id: str, *, limit_per_kind: int = 3) -> list[int]
         for item in departments.summarise(conn, slug)[:limit_per_kind]:
             file(kind, item["headline"], item["summary"],
                  item["source_table"], item["source_id"], broadcast.URGENCY_ROUTINE)
+
+    # -- the desk ------------------------------------------------------------------
+    #
+    # A trade the organization actually placed, and the attribution somebody
+    # other than the trader recorded. Reported with the verdict rather than the
+    # profit alone, because the specification asks the demo to expose the
+    # evaluator's attribution and not merely the final number - a losing trade
+    # attributed to a bad idea says something different about the desk than one
+    # attributed to bad timing.
+    for row in _rows(conn, "SELECT a.order_id, a.verdict, a.detail, a.pnl_vol_points,"
+                           " o.security, o.side, o.placed_by FROM trader_attributions a"
+                           " JOIN trader_orders o ON o.id = a.order_id"
+                           " ORDER BY a.id DESC LIMIT ?", (limit_per_kind,)):
+        file(KIND_TRADE,
+             f"{row['security']}: {row['side']} closed {row['pnl_vol_points']:+.4f} vol points",
+             f"{row['detail']} Verdict: {row['verdict'].replace('_', ' ')}. "
+             "Vol points against a generated surface - a measure of the process, not money.",
+             "trader_attributions", row["order_id"], broadcast.URGENCY_ROUTINE,
+             row["placed_by"])
+
+    for row in _rows(conn, "SELECT id, security, side, size, thesis, placed_by"
+                           " FROM trader_orders WHERE status = 'open' ORDER BY id DESC LIMIT ?",
+                     (limit_per_kind,)):
+        file(KIND_TRADE,
+             f"The desk is {row['side'].replace('_', ' ')} {row['size']} on {row['security']}",
+             (row["thesis"] or "").strip()[:300] or "No thesis was recorded.",
+             "trader_orders", row["id"], broadcast.URGENCY_ROUTINE, row["placed_by"])
+
+    # -- overlooked sectors ---------------------------------------------------------
+    #
+    # The only programme that reports on a subject rather than on the
+    # organization's own record, so the catalogue is what keeps it sourced: each
+    # item is a row, and the standing of that row goes on air with it. These are
+    # premises worth investigating and the summary says so, because a confident
+    # sentence about an unexamined idea is how a station starts making claims its
+    # organization cannot support.
+    for row in _rows(conn, "SELECT id, name, field, premise, benefit, why_overlooked,"
+                           " evidence_note FROM emerging_sectors ORDER BY id"):
+        file(KIND_SECTOR,
+             f"{row['name']} - {row['field']}",
+             f"{row['premise']} {row['benefit']} Overlooked because: "
+             f"{row['why_overlooked']} Standing: {row['evidence_note']} - this "
+             "organization has not investigated it.",
+             "emerging_sectors", row["id"], broadcast.URGENCY_ROUTINE)
 
     return filed
 

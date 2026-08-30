@@ -68,7 +68,7 @@ COO_ROLE = "coo"
 WATCHES = {
     CONTROLLER_ROLE: (COO_ROLE,),
     COO_ROLE: ("explorer", "speculator", "analysis", "dummy", "speaker", "dba",
-               "qa_engineer", CONTROLLER_ROLE),
+               "qa_engineer", "trader", CONTROLLER_ROLE),
 }
 
 # The inverse, which is the question actually asked: who is watching this role?

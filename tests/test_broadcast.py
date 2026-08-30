@@ -416,3 +416,58 @@ def test_the_gap_does_eventually_pass(conn, monkeypatch):
     broadcast.open_day(conn, "day-1")
     broadcast.close_day(conn, "day-1")
     assert broadcast.ready_for_a_new_day(conn) is True
+
+
+# -- the one programme that reports on subjects ----------------------------------
+
+
+def test_every_sector_on_air_comes_from_the_catalogue(conn):
+    """`Where Nobody Is Looking` is the only programme not reporting the
+    organization's own record, so the catalogue is what keeps it sourced. A
+    station that improvised a subject would be doing the one thing a newsroom
+    must not."""
+    from backend import sectors
+
+    broadcast.open_day(conn, "day-1")
+    newsroom.gather(conn, "day-1")
+    stories = broadcast.stories_for(conn, "day-1", kind=newsroom.KIND_SECTOR)
+    assert stories, "the catalogue produced no stories"
+
+    known = {str(s["id"]) for s in sectors.all_sectors(conn)}
+    for story in stories:
+        assert story["source_table"] == "emerging_sectors"
+        assert story["source_id"] in known, (
+            "a sector went to air that is not in the catalogue")
+
+
+def test_a_sector_goes_to_air_with_its_standing(conn):
+    """These are premises, not findings. A confident sentence about an unexamined
+    idea is how a station starts making claims its organization cannot support,
+    so the standing travels with the item."""
+    broadcast.open_day(conn, "day-1")
+    newsroom.gather(conn, "day-1")
+    for story in broadcast.stories_for(conn, "day-1", kind=newsroom.KIND_SECTOR):
+        assert "premise" in story["summary"]
+        assert "has not investigated" in story["summary"]
+
+
+def test_an_unknown_standing_is_refused(conn):
+    from backend import sectors
+
+    with pytest.raises(ValueError):
+        sectors.add(conn, slug="x", name="X", field="f", premise="p", benefit="b",
+                    why_overlooked="w", added_by="owner", evidence_note="proven")
+
+
+def test_the_sector_programme_books_the_head_of_strategy(conn):
+    """An under-examined sector is a strategy question, and a sector story is
+    about the subject rather than about an agent - so it names no subject and
+    would otherwise book nobody."""
+    _staff(conn, ("anchor-1", "anchor"), ("producer-1", "producer"),
+           ("strategy_head-1", "strategy_head"))
+    broadcast.open_day(conn, "day-1")
+    gallery.produce(conn, "day-1", producer_identity="producer-1")
+
+    booked = [a for a in broadcast.appearances_of(conn, "day-1")
+              if a["booked_identity"] == "strategy_head-1"]
+    assert booked, "nobody was booked to discuss the overlooked sectors"

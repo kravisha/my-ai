@@ -40,7 +40,7 @@ from collections import Counter
 
 from agents.base import run_agent
 from backend.db import now_iso
-from backend import appeal, broadcast, departments, engineering, fi_db, software_department, status_events, remediation, risk, strategy
+from backend import appeal, broadcast, departments, engineering, fi_db, trading, software_department, status_events, remediation, risk, strategy
 
 ROLE = "coo"
 
@@ -83,6 +83,11 @@ BASELINE_POPULATION = {
     # is work. So it is baseline and they are on-demand - which is 46 §10's *work
     # determines staffing* reading the specification rather than overriding it.
     "dba": _baseline_target("dba", 1),
+    # The desk is baseline rather than on-demand: an analyst's judgement that
+    # nobody was there to act on is an idea the organization generated and threw
+    # away, and 46 §10's *work determines staffing* points the other way here -
+    # the work arrives continuously because judgment does.
+    "trader": _baseline_target("trader", 1),
 }
 
 # The role names alone. Kept because plenty of callers only ever wanted the
@@ -655,6 +660,15 @@ def _coo_work(conn) -> None:
     # same reason lens health is COO's: the producer of evidence must not be
     # the judge of its own sources (addendum 11 §8).
     fi_db.recompute_source_reliability(conn)
+    # A trader does not mark its own homework. Attribution is recorded here for
+    # the same reason lens health and source standings are - the producer of an
+    # outcome must not be the judge of it (addendum 11 §8) - and directive §11
+    # wants the cause diagnosed rather than a role blamed by default.
+    for order in trading.unattributed_closed_orders(conn):
+        verdict = trading.attribute(conn, order["id"], judged_by=IDENTITY)
+        if verdict:
+            print(f"[COO] trade {order['id']} on {order['security']}: "
+                  f"{verdict['verdict']} ({verdict['pnl_vol_points']:+.4f} vol points)")
     # Abandoned report claims are returned to the queue here, and this is the
     # third application of the same rule one column along: *the recovery of a
     # queue must not depend on a worker of that queue.*
