@@ -22,11 +22,21 @@ the presentation is exactly when that seam breaks, so the test walks it.
 """
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 CONSOLE = Path(__file__).resolve().parent.parent / "backend" / "console" / "index.html"
+
+
+def test_camera_request_lifecycle():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for the camera lifecycle regression")
+    subprocess.run([node, str(Path(__file__).with_name("studio_camera_lifecycle.cjs"))],
+                   check=True, capture_output=True, text=True, timeout=20)
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +84,69 @@ def test_state_fields_the_renderers_read_are_initialised(script: str):
     initialised = set(re.findall(r"(\w+)\s*:", declared.group(1)))
     for field in ("tab", "follow", "attention", "source", "speak", "tapeWidth"):
         assert field in initialised, f"S.{field} is read but never initialised"
+
+
+# --- the studio desk: the one surface that is literally a studio -------------
+
+
+def test_the_studio_desk_has_a_button_and_a_surface(html: str):
+    """Addendum 41 calls the console a studio as a matter of look. This desk is
+    the one place it is meant literally, so it needs both halves like any other
+    desk - the generic rundown/surface test covers the pairing, this one names
+    it so a deletion reads as a deliberate removal rather than a typo."""
+    assert 'data-tab="studio"' in html, "the rundown has no Live Studio"
+    assert 'class="tab" id="tab-studio"' in html, "Live Studio has no surface"
+    assert 'id="studio-video"' in html, "the studio desk has no video element"
+
+
+def test_the_studio_panel_is_built_once(script: str):
+    """The desk poll replaces the innerHTML of its surfaces every six seconds.
+    If the studio panel were rebuilt on that cycle, the <video> would be
+    detached from its MediaStream and the picture would die on a timer - a
+    defect that looks like a flaky camera and is actually a render loop.
+
+    Two halves: the guard exists, and nothing calls renderStudio on a poll."""
+    assert "studioBuilt" in script, "the studio panel has no build-once guard"
+    assert "if(studioBuilt)return;" in script.replace(" ", ""), (
+        "renderStudio does not return early once built"
+    )
+    # Declaration plus exactly one call, made at boot. A third occurrence means
+    # something started re-rendering it.
+    assert script.count("renderStudio(") == 2, (
+        f"renderStudio is referenced {script.count('renderStudio(')} times; "
+        "expected its declaration and a single boot call"
+    )
+
+
+def test_going_off_air_releases_the_camera(script: str):
+    """A stream left running keeps the device busy and the camera light on.
+    That is a privacy failure on its own, and it is also why OBS would not be
+    able to reopen the device afterwards."""
+    flat = script.replace(" ", "")
+    assert "getTracks().forEach(t=>t.stop())" in flat, (
+        "studioStop does not stop the media tracks"
+    )
+    assert "srcObject=null" in flat, "studioStop does not detach the video element"
+
+
+def test_the_studio_can_recognise_the_obs_camera(script: str):
+    """The operator should not have to pick their own virtual camera out of a
+    list of device names. The match is loose on purpose - OBS ships "OBS
+    Virtual Camera" on Windows and macOS, "OBS Virtual Camera (v4l2loopback)"
+    on Linux, and older builds called it "VirtualCam" - but loose is not the
+    same as careless, so the real webcam on the bench is asserted *not* to
+    match."""
+    declared = re.search(r"OBS_CAMERA\s*=\s*/(.+?)/i", script)
+    assert declared, "nothing looks for the OBS virtual camera"
+    matcher = re.compile(declared.group(1), re.I)
+
+    for label in ("OBS Virtual Camera",
+                  "OBS Virtual Camera (v4l2loopback)",
+                  "VirtualCam"):
+        assert matcher.search(label), f"would not recognise {label!r}"
+
+    for label in ("HD Pro Webcam C920", "Integrated Webcam", "Elgato Cam Link"):
+        assert not matcher.search(label), f"wrongly claims {label!r} is the OBS camera"
 
 
 # --- the look: §2's prohibitions, §18's repeated check ------------------------
