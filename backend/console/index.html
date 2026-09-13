@@ -187,6 +187,14 @@
   .side .cards{grid-template-columns:1fr;}
   @media (max-width:1150px){.newsgrid{grid-template-columns:1fr;grid-auto-rows:minmax(0,auto);}}
   .strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;}
+  /* The studio picture. Letterboxed rather than cropped: the composite is
+     framed in OBS, and a desk that silently crops it would be lying about
+     what is going out. */
+  .studio-stage{margin:0 0 14px;background:#000;border:1px solid var(--line);
+    border-radius:10px;overflow:hidden;aspect-ratio:16/9;display:flex;
+    align-items:center;justify-content:center;}
+  .studio-stage video{width:100%;height:100%;object-fit:contain;background:#000;}
+  .note.absent{color:var(--warn);}
   #feed{flex:1;min-height:120px;overflow-y:auto;padding-right:6px;}
   .stand{display:inline-flex;align-items:center;gap:8px;margin:0 8px 8px 0;font-size:13px;}
 
@@ -273,6 +281,7 @@
       <button data-tab="simulation"><i class="mark"></i>Simulation<span class="badge" id="b-sim"></span></button>
       <button data-tab="alerts"><i class="mark"></i>Alerts<span class="badge" id="b-alr"></span></button>
       <button data-tab="parliament"><i class="mark"></i>Parliament</button>
+      <button data-tab="studio"><i class="mark"></i>Live Studio</button>
     </nav>
 
     <div class="railnote" title="Addendum 41 §3 rules out a static avatar standing in for the animated presenter, so this frame does not pretend to be one.">
@@ -314,6 +323,7 @@
     <div class="tab" id="tab-simulation"></div>
     <div class="tab" id="tab-alerts"></div>
     <div class="tab" id="tab-parliament"></div>
+    <div class="tab" id="tab-studio"></div>
   </section>
 </main>
 
@@ -351,6 +361,8 @@
 // it streams because interruptibility requires it.
 const FEED_MS=2000, DESK_MS=6000, FIN_MS=8000;
 const S={seen:0,source:"",attention:false,follow:true,printed:0,tapeWidth:0,tab:"newsroom",
+         // Which camera the studio desk shows, and whether it is on air.
+         studioDeviceId:"",studioActive:false,
          speak:false,listening:false,history:[],abort:null,tape:0,
          // Who the operator is talking to, from /console/identity (§88). The
          // markup's default is a fallback for a console that cannot reach the
@@ -930,6 +942,122 @@ async function restoreWorkspace(){
                (draft ? `\nUnsent text was preserved (addendum 40 §5.3).` : "");
 }
 
+/* ---------------- live studio ----------------
+   Addendum 41 calls the console a studio; this is the one desk where that is
+   literal. It chooses a camera and shows it. The composite - backdrop,
+   presenter, background removal - is built in OBS and arrives here as an
+   ordinary video input, which is why this code knows nothing about scenes.
+
+   Built once, never re-rendered. The desk poll replaces the innerHTML of the
+   surfaces it owns every six seconds; doing that here would detach <video>
+   from its MediaStream and the picture would die on a six-second cycle. */
+let studioBuilt=false, studioStream=null, studioRequest=0;
+
+// Whatever the platform calls it: "OBS Virtual Camera" on Windows and macOS,
+// "OBS Virtual Camera (v4l2loopback)" on Linux, "VirtualCam" on older builds.
+const OBS_CAMERA=/obs[\s-]*virtual|virtual[\s-]*cam/i;
+
+function studioNote(msg,absent){
+  const n=$("studio-note"); if(!n)return;
+  n.className="note"+(absent?" absent":""); n.textContent=msg;
+}
+
+// A camera's label is empty until the operator has granted access once. That
+// matters here: without labels the OBS camera cannot be told from the webcam,
+// so the desk says so rather than picking one and hoping.
+async function studioEnumerate(){
+  const sel=$("studio-cam"); if(!sel)return;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.enumerateDevices){
+    sel.innerHTML=`<option value="">No camera API</option>`;
+    studioNote("This browser exposes no camera API.",true); return;
+  }
+  let devices=[];
+  try{ devices=await navigator.mediaDevices.enumerateDevices(); }
+  catch(err){ studioNote("Could not list cameras: "+err.message,true); return; }
+  const cams=devices.filter(d=>d.kind==="videoinput");
+  if(!cams.length){
+    sel.innerHTML=`<option value="">No camera found</option>`;
+    studioNote("No camera is attached to this machine.",true); return;
+  }
+  const keep=sel.value;
+  sel.innerHTML=cams.map((c,i)=>
+    `<option value="${esc(c.deviceId)}">${esc(c.label||("Camera "+(i+1)))}</option>`).join("");
+  const obs=cams.find(c=>OBS_CAMERA.test(c.label||""));
+  if(keep&&cams.some(c=>c.deviceId===keep)) sel.value=keep;
+  else if(obs) sel.value=obs.deviceId;
+  S.studioDeviceId=sel.value;
+  if(S.studioActive) return;              // already reporting what is on air
+  if(obs) studioNote(`OBS Virtual Camera found · ${cams.length} camera(s) available.`);
+  else if(cams.every(c=>!c.label))
+    studioNote(`${cams.length} camera(s) found, names hidden until you put one on air once.`);
+  else studioNote("OBS Virtual Camera is not being offered — start it in OBS, then rescan.",true);
+}
+
+async function studioStart(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    studioNote("This browser exposes no camera API.",true); return; }
+  studioStop();
+  const request=studioRequest;
+  const id=$("studio-cam").value;
+  let stream;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia(
+      id?{video:{deviceId:{exact:id}}}:{video:true});
+  }catch(err){
+    if(request!==studioRequest)return;
+    studioNote(err&&err.name==="NotAllowedError"
+      ?"The browser refused the camera — permission denied."
+      :"Camera refused: "+((err&&err.message)||"unknown error"),true);
+    return;
+  }
+  // Stop or a newer Start can supersede a pending permission request.
+  if(request!==studioRequest){stream.getTracks().forEach(t=>t.stop());return;}
+  studioStream=stream;
+  $("studio-video").srcObject=studioStream;
+  S.studioActive=true;
+  const t=studioStream.getVideoTracks()[0];
+  const s=t&&t.getSettings?t.getSettings():{};
+  if(t)t.addEventListener("ended",()=>{
+    if(studioStream===stream){studioStop();studioNote("Camera disconnected. Start preview to reconnect.",true);}
+  });
+  studioNote(`Local preview · ${t?t.label||"camera":"camera"}`
+    +(s.width?` · ${s.width}×${s.height}`:"")
+    +(s.frameRate?` · ${Math.round(s.frameRate)} fps`:""));
+  studioEnumerate();   // labels are readable now that access has been granted
+}
+
+function studioStop(){
+  studioRequest++;
+  if(studioStream){ studioStream.getTracks().forEach(t=>t.stop()); studioStream=null; }
+  const v=$("studio-video"); if(v)v.srcObject=null;
+  S.studioActive=false;
+}
+
+function renderStudio(){
+  if(studioBuilt)return; studioBuilt=true;
+  $("tab-studio").innerHTML=
+    lead("Live studio","The presenter's local camera preview.",
+         "Choose a camera to preview here. This does not start a broadcast. The composite is built in OBS and "+
+         "arrives here as a single video input.")+
+    `<div class="strip">`+
+      `<select id="studio-cam" title="Which camera this desk shows"><option value="">Scanning…</option></select>`+
+      `<button class="btn" id="studio-start" title="Show the selected camera">▶ Start preview</button>`+
+      `<button class="btn" id="studio-stop" title="Release the camera">■ Stop preview</button>`+
+      `<button class="btn" id="studio-rescan" title="Look for cameras again">↻ Rescan</button>`+
+    `</div>`+
+    `<div class="studio-stage"><video id="studio-video" autoplay playsinline muted></video></div>`+
+    `<div class="note" id="studio-note">Looking for cameras…</div>`;
+  $("studio-start").addEventListener("click",studioStart);
+  $("studio-stop").addEventListener("click",()=>{studioStop();studioNote("Preview stopped.");});
+  $("studio-rescan").addEventListener("click",studioEnumerate);
+  $("studio-cam").addEventListener("change",()=>{S.studioDeviceId=$("studio-cam").value;});
+  // A camera appearing or vanishing - OBS starting its virtual camera, a USB
+  // webcam unplugged - should update the list without the operator asking.
+  if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener)
+    navigator.mediaDevices.addEventListener("devicechange",studioEnumerate);
+  studioEnumerate();
+}
+
 /* ---------------- conversations ---------------- */
 function renderChatterbox(c){
   const counts=c.counts||{};
@@ -1237,6 +1365,8 @@ Identity version ${who.identity_version}, carried through `+
   addEventListener("pagehide", () => saveWorkspace("flush"));
   addEventListener("visibilitychange", () => { if (document.hidden) saveWorkspace("flush"); });
 
+  renderStudio();
+  addEventListener("pagehide",studioStop);
   pollFeed(); pollDesks(); pollFinance(); pollChatterbox();
   setInterval(pollFeed,FEED_MS); setInterval(pollDesks,DESK_MS); setInterval(pollFinance,FIN_MS); setInterval(pollChatterbox,DESK_MS);
 })();

@@ -1,0 +1,3 @@
+# The custody manifest records the CRLF bytes of this protected document.
+# Preserve those bytes on every checkout without changing its text or digest.
+docs/JARVIS.md text eol=crlf

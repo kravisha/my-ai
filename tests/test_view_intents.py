@@ -36,6 +36,8 @@ from backend.view_intents import (
     ("pull up the strategy register", "strategy"),
     ("let's see parliament", "parliament"),
     ("bring up the newsroom", "newsroom"),
+    ("open the live studio", "studio"),
+    ("show me the webcam", "studio"),
 ])
 def test_show_commands_name_a_view(phrase, view):
     directive = vi.interpret(phrase)

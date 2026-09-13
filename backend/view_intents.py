@@ -59,6 +59,10 @@ VIEWS: dict[str, tuple[str, ...]] = {
     "alerts": ("alerts", "errors", "warnings", "problems", "exceptions", "attention",
                "what needs attention", "failures"),
     "parliament": ("parliament", "governance", "sessions", "voting"),
+    # The presenter's own camera. "feed" is deliberately absent - it already
+    # means the newsroom, and a word that opens two desks opens neither.
+    "studio": ("studio", "live studio", "camera", "webcam", "presenter camera",
+               "video"),
 }
 
 # Verbs that mean "put this in front of me". Deliberately narrow: an operator
