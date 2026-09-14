@@ -201,7 +201,30 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const store = window.localStorage;
+  /* Storage that cannot take the page down with it.
+     `window.localStorage` THROWS on property access in iOS private browsing and
+     when a browser is set to block site data - it does not return null. A bare
+     `store.getItem(...)` at load would therefore not degrade the page, it would
+     stop the script before anything rendered, and Krish would see a blank
+     screen from another continent with no way to tell me why. Every read and
+     write is wrapped, and every reader must cope with "" coming back. */
+  const store = (function () {
+    function safe(fn, fallback) {
+      try { return fn(); } catch (_) { return fallback; }
+    }
+    return {
+      getItem: (k) => safe(() => window.localStorage.getItem(k), null),
+      setItem: (k, v) => safe(() => window.localStorage.setItem(k, v), undefined),
+      removeItem: (k) => safe(() => window.localStorage.removeItem(k), undefined),
+    };
+  })();
+
+  /* The draft key. A message he has composed but not yet delivered is the most
+     expensive thing on this page: it may have been dictated once, on a train,
+     in a country where he will not get a second quiet moment. iOS discards a
+     backgrounded tab routinely, and the session expires every 12 hours, so the
+     DOM alone is not somewhere to keep it. */
+  const DRAFT_KEY = "jv_relay_draft";
 
   let token = store.getItem("jv_token") || "";
   let voicePref = store.getItem("jv_voice") || "auto";   // auto | always | never
@@ -338,9 +361,13 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
         body: JSON.stringify({ text }),
       });
       if (r.ok) {
-        setStatus("good", "✓ DELIVERED to Claude at " + r.at
+        setStatus("good", "✓ DELIVERED to Claude at " + (r.at || "just now")
                         + ". He reads it on his next check.");
+        // Cleared ONLY here. Every other path leaves the text where it is, in
+        // the box and in storage, because a message that failed to send is a
+        // message he still needs.
         field.value = "";
+        store.removeItem(DRAFT_KEY);
         speak("Delivered to Claude.");
       } else {
         setStatus("bad", "✗ NOT SENT — " + (r.detail || r.error || "unknown"));
@@ -421,6 +448,12 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
         $("draftRelay").disabled = false;
         if (text) {
           $("relay").value = text;
+          // Setting .value in script does NOT fire the `input` event, so the
+          // listener that persists drafts never sees this one. A message Jarvis
+          // composed is exactly as expensive to lose as one Krish typed - more
+          // so, since reproducing it costs another model call - and it would
+          // have been the only unsaved kind.
+          store.setItem(DRAFT_KEY, text);
           $("relaystatus").textContent = "Draft ready — read it, edit it, then press Send to Claude.";
           speak("Draft is ready in the lower box. Read it, then tell me when.");
         } else {
@@ -806,6 +839,32 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     $("enableAudio").classList.add("hidden");
     speak("Voice is on.", true);
   };
+
+  /* Keep the draft, and restore it before anything else can need it.
+
+     Restoration runs whether or not he is signed in, and deliberately so: the
+     commonest way to lose a message is to compose it, have the 12-hour session
+     expire, get bounced to the login box, and sign back in to an empty page.
+     The draft has to outlive the sign-out, so it is not tied to the token. */
+  (function keepTheDraft() {
+    const field = $("relay");
+    if (!field) return;
+
+    const saved = store.getItem(DRAFT_KEY);
+    if (saved && !field.value) {
+      field.value = saved;
+      setStatus("sending", "Restored an unsent message. Press Send when ready.");
+    }
+
+    // Saved on every edit rather than on a timer: a timer loses whatever was
+    // typed since it last fired, and the whole point is the message he cannot
+    // easily compose twice.
+    field.addEventListener("input", () => {
+      const text = field.value;
+      if (text.trim()) store.setItem(DRAFT_KEY, text);
+      else store.removeItem(DRAFT_KEY);
+    });
+  })();
 
   if (token) showApp();
 })();
