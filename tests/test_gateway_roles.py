@@ -100,6 +100,13 @@ PUBLIC_PATHS = {
     # no organizational data - every byte of that comes through /console/*,
     # which is gated - and the test below is what keeps that true.
     "/studio",
+    # The voice client's shell, public for the same reason as /studio and no
+    # other: a browser navigation carries no Authorization header, so gating the
+    # page itself would serve a blank 401 to someone trying to reach the sign-in
+    # form. It holds no organizational data - sign-in is /auth/login and every
+    # word of conversation arrives over the gated /ws - and the test below is
+    # what keeps that true rather than merely intended.
+    "/voice",
     "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc",
 }
 
@@ -124,6 +131,29 @@ def test_the_public_studio_shell_contains_no_organizational_data():
     # The only name in it is the COO's default, which the specification
     # publishes anyway and which /console/identity overrides at runtime.
     assert page.count("coo-1") == 0
+
+
+def test_the_public_voice_shell_contains_no_organizational_data():
+    """The same assertion as the studio shell, for the same reason.
+
+    A voice client is more tempting to inline state into than a typed one - it is
+    read aloud, so a "helpful" bootstrapped summary saves a round trip. That is
+    exactly the change that would turn this shell into a public leak, and this is
+    what stops it shipping."""
+    from pathlib import Path
+
+    page = Path(main.STATIC_DIR / "voice.html").read_text(encoding="utf-8")
+
+    # It reaches its data through the gated surfaces rather than embedding it.
+    assert "/auth/login" in page and "/ws" in page
+    # And carries none of the things that would make it more than a shell.
+    for leak in ("agent_registry", "GATEWAY_PASSWORD", "Bearer ey", "sqlite",
+                 "audit_log", "permissions.json"):
+        assert leak not in page, f"the voice shell contains {leak!r}"
+    # No credential may be baked in: the token is obtained at runtime and kept
+    # in the browser, never written into the page that is served to anyone.
+    assert "jv_token" in page, "the token should come from client storage"
+    assert "password" not in page.lower().split("autocomplete")[0]
 
 
 def test_no_route_is_reachable_without_a_declared_capability():

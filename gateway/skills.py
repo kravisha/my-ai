@@ -98,6 +98,24 @@ SKILLS: tuple[Skill, ...] = (
         status=STATUS_AVAILABLE,
     ),
     Skill(
+        name="relay_to_claude",
+        summary=(
+            "draft a message to Claude Dev, the engineer working on this machine, and "
+            "put it in the owner's second box for him to read and send. You write the "
+            "draft; he sends it. You never send it yourself, and sending it executes "
+            "nothing - it appends a line to a shared file Claude reads on his next "
+            "check, minutes later"
+        ),
+        # NOT converse. Conversing is something a client may do; carrying a message
+        # to the engineer who maintains this machine is not, and CAP_CONVERSE would
+        # have handed it to every client role. `publish` is the operator-only
+        # capability for putting something outside this system, which is exactly
+        # what appending to the shared developer channel is.
+        capability=roles.CAP_PUBLISH,
+        scope=SCOPE_SUBJECT,
+        status=STATUS_AVAILABLE,
+    ),
+    Skill(
         name="portfolio_analysis",
         summary=("remember the holdings the client tells you about, and work out weights "
                  "and concentration across them from what they paid"),

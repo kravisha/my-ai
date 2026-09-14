@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#111418">
+<title>Jarvis — voice</title>
+<style>
+/* Deliberately self-contained: one file, no build step, no CDN. The phone
+   loads this over a tunnel on a possibly poor connection. */
+:root {
+  --bg: #0f1115; --card: #171a21; --line: #262b36; --text: #e8eaf0;
+  --muted: #9aa3b2; --accent: #2563eb; --ok: #22c55e; --warn: #f59e0b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+header {
+  background: var(--accent); color: #fff; position: sticky; top: 0; z-index: 5;
+  padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+}
+header .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+header .row.small { margin-top: 6px; font-size: 13px; }
+header strong { font-size: 19px; letter-spacing: .4px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--ok); }
+.chip {
+  background: rgba(255,255,255,.2); color: #fff; border: 0;
+  border-radius: 999px; padding: 5px 11px; font-size: 12px;
+}
+main { padding: 14px; max-width: 760px; margin: 0 auto; }
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px; margin-bottom: 14px;
+}
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+input, textarea {
+  width: 100%; background: #0c0e13; color: var(--text); font-family: inherit;
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px; font-size: 17px;
+}
+textarea { resize: vertical; min-height: 86px; }
+button { font-family: inherit; cursor: pointer; }
+.primary {
+  flex: 1; padding: 18px; font-size: 16px; font-weight: 700;
+  background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+}
+.primary[disabled] { opacity: .5; }
+.mic {
+  flex: 1; padding: 18px; font-size: 16px; font-weight: 600; color: var(--text);
+  background: #1f2530; border: 1px solid var(--line); border-radius: 10px;
+  touch-action: none; user-select: none;
+}
+.mic.rec { background: #b91c1c; color: #fff; border-color: transparent; }
+.actions { display: flex; gap: 8px; margin-top: 10px; }
+.hint { color: var(--muted); font-size: 13px; margin: 8px 2px 0; }
+#log { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+.entry { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.entry .meta { font-size: 12px; color: var(--muted); margin-bottom: 8px; display: flex; gap: 8px; }
+.tag { border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 700; background: #263042; color: #b8c4d8; }
+.tag.spoken { background: #14532d; color: #bbf7d0; }
+.tag.textonly { background: #422006; color: #fde68a; }
+.entry .q { color: var(--muted); margin-bottom: 8px; }
+.entry pre { margin: 0; white-space: pre-wrap; word-break: break-word;
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* Two boxes, visibly separate. Krish must never be in doubt about whether he is
+   talking TO Jarvis or sending something THROUGH him to Claude. */
+.box {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px; margin-bottom: 16px;
+}
+.box h2 {
+  margin: 0 0 10px; font-size: 15px; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--muted);
+}
+.box.relay { border-left: 4px solid #a855f7; }
+.box.relay h2 { color: #c4b5fd; }
+.primary.alt { background: #7c3aed; }
+
+/* Read-aloud control on each reply: TTS on demand, for when audio was off or
+   the spoken version was missed. */
+.speakbtn {
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-size: 11px; padding: 2px 9px; margin-left: auto;
+}
+.speakbtn:hover { color: var(--text); }
+
+/* Live feedback. The whole point is that nothing fails silently. */
+.heard {
+  margin-top: 10px; padding: 12px; border-radius: 10px;
+  background: #0c0e13; border: 1px dashed var(--line);
+  color: var(--muted); font-size: 16px; min-height: 48px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.heard.live { color: var(--text); border-color: var(--accent); border-style: solid; }
+.micstatus { margin-top: 10px; font-size: 14px; color: var(--muted); }
+.micstatus.bad { color: #fca5a5; }
+/* The relay's own status is loud: it is the one action with a consequence
+   outside this machine, and the one Krish most needs confirmed. */
+#relaystatus {
+  margin-top: 12px; padding: 12px 14px; border-radius: 10px; font-size: 15px;
+  border: 1px solid var(--line); background: #0c0e13; color: var(--muted);
+}
+#relaystatus.sending { border-color: #7c3aed; color: #ddd6fe; background: #1a1030; }
+#relaystatus.good {
+  border-color: #22c55e; color: #bbf7d0; background: #052e16; font-weight: 600;
+}
+#relaystatus.bad {
+  border-color: #ef4444; color: #fecaca; background: #2a0a0a; font-weight: 600;
+}
+.hidden { display: none !important; }
+footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align: center; }
+.link { background: none; border: 0; color: var(--muted); text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="row">
+    <strong>Jarvis</strong>
+    <span id="dot" class="dot"></span>
+    <span id="state">signed out</span>
+  </div>
+  <div class="row small">
+    <span id="voicestate">voice: auto</span>
+    <span class="chip" style="background:rgba(0,0,0,.25)">v__VERSION__</span>
+    <button id="enableAudio" class="chip">tap to enable voice</button>
+    <button id="stopSpeak" class="chip hidden">stop talking</button>
+  </div>
+</header>
+
+<main>
+
+  <div id="loginBox" class="card">
+    <label for="user">Super User sign-in</label>
+    <input id="user" type="text" autocomplete="username" placeholder="username">
+    <div style="height:8px"></div>
+    <input id="pass" type="password" autocomplete="current-password" placeholder="password">
+    <div class="actions"><button id="signin" class="primary">Sign in</button></div>
+    <p class="hint" id="loginHint">Your credentials go to this Gateway only.</p>
+  </div>
+
+  <div id="app" class="hidden">
+
+    <!-- BOX 1 — talking to Jarvis -->
+    <section class="box">
+      <h2>1 &nbsp;Talk to Jarvis</h2>
+      <label for="text">What you said — edit it before sending</label>
+      <textarea id="text" rows="3" placeholder="Tap the mic and speak, or just type here…"></textarea>
+
+      <div id="heard" class="heard">Nothing captured yet.</div>
+
+      <div class="actions">
+        <button id="mic" class="mic">Tap to speak</button>
+        <button id="send" class="primary">Send to Jarvis</button>
+      </div>
+
+      <div id="micstatus" class="micstatus">Microphone not yet used.</div>
+      <p class="hint">
+        Typing always works, even when the microphone does not. Your phone
+        keyboard's mic key types into this box too.
+      </p>
+    </section>
+
+    <!-- BOX 2 — what Jarvis sends on to Claude Dev -->
+    <section class="box relay">
+      <h2>2 &nbsp;Message to Claude</h2>
+      <label for="relay">Jarvis drafts here, or you write it. Nothing is sent until you press the button.</label>
+      <textarea id="relay" rows="3" placeholder="A message to carry to Claude Dev…"></textarea>
+      <div class="actions">
+        <button id="draftRelay" class="mic">Jarvis, draft it &rarr;</button>
+        <button id="sendRelay" class="primary alt">Send to Claude &#10148;</button>
+      </div>
+      <div id="relaystatus" class="micstatus">Not sent.</div>
+      <p class="hint">
+        <strong>To reach Claude:</strong> say or type it in box 1 &rarr; tap
+        <em>Jarvis, draft it</em> &rarr; read what appears here &rarr; tap
+        <em>Send to Claude</em>.
+        <br>Or just say <em>&ldquo;tell Claude &hellip;&rdquo;</em> and then
+        <em>&ldquo;send it&rdquo;</em> &mdash; same thing, hands free.
+        <br><br>
+        This appends to the shared developer channel. Claude reads it on his next
+        check, minutes later. Sending executes nothing.
+      </p>
+    </section>
+
+    <div id="log"></div>
+  </div>
+
+</main>
+
+<footer>
+  <button id="signout" class="link hidden">sign out</button>
+  <div class="hint" style="text-align:center">version <strong>__VERSION__</strong> &middot; built __BUILD__</div>
+</footer>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const store = window.localStorage;
+
+  let token = store.getItem("jv_token") || "";
+  let voicePref = store.getItem("jv_voice") || "auto";   // auto | always | never
+  let audioUnlocked = false;
+  let ws = null, recog = null, recognising = false;
+  let relayDraft = null;   // set while Jarvis is composing the box-2 message
+
+  /* ---------------------------------------------------------------- speaking */
+
+  function speak(text, force) {
+    if (voicePref === "never" && !force) return;
+    if (!("speechSynthesis" in window) || !audioUnlocked) return;
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.02;
+      u.onstart = () => $("stopSpeak").classList.remove("hidden");
+      u.onend = () => $("stopSpeak").classList.add("hidden");
+      speechSynthesis.speak(u);
+    } catch (_) {}
+  }
+  function stopSpeaking() {
+    try { speechSynthesis.cancel(); } catch (_) {}
+    $("stopSpeak").classList.add("hidden");
+  }
+
+  /* Things that are worse heard than read. Returning true means: show it,
+     say one sentence explaining why, and never switch silently. */
+  function betterAsText(s) {
+    return /```/.test(s)
+        || /[A-Za-z]:\\[^\s]{6,}/.test(s)
+        || /\b[0-9a-f]{12,}\b/i.test(s)
+        || (s.match(/^\s*[-*\d]/gm) || []).length > 6
+        || s.length > 900;
+  }
+  function speakable(s) {
+    return s.replace(/```[\s\S]*?```/g, " code on screen. ")
+            .replace(/[A-Za-z]:\\[^\s]+/g, " a path on screen ")
+            .replace(/\b[0-9a-f]{12,}\b/gi, " a hash on screen ")
+            .replace(/https?:\/\/\S+/g, " a link on screen ")
+            .replace(/\s+/g, " ").trim();
+  }
+
+  const OVERRIDES = [
+    { re: /\b(just|only)\s+text\b|\bstop talking\b|\bbe quiet\b|\btext mode\b/i, v: "never" },
+    { re: /\bvoice mode\b|\bread it out\b|\bsay that\b/i, v: "always" },
+    { re: /\bauto mode\b|\bnormal mode\b/i, v: "auto" },
+  ];
+  function applyOverride(s) {
+    for (const o of OVERRIDES) if (o.re.test(s)) {
+      voicePref = o.v; store.setItem("jv_voice", voicePref); paintVoice(); return true;
+    }
+    return false;
+  }
+  function paintVoice() {
+    $("voicestate").textContent =
+      { auto: "voice: auto", always: "voice: always", never: "voice: off" }[voicePref];
+  }
+
+  /* ------------------------------------------------------------------ render */
+
+  function entry(q) {
+    const el = document.createElement("div");
+    el.className = "entry";
+    el.innerHTML = `<div class="meta"><span>${new Date().toLocaleTimeString()}</span>
+                    <span class="tag">working…</span>
+                    <button class="speakbtn">read aloud</button></div>
+                    ${q ? `<div class="q"></div>` : ""}<pre></pre>`;
+    if (q) el.querySelector(".q").textContent = q;
+    // Read-aloud on demand. Audio may have been off, or the reply may have gone
+    // out as text because it was better read than heard; either way Krish can
+    // ask for it out loud without resending anything.
+    el.querySelector(".speakbtn").onclick = () => {
+      const body = el.querySelector("pre").textContent || "";
+      if (!body.trim()) return;
+      audioUnlocked = true;          // an explicit tap IS the gesture browsers want
+      $("enableAudio").classList.add("hidden");
+      stopSpeaking();
+      speak(speakable(body), true);
+    };
+    $("log").prepend(el);
+    while ($("log").children.length > 40) $("log").lastChild.remove();
+    return el;
+  }
+
+  /* ---------------------------------------------------------- relay to Claude */
+
+  /* Authenticated fetch. sendRelay and draftRelay were ported from an earlier
+     prototype that had this helper; the calls came across and the helper did not,
+     so every relay attempt died with "api is not defined" before reaching the
+     network. The button looked dead and the server saw nothing, which is exactly
+     how it presented. */
+  function setStatus(kind, message) {
+    const el = $("relaystatus");
+    el.className = kind;              // sending | good | bad
+    el.textContent = message;
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+        ...(opts.headers || {}),
+      },
+    });
+    let body = {};
+    try { body = await res.json(); } catch (_) { /* empty or non-JSON */ }
+    if (res.status === 401) {
+      return { ok: false, detail: "Not signed in, or the session expired. Sign in again." };
+    }
+    if (!res.ok) {
+      return { ok: false, detail: body.detail || ("HTTP " + res.status) };
+    }
+    return body;
+  }
+
+  async function sendRelay() {
+    const field = $("relay");
+    const text = field.value.trim();
+    if (!text) {
+      setStatus("bad", "✗ The message box is empty — type something first.");
+      speak("The message box is empty.");
+      return;
+    }
+    const btn = $("sendRelay");
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Sending…";           // the button itself changes, not only a caption
+    setStatus("sending", "Sending to Claude…");
+    try {
+      const r = await api("/voice/relay", {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+      if (r.ok) {
+        setStatus("good", "✓ DELIVERED to Claude at " + r.at
+                        + ". He reads it on his next check.");
+        field.value = "";
+        speak("Delivered to Claude.");
+      } else {
+        setStatus("bad", "✗ NOT SENT — " + (r.detail || r.error || "unknown"));
+        speak("That did not send.");
+      }
+    } catch (err) {
+      setStatus("bad", "✗ NOT SENT — " + err.message);
+      speak("That did not send.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  }
+
+  /* Ask Jarvis to compose the relay message, using the live conversation socket.
+     His reply lands in box 2 for Krish to read and edit; it is never sent on. */
+  async function draftRelay() {
+    const ask = $("text").value.trim() || $("relay").value.trim();
+    if (!ask) {
+      $("relaystatus").className = "micstatus bad";
+      $("relaystatus").textContent = "Say or type what you want Claude told, first.";
+      return;
+    }
+    $("draftRelay").disabled = true;
+    $("relaystatus").className = "micstatus";
+    $("relaystatus").textContent = "Jarvis is drafting…";
+    relayDraft = { buf: "" };
+    try {
+      if (!ws || ws.readyState !== WebSocket.OPEN) await connect();
+      ws.send(JSON.stringify({
+        type: "message",
+        text: "Write a short, clear message for me to send to Claude Dev, the "
+            + "engineer working on this machine. Reply with ONLY the message "
+            + "text, no preamble. Here is what I want him told: " + ask,
+      }));
+    } catch (err) {
+      relayDraft = null;
+      $("draftRelay").disabled = false;
+      $("relaystatus").className = "micstatus bad";
+      $("relaystatus").textContent = "Could not reach Jarvis: " + err.message;
+    }
+  }
+
+  /* ------------------------------------------------------------------ socket */
+
+  function connect() {
+    return new Promise((resolve, reject) => {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token }));
+      ws.onerror = () => reject(new Error("socket error"));
+      ws.onclose = () => { $("dot").classList.remove("on"); $("state").textContent = "disconnected"; };
+      ws.onmessage = (ev) => {
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.type === "ready") {
+          $("dot").classList.add("on");
+          $("state").textContent = "connected";
+          resolve();
+        } else if (m.type === "error" && !current) {
+          reject(new Error(m.error || "auth failed"));
+        } else {
+          handle(m);
+        }
+      };
+    });
+  }
+
+  let current = null;   // { el, pre, buf }
+
+  function handle(m) {
+    // A draft for box 2 is in flight: its text belongs in the relay box, not
+    // in the conversation log.
+    if (relayDraft) {
+      if (m.type === "delta") { relayDraft.buf += (m.text || ""); return; }
+      if (m.type === "done") {
+        const text = relayDraft.buf.trim();
+        relayDraft = null;
+        $("draftRelay").disabled = false;
+        if (text) {
+          $("relay").value = text;
+          $("relaystatus").textContent = "Draft ready — read it, edit it, then press Send to Claude.";
+          speak("Draft is ready in the lower box. Read it, then tell me when.");
+        } else {
+          $("relaystatus").className = "micstatus bad";
+          $("relaystatus").textContent = "Jarvis returned nothing. Write it yourself, or try again.";
+        }
+        return;
+      }
+      if (m.type === "error") {
+        relayDraft = null;
+        $("draftRelay").disabled = false;
+        $("relaystatus").className = "micstatus bad";
+        $("relaystatus").textContent = "Draft failed: " + (m.error || "unknown");
+        return;
+      }
+    }
+    if (!current) return;
+    if (m.type === "delta") {
+      current.buf += (m.text || "");
+      current.pre.textContent = current.buf;
+    } else if (m.type === "done") {
+      finish();
+    } else if (m.type === "error") {
+      current.pre.textContent = "Error: " + (m.error || "unknown");
+      current.el.querySelector(".tag").textContent = "failed";
+      current = null;
+      $("send").disabled = false;
+    }
+  }
+
+  function finish() {
+    const { el, buf } = current;
+    const tag = el.querySelector(".tag");
+    const asText = voicePref === "never" || (voicePref === "auto" && betterAsText(buf));
+    if (asText) {
+      tag.textContent = "text only"; tag.className = "tag textonly";
+      // The rule: a switch to text is announced, never silent.
+      if (voicePref !== "never") speak("Sending this as text, it reads better than it hears.", true);
+    } else {
+      tag.textContent = "spoken"; tag.className = "tag spoken";
+      speak(speakable(buf));
+    }
+    current = null;
+    $("send").disabled = false;
+  }
+
+  /* -------------------------------------------------------------------- send */
+
+  /* Spoken control of the relay box.
+   *
+   * Two intents Krish asked for by name: "tell Claude X" should draft into box 2
+   * without him touching it, and "send it" should press the button.
+   *
+   * Deliberately NOT behind a confirmation. Relaying executes nothing; it appends
+   * a line to a file another session reads later. On the graded scheme agreed
+   * with Deploy that is the low end, and a prompt here would be one of the ones
+   * people learn to click through, which devalues the prompts that matter.
+   *
+   * The machine must never SPEAK these trigger phrases, for the same reason a
+   * confirmation keyword is never spoken: its own output reaches its own
+   * microphone, and in a room with a second host, that host's microphone too.
+   * The acknowledgements below are worded to avoid uttering them.
+   */
+  const TELL_CLAUDE = /\b(tell|ask|message|inform)\s+(claude|dev)\b|\blet\s+claude\s+know\b/i;
+  const SEND_RELAY = /^\s*(send it|send that|send it jarvis|send to claude|go ahead and send|yes send it)\s*[.!]?\s*$/i;
+
+  async function trySpokenRelayCommand(text) {
+    if (SEND_RELAY.test(text)) {
+      const pending = $("relay").value.trim();
+      if (!pending) {
+        $("relaystatus").className = "micstatus bad";
+        $("relaystatus").textContent = "There is nothing in the message box to send.";
+        speak("Nothing is drafted yet.");
+        return true;
+      }
+      $("text").value = "";
+      await sendRelay();
+      return true;
+    }
+    if (TELL_CLAUDE.test(text)) {
+      await draftRelay();            // reads box 1, writes the draft into box 2
+      return true;
+    }
+    return false;
+  }
+
+  async function send() {
+    const field = $("text");
+    const text = field.value.trim();
+    if (!text || current) return;
+
+    // Handled before anything reaches Jarvis, so "send it" does not become a
+    // conversational turn and get answered instead of obeyed.
+    if (await trySpokenRelayCommand(text)) return;
+
+    if (applyOverride(text) && text.split(/\s+/).length <= 4) {
+      field.value = "";
+      const el = entry(null);
+      el.querySelector(".tag").textContent = "setting";
+      el.querySelector("pre").textContent = "Voice preference: " + voicePref;
+      speak("Voice " + voicePref, true);
+      return;
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      try { await connect(); } catch (e) {
+        const el = entry(text);
+        el.querySelector("pre").textContent = "Could not connect: " + e.message;
+        return;
+      }
+    }
+
+    $("send").disabled = true;
+    const el = entry(text);
+    current = { el, pre: el.querySelector("pre"), buf: "" };
+    current.pre.textContent = "…";
+    ws.send(JSON.stringify({ type: "message", text }));
+    field.value = "";
+  }
+
+  /* ----------------------------------------------------------------- speech in */
+
+  /* Every failure here must be VISIBLE. An earlier version swallowed errors and
+     flipped the button back with no explanation, which is indistinguishable from
+     the microphone simply not working. */
+  function micSay(msg, bad) {
+    const el = $("micstatus");
+    el.textContent = msg;
+    el.className = "micstatus" + (bad ? " bad" : "");
+  }
+  function heardSay(msg, live) {
+    const el = $("heard");
+    el.textContent = msg;
+    el.className = "heard" + (live ? " live" : "");
+  }
+
+  function setupMic() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const mic = $("mic");
+
+    if (!window.isSecureContext) {
+      mic.disabled = true;
+      micSay("Microphone needs a secure page (https or localhost). Type instead.", true);
+      return;
+    }
+    if (!SR) {
+      mic.textContent = "Speech not supported here";
+      mic.disabled = true;
+      micSay("This browser has no speech recognition. Use the keyboard, or the mic "
+           + "key on your phone keyboard, which types into the box above.", true);
+      return;
+    }
+
+    recog = new SR();
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.lang = "en-US";
+
+    let base = "", gotAnything = false;
+
+    recog.onstart = () => { micSay("Listening — speak now."); };
+
+    recog.onaudiostart = () => { micSay("Microphone is open. Listening…"); };
+
+    recog.onspeechstart = () => { micSay("Hearing you…"); };
+
+    recog.onresult = (e) => {
+      let interim = "", final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t; else interim += t;
+      }
+      if (final) base += final;
+      const whole = (base + interim).trim();
+      $("text").value = whole;                      // editable, never auto-sent
+      if (whole) { gotAnything = true; heardSay(whole, true); }
+    };
+
+    /* The important change: say WHAT went wrong, in words, on screen. */
+    recog.onerror = (e) => {
+      const why = {
+        "not-allowed": "Microphone permission was refused. Click the padlock in the "
+                     + "address bar, allow the microphone, then reload.",
+        "service-not-allowed":
+                       "The browser blocked the speech service. Allow the microphone "
+                     + "for this site, then reload.",
+        "no-speech":   "No speech detected — nothing was heard.",
+        "audio-capture":
+                       "No microphone was found on this machine.",
+        "network":     "The speech service could not be reached (it needs the internet).",
+        "aborted":     "Listening stopped.",
+      }[e.error] || ("Speech error: " + e.error);
+      micSay(why, e.error !== "no-speech" && e.error !== "aborted");
+      heardSay(why);            // the big box, so it cannot be missed
+      hardStop();
+    };
+
+    recog.onend = () => {
+      if (recognising) { try { recog.start(); } catch (_) {} return; }  // hold continues
+      if (!gotAnything && !$("micstatus").classList.contains("bad")) {
+        heardSay("Nothing captured. Try again, or type it.");
+      }
+    };
+
+    /* Ask for the microphone EXPLICITLY before starting recognition.
+       Speech recognition asks implicitly and, when the prompt is dismissed or the
+       site is already blocked, fails with an error that arrives after a confusing
+       pause - or, on some builds, ends with no results and no error at all, which
+       is indistinguishable from "you said nothing". getUserMedia makes the browser
+       show its prompt immediately and hands back a named exception we can print. */
+    let micGranted = false;
+    async function ensureMic() {
+      if (micGranted) return true;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        micSay("This browser exposes no microphone API.", true);
+        return false;
+      }
+      micSay("Asking for microphone permission…");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());   // we only needed the grant
+        micGranted = true;
+        return true;
+      } catch (err) {
+        const name = err && err.name ? err.name : "Error";
+        const why = {
+          NotAllowedError: "Microphone permission is BLOCKED for this site. Click the "
+                         + "padlock (or camera icon) at the left of the address bar, set "
+                         + "Microphone to Allow, then reload this page.",
+          NotFoundError:   "No microphone is connected to this machine.",
+          NotReadableError:"The microphone is in use by another application.",
+          SecurityError:   "The page is not allowed to use the microphone here.",
+        }[name] || (name + ": " + (err && err.message ? err.message : "unknown"));
+        micSay(why, true);
+        heardSay("Microphone unavailable — " + why);
+        return false;
+      }
+    }
+
+    const startRec = async (ev) => {
+      ev.preventDefault();
+      stopSpeaking();
+      if (!(await ensureMic())) { hardStop(); return; }
+      base = $("text").value ? $("text").value + " " : "";
+      gotAnything = false;
+      recognising = true;
+      mic.classList.add("rec");
+      mic.textContent = "Listening… tap to stop";
+      micSay("Starting microphone…");
+      heardSay("…", true);
+      try {
+        recog.start();
+      } catch (err) {
+        micSay("Could not start listening: " + err.message, true);
+        hardStop();
+      }
+    };
+
+    const hardStop = () => {
+      recognising = false;
+      mic.classList.remove("rec");
+      mic.textContent = "Tap to speak";
+      try { recog.stop(); } catch (_) {}
+    };
+
+    const stopRec = (reason) => {
+      if (!recognising) return;
+      clearTimeout(silenceTimer); clearTimeout(hardTimer);
+      hardStop();
+      if (reason) { micSay(reason); return; }
+      const v = $("text").value.trim();
+      if (v) micSay("Captured. Check the text, then press Send.");
+      else micSay("Nothing was captured.", true);
+    };
+
+    /* TOGGLE, not press-and-hold. Krish asked for a moving conversation without
+       holding a button down, and holding is genuinely awkward one-handed.
+
+       The original spec warned against a toggle because one left on by accident
+       captures the room. Two things make that acceptable here, and they are the
+       reason this is safe rather than merely requested:
+
+         1. Nothing is ever auto-sent. The transcript lands in an editable box and
+            Krish presses send. A toggle left on produces junk text he deletes,
+            not an instruction anybody acts on.
+         2. It stops itself. Silence for SILENCE_STOP_MS ends it, and a hard
+            ceiling ends it regardless, so "left on" has an upper bound measured
+            in seconds rather than until someone notices. */
+    const SILENCE_STOP_MS = 8000;    // no speech heard for this long -> stop
+    const HARD_MAX_MS = 180000;      // never listen longer than this, ever
+    let silenceTimer = null, hardTimer = null;
+
+    const armSilence = () => {
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (recognising) { stopRec("Stopped after a pause."); }
+      }, SILENCE_STOP_MS);
+    };
+
+    mic.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      if (recognising) stopRec();
+      else {
+        startRec(ev);
+        armSilence();
+        clearTimeout(hardTimer);
+        hardTimer = setTimeout(() => {
+          if (recognising) stopRec("Stopped at the time limit.");
+        }, HARD_MAX_MS);
+      }
+    });
+
+    // Every result resets the silence countdown, so a real conversation keeps
+    // the microphone open and a forgotten button does not.
+    const bumpSilence = () => { if (recognising) armSilence(); };
+    recog.addEventListener("result", bumpSilence);
+    recog.addEventListener("speechstart", bumpSilence);
+  }
+
+  /* -------------------------------------------------------------------- auth */
+
+  async function signIn() {
+    const username = $("user").value.trim();
+    const password = $("pass").value;
+    if (!username || !password) return;
+    $("signin").disabled = true;
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        $("loginHint").textContent = detail.detail || ("Sign-in failed (" + res.status + ")");
+        return;
+      }
+      const data = await res.json();
+      token = data.token || data.session_token || "";
+      if (!token) { $("loginHint").textContent = "No token in the response."; return; }
+      store.setItem("jv_token", token);
+      $("pass").value = "";
+      showApp();
+    } catch (e) {
+      $("loginHint").textContent = "Network error: " + e.message;
+    } finally {
+      $("signin").disabled = false;
+    }
+  }
+
+  function showApp() {
+    $("loginBox").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("signout").classList.remove("hidden");
+    $("state").textContent = "connecting…";
+    connect().catch(() => { $("state").textContent = "auth failed — sign in again"; signOut(); });
+  }
+
+  function signOut() {
+    store.removeItem("jv_token"); token = "";
+    if (ws) { try { ws.close(); } catch (_) {} }
+    $("app").classList.add("hidden");
+    $("signout").classList.add("hidden");
+    $("loginBox").classList.remove("hidden");
+    $("state").textContent = "signed out";
+    $("dot").classList.remove("on");
+  }
+
+  /* -------------------------------------------------------------------- init */
+
+  paintVoice();
+  setupMic();
+  $("signin").onclick = signIn;
+  $("pass").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+  $("send").onclick = send;
+  // These two were never wired: both relay buttons were dead on the page.
+  $("draftRelay").onclick = draftRelay;
+  $("sendRelay").onclick = sendRelay;
+  $("signout").onclick = signOut;
+  $("stopSpeak").onclick = stopSpeaking;
+  $("enableAudio").onclick = () => {
+    audioUnlocked = true;
+    $("enableAudio").classList.add("hidden");
+    speak("Voice is on.", true);
+  };
+
+  if (token) showApp();
+})();
+</script>
+</body>
+</html>
