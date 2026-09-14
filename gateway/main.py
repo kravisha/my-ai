@@ -33,16 +33,18 @@ lesson `tests/test_db_isolation.py` was written to keep.
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, client_agent, clients, conversation, exposure, jarvis, roles, scoreboard, store, technology
+from gateway import auth, client_agent, clients, conversation, exposure, jarvis, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -276,6 +278,94 @@ async def index():
     native app required). Read per request rather than cached at import so that
     editing the page does not require a restart."""
     return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/voice")
+async def voice():
+    """The same Gateway, driven by speech instead of typing.
+
+    A separate page rather than a mode on the main client: the phone client is
+    used one-handed, often while walking, and the controls that make speech
+    workable - a press-and-hold microphone, a stop-talking control reachable
+    without looking - crowd out a keyboard-first layout rather than coexisting
+    with it.
+
+    It is a view, not a second API. Sign-in is `/auth/login` and the conversation
+    is the existing `/ws`, so a voice session is subject to exactly the same
+    capability checks, rate limiting and audit trail as a typed one. Nothing here
+    can reach a capability the caller's role does not already allow.
+
+    Read per request, like the main client, so editing the page needs no restart.
+
+    The build stamp is injected rather than written into the file: Krish and I lost
+    time three times today to a cached page, each of us guessing whether the other
+    was looking at current code. A version derived from the file's own mtime cannot
+    be forgotten on an edit, and it is visible on screen without opening devtools."""
+    page = STATIC_DIR / "voice.html"
+    html = page.read_text(encoding="utf-8")
+    info = uiversion.current()
+    html = html.replace("__VERSION__", info["version"]).replace("__BUILD__", info["built"])
+    return Response(content=html, media_type="text/html",
+                    headers={"Cache-Control": "no-store, must-revalidate"})
+
+
+class RelayRequest(BaseModel):
+    text: str
+
+
+@app.post("/voice/relay")
+async def voice_relay(
+    body: RelayRequest,
+    _: str = Depends(require(roles.CAP_PUBLISH)),
+):
+    """Krish's second box: a message he wants carried to Claude Dev.
+
+    Jarvis drafts it, Krish reads it and presses send, and it is appended to the
+    shared developer channel that the Claude sessions poll. Deliberately a
+    *relay* and not an instruction: nothing here executes anything, it writes a
+    timestamped, attributed line into a file someone else reads on their own
+    schedule. Minutes, not seconds, and the entry says so rather than implying
+    the message was delivered into a running session.
+
+    Append-only, and that is load-bearing. The channel is the shared record of a
+    day's work between three parties; a truncating write would destroy history
+    that cannot be reconstructed.
+
+    Gated on `publish`, not `converse`. Conversing is something a client role may
+    do; carrying a message out to the engineer who maintains this machine is not,
+    and `converse` would have handed this to every client. `publish` is the
+    operator-only capability for putting something outside this system, which is
+    exactly what appending to the shared developer channel is. The skills registry
+    declares the same capability for `relay_to_claude`; they must not drift."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Nothing to send")
+    if len(text) > 20_000:
+        raise HTTPException(status_code=413, detail="Message too long")
+
+    channel = Path(
+        os.environ.get("JARVIS_CLAUDE_CHANNEL")
+        or r"C:\Users\Krish\Documents\Aria-Claude-Communications"
+           r"\Arya-Claude - Ongoing Conversation.md"
+    )
+    if not channel.parent.is_dir():
+        raise HTTPException(status_code=503, detail="Channel directory not present")
+
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    entry = (
+        f"\n## {stamp} | KRISH-VIA-JARVIS | relayed by Jarvis at Krish's direction\n\n"
+        f"{text}\n"
+    )
+    with channel.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(entry)
+
+    return {
+        "ok": True,
+        "at": stamp,
+        "bytes": channel.stat().st_size,
+        "note": "Written to the shared channel. Claude Dev reads it on his next "
+                "poll - minutes, not seconds. Nothing was executed.",
+    }
 
 
 @app.post("/auth/login", response_model=LoginResponse)

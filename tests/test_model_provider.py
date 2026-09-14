@@ -39,7 +39,13 @@ def test_importing_the_model_gateway_needs_no_api_key():
     env = {
         key: value
         for key, value in os.environ.items()
-        if key in ("PATH", "SYSTEMROOT", "HOME", "USERPROFILE", "PYTHONPATH")
+        # APPDATA joins these for the same reason they are here: on Windows the
+        # per-user site-packages directory lives under it, so stripping it hides
+        # every user-installed package from the child - python-dotenv included -
+        # and the import then fails for a reason that has nothing to do with the
+        # API key this test is about. Keeping it preserves the thing being
+        # tested; ANTHROPIC_API_KEY is still absent, which is the whole point.
+        if key in ("PATH", "SYSTEMROOT", "HOME", "USERPROFILE", "PYTHONPATH", "APPDATA")
     }
     env["PYTHONPATH"] = str(PROJECT_ROOT)
     assert "ANTHROPIC_API_KEY" not in env

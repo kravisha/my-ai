@@ -42,7 +42,7 @@ from typing import Iterator
 
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import roles, skills, store, tools
+from gateway import roles, skills, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -179,7 +179,8 @@ def client_prompt(agent_name: str, role: str) -> str:
     """The client agent's instructions, assembled from who it is and what it may
     actually do."""
     return CLIENT_SYSTEM_PROMPT.format(
-        name=agent_name, capabilities=skills.capability_paragraph(role))
+        name=agent_name,
+        capabilities=skills.capability_paragraph(role) + uiversion.prompt_paragraph())
 
 
 

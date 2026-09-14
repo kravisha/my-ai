@@ -35,7 +35,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import roles
+from gateway import machine, roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -240,6 +240,24 @@ JARVIS_TOOLS = [
     },
 ]
 
+MACHINE_TOOLS = [
+    {
+        "name": "machine_status",
+        "description": (
+            "What is happening on this PC right now: disk space per drive with a "
+            "state, memory, the heaviest processes by CPU and by memory, the largest "
+            "folders, and what has changed in the last few hours. Returns a "
+            "'concerns' list derived from fixed thresholds, so 'is anything wrong' "
+            "has a reproducible answer rather than a guess - an empty list genuinely "
+            "means nothing crossed a line, and you should say so positively. "
+            "Read-only: it starts, stops and deletes nothing. It deliberately does "
+            "NOT report per-application disk usage; see 'not_measured' in the result "
+            "and repeat that reason if asked, rather than estimating."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
 TECHNOLOGY_TOOLS = [
     {
         "name": "technology_review",
@@ -267,7 +285,7 @@ TECHNOLOGY_TOOLS = [
     },
 ]
 
-TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS
+TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -306,6 +324,7 @@ TOOL_NAMES = {tool["name"] for tool in TOOLS}
 # checks again, which is the boundary, because a model can name a tool nobody
 # offered it.
 TOOL_CAPABILITY = {
+    "machine_status": roles.CAP_SYSTEM_STATUS,
     "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
     "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
     "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
@@ -379,6 +398,9 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
         # the user plainly instead of the turn collapsing.
         return {"error": f"Not permitted: your role ({role}) cannot use {name}."}
     try:
+        if name == "machine_status":
+            return machine.snapshot()
+
         if name == "file_scoreboard_item":
             item_id = scoreboard.file_item(
                 conn,

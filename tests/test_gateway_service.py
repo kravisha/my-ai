@@ -389,6 +389,16 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "jarvis_status",
         "jarvis_agent",
         "technology_review",
+        # `machine_status` added 2026-09-14. Krish asked Jarvis to be able to
+        # report what is happening on the PC - disks, memory, the processes
+        # taking the space - because he is operating this machine remotely and
+        # cannot look at it. It is BUILT, in `gateway/machine.py`, which is the
+        # bar this assertion actually guards: the first version took over 180
+        # seconds and timed out, so recursive folder sizing was made opt-in and
+        # the snapshot now returns in about 9 seconds. A tool that times out is
+        # a tool that is not built, and it would have belonged on the withdrawn
+        # list below rather than here.
+        "machine_status",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so
