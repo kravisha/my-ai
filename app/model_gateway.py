@@ -17,6 +17,7 @@ import time
 
 from app.model_budget import BudgetedProvider
 from app.model_provider import DEFAULT_MODEL, AnthropicProvider, ModelProvider
+from app.model_tiering import TieredProvider, capable_model, cheap_model
 
 MODEL = DEFAULT_MODEL
 
@@ -117,7 +118,18 @@ def default_provider() -> ModelProvider:
     wrapped: it spends nothing."""
     global _provider
     if _provider is None:
-        _provider = BudgetedProvider(AnthropicProvider(model=MODEL))
+        # Tiering INSIDE the budget wrapper, deliberately. The ledger must count
+        # every call once, whichever model served it, so the breaker sits
+        # outermost and refuses before the router ever chooses. Reversing these
+        # would give each tier its own view of the budget and let the pair
+        # collectively spend twice the limit - the same mistake the shared
+        # SQLite ledger exists to prevent between processes.
+        _provider = BudgetedProvider(
+            TieredProvider(
+                cheap=AnthropicProvider(model=cheap_model()),
+                capable=AnthropicProvider(model=capable_model()),
+            )
+        )
         fault = _fault_delay()
         if fault is not None:
             # Outside the budget wrapper, so a stalled call still counts against
