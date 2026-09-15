@@ -34,9 +34,50 @@ function Alive {
 
 Say '=== start-jarvis-gateway launched ==='
 
+function Clear-WedgedGateway {
+  <#
+    A DEAD gateway frees port 8100 and the replacement binds cleanly. A WEDGED
+    one does not: it still owns the port, accepts the connection and never
+    answers, so /health fails while the socket stays held. Starting a second
+    process then achieves nothing - it cannot bind, it exits, and the loop
+    repeats every 30 seconds forever while Krish sees only silence.
+
+    That is not a hypothetical. Today alone robocopy, MTP enumeration, iCloud
+    hydration and a local model all failed by STOPPING rather than by erroring.
+    It is the house failure mode and the first version of this script had no
+    answer to it.
+
+    Only processes whose command line is our own `gateway.run` are killed. If
+    something ELSE owns the port we log it loudly and leave it alone: killing a
+    stranger's process on an unattended machine is worse than staying down and
+    saying so.
+  #>
+  $ours = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'gateway\.run' })
+  foreach ($p in $ours) {
+    Say ("killing unresponsive gateway pid " + $p.ProcessId + " (holds the port, fails /health)")
+    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+  if ($ours.Count -gt 0) { Start-Sleep -Seconds 3 }
+
+  # Whatever still holds 8100 after that is not ours.
+  try {
+    $owner = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+             Select-Object -First 1
+    if ($owner) {
+      $proc = Get-Process -Id $owner.OwningProcess -ErrorAction SilentlyContinue
+      Say ("PORT $port IS HELD BY A FOREIGN PROCESS: " + $proc.ProcessName +
+           " pid " + $owner.OwningProcess + " - NOT killing it. The Gateway cannot start " +
+           "until that is resolved by a human.")
+    }
+  } catch { }
+}
+
 while ($true) {
   if (-not (Alive)) {
-    Say 'gateway not answering /health - starting it'
+    Say 'gateway not answering /health'
+    Clear-WedgedGateway
+    Say 'starting gateway'
     Start-Process -FilePath $python -ArgumentList '-m','gateway.run' `
       -WorkingDirectory $root -WindowStyle Hidden | Out-Null
     Start-Sleep -Seconds 10
