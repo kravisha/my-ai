@@ -368,6 +368,65 @@ async def voice_relay(
     }
 
 
+def _inbox_path() -> Path:
+    return Path(
+        os.environ.get("JARVIS_KRISH_INBOX")
+        or r"C:\Users\Krish\Documents\Aria-Claude-Communications\CLAUDE-TO-KRISH.md"
+    )
+
+
+@app.get("/voice/inbox")
+async def voice_inbox(
+    since: str = "",
+    _: str = Depends(require(roles.CAP_PUBLISH)),
+):
+    """The RETURN path. Without this the relay is half a system.
+
+    Krish spotted the gap himself: he could reach Claude Dev from his phone all
+    evening, and Claude Dev had no way at all to reach him back. From another
+    continent that is not a conversation, it is a suggestion box. Every reply
+    tonight has depended on him being able to read a terminal on this machine,
+    which is exactly what he will not have.
+
+    A FILE, POLLED - not a push. No notification infrastructure, no second
+    socket, nothing that has to survive a network change on a phone that moves
+    between cellular and hotel wifi. Claude Dev appends; the page asks "anything
+    after this timestamp?"; the worst failure is a late message rather than a
+    lost one. The relay outward works the same way and worked first time.
+
+    Gated on `publish`, the same capability as the relay and for the same
+    reason: this carries the engineer's words to the operator, which is not
+    something a client role does. Reusing the capability rather than minting a
+    new one also means no role grant changes - the narrowing that locked me out
+    of my own reasoning earlier today happened because I moved a capability
+    without checking who still held it.
+
+    Read-only. This endpoint cannot write, and it cannot execute. The worst a
+    compromised caller does is read messages already written for Krish."""
+    path = _inbox_path()
+    if not path.exists():
+        return {"ok": True, "messages": [], "note": "No messages yet."}
+
+    raw = path.read_text(encoding="utf-8", errors="replace")
+
+    # Entries are "## <iso timestamp> | CLAUDE-TO-KRISH\n\n<body>". Split on the
+    # header so a body containing '##' survives intact.
+    messages = []
+    for chunk in raw.split("\n## ")[1:]:
+        header, _, body = chunk.partition("\n")
+        stamp = header.split("|")[0].strip()
+        text = body.strip()
+        if not text:
+            continue
+        if since and stamp <= since:
+            continue
+        messages.append({"at": stamp, "text": text})
+
+    # Newest last, and capped. A phone that has been offline for a day should
+    # get the recent ones read aloud, not forty minutes of speech.
+    return {"ok": True, "messages": messages[-5:], "total": len(messages)}
+
+
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest, http_request: Request, conn=Depends(gateway_db)):
     """503 when no Super User is configured, 401 when the credential is wrong.

@@ -49,3 +49,7 @@ simulation/runs/
 # rather than part of the system: reproducible from the run directories they
 # point at, and different on every machine.
 demo_summary.json
+
+# Backups of .env hold the API key and the password hash. Never tracked.
+.env.backup*
+.env.*.bak

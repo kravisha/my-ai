@@ -78,6 +78,14 @@ button { font-family: inherit; cursor: pointer; }
 }
 .box.relay { border-left: 4px solid #a855f7; }
 .box.relay h2 { color: #c4b5fd; }
+/* Box 3, the return path. Green so that "Claude has said something" is
+   distinguishable at a glance from the two boxes Krish types into. */
+.box.inbox { border-left: 4px solid #22c55e; }
+.box.inbox h2 { color: #86efac; }
+#inboxlist { max-height: 40vh; overflow-y: auto; margin-bottom: .6rem; }
+.inboxmsg { border-top: 1px solid #334155; padding: .5rem 0; white-space: pre-wrap;
+            word-break: break-word; }
+.inboxwhen { font-size: .75rem; color: #64748b; margin-bottom: .2rem; }
 .primary.alt { background: #7c3aed; }
 
 /* Read-aloud control on each reply: TTS on demand, for when audio was off or
@@ -185,6 +193,17 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
         This appends to the shared developer channel. Claude reads it on his next
         check, minutes later. Sending executes nothing.
       </p>
+    </section>
+
+    <!-- The return path. Krish: "how do I receive the feedback from you?" -->
+    <section class="box inbox">
+      <h2>3 &nbsp;From Claude</h2>
+      <div id="inboxlist"><em>Nothing yet. Replies from Claude appear here.</em></div>
+      <div class="row">
+        <button id="checkInbox" type="button">Check now</button>
+        <button id="readInbox" type="button">Read aloud</button>
+      </div>
+      <div id="inboxstatus" class="micstatus">Checking every 30 seconds.</div>
     </section>
 
     <div id="log"></div>
@@ -866,7 +885,84 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     });
   })();
 
-  if (token) showApp();
+  /* ------------------------------------------------- the return path (box 3)
+
+     Krish, tonight: "this is only one half - how do I receive the feedback
+     from you?" Correct, and it was the largest hole in the evening's work. He
+     could reach Claude Dev from anywhere; Claude Dev could only reach him by
+     writing to a terminal on a machine he is about to leave behind.
+
+     Polling, not push. A phone that moves between cellular and hotel wifi will
+     drop a socket repeatedly; asking "anything new?" every thirty seconds
+     cannot get stuck in a half-open state, and the worst failure is a late
+     message rather than a silent one. The outbound relay works the same way
+     and it worked first time.
+
+     What has been SEEN is remembered, so reopening the page does not read the
+     same three messages aloud again. What has been HEARD is tracked separately
+     from what has been shown, because arriving to unread text is fine and
+     being talked at on a train is not. */
+  const SEEN_KEY = "jv_inbox_seen";
+
+  async function checkInbox(opts) {
+    opts = opts || {};
+    if (!token) return;
+    const seen = store.getItem(SEEN_KEY) || "";
+    const r = await api("/voice/inbox?since=" + encodeURIComponent(seen));
+    if (!r.ok) {
+      $("inboxstatus").className = "micstatus bad";
+      $("inboxstatus").textContent = "Could not check: " + (r.detail || "unknown");
+      return;
+    }
+    const msgs = r.messages || [];
+    if (!msgs.length) {
+      if (opts.manual) {
+        $("inboxstatus").className = "micstatus";
+        $("inboxstatus").textContent = "Nothing new. Last checked " +
+          new Date().toLocaleTimeString();
+      }
+      return;
+    }
+
+    const list = $("inboxlist");
+    if (list.querySelector("em")) list.innerHTML = "";
+    for (const m of msgs) {
+      const div = document.createElement("div");
+      div.className = "inboxmsg";
+      const when = document.createElement("div");
+      when.className = "inboxwhen";
+      when.textContent = m.at;
+      const body = document.createElement("div");
+      // textContent, never innerHTML: this is text from a file and it is going
+      // onto a page that holds a session token.
+      body.textContent = m.text;
+      div.appendChild(when);
+      div.appendChild(body);
+      list.appendChild(div);
+    }
+    // Remember the newest timestamp so these never arrive twice.
+    store.setItem(SEEN_KEY, msgs[msgs.length - 1].at);
+
+    $("inboxstatus").className = "micstatus good";
+    $("inboxstatus").textContent = "★ " + msgs.length + " new from Claude at " +
+      new Date().toLocaleTimeString();
+    speak("New message from Claude. " + msgs.map((m) => m.text).join(". "));
+    list.scrollTop = list.scrollHeight;
+  }
+
+  $("checkInbox").onclick = () => checkInbox({ manual: true });
+  $("readInbox").onclick = () => {
+    const texts = [...document.querySelectorAll("#inboxlist .inboxmsg")]
+      .slice(-3).map((d) => d.lastChild.textContent);
+    if (!texts.length) { speak("Nothing from Claude yet.", true); return; }
+    speak(texts.join(". "), true);
+  };
+
+  // Thirty seconds. Frequent enough to feel like a conversation, rare enough
+  // that a phone on roaming data is not making thousands of requests a day.
+  setInterval(() => { if (token) checkInbox({}); }, 30000);
+
+  if (token) { showApp(); checkInbox({}); }
 })();
 </script>
 </body>
