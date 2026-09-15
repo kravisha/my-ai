@@ -261,3 +261,37 @@ def test_the_screen_matches_words_not_fragments():
     assert repositories.philosophy_signals("database reconstitution after a restore") == []
     assert repositories.philosophy_signals("see INT-PHIL-0007") == ["int-phil"]
     assert repositories.philosophy_signals("plain technical prose about sockets") == []
+
+
+def test_the_screen_reads_the_text_in_any_case():
+    """Krish types the way he speaks, and the screen must not care.
+
+    This documents behaviour that already worked - the document side is lowered
+    before matching - rather than a defect being fixed. It is here because the
+    lowering is one line in the middle of a function, and the next person to
+    rewrite that function should have to make this go red to remove it.
+
+    The plural is deliberate: 'guiding principles' matches and 'guiding
+    principle' does not, because the word-boundary lookahead refuses a partial
+    word. That is the same rule that keeps 'reconstitution' from tripping it."""
+    assert repositories.philosophy_signals("The Constitution's axioms") == ["constitution", "axioms"]
+    assert repositories.philosophy_signals("See INT-PHIL-0007") == ["int-phil"]
+    assert repositories.philosophy_signals("OUR GUIDING PRINCIPLES") == ["guiding principles"]
+
+
+def test_the_screen_survives_a_signal_written_in_the_wrong_case(monkeypatch):
+    """The trap this guards is in the LIST, not in the document.
+
+    PHILOSOPHY_SIGNALS is an editable tuple, and the haystack is lowered before
+    matching. An entry added as 'Constitution' would compile into a pattern that
+    can never match, so the tripwire would stop firing and say nothing - and this
+    screen fails toward the PRIVATE repository, so a tripwire that cannot fire
+    means private material published into a public one.
+
+    Nothing would break. No test would go red. The guard would just be gone,
+    which is the shape of failure this project keeps meeting: a check that cannot
+    fire reports success."""
+    monkeypatch.setattr(repositories, "PHILOSOPHY_SIGNALS", ("Constitution", "INT-PHIL"))
+
+    assert repositories.philosophy_signals("the constitution binds us") == ["Constitution"]
+    assert repositories.philosophy_signals("see int-phil-0007") == ["INT-PHIL"]
