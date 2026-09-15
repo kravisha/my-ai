@@ -36,6 +36,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -45,7 +46,7 @@ from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, client_agent, clients, conversation, exposure, jarvis, roles, scoreboard, store, technology, uiversion
+from gateway import auth, client_agent, clients, conversation, exposure, jarvis, machine, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -343,6 +344,11 @@ async def voice():
     html = page.read_text(encoding="utf-8")
     info = uiversion.current()
     html = html.replace("__VERSION__", info["version"]).replace("__BUILD__", info["built"])
+    # Which machine he is talking to, escaped because the name comes from the
+    # environment and lands inside the markup. A Gateway operator setting it is
+    # trusted, but "trusted input rendered unescaped" is how the next injection
+    # gets written, and the cost of escaping a label is nothing.
+    html = html.replace("__INSTANCE__", html_escape(machine.instance_name()))
     return Response(content=html, media_type="text/html",
                     headers={"Cache-Control": "no-store, must-revalidate"})
 
