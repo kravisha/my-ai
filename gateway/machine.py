@@ -48,6 +48,50 @@ BIG_FOLDER_MIN_GB = 5.0
 RECENT_HOURS = 4
 
 
+INSTANCE_NAME_ENV = "GATEWAY_INSTANCE_NAME"
+
+# What to call this Gateway when nothing has been configured. COMPUTERNAME is
+# right far more often than a hardcoded guess, and being wrong here is the whole
+# problem rather than a cosmetic one.
+_UNNAMED_INSTANCE = "UNNAMED INSTANCE"
+
+
+def instance_name() -> str:
+    """Which machine this Gateway is, in words Krish chose.
+
+    Krish, 2026-09-15, once a second Gateway existed on a second machine: *"you
+    should also say whether it is deployment PC or dev PC ... because I will have
+    different things to say to different and will be confused as to who I am
+    talking to."*
+
+    That is the same failure `gateway/uiversion.py` exists to stop, one level up.
+    There, he and I reasoned about code that was not the code on his screen. Here
+    he would reason about a machine that is not the machine he is talking to -
+    and the consequence is worse, because the two Gateways have different files,
+    different state and different jobs. Telling the standby to do something only
+    the primary can do is a wasted round trip; the reverse can be a wrong action
+    on the wrong host.
+
+    Configurable rather than derived, because the useful name is the one he
+    already uses out loud. COMPUTERNAME says DEPLOYMENT-PC, which is fine, but he
+    may prefer "Deploy (standby)" and he is the one reading it at a glance while
+    walking.
+
+    Never empty: an unnamed instance says so loudly rather than rendering a blank
+    space, because a missing label looks identical to a label that says nothing is
+    wrong.
+
+    The fallback carries the machine name rather than inventing a friendly one. A
+    rule like "COMPUTERNAME contains DEPLOY, therefore this is the standby" would
+    be right on two machines today and quietly wrong on the third, and a
+    confidently wrong label is worse here than an ugly correct one."""
+    configured = os.environ.get(INSTANCE_NAME_ENV, "").strip()
+    if configured:
+        return configured
+    host = os.environ.get("COMPUTERNAME", "").strip()
+    return f"Jarvis {host}" if host else _UNNAMED_INSTANCE
+
+
 def _run_ps(script: str, timeout: int = 25) -> str:
     """PowerShell, never raising. A status report that dies because one probe
     failed is worse than one that reports the failure and carries on."""
