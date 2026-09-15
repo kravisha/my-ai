@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from app import model_gateway
 from conftest import GATEWAY_TEST_PASSWORD, GATEWAY_TEST_USER
 from gateway import auth, store
+from gateway.main import app
 
 
 class FakeProvider:
@@ -106,6 +107,52 @@ def test_the_client_page_is_served(gateway_client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "Jarvis Gateway" in response.text
+
+
+def test_a_slash_redirect_keeps_the_scheme_it_arrived_on(gateway_client):
+    """`/voice/` must not redirect a phone to a scheme with no listener.
+
+    Starlette's redirect_slashes builds an absolute Location from the request as
+    this process sees it. Behind the tunnel that is plain HTTP on loopback -
+    gateway/run.py refuses to believe X-Forwarded-Proto on purpose - so the
+    absolute form says `http://`, and nothing listens on port 80.
+
+    Found on the tailnet, not in a test: GET https://<host>/voice/ answered 307
+    with `Location: http://<host>/voice`, and that target refused the connection.
+    Krish would have seen a dead page from the URL his browser autocompleted.
+
+    A relative Location is resolved against the origin the browser already used,
+    so the https it arrived on is the https it continues on."""
+    response = gateway_client.get("/voice/", follow_redirects=False)
+
+    assert response.status_code in (307, 308)
+    location = response.headers["location"]
+    assert location == "/voice"
+    assert "://" not in location, f"Location must carry no scheme, got {location!r}"
+
+
+def test_a_redirect_somewhere_else_is_left_alone(gateway_client):
+    """The rewrite is for our own redirects only.
+
+    Without this, a handler that deliberately sent a caller to another host would
+    have its Location silently turned into a path on this one - which is a far
+    worse bug than the one being fixed, and the kind a narrow test never sees."""
+    from starlette.responses import RedirectResponse
+
+    elsewhere = "https://example.invalid/somewhere?x=1"
+
+    @app.get("/_test_offsite_redirect", include_in_schema=False)
+    async def _offsite():
+        return RedirectResponse(elsewhere, status_code=307)
+
+    try:
+        response = gateway_client.get("/_test_offsite_redirect", follow_redirects=False)
+        assert response.headers["location"] == elsewhere
+    finally:
+        app.router.routes = [
+            route for route in app.router.routes
+            if getattr(route, "path", None) != "/_test_offsite_redirect"
+        ]
 
 
 def test_the_page_fetches_nothing_from_a_third_party(gateway_client):

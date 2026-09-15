@@ -37,6 +37,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -156,6 +157,43 @@ async def security_headers(request: Request, call_next):
     forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
     if request.url.scheme == "https" or forwarded_proto == "https":
         response.headers.setdefault(*exposure.HSTS_HEADER)
+    return response
+
+
+@app.middleware("http")
+async def relative_redirects(request: Request, call_next):
+    """Strip scheme and host from our own redirects, because we do not trust the
+    forwarded scheme.
+
+    Starlette's `redirect_slashes` answers `/voice/` with an *absolute* Location
+    built from the request as this process sees it. Tailscale terminates TLS and
+    forwards plain HTTP to loopback, and `gateway/run.py` deliberately refuses to
+    believe `X-Forwarded-Proto` - so the application honestly reports `http://`,
+    and nothing listens on port 80.
+
+    Measured on the tailnet 2026-09-15, which is how this was found rather than
+    reasoned about:
+
+        GET  https://<host>/voice/  ->  307, Location: http://<host>/voice
+        GET  http://<host>/voice    ->  connection refused
+
+    The host was never the problem - Starlette takes it from the Host header and
+    the tunnel passes the public name through correctly. The *scheme* was, and a
+    phone following that redirect reached a port with no listener.
+
+    A Location carrying neither scheme nor host is resolved by the browser
+    against the origin it already used, which is the https one that worked. So
+    this needs no trust in any forwarded header - the thing run.py exists to
+    avoid - and it covers every route rather than the ones we remembered to
+    alias. Only self-redirects are rewritten: a Location pointing somewhere else
+    is left exactly as the handler wrote it."""
+    response = await call_next(request)
+    location = response.headers.get("location")
+    if not location or response.status_code not in (301, 302, 303, 307, 308):
+        return response
+    parsed = urlsplit(location)
+    if parsed.netloc and parsed.netloc == request.url.netloc:
+        response.headers["location"] = urlunsplit(("", "", parsed.path, parsed.query, parsed.fragment))
     return response
 
 
