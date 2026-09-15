@@ -51,10 +51,35 @@ no human here to answer questions. Krish is abroad and reachable ONLY by
 appending to CLAUDE-TO-KRISH.md.
 "@
 
-& $claude -p $prompt `
+$output = & $claude -p $prompt `
   --add-dir $workdir `
   --allowedTools 'Read' 'Grep' 'Glob' 'Edit' 'Write' 'Bash(git status:*)' 'Bash(git log:*)' `
-  2>&1 | ForEach-Object { Say "  $_" }
+  2>&1
+$output | ForEach-Object { Say "  $_" }
+
+# The marker is advanced ONLY on a run that actually reasoned about the message.
+#
+# The first version advanced it unconditionally, and on 2026-09-14 the very
+# first real invocation printed "Failed to authenticate: OAuth session expired"
+# AND EXITED 0. Under the old code that would have marked Krish's message as
+# handled, never woken for it again, and left him waiting on a reply that no
+# longer had anything scheduled to produce it. A wake loop that silently marks
+# unread messages as read is worse than no wake loop, because the second one
+# fails visibly.
+#
+# Exit code alone is not trustworthy here - the failure above returned 0 - so
+# the authentication string is matched explicitly. Anything unrecognised is
+# treated as FAILURE and the marker is left alone: the cost of waking twice is
+# a duplicate reply, and the cost of not waking is silence.
+$text = ($output | Out-String)
+$authFailed = $text -match 'Failed to authenticate|OAuth session expired|Invalid API key'
+
+if ($authFailed) {
+  Say 'AUTHENTICATION FAILED - marker NOT advanced, this message stays unread'
+  Say 'FIX: run `claude` interactively once to refresh the OAuth session, or set'
+  Say '     ANTHROPIC_API_KEY in the scheduled task environment.'
+  exit 1
+}
 
 Set-Content -LiteralPath $marker -Value $size -Encoding utf8
-Say 'done'
+Say 'done - marker advanced'
