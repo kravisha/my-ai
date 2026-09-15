@@ -26,6 +26,15 @@ header {
 header .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 header .row.small { margin-top: 6px; font-size: 13px; }
 header strong { font-size: 19px; letter-spacing: .4px; }
+/* Which machine this is. Deliberately the loudest thing in the header after the
+   name: Krish runs two Gateways and asked for this because he was losing track
+   of which one he was speaking to, and the two have different files, different
+   state and different jobs. A label he has to hunt for would not have fixed it. */
+#instance {
+  background: #fff; color: var(--accent); font-weight: 700;
+  letter-spacing: .6px; text-transform: uppercase; font-size: 12px;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .dot.on { background: var(--ok); }
 .chip {
@@ -134,6 +143,7 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   </div>
   <div class="row small">
     <span id="voicestate">voice: auto</span>
+    <span id="instance">__INSTANCE__</span>
     <span class="chip" style="background:rgba(0,0,0,.25)">v__VERSION__</span>
     <button id="enableAudio" class="chip">tap to enable voice</button>
     <button id="stopSpeak" class="chip hidden">stop talking</button>
@@ -213,7 +223,7 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
 
 <footer>
   <button id="signout" class="link hidden">sign out</button>
-  <div class="hint" style="text-align:center">version <strong>__VERSION__</strong> &middot; built __BUILD__</div>
+  <div class="hint" style="text-align:center"><strong>__INSTANCE__</strong> &middot; version <strong>__VERSION__</strong> &middot; built __BUILD__</div>
 </footer>
 
 <script>

@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import model_gateway
 from conftest import GATEWAY_TEST_PASSWORD, GATEWAY_TEST_USER
-from gateway import auth, store
+from gateway import auth, machine, store
 from gateway.main import app
 
 
@@ -107,6 +107,50 @@ def test_the_client_page_is_served(gateway_client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "Jarvis Gateway" in response.text
+
+
+def test_the_page_says_which_machine_it_is(gateway_client, monkeypatch):
+    """Krish runs two Gateways and asked to be told which one he has open.
+
+    His words, 2026-09-15: "I will have different things to say to different and
+    will be confused as to who I am talking to." The two hosts have different
+    files, different state and different jobs, so this is a safety label rather
+    than decoration - it is what stops him telling the standby to do something
+    only the primary can."""
+    monkeypatch.setenv(machine.INSTANCE_NAME_ENV, "Jarvis deploy")
+
+    body = gateway_client.get("/voice").text
+
+    assert "Jarvis deploy" in body
+    assert "__INSTANCE__" not in body, "the placeholder must be substituted, not shipped"
+
+
+def test_an_unnamed_instance_says_so_rather_than_rendering_nothing(gateway_client, monkeypatch):
+    """A blank label is indistinguishable from a label saying all is well.
+
+    If the name is unset and COMPUTERNAME is absent too, the page must still put
+    *something* in that slot - otherwise the one case where he most needs to know
+    which machine he is on is the case that shows him an empty space."""
+    monkeypatch.delenv(machine.INSTANCE_NAME_ENV, raising=False)
+    monkeypatch.delenv("COMPUTERNAME", raising=False)
+
+    body = gateway_client.get("/voice").text
+
+    assert machine._UNNAMED_INSTANCE in body
+    assert "__INSTANCE__" not in body
+
+
+def test_the_instance_name_is_escaped_into_the_page(gateway_client, monkeypatch):
+    """The name arrives from the environment and is written into markup.
+
+    Whoever sets it is trusted; rendering trusted input unescaped is still how
+    the next injection gets written, and escaping a label costs nothing."""
+    monkeypatch.setenv(machine.INSTANCE_NAME_ENV, '<script>alert(1)</script>')
+
+    body = gateway_client.get("/voice").text
+
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
 
 
 def test_a_slash_redirect_keeps_the_scheme_it_arrived_on(gateway_client):
