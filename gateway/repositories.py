@@ -273,10 +273,17 @@ def philosophy_signals(*texts: str) -> list[str]:
     A tripwire rather than a classifier - see this module's docstring for what
     that means and why it is set to fail toward the private repository."""
     haystack = " ".join(texts).lower()
+    # The signal is lowered at the point of comparison, not trusted to have been
+    # written that way. PHILOSOPHY_SIGNALS is an editable tuple, and an entry
+    # added as "Constitution" or "INT-PHIL" would compile into a pattern that can
+    # never match a lowered haystack - so the tripwire would stop firing and say
+    # nothing, which for a check that fails toward the private repository means
+    # private material published to a public one. A guard that cannot fire is
+    # indistinguishable from a guard that found nothing.
     return [
         signal
         for signal in PHILOSOPHY_SIGNALS
-        if re.search(rf"(?<![a-z0-9-]){re.escape(signal)}(?![a-z0-9])", haystack)
+        if re.search(rf"(?<![a-z0-9-]){re.escape(signal.lower())}(?![a-z0-9])", haystack)
     ]
 
 

@@ -200,8 +200,14 @@ _SECRET_KEYS = ("credential", "credentials", "password", "secret", "token",
 
 
 def _refuse_secrets(source: dict) -> None:
+    # Both sides are lowered here. The key because a caller names it, and the
+    # signal because _SECRET_KEYS is an editable tuple: an entry added as
+    # "API_KEY" would never match the lowered key, and this refusal would stop
+    # refusing without anyone noticing. The failure would be silent and it would
+    # write a credential to disk, which is the one thing this function exists to
+    # prevent.
     offending = sorted(key for key in source
-                       if any(secret in str(key).lower() for secret in _SECRET_KEYS))
+                       if any(secret.lower() in str(key).lower() for secret in _SECRET_KEYS))
     if offending:
         raise RequestRefused(
             f"a source descriptor carries {offending}, which would write a credential to "

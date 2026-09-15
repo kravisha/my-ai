@@ -290,6 +290,33 @@ def test_a_source_carrying_a_secret_is_refused(conn, key):
     assert "credential" in str(refusal.value).lower()
 
 
+@pytest.mark.parametrize("key", ["Password", "API_KEY", "Access_Token", "PRIVATE_KEY"])
+def test_a_secret_is_refused_whatever_case_the_caller_used(conn, key):
+    """The caller names the field, so the caller decides its case.
+
+    `API_KEY` and `api_key` are the same field to everyone except a comparison
+    that forgot to normalise one side."""
+    with pytest.raises(analysis_requests.RequestRefused):
+        _submit(conn, sources=[{"provider_type": "SCHWAB", "name": "b", key: "hunter2"}])
+
+
+def test_the_refusal_survives_a_signal_written_in_the_wrong_case(conn, monkeypatch):
+    """The trap this guards is in the LIST, not in the caller.
+
+    `_SECRET_KEYS` is an editable tuple. An entry added as `API_KEY` would be
+    compared against an already-lowered key, never match, and this refusal would
+    quietly stop refusing - writing the credential to disk, which is the one
+    thing the function exists to prevent. Nothing would fail; the test suite
+    would stay green; the guard would simply be gone.
+
+    So the signal is lowered at the point of comparison rather than trusted to
+    have been typed correctly."""
+    monkeypatch.setattr(analysis_requests, "_SECRET_KEYS", ("API_KEY", "Password"))
+
+    with pytest.raises(analysis_requests.RequestRefused):
+        _submit(conn, sources=[{"provider_type": "SCHWAB", "name": "b", "api_key": "hunter2"}])
+
+
 def test_a_claimed_request_is_not_offered_again(conn):
     """The easy half: once claimed, it is no longer pending."""
     _submit(conn)
