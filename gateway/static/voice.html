@@ -128,6 +128,41 @@ button { font-family: inherit; cursor: pointer; }
 #relaystatus.bad {
   border-color: #ef4444; color: #fecaca; background: #2a0a0a; font-weight: 600;
 }
+/* Attachments. Sized for a thumb on a moving train: the attach button is as
+   tall as the send buttons, and the remove cross on each chip is a 44px target
+   rather than a typographic ×, because removing the wrong file is a mistake he
+   cannot undo from another continent. */
+.attachrow { display: flex; margin-top: 8px; }
+.attachbtn {
+  flex: 1; padding: 14px; font-size: 15px; font-weight: 600; color: var(--text);
+  background: #1f2530; border: 1px dashed var(--line); border-radius: 10px;
+}
+.attachbtn.open { border-style: solid; border-color: var(--accent); }
+.attachmenu { display: flex; gap: 8px; margin-top: 8px; }
+.attachmenu button {
+  flex: 1; padding: 14px; font-size: 15px; font-weight: 600; color: var(--text);
+  background: #0c0e13; border: 1px solid var(--accent); border-radius: 10px;
+}
+.tray { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.trayhead { font-size: 13px; color: var(--muted); }
+.chipfile {
+  display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px;
+  background: #0c0e13; border: 1px solid var(--line); border-radius: 10px;
+}
+.chipfile.ready { border-color: #22c55e; }
+.chipfile.failed { border-color: #ef4444; }
+.chipfile .thumb {
+  width: 40px; height: 40px; object-fit: cover; border-radius: 6px; flex: 0 0 auto;
+}
+.chipname { flex: 1; min-width: 0; font-size: 14px; }
+.chipname .who { word-break: break-all; }
+.chipnote { font-size: 12px; color: var(--muted); }
+.chipfile.ready .chipnote { color: #86efac; }
+.chipfile.failed .chipnote { color: #fca5a5; }
+.chipx {
+  flex: 0 0 auto; width: 44px; height: 44px; font-size: 22px; line-height: 1;
+  background: none; border: 0; color: var(--muted); border-radius: 8px;
+}
 .hidden { display: none !important; }
 footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align: center; }
 .link { background: none; border: 0; color: var(--muted); text-decoration: underline; }
@@ -176,10 +211,41 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
         <button id="send" class="primary">Send to Jarvis</button>
       </div>
 
+      <!-- ATTACHMENTS. Krish, 2026-09-16 17:36: "I should be able to send files
+           and images through the same text box I currently use for typing or
+           voice input." The button sits with box 1's own controls for that
+           reason, and what it collects travels with whichever message he sends
+           next - box 1 to Jarvis, or box 2 to Claude.
+
+           The two pickers are separate <input>s rather than one, because the
+           choice he asked for is a choice between two things a phone does
+           differently: accept="image/*" is what makes iOS offer the photo
+           library and the camera, and a document picker offered the same way
+           hides the files he is looking for behind "Browse". -->
+      <div class="attachrow">
+        <button id="attach" class="attachbtn" type="button" aria-expanded="false"
+                aria-controls="attachMenu">+&nbsp; Attach a file or photo</button>
+      </div>
+      <div id="attachMenu" class="attachmenu hidden">
+        <button id="attachPhoto" type="button">Photos / Images</button>
+        <button id="attachFile" type="button">Files</button>
+      </div>
+      <!-- accept lists mirror gateway/attachments.ALLOWED, and
+           tests/test_gateway_attachments.py asserts the two describe the same
+           set. Without that check the picker would happily offer a type the
+           server refuses, and he would find out after the upload. -->
+      <input id="photoInput" class="hidden" type="file" multiple
+             accept="image/*,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif">
+      <input id="fileInput" class="hidden" type="file" multiple
+             accept=".pdf,.txt,.md,.csv,.json,.log,.rtf,.doc,.docx,.xls,.xlsx,.ppt,.pptx">
+      <div id="tray" class="tray hidden"></div>
+
       <div id="micstatus" class="micstatus">Microphone not yet used.</div>
       <p class="hint">
         Typing always works, even when the microphone does not. Your phone
         keyboard's mic key types into this box too.
+        <br>Attachments: up to four at a time, 15 MB each. Photos, PDFs, text
+        and Office documents. Nothing is sent until you press a Send button.
       </p>
     </section>
 
@@ -363,22 +429,33 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     let body = {};
     try { body = await res.json(); } catch (_) { /* empty or non-JSON */ }
     if (res.status === 401) {
-      return { ok: false, detail: "Not signed in, or the session expired. Sign in again." };
+      return { ok: false, status: 401,
+               detail: "Not signed in, or the session expired. Sign in again." };
     }
     if (!res.ok) {
-      return { ok: false, detail: body.detail || ("HTTP " + res.status) };
+      // The status is carried out as well as the sentence. A caller that needs
+      // to tell a refusal apart from a route that is not there yet cannot do it
+      // from the text - see uploadOne, where those two produce very different
+      // advice.
+      return { ok: false, status: res.status, detail: body.detail || ("HTTP " + res.status) };
     }
     return body;
   }
 
   async function sendRelay() {
     const field = $("relay");
-    const text = field.value.trim();
-    if (!text) {
+    let text = field.value.trim();
+    if (!text && !attached.length) {
       setStatus("bad", "✗ The message box is empty — type something first.");
       speak("The message box is empty.");
       return;
     }
+    // Same two refusals as box 1, and the same reason: Claude being told a file
+    // is attached and finding nothing is worse than being told to wait.
+    const notReady = attachmentsNotReady();
+    if (notReady) { setStatus("bad", notReady); speak("That file did not attach."); return; }
+    const ids = attachmentIds();
+    if (!text) text = NO_TEXT;
     const btn = $("sendRelay");
     const originalLabel = btn.textContent;
     btn.disabled = true;
@@ -387,17 +464,21 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     try {
       const r = await api("/voice/relay", {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, attachments: ids }),
       });
       if (r.ok) {
+        const withFiles = ids.length
+          ? " " + ids.length + (ids.length === 1 ? " file went with it." : " files went with it.")
+          : "";
         setStatus("good", "✓ DELIVERED to Claude at " + (r.at || "just now")
-                        + ". He reads it on his next check.");
+                        + "." + withFiles + " He reads it on his next check.");
         // Cleared ONLY here. Every other path leaves the text where it is, in
         // the box and in storage, because a message that failed to send is a
-        // message he still needs.
+        // message he still needs. The tray follows the same rule.
         field.value = "";
         store.removeItem(DRAFT_KEY);
-        speak("Delivered to Claude.");
+        if (ids.length) clearAttachments();
+        speak("Delivered to Claude." + withFiles);
       } else {
         setStatus("bad", "✗ NOT SENT — " + (r.detail || r.error || "unknown"));
         speak("That did not send.");
@@ -462,6 +543,234 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     // page's own speech reaches this page's own microphone.
     speak("I have put it in box two. Read it, then tell me when.");
     try { field.scrollIntoView({ block: "center" }); } catch (_) {}
+  }
+
+  /* ------------------------------------------------------------- attachments
+
+     Krish, 2026-09-16 17:36, from abroad: "I should be able to send files and
+     images through the same text box I currently use for typing or voice
+     input."
+
+     THE UPLOAD HAPPENS ON PICK, NOT ON SEND, and that is the one design choice
+     here worth arguing about. Uploading on send would be tidier - one request,
+     nothing on the server for a file he changes his mind about. It would also
+     mean a five-megabyte photo travelling over a hotel connection *after* he
+     presses Send, with his message waiting behind it and no way to tell a slow
+     upload from a broken one. Picking early makes the tray honest: by the time
+     he presses Send, each chip already says "attached" or says why not.
+
+     Consequence, stated because it is a real cost: a file he attaches and then
+     removes has already been saved on this machine. Nothing here deletes it -
+     this host grants no deletion - so the directory keeps a copy he thought
+     better of. That is the cheaper of the two mistakes.
+
+     Nothing is sent by attaching. The ids collected here travel with whichever
+     message he presses Send on next, which is why the tray says so. */
+
+  const MAX_ATTACH = 4;                  // gateway/attachments.MAX_PER_MESSAGE
+  const MAX_ATTACH_BYTES = 15728640;     // gateway/attachments.MAX_BYTES
+
+  /* When he attaches something and types nothing. A phone user sending a photo
+     with no words is ordinary, and the server needs a message - so this is what
+     is sent, and it is deliberately not a sentence in his voice. Putting words
+     in his mouth in a file Claude reads as "relayed at Krish's direction" is
+     exactly the attribution this page is careful about everywhere else. */
+  const NO_TEXT = "(no message - see the attachment)";
+
+  let attached = [];       // { key, name, size, state, id, error, url, sizeText }
+  let attachSeq = 0;
+
+  function closeAttachMenu() {
+    $("attachMenu").classList.add("hidden");
+    $("attach").classList.remove("open");
+    $("attach").setAttribute("aria-expanded", "false");
+  }
+  function toggleAttachMenu() {
+    const menu = $("attachMenu");
+    const opening = menu.classList.contains("hidden");
+    menu.classList.toggle("hidden", !opening);
+    $("attach").classList.toggle("open", opening);
+    $("attach").setAttribute("aria-expanded", opening ? "true" : "false");
+  }
+
+  /* base64 in a JSON body rather than a multipart form. `python-multipart` is
+     not installed in this deployment and this page is his only line of contact
+     while he is abroad; see gateway/attachments.py for the trade. The data URL's
+     "data:...;base64," prefix is stripped - the server decodes what follows. */
+  function readAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("this phone could not read the file"));
+      reader.onload = () => {
+        const s = String(reader.result || "");
+        const comma = s.indexOf(",");
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      try { reader.readAsDataURL(file); }
+      catch (err) { reject(new Error(err.message || "could not read the file")); }
+    });
+  }
+
+  function paintTray() {
+    const tray = $("tray");
+    tray.innerHTML = "";
+    if (!attached.length) { tray.classList.add("hidden"); return; }
+    tray.classList.remove("hidden");
+
+    const head = document.createElement("div");
+    head.className = "trayhead";
+    head.textContent = attached.length + (attached.length === 1 ? " file" : " files")
+      + " attached — they go with whichever message you send next.";
+    tray.appendChild(head);
+
+    for (const item of attached) {
+      const chip = document.createElement("div");
+      chip.className = "chipfile " + item.state;
+
+      if (item.url) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = item.url;
+        img.alt = "";
+        chip.appendChild(img);
+      }
+
+      const label = document.createElement("div");
+      label.className = "chipname";
+      const who = document.createElement("div");
+      who.className = "who";
+      // textContent, never innerHTML. The filename comes from a file picker and
+      // lands on a page holding a session token.
+      who.textContent = item.name;
+      const note = document.createElement("div");
+      note.className = "chipnote";
+      note.textContent =
+          item.state === "sending" ? "uploading…"
+        : item.state === "ready"   ? ("attached · " + (item.sizeText || ""))
+        :                            ("NOT attached — " + (item.error || "unknown"));
+      label.appendChild(who);
+      label.appendChild(note);
+      chip.appendChild(label);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chipx";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", "remove " + item.name);
+      remove.onclick = () => {
+        attached = attached.filter((x) => x.key !== item.key);
+        if (item.url) { try { URL.revokeObjectURL(item.url); } catch (_) {} }
+        paintTray();
+      };
+      chip.appendChild(remove);
+
+      tray.appendChild(chip);
+    }
+  }
+
+  async function uploadOne(item, file) {
+    try {
+      const data = await readAsBase64(file);
+      const r = await api("/voice/attach", {
+        method: "POST",
+        body: JSON.stringify({ name: item.name, data_base64: data }),
+      });
+      if (r && r.ok && r.attachment) {
+        item.id = r.attachment.id;
+        item.sizeText = r.attachment.size_human || "";
+        item.state = "ready";
+      } else if (r && r.status === 404) {
+        /* THE WINDOW BETWEEN A PULL AND A RESTART, named rather than left as
+           "Not Found". This page is read from disk on every request while the
+           modules behind it are held in memory, so the attach button can exist
+           minutes before the upload route does - which is exactly how a raw
+           placeholder reached his phone on 2026-09-15. Telling him the truth
+           about it costs one line and turns a mystery into a wait. */
+        item.state = "failed";
+        item.error = "this Gateway has not been restarted with attachments yet — "
+                   + "wait a few minutes and attach it again";
+      } else {
+        item.state = "failed";
+        // The server's own sentence, which is written to be read aloud.
+        item.error = (r && (r.detail || r.error)) || "the Gateway would not take it";
+      }
+    } catch (err) {
+      item.state = "failed";
+      item.error = err.message;
+    }
+    paintTray();
+  }
+
+  async function addFiles(files) {
+    closeAttachMenu();
+    const picked = Array.from(files || []);
+    if (!picked.length) return;
+
+    // Every chip appears before any upload starts, so he sees what he picked
+    // immediately rather than one file at a time as each finishes.
+    const queue = [];
+    for (const file of picked) {
+      if (attached.length + queue.length >= MAX_ATTACH) {
+        micSay("Four files is the limit on one message. The rest were not attached.", true);
+        break;
+      }
+      const item = {
+        key: ++attachSeq,
+        name: file.name || "attachment",
+        size: file.size,
+        state: "sending",
+        id: null, error: "", url: "", sizeText: "",
+      };
+      if (file.size > MAX_ATTACH_BYTES) {
+        item.state = "failed";
+        item.error = "too big — the limit is 15 MB";
+      } else if (file.type && file.type.indexOf("image/") === 0) {
+        try { item.url = URL.createObjectURL(file); } catch (_) {}
+      }
+      attached.push(item);
+      if (item.state === "sending") queue.push([item, file]);
+    }
+    paintTray();
+
+    // One at a time. Four photos uploading at once over a hotel connection
+    // finish no sooner and make every chip say "uploading" for longer.
+    for (const [item, file] of queue) await uploadOne(item, file);
+  }
+
+  function attachmentIds() {
+    return attached.filter((item) => item.state === "ready" && item.id).map((item) => item.id);
+  }
+
+  /* Why sending is blocked rather than the bad chips dropped. Sending his text
+     while quietly leaving out a photo produces the worst outcome available: he
+     believes the file went, and the reply he gets is about a message that never
+     had it. Both refusals below name the chip and tell him the one tap that
+     clears it. */
+  function attachmentsNotReady() {
+    if (attached.some((item) => item.state === "sending")) {
+      return "A file is still uploading. Give it a moment and press Send again.";
+    }
+    const bad = attached.filter((item) => item.state === "failed");
+    if (bad.length) {
+      return "✗ " + bad[0].name + " did not attach — " + (bad[0].error || "unknown")
+           + ". Remove it with the cross, or attach it again.";
+    }
+    return "";
+  }
+
+  function clearAttachments() {
+    for (const item of attached) {
+      if (item.url) { try { URL.revokeObjectURL(item.url); } catch (_) {} }
+    }
+    attached = [];
+    paintTray();
+  }
+
+  function attachSummary(ids) {
+    if (!ids.length) return "";
+    const names = attached.filter((item) => ids.indexOf(item.id) >= 0)
+                          .map((item) => item.name);
+    return "\n[with " + names.join(", ") + "]";
   }
 
   /* ------------------------------------------------------------------ socket */
@@ -609,12 +918,20 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
 
   async function send() {
     const field = $("text");
-    const text = field.value.trim();
-    if (!text || current) return;
+    let text = field.value.trim();
+    if (current) return;
+    // A photo with no words is an ordinary thing to send from a phone, so an
+    // empty box stops being empty when something is attached.
+    if (!text && !attached.length) return;
 
     // Handled before anything reaches Jarvis, so "send it" does not become a
     // conversational turn and get answered instead of obeyed.
-    if (await trySpokenRelayCommand(text)) return;
+    if (text && await trySpokenRelayCommand(text)) return;
+
+    const notReady = attachmentsNotReady();
+    if (notReady) { micSay(notReady, true); speak("That file did not attach."); return; }
+    const ids = attachmentIds();
+    if (!text) text = NO_TEXT;
 
     if (applyOverride(text) && text.split(/\s+/).length <= 4) {
       field.value = "";
@@ -634,11 +951,17 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     }
 
     $("send").disabled = true;
-    const el = entry(text);
+    // The log entry names the files, so the conversation on screen shows what
+    // went with the question rather than only the question.
+    const el = entry(text + attachSummary(ids));
     current = { el, pre: el.querySelector("pre"), buf: "" };
     current.pre.textContent = "…";
-    ws.send(JSON.stringify({ type: "message", text }));
+    ws.send(JSON.stringify({ type: "message", text, attachments: ids }));
     field.value = "";
+    // Cleared only once the frame is on the wire. Every path that refused above
+    // leaves the tray exactly as it was, because a file that did not go is a
+    // file he still means to send.
+    if (ids.length) clearAttachments();
   }
 
   /* ----------------------------------------------------------------- speech in */
@@ -901,6 +1224,28 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   $("sendRelay").onclick = sendRelay;
   $("signout").onclick = signOut;
   $("stopSpeak").onclick = stopSpeaking;
+
+  /* The attachment controls. The two pickers are opened by a real tap on a real
+     button - `input.click()` from anything else is refused by mobile Safari, and
+     that refusal is silent, which is how this presents as a button that does
+     nothing.
+
+     `onchange` fires, and `value = ""` afterwards is not optional: picking the
+     same photo twice in a row fires no change event at all if the input still
+     holds it, so the second attempt would look like the picker being ignored. */
+  $("attach").onclick = toggleAttachMenu;
+  $("attachPhoto").onclick = () => $("photoInput").click();
+  $("attachFile").onclick = () => $("fileInput").click();
+  for (const id of ["photoInput", "fileInput"]) {
+    $(id).onchange = (event) => {
+      // Copied out BEFORE the input is cleared. `value = ""` empties the live
+      // FileList the event handed over; the File objects in a copied array stay
+      // readable because a File is a handle to the bytes, not to the input.
+      const files = Array.from(event.target.files || []);
+      event.target.value = "";
+      addFiles(files);
+    };
+  }
   $("enableAudio").onclick = () => {
     audioUnlocked = true;
     $("enableAudio").classList.add("hidden");

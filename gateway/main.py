@@ -31,6 +31,8 @@ lesson `tests/test_db_isolation.py` was written to keep.
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import os
@@ -46,7 +48,7 @@ from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, roles, scoreboard, store, technology, uiversion
+from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -353,8 +355,64 @@ async def voice():
                     headers={"Cache-Control": "no-store, must-revalidate"})
 
 
+class AttachRequest(BaseModel):
+    name: str
+    data_base64: str
+
+
+@app.post("/voice/attach")
+async def voice_attach(
+    body: AttachRequest,
+    _: str = Depends(require(roles.CAP_PUBLISH)),
+):
+    """One file or photo from his phone, saved where both assistants can reach it.
+
+    Krish, 2026-09-16 17:36: *"I should be able to send files and images through
+    the same text box I currently use for typing or voice input."* This is the
+    upload half. It saves the bytes and returns an id; the id then travels with
+    the next message he sends, on the socket to Jarvis or through `/voice/relay`
+    to Claude. Uploading is not sending, exactly as drafting is not sending -
+    nothing here reaches anybody, and a file he attaches and then thinks better of
+    is a file that sat on a disk.
+
+    **Gated on `publish`, not `converse`, and that is a narrowing worth stating.**
+    Conversing is something a client role does; writing a file onto this machine's
+    disk is not, and `converse` would have handed that to every client who signs
+    in. `publish` is already the operator-only capability for the relay, and an
+    attachment is the same act - putting something of his outside the
+    conversation - so it reuses the capability rather than minting one.
+
+    Base64 in the JSON body rather than a multipart form: `python-multipart` is
+    not installed in this deployment and this is the owner's only line of contact
+    while he is abroad. See `gateway/attachments.py` for that trade in full.
+
+    Every refusal comes back as a sentence he can act on, because the page reads
+    the detail aloud. `gateway/attachments.AttachmentError` carries both the
+    sentence and the status.
+    """
+    try:
+        raw = base64.b64decode(body.data_base64 or "", validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(
+            status_code=400,
+            detail="That file did not arrive intact. Try attaching it again.",
+        )
+    try:
+        record = attachments.save(body.name, raw)
+    except attachments.AttachmentError as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.reason)
+
+    logger.info("attachment saved: %s (%s, %d bytes)",
+                record["id"], record["kind"], record["size"])
+    return {"ok": True, "attachment": attachments.public(record)}
+
+
 class RelayRequest(BaseModel):
     text: str
+    # Ids from /voice/attach. Default empty so every existing caller - the page
+    # before this release, and the tests written against it - keeps working
+    # unchanged.
+    attachments: list[str] = []
 
 
 @app.post("/voice/relay")
@@ -391,6 +449,23 @@ async def voice_relay(
     if len(text) > interface.RELAY_MAX_CHARS:
         raise HTTPException(status_code=413, detail="Message too long")
 
+    # Attachments he picked before pressing send. Resolved BEFORE the file is
+    # opened: a message that names a file Claude cannot find is worse than a
+    # refusal, because it reads as delivered and the engineer has nothing to open.
+    if len(body.attachments) > attachments.MAX_PER_MESSAGE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That is more than {attachments.MAX_PER_MESSAGE} attachments on "
+                   "one message.",
+        )
+    attached, missing = attachments.resolve(body.attachments)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail="One of the attachments is no longer on this machine. Attach it "
+                   "again and resend.",
+        )
+
     channel = Path(
         os.environ.get("JARVIS_CLAUDE_CHANNEL")
         or r"C:\Users\Krish\Documents\Aria-Claude-Communications"
@@ -403,6 +478,9 @@ async def voice_relay(
     entry = (
         f"\n## {stamp} | KRISH-VIA-JARVIS | relayed by Jarvis at Krish's direction\n\n"
         f"{text}\n"
+        # Inside the entry rather than after it: the reader splits this file on
+        # "\n## ", so anything written between entries would belong to neither.
+        f"{attachments.channel_block(attached)}"
     )
     with channel.open("a", encoding="utf-8", newline="") as handle:
         handle.write(entry)
@@ -411,6 +489,7 @@ async def voice_relay(
         "ok": True,
         "at": stamp,
         "bytes": channel.stat().st_size,
+        "attachments": [attachments.public(record) for record in attached],
         "note": "Written to the shared channel. Claude Dev reads it on his next "
                 "poll - minutes, not seconds. Nothing was executed.",
     }
@@ -779,7 +858,9 @@ async def conversation_socket(
 
     Protocol, client to server:
         {"type": "auth", "token": "..."}      once, first
-        {"type": "message", "text": "..."}    thereafter
+        {"type": "message", "text": "...",    thereafter. `attachments` is
+         "attachments": ["id", ...]}          optional, ids from /voice/attach,
+                                              and needs the `publish` capability
 
     Server to client:
         {"type": "ready", "conversation_id": N, "messages": [...]}
@@ -900,6 +981,49 @@ async def conversation_socket(
         if len(text) > MAX_MESSAGE_CHARS:
             await websocket.send_json({"type": "error", "error": "message too long"})
             continue
+
+        # ATTACHMENTS, resolved here and folded into the text.
+        #
+        # Folded in rather than carried beside it because the transcript is one
+        # string per turn (gateway/store.py), and a manifest kept out of the text
+        # would be invisible to every later turn - "what was in that file I sent
+        # you" is the obvious second question and it would have no answer.
+        #
+        # The ceiling above is checked against what he actually typed, before the
+        # manifest is added. A file he attached must not be what makes his own
+        # sentence too long to send.
+        attached: list[dict] = []
+        if message.get("attachments"):
+            # A frame is whatever arrived on a socket. `len()` of a number raises,
+            # and an unhandled exception in this loop closes the conversation -
+            # so the shape is checked before it is measured.
+            if not isinstance(message["attachments"], list):
+                await websocket.send_json(
+                    {"type": "error", "error": "attachments must be a list of ids"})
+                continue
+            # Checked again here even though an id can only exist because an
+            # upload already passed the same gate. A capability filtered at one
+            # door and not the other is the shape of authorization bug this
+            # Gateway has had before (§92): the check belongs where the act is.
+            if not roles.allows(role, roles.CAP_PUBLISH):
+                await websocket.send_json(
+                    {"type": "error", "error": "attachments are not permitted here"})
+                continue
+            if len(message["attachments"]) > attachments.MAX_PER_MESSAGE:
+                await websocket.send_json(
+                    {"type": "error",
+                     "error": f"more than {attachments.MAX_PER_MESSAGE} attachments"})
+                continue
+            attached, missing = attachments.resolve(message["attachments"])
+            if missing:
+                # Refused rather than sent without them. A turn that silently
+                # dropped an attachment would have the assistant answering a
+                # question about a file nobody gave him.
+                await websocket.send_json(
+                    {"type": "error",
+                     "error": "one of those attachments is no longer on this machine"})
+                continue
+            text = text + attachments.describe_for_model(attached)
 
         # The session is re-checked every turn, not only at connection. A socket
         # opened before expiry would otherwise stay privileged indefinitely,

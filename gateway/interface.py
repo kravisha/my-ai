@@ -44,6 +44,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gateway import attachments
+
 # The relay's own ceiling, enforced by `gateway/main.py`'s /voice/relay route.
 # Declared here because the draft tool has to refuse what the route would refuse:
 # an agent that cheerfully fills the box with 30,000 characters has produced a
@@ -133,6 +135,38 @@ CONTROLS: tuple[Control, ...] = (
         element_id="send",
         label="Send to Jarvis",
         does="sends box 1 to you. This is how everything you hear from him arrives",
+        box="1",
+    ),
+    Control(
+        element_id="attach",
+        label="+ Attach",
+        does=(
+            "opens two choices, Photos and Files, and adds what he picks to a tray "
+            "under box 1. Picking is not sending: the files travel with whichever "
+            "message he sends next"
+        ),
+        box="1",
+    ),
+    Control(
+        element_id="attachPhoto",
+        label="Photos / Images",
+        does="opens his phone's photo library or camera",
+        box="1",
+    ),
+    Control(
+        element_id="attachFile",
+        label="Files",
+        does="opens his phone's file picker, for PDFs, text and Office documents",
+        box="1",
+    ),
+    Control(
+        element_id="tray",
+        label="the attachment tray",
+        does=(
+            "shows what is attached but not yet sent, each with a cross to remove "
+            "it. If he says he attached something and you were not given it, ask "
+            "whether the tray still shows it - an upload that failed says so there"
+        ),
         box="1",
     ),
     Control(
@@ -307,6 +341,8 @@ def prompt_paragraph() -> str:
         "cannot press Send to Claude and you must never imply that you have: the "
         "press is his, and it is what makes the line Claude receives - \"relayed by "
         "Jarvis at Krish's direction\" - a true one.")
+    lines.append(attachments.prompt_paragraph().strip())
+    lines.append("")
     lines.append(
         "If he says nothing appeared in box 2, do not assume it worked. Either he is "
         "on a cached copy of the page, and the version below is what he should be "
