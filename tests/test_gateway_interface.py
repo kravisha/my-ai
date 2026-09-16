@@ -29,6 +29,8 @@ handler quietly rewired to send - is the failure that would be discovered by the
 owner, on a phone, in another country.
 """
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -537,3 +539,122 @@ def test_the_relay_needs_a_session(gateway_client, tmp_path, monkeypatch):
 
     assert response.status_code in (401, 403)
     assert not channel.exists()
+
+
+# --- which build he is holding, including the releases he cannot see ----------------
+#
+# Krish asked twice on 2026-09-16 whether he had the latest version - at 06:11 and
+# again at 15:25, the second time hours after a release he had been told about. The
+# number was correct both times and useless both times: it counted the page alone,
+# and that release had changed the modules behind the page. The tests below hold the
+# two halves of the fix apart, because they pull in opposite directions. A version
+# must move when code ships, or he learns to distrust it. It must not move before
+# the restart that makes the new code the running code, or it lies - and that exact
+# lie cost an hour on his live page on 2026-09-15.
+
+PAGE_BUILT = 1_700_000_000       # a page on disk
+CODE_DEPLOYED = 1_700_086_400    # modules written a day after it
+LATER_STILL = 1_700_172_800      # a pull that has landed but not restarted
+
+
+def stamped(path: Path, when: int) -> Path:
+    """A file standing in for a deployed one, with a chosen modification time.
+    The content is irrelevant - every question this module answers is asked of the
+    timestamp."""
+    path.write_text("# a stand-in for something deployed\n", encoding="utf-8")
+    os.utime(path, (when, when))
+    return path
+
+
+def as_version(when: int) -> str:
+    return datetime.fromtimestamp(when).strftime("%Y%m%d.%H%M")
+
+
+def test_a_release_that_changes_only_the_code_moves_the_version(tmp_path, monkeypatch):
+    """His complaint, as a test. Nothing about the page changed and the build he is
+    served is still a new one."""
+    monkeypatch.setattr(uiversion, "VOICE_PAGE", stamped(tmp_path / "voice.html", PAGE_BUILT))
+    monkeypatch.setattr(uiversion, "_RUNNING_CODE_MTIME", CODE_DEPLOYED)
+
+    info = uiversion.current()
+
+    assert info["ok"]
+    assert info["version"] == as_version(CODE_DEPLOYED)
+
+
+def test_a_page_newer_than_the_code_still_sets_the_version(tmp_path, monkeypatch):
+    """The cache check this module was built for, untouched. The page is read from
+    disk per request, so an edited page is a new build to the person looking at it
+    whether or not any module moved with it."""
+    monkeypatch.setattr(uiversion, "VOICE_PAGE", stamped(tmp_path / "voice.html", CODE_DEPLOYED))
+    monkeypatch.setattr(uiversion, "_RUNNING_CODE_MTIME", PAGE_BUILT)
+
+    assert uiversion.current()["version"] == as_version(CODE_DEPLOYED)
+
+
+def test_the_code_stamp_is_the_newest_module_and_ignores_everything_else(tmp_path, monkeypatch):
+    """A deployment writes only the files it changed, so the newest module dates it.
+    Only `*.py` counts: the package also carries the compiled cache and the static
+    page, and either would date the build by when it was last *read*."""
+    stamped(tmp_path / "older.py", PAGE_BUILT)
+    stamped(tmp_path / "newer.py", CODE_DEPLOYED)
+    stamped(tmp_path / "notes.txt", LATER_STILL)
+    monkeypatch.setattr(uiversion, "CODE_DIRS", (tmp_path,))
+
+    assert uiversion._code_mtime() == CODE_DEPLOYED
+
+
+def test_the_code_stamp_spans_every_directory_this_process_imports(tmp_path, monkeypatch):
+    """Two directories, because the Gateway imports the shared model layer as well
+    as its own package, and a release to either one changes what the owner is
+    talking to. A stamp covering only the first would report no new build for a
+    deployment he had been told about, which is the whole fault being fixed."""
+    first = tmp_path / "gateway"
+    second = tmp_path / "app"
+    first.mkdir()
+    second.mkdir()
+    stamped(first / "main.py", PAGE_BUILT)
+    stamped(second / "model_provider.py", CODE_DEPLOYED)
+    monkeypatch.setattr(uiversion, "CODE_DIRS", (first, second))
+
+    assert uiversion._code_mtime() == CODE_DEPLOYED
+
+
+def test_a_directory_that_is_not_there_is_not_a_failure(tmp_path, monkeypatch):
+    """A version is not worth raising into a request over. A missing directory
+    contributes nothing and the remaining one still dates the build."""
+    present = tmp_path / "gateway"
+    present.mkdir()
+    stamped(present / "main.py", CODE_DEPLOYED)
+    monkeypatch.setattr(uiversion, "CODE_DIRS", (present, tmp_path / "never-existed"))
+
+    assert uiversion._code_mtime() == CODE_DEPLOYED
+
+
+def test_the_code_stamp_is_taken_at_import_and_never_per_request(tmp_path, monkeypatch):
+    """The pull-without-restart case, and the reason the snapshot is a module
+    constant rather than a call. New modules are sitting on disk; this process is
+    still executing the old ones, so the number it reports must not have moved."""
+    monkeypatch.setattr(uiversion, "VOICE_PAGE", stamped(tmp_path / "voice.html", PAGE_BUILT))
+    monkeypatch.setattr(uiversion, "_RUNNING_CODE_MTIME", CODE_DEPLOYED)
+    monkeypatch.setattr(uiversion, "_code_mtime", lambda: LATER_STILL)
+
+    assert uiversion.current()["version"] == as_version(CODE_DEPLOYED)
+
+
+def test_a_missing_page_is_an_unusable_version_rather_than_a_crash(tmp_path, monkeypatch):
+    """A missing page is a real failure with its own cause, and raising it into a
+    request would take his only line of contact down to report it."""
+    monkeypatch.setattr(uiversion, "VOICE_PAGE", tmp_path / "never-written.html")
+
+    assert uiversion.current() == {"version": "unknown", "built": "unknown", "ok": False}
+
+
+def test_the_deployed_gateway_is_never_older_than_the_code_it_is_running():
+    """Asserted against the real tree, so that counting the page alone cannot come
+    back quietly. Versions are strftime-ordered on purpose - a later build is a
+    larger string."""
+    info = uiversion.current()
+
+    assert info["ok"], "the page is missing, which is a real failure with its own cause"
+    assert info["version"] >= as_version(int(uiversion._RUNNING_CODE_MTIME))

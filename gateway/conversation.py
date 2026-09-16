@@ -195,10 +195,11 @@ def operator_prompt() -> str:
 
     All three additions are here rather than in the constant because all three
     change without this file changing: `interface.prompt_paragraph` is generated
-    from the control registry, `uiversion.prompt_paragraph` from the page's own
-    modification time, and `devchannel.prompt_paragraph` from the rate limits that
-    actually enforce it - a prompt that promises three messages a window and a
-    module that allows two is a model being called a liar by its own tools.
+    from the control registry, `uiversion.prompt_paragraph` from the timestamps
+    of the deployed page and the running code, and `devchannel.prompt_paragraph`
+    from the rate limits that actually enforce it - a prompt that promises three
+    messages a window and a module that allows two is a model being called a liar
+    by its own tools.
 
     The channel paragraph is operator-only for the same reason the page
     description is. A client meets a representative with no business knowing that
