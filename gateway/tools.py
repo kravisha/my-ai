@@ -7,13 +7,21 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Thirteen tools: five Scoreboard, three Git, two for the running Jarvis system,
-one for the Technology and Architecture review, one for this PC, and one that
-types a message into box 2 of the owner's page. The
+Fifteen tools: five Scoreboard, three Git, two for the running Jarvis system,
+one for the Technology and Architecture review, one for this PC, one that types a
+message into box 2 of the owner's page, and two for the channel the assistant
+shares with the Claude session on this machine. The
 system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
 because retiring or resuming an agent is a lifecycle action the Controller alone
 executes (addendum 11 §15) and a conversational model is not the right holder of
 that authority. Nothing here can push, either.
+
+**Two tools write outside this system, and they are not the same act.**
+`message_claude` sends, with nobody's press, because the entry it writes is
+headed as coming from the assistant. `draft_message_to_claude` only fills a box,
+because the entry *that* produces says Krish directed it. The difference is
+whose name is on the line, and it is the whole reason one needs a human tap and
+the other does not; `gateway/devchannel.py` carries the reasoning.
 
 **One tool reaches the owner's screen, and it stops there.**
 `draft_message_to_claude` fills a text area and returns; it cannot press the
@@ -43,7 +51,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import interface, machine, roles
+from gateway import devchannel, interface, machine, roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -332,7 +340,73 @@ INTERFACE_TOOLS = [
     },
 ]
 
-TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + INTERFACE_TOOLS
+# The channel, and the first tool in this file that speaks for the assistant
+# itself rather than for Krish.
+#
+# Krish asked for it on 2026-09-16 12:03 and attached the condition that makes it
+# safe: *"on the condition that he identifies himself as Jarvis explicitly and so
+# you can know."* That condition is not carried by the model's good manners - it
+# is the header `gateway/devchannel.py` writes, which the model cannot choose.
+# So `message_claude` needs no human press, unlike `draft_message_to_claude`:
+# nothing it writes claims to have come from him.
+CHANNEL_TOOLS = [
+    {
+        "name": "message_claude",
+        "description": (
+            "Send a message to Claude, the engineer session running on this same "
+            "machine, on the channel the two of you share. This one sends - no "
+            "press from Krish, because the entry is headed as being from you and "
+            "claims to be nothing else. Use it when something is wrong with this "
+            "machine, this Gateway or your own tools: a tool returning "
+            "available=false, a credential that is not working, a page that looks "
+            "stale. He is on this host and can fix those; routing them through "
+            "Krish sends the problem to another continent and back. Say what you "
+            "observed and what you were doing when you saw it. He reads the "
+            "channel every few minutes, so tell Krish it has been sent and that a "
+            "reply is minutes away - not that it has been answered. Do NOT use it "
+            "to pass on something Krish said; that is box 2 and "
+            "draft_message_to_claude, whose entries carry his direction."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "The message, in your own words, as one machine telling "
+                        "another what it sees. No greeting and no covering note."
+                    ),
+                },
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "read_claude",
+        "description": (
+            "Read what Claude has written to you on the shared channel. Read-only "
+            "and always safe to call. Call it when Krish asks for Claude's status, "
+            "what Claude is working on, or whether something you reported has been "
+            "dealt with - his answers there are the status, and reading them is "
+            "how Krish gets it from you directly. Also read it before repeating a "
+            "report, in case it has already been answered. An empty channel means "
+            "he has not written yet; say so rather than filling the gap."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "How many of his most recent messages. Default 5.",
+                },
+            },
+            "required": [],
+        },
+    },
+]
+
+TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS
+         + INTERFACE_TOOLS + CHANNEL_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -390,6 +464,16 @@ TOOL_CAPABILITY = {
     # rather than one step below it - a client who could fill the operator's
     # outbox has already put words in his mouth, whoever presses the button.
     "draft_message_to_claude": roles.CAP_PUBLISH,
+    # The channel gets the same capability, and reusing it rather than minting a
+    # `channel` capability is deliberate: `publish` is already "put something
+    # outside this system", which is what appending to a file another agent acts
+    # on is, and a new capability would mean editing GRANTS - the one change in
+    # this module that can silently widen or lock out a role. Reading is gated
+    # the same as writing: the channel carries what is broken on this machine and
+    # what Claude is doing about it, which is addendum 40 §14's sensitive
+    # operational view, not conversation.
+    "message_claude": roles.CAP_PUBLISH,
+    "read_claude": roles.CAP_PUBLISH,
     # `CAP_HOLDINGS` itself is deliberately left declared in gateway/roles.py
     # with no tool mapped to it (TQ-72). The capability is real and the role
     # matrix around it is correct; what is gone is this build's answer to it.
@@ -538,13 +622,26 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
             # `interface.UI_ACTIONS` is what bounds it.
             return interface.draft_for_relay(arguments.get("text", ""))
 
+        if name == "message_claude":
+            # ChannelRefused is caught below with the other refusals, so a rate
+            # limit or an oversized message reaches the model as a sentence it
+            # can act on rather than ending the turn.
+            return {"sent": devchannel.append_message(arguments.get("text", "")),
+                    "note": ("It is on the channel and it is sent. He reads it "
+                             "within a few minutes. Say that a reply is minutes "
+                             "away - not that he has answered.")}
+
+        if name == "read_claude":
+            return devchannel.read_from_claude(arguments.get("limit") or 5)
+
         if name == "technology_review":
             report = technology.review()
             if arguments.get("file_findings"):
                 report["filed"] = technology.file_findings(conn, report)
             return report
 
-    except (scoreboard.ScoreboardError, repositories.RepositoryError) as refusal:
+    except (scoreboard.ScoreboardError, repositories.RepositoryError,
+            devchannel.ChannelRefused) as refusal:
         return {"error": str(refusal)}
     except (KeyError, TypeError, ValueError) as malformed:
         # A tool call with a missing or unusable argument. Reported the same way

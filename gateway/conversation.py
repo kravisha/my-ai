@@ -42,7 +42,7 @@ from typing import Iterator
 
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import interface, roles, skills, store, tools, uiversion
+from gateway import devchannel, interface, roles, skills, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -190,13 +190,20 @@ def client_prompt(agent_name: str, role: str) -> str:
 
 
 def operator_prompt() -> str:
-    """SYSTEM_PROMPT, plus what the owner's page has on it and which build of it
-    he is holding.
+    """SYSTEM_PROMPT, plus what the owner's page has on it, which build of it he
+    is holding, and the channel the assistant shares with Claude.
 
-    Both additions are here rather than in the constant because both change
-    without this file changing: `interface.prompt_paragraph` is generated from the
-    control registry, and `uiversion.prompt_paragraph` from the page's own
-    modification time.
+    All three additions are here rather than in the constant because all three
+    change without this file changing: `interface.prompt_paragraph` is generated
+    from the control registry, `uiversion.prompt_paragraph` from the page's own
+    modification time, and `devchannel.prompt_paragraph` from the rate limits that
+    actually enforce it - a prompt that promises three messages a window and a
+    module that allows two is a model being called a liar by its own tools.
+
+    The channel paragraph is operator-only for the same reason the page
+    description is. A client meets a representative with no business knowing that
+    an engineer session exists on this machine, let alone that it can be written
+    to.
 
     The version paragraph was reaching the *client* prompt only, which was
     backwards. Every word of `gateway/uiversion.py` is about the owner - it exists
@@ -204,7 +211,8 @@ def operator_prompt() -> str:
     code the other could not see - and he is the one role that was not being told
     the number. A client has never once reported a stale build.
     """
-    return SYSTEM_PROMPT + interface.prompt_paragraph() + uiversion.prompt_paragraph()
+    return (SYSTEM_PROMPT + interface.prompt_paragraph()
+            + devchannel.prompt_paragraph() + uiversion.prompt_paragraph())
 
 
 
