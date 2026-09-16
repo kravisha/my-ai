@@ -53,3 +53,11 @@ demo_summary.json
 # Backups of .env hold the API key and the password hash. Never tracked.
 .env.backup*
 .env.*.bak
+
+# The machines this deployment is allowed to diagnose (gateway/remote.py): their
+# names, tailnet addresses, ports and the local paths of files their agents
+# write. Every one of those is a property of one installation rather than of the
+# code, which is the whole reason the module reads them from a file instead of
+# containing them. remote-targets.example.json IS tracked and documents the
+# shape; this is the live one.
+config/remote-targets.json

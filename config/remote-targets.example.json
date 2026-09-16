@@ -1,0 +1,64 @@
+{
+  "_README": [
+    "The machines this Gateway is allowed to look at, and the only ones it can.",
+    "",
+    "Copy this file to remote-targets.json beside it, or point REMOTE_TARGETS_FILE",
+    "anywhere you like. The real file is NOT tracked: it names hosts, addresses and",
+    "paths, which are properties of one deployment rather than of the code, and",
+    "gateway/remote.py deliberately contains none of them.",
+    "",
+    "Everything here is read-only. Nothing in this file can start, stop or change",
+    "anything - the ssh checks are run verbatim and their output is reported, so a",
+    "command that modifies the far end is the one way to break that, and it is your",
+    "responsibility not to write one.",
+    "",
+    "FIELDS",
+    "  name        what to call it in a question. This is what the assistant passes",
+    "              to remote_diagnose; it cannot pass an address.",
+    "  label       how it should be read aloud.",
+    "  hostname    the tailnet name, used to look the peer up in `tailscale status`.",
+    "  host        the address probes connect to. A tailnet IP or a DNS name.",
+    "  services    ports to try. health_path is optional; without one only the TCP",
+    "              connect is attempted, which proves a listener and nothing more.",
+    "  channels    files an agent on that machine writes. This is the only evidence",
+    "              available for an agent that has no port. They are stat'd on THIS",
+    "              host and reported as such - a synced file is not the remote disk.",
+    "  ssh         optional. Without it the report says plainly that the process",
+    "              table, PIDs, directories and remote logs were not measured.",
+    "              checks are named read-only commands; none are built in, because a",
+    "              built-in one would assume the remote operating system."
+  ],
+
+  "tailscale_exe": "C:\\Program Files\\Tailscale\\tailscale.exe",
+
+  "targets": [
+    {
+      "name": "example-app-host",
+      "label": "the application host",
+      "hostname": "app-host",
+      "host": "100.64.0.2",
+      "services": [
+        { "name": "gateway", "port": 8100, "health_path": "/health" },
+        { "name": "backend", "port": 8000, "health_path": "/health" },
+        { "name": "database", "port": 5432 }
+      ],
+      "channels": [
+        {
+          "name": "the shared conversation",
+          "path": "C:\\path\\to\\a\\file the remote agent appends to.md",
+          "stale_minutes": 120,
+          "description": "What writes it, and what its silence would mean."
+        }
+      ],
+      "ssh": {
+        "user": "someone",
+        "port": 22,
+        "key": "C:\\path\\to\\a\\private key",
+        "checks": [
+          { "name": "who and where", "command": "hostname" },
+          { "name": "the process", "command": "the read-only command that lists it" }
+        ]
+      }
+    }
+  ]
+}

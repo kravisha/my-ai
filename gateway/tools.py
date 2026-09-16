@@ -7,8 +7,9 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Fifteen tools: five Scoreboard, three Git, two for the running Jarvis system,
-one for the Technology and Architecture review, one for this PC, one that types a
+Sixteen tools: five Scoreboard, three Git, two for the running Jarvis system,
+one for the Technology and Architecture review, one for this PC, one for the
+*other* machines this one is authorised to look at, one that types a
 message into box 2 of the owner's page, and two for the channel the assistant
 shares with the Claude session on this machine. The
 system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
@@ -51,7 +52,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import devchannel, interface, machine, roles
+from gateway import devchannel, interface, machine, remote, roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -274,6 +275,66 @@ MACHINE_TOOLS = [
     },
 ]
 
+# The other machines, and the first tool here that looks past this host.
+#
+# Krish, 2026-09-16 18:12: *"Jarvis must eventually be able to diagnose services
+# and agents running on other authorized machines, not only its own machine ...
+# Report findings before taking corrective action."* Phase 1 of the plan he
+# attached, and read-only by construction - `gateway/remote.py` has no code path
+# that changes anything anywhere.
+#
+# **The argument is a configured name, never an address.** That is the guard
+# worth stating twice: a `host` parameter would let a sentence in a conversation
+# aim this Gateway at any machine it can reach, and the machines it may look at
+# are a decision somebody made in a file on disk.
+#
+# The description spends most of its words on honesty about the gaps, because
+# the failure mode here is not a crash. It is a confident report about a process
+# nobody looked at, delivered to someone on another continent who then decides
+# whether to restart something.
+REMOTE_TOOLS = [
+    {
+        "name": "remote_diagnose",
+        "description": (
+            "Diagnose another authorized machine and the agents and services on "
+            "it: whether the tailnet can see it, whether its ports accept a "
+            "connection, whether its services answer a health request, and "
+            "whether the files its agents write are still moving. Returns a "
+            "report with a probable cause, a confidence and a recommended next "
+            "action. Use it when asked whether another machine or another agent "
+            "is up, stuck or gone. "
+            "READ-ONLY and safe to run whenever asked: it starts, stops, writes "
+            "and deletes nothing, here or there. It cannot recover anything - "
+            "say so rather than offering. "
+            "Name a machine from the configured list; omit it for all of them. "
+            "You cannot supply an address, and there is no way to look at a "
+            "machine that is not in that list. "
+            "Read 'not_measured' and repeat it. Without a credential on the far "
+            "end this cannot see the remote process table, a PID, the directory "
+            "structure or the remote logs - those are absent, not clean, and "
+            "guessing at them would be the one failure this is built to avoid. "
+            "An agent's state is only ever 'alive', 'quiet' or 'no evidence'. "
+            "Never call a quiet agent hung: from outside, an idle session and a "
+            "dead one look identical, and the wrong word there gets a working "
+            "session killed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "The name of a configured machine. Omit to diagnose every "
+                        "configured machine. A name that is not configured is "
+                        "refused, and the refusal lists the ones that are."
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+]
+
 TECHNOLOGY_TOOLS = [
     {
         "name": "technology_review",
@@ -405,7 +466,7 @@ CHANNEL_TOOLS = [
     },
 ]
 
-TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS
+TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
          + INTERFACE_TOOLS + CHANNEL_TOOLS)
 
 
@@ -446,6 +507,14 @@ TOOL_NAMES = {tool["name"] for tool in TOOLS}
 # offered it.
 TOOL_CAPABILITY = {
     "machine_status": roles.CAP_SYSTEM_STATUS,
+    # The same capability as machine_status, and reusing it rather than minting
+    # a `remote` one is deliberate. `system:status` already means "observe
+    # infrastructure, change nothing", which is exactly what this is; a new
+    # capability would mean editing GRANTS, the one change in gateway/roles.py
+    # that can silently widen or lock out a role. When recovery is built it will
+    # NOT reuse this - acting on another machine is a different authority from
+    # looking at one, and that is the line this mapping is here to hold.
+    "remote_diagnose": roles.CAP_SYSTEM_STATUS,
     "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
     "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
     "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
@@ -538,6 +607,14 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
     try:
         if name == "machine_status":
             return machine.snapshot()
+
+        if name == "remote_diagnose":
+            # `target` is passed through as given. An unconfigured name is
+            # refused inside `diagnose`, with the configured names in the
+            # refusal, so the model corrects itself rather than reporting that
+            # a machine could not be reached - which is what a silent empty
+            # result would look like, and it is a different and worse claim.
+            return remote.diagnose(arguments.get("target"))
 
         if name == "file_scoreboard_item":
             item_id = scoreboard.file_item(

@@ -490,6 +490,19 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # a tool that is not built, and it would have belonged on the withdrawn
         # list below rather than here.
         "machine_status",
+        # `remote_diagnose` added 2026-09-16, on Krish's direction: *"Jarvis must
+        # eventually be able to diagnose services and agents running on other
+        # authorized machines, not only its own machine ... Report findings
+        # before taking corrective action."* Phase 1 of the plan he attached.
+        #
+        # It is BUILT, in `gateway/remote.py`, and the bar this assertion guards
+        # is narrower than "it exists": the tool is *only* the diagnosis half.
+        # Phases 3 and 4 of the same plan - recovery and redeployment - are
+        # deliberately absent rather than declared, because a tool the assistant
+        # can see is a tool it will reach for, and the one thing Krish asked for
+        # twice is that nothing acts on another machine before a person has read
+        # the evidence.
+        "remote_diagnose",
         # `draft_message_to_claude` added 2026-09-16, on Krish's direction: *"he
         # should be able to paste messages in the box where I send messages to
         # you - currently he is unaware of this."* It is the only tool here whose
