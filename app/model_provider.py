@@ -97,6 +97,60 @@ class ModelProvider(Protocol):
         ...
 
 
+def cacheable_system(system: str):
+    """The system prompt as a cacheable prefix, or unchanged if there is nothing
+    worth caching.
+
+    Krish, 2026-09-16 from abroad: *"please minimize Jarvis use of Anthropic
+    key."* `app/model_tiering.py` did the half of that which picks a smaller
+    model - but its hard boundary sends every request carrying tools to the
+    capable one, and the Gateway assistant always carries tools. So his turns
+    were never going to get cheaper by routing. What makes them expensive is that
+    the two largest parts of every one of them are *identical to the last*: a
+    standing instruction of some seven thousand characters, and the definitions
+    of every tool he is allowed. Both were being sent and billed again on every
+    sentence he was told.
+
+    A cache breakpoint at the END of the system prompt covers both of them, and
+    that is the whole reason it goes here rather than on the tools: the API's
+    cacheable prefix is ordered tools, then system, then messages, and a
+    breakpoint caches everything before it. One marker, both parts.
+
+    Returned as a list of content blocks rather than a string because that is the
+    only form that can carry `cache_control`. Callers never see it - `system` is
+    still a plain string at the `ModelProvider` interface, so nothing above this
+    module learns the vendor's cache syntax.
+
+    An empty or blank prompt is passed through untouched: a text block with no
+    text is rejected by the API, and a caller with no system prompt has nothing
+    to cache anyway.
+
+    TWO LIMITS WORTH KNOWING BEFORE READING A BILL. The entry is ephemeral and
+    lives about five minutes, so this makes a conversation cheaper rather than
+    making the assistant cheaper to have - the first turn after a quiet hour pays
+    full price and writes the cache again. And a prefix below the vendor's
+    minimum is simply not cached; the request still succeeds, which is why this
+    cannot be trusted on unit tests alone. Nothing here is observable through a
+    stand-in client: a MagicMock accepts any shape, including a wrong one. The
+    deploy job that ships this makes one real call and reads the cache counters
+    back off it, because that is the only check that can fail for the right
+    reason.
+
+    ONE KNOWN CONSEQUENCE, LEFT FOR THE LEDGER TO FIX. The vendor reports cached
+    input in its own counters rather than in `input_tokens`, so the spend written
+    by `app/model_budget.py` now omits a cache read entirely instead of pricing
+    it at roughly a tenth of a fresh token. The ceiling is therefore a little
+    looser than it reads, in the cheap direction. Correcting it means deciding
+    what a cached token costs the ledger, which is a pricing decision belonging
+    to the budget module and not a side effect to smuggle in here - so the
+    counters are deliberately not folded in yet, and this paragraph is the record
+    that it is owed.
+    """
+    if not system or not system.strip():
+        return system
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
 def _tool_argument(tools: list) -> dict:
     """Omit `tools` entirely when there are none, rather than sending an empty
     list (TQ-39, §93).
@@ -132,7 +186,7 @@ class AnthropicProvider:
         return self.client().messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
+            system=cacheable_system(system),
             messages=messages,
             **_tool_argument(tools),
         )
@@ -150,7 +204,7 @@ class AnthropicProvider:
         with self.client().messages.stream(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
+            system=cacheable_system(system),
             messages=messages,
             **_tool_argument(tools),
         ) as stream:

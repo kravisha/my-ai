@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 from app import model_gateway
-from app.model_provider import AnthropicProvider
+from app.model_provider import AnthropicProvider, cacheable_system
 from backend.controller import PROJECT_ROOT
 
 
@@ -67,6 +67,10 @@ def test_importing_the_model_gateway_needs_no_api_key():
 
 
 def test_complete_forwards_every_argument_to_the_sdk():
+    """The system prompt goes as a content block rather than the string the
+    caller passed, because that is the only form that can carry a cache
+    breakpoint. Everything else is forwarded untouched - in particular the tools,
+    which are cached by the breakpoint's position rather than by being marked."""
     provider = AnthropicProvider(model="test-model")
     fake_create = MagicMock(return_value="fake-response")
     provider._client = MagicMock(messages=MagicMock(create=fake_create))
@@ -77,7 +81,15 @@ def test_complete_forwards_every_argument_to_the_sdk():
 
     assert result == "fake-response"
     fake_create.assert_called_once_with(
-        model="test-model", max_tokens=99, system="system prompt", messages=messages, tools=tools
+        model="test-model",
+        max_tokens=99,
+        system=[{
+            "type": "text",
+            "text": "system prompt",
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=messages,
+        tools=tools,
     )
 
 
@@ -143,7 +155,11 @@ def test_stream_passes_the_model_tools_and_token_budget():
     assert captured == {
         "model": "test-model",
         "max_tokens": 1234,
-        "system": "system",
+        "system": [{
+            "type": "text",
+            "text": "system",
+            "cache_control": {"type": "ephemeral"},
+        }],
         "messages": messages,
         "tools": tools,
     }
@@ -221,3 +237,71 @@ def test_an_unrecognised_block_type_is_passed_through_whole():
     unknown = {"type": "something_new", "payload": 1, "nested": {"a": 2}}
 
     assert replayable_block(unknown) == unknown
+
+
+# --- not paying twice for the part that never changes -------------------------------
+#
+# Krish, 2026-09-16 from abroad: "please minimize Jarvis use of Anthropic key."
+# The two largest parts of each of his turns are identical to the last one - the
+# standing instruction and the tool definitions - and both were billed again every
+# time he was answered.
+#
+# What these tests can and cannot show. They pin the SHAPE, which is worth pinning
+# because a stand-in client accepts a wrong one silently and the assertion above
+# would have passed either way. They cannot show that anything was actually cached:
+# only the vendor's own counters say that, so the deploy job makes one real call and
+# reads them. Unit tests here, evidence there.
+
+
+def test_the_system_prompt_is_sent_as_one_cached_block():
+    blocks = cacheable_system("the standing instruction")
+
+    assert blocks == [{
+        "type": "text",
+        "text": "the standing instruction",
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
+def test_exactly_one_breakpoint_is_marked():
+    """The breakpoint sits at the end of the system prompt, and one is the right
+    number: the cacheable prefix runs tools, then system, then messages, so a
+    single marker here covers the tools as well. A second marker inside anything
+    that varies per turn would cache a prefix that never recurs."""
+    blocks = cacheable_system("x" * 5000)
+
+    marked = [block for block in blocks if "cache_control" in block]
+    assert len(marked) == 1
+    assert blocks[-1] is marked[0]
+
+
+def test_caching_does_not_alter_a_single_character_of_the_prompt():
+    """The cheapest possible bug here is an invisible one: a prompt quietly
+    truncated or reflowed on its way to a cache block changes what the assistant
+    was told, and nothing downstream would report it."""
+    prompt = "\n".join(f"line {n} — with an em dash and a \"quote\"" for n in range(200))
+
+    assert cacheable_system(prompt)[0]["text"] == prompt
+
+
+def test_a_blank_prompt_is_passed_through_rather_than_wrapped():
+    """A text block with no text is rejected by the API, and a caller with no
+    system prompt has nothing to cache. Whitespace counts as blank: a block
+    holding two spaces would be a request that fails for a reason nobody could
+    read off the page."""
+    assert cacheable_system("") == ""
+    assert cacheable_system("   \n  ") == "   \n  "
+    assert cacheable_system(None) is None
+
+
+def test_the_interface_above_this_module_still_takes_a_plain_string():
+    """§24 again. Nothing above the provider should have to know the vendor's
+    cache syntax, so the wrapping happens inside the one class named for its
+    vendor - the caller hands over a string, as it always has."""
+    captured = {}
+    provider = AnthropicProvider(model="test-model")
+    provider._client = MagicMock(messages=MagicMock(stream=_fake_stream([], captured=captured)))
+
+    list(provider.stream("a plain string", [{"role": "user", "content": "hi"}], []))
+
+    assert captured["system"][0]["text"] == "a plain string"
