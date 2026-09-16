@@ -57,6 +57,7 @@ reading a quote attributed to a machine - which is legible as exactly that.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -88,6 +89,37 @@ WINDOW_MINUTES = 15
 # steadily; this bounds a year of legitimate use on a disk nobody is watching.
 MAX_FILE_BYTES = 2_000_000
 
+# WHAT COUNTS AS THE START OF AN ENTRY, and it is a whole line or nothing.
+#
+# The first version of `parse_entries` split the file on "\n## " and its gate
+# caught it at 12:40 on 2026-09-16. The bodies this channel carries are quotes
+# from logs and test output - that is what the channel is FOR - and a log line
+# beginning with two hashes is not hypothetical: the wake log and every shipping
+# script on this machine produce them. Such a line ended the message it was
+# quoted in and started a new entry with an empty speaker and a timestamp read
+# out of the log.
+#
+# So the speaker is part of the pattern rather than something read out of the
+# header afterwards. That makes the check the same shape as the condition Krish
+# attached - *"on the condition that he identifies himself as Jarvis explicitly
+# and so you can know"* - instead of a proxy for it: a line that does not name
+# one of the two speakers is not a header, and an entry with no speaker has
+# become unrepresentable rather than merely unexpected.
+#
+# It is deliberately the same anchored shape as the one wake-claude-deploy.ps1
+# uses to decide whether the channel holds anything Jarvis said. One rule in both
+# places; a header this module reads and that one ignores would be a message that
+# arrives and wakes nobody.
+#
+# `\r` is tolerated at the end because PowerShell's Add-Content writes CRLF while
+# this module writes LF, and both have appended to the real file.
+_HEADER = re.compile(
+    r"^## (?P<at>[^|\r\n]+?)[ \t]*\|[ \t]*(?P<speaker>"
+    + "|".join(re.escape(name) for name in (SPEAKER_JARVIS, SPEAKER_CLAUDE))
+    + r")[ \t\r]*$",
+    re.MULTILINE,
+)
+
 
 class ChannelRefused(Exception):
     """A write this channel will not take. Carried to the model as a string."""
@@ -110,20 +142,22 @@ def _stamp() -> str:
 def parse_entries(raw: str) -> list[dict]:
     """Every entry in the file, oldest first, as `{at, speaker, text}`.
 
-    Splits on the header rather than on `##`, so an entry whose body contains a
-    markdown heading survives intact - the bodies here are written by models
-    quoting logs, and a log line beginning `## ` is not hypothetical.
+    Found by `_HEADER`, which matches a whole line naming a known speaker, so an
+    entry whose body contains a markdown heading survives intact - bodies here
+    are written by models quoting logs, and a log line beginning `## ` is not
+    hypothetical. Anything before the first header, which is the file's own
+    preamble, belongs to nobody and is not an entry.
     """
     entries = []
-    for chunk in raw.split("\n## ")[1:]:
-        header, _, body = chunk.partition("\n")
-        fields = header.split("|")
-        text = body.strip()
+    headers = list(_HEADER.finditer(raw))
+    for index, header in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(raw)
+        text = raw[header.end():end].strip()
         if not text:
             continue
         entries.append({
-            "at": fields[0].strip(),
-            "speaker": fields[1].strip() if len(fields) > 1 else "",
+            "at": header.group("at").strip(),
+            "speaker": header.group("speaker"),
             "text": text,
         })
     return entries

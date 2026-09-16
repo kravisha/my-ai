@@ -500,6 +500,24 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # box 2 appends to the file that wakes the Claude session on this
         # machine, under an attribution that says Krish directed it.
         "draft_message_to_claude",
+        # `message_claude` and `read_claude` added 2026-09-16, on Krish's
+        # direction: *"I would like a more direct communication Chanel between you
+        # and Jarvis... on the condition that he identifies himself as Jarvis
+        # explicitly ans so you can know."* They are BUILT, in
+        # `gateway/devchannel.py`, over a file on this machine that the Claude
+        # session polls - not over the backend, which cannot carry a message
+        # between agents at all.
+        #
+        # The bar this assertion guards here is the one Krish set. Both tools
+        # write and read `JARVIS-CLAUDE-CHANNEL.md`, whose every entry is headed
+        # with a speaker, and the speaker `message_claude` writes is fixed at
+        # `JARVIS-TO-CLAUDE-DEPLOY` - the assistant cannot choose it. That is why
+        # this pair needs no press from Krish while `draft_message_to_claude`
+        # above still does: box 2 writes the header that WAKES the Claude session
+        # and says Krish directed it, and a tool able to write that header could
+        # wake an agent in his name.
+        "message_claude",
+        "read_claude",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so
