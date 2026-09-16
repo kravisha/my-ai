@@ -42,7 +42,7 @@ from typing import Iterator
 
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import roles, skills, store, tools, uiversion
+from gateway import interface, roles, skills, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -140,6 +140,12 @@ You cannot push, and you cannot act on the running system - only read it. Those 
 are specified and not built. If asked, say so plainly rather than describing what \
 you would do."""
 
+# Everything above is fixed text. Everything the operator's prompt says about his
+# *page* is generated, by operator_prompt below, for the reason gateway/skills.py
+# generates the client's capability paragraph: a description of a moving surface,
+# typed into a constant, is wrong the first time the surface moves and goes on
+# sounding right.
+
 MAX_REPLY_TOKENS = 2048
 
 # A turn that keeps calling tools is either working or looping, and nothing here
@@ -183,6 +189,24 @@ def client_prompt(agent_name: str, role: str) -> str:
         capabilities=skills.capability_paragraph(role) + uiversion.prompt_paragraph())
 
 
+def operator_prompt() -> str:
+    """SYSTEM_PROMPT, plus what the owner's page has on it and which build of it
+    he is holding.
+
+    Both additions are here rather than in the constant because both change
+    without this file changing: `interface.prompt_paragraph` is generated from the
+    control registry, and `uiversion.prompt_paragraph` from the page's own
+    modification time.
+
+    The version paragraph was reaching the *client* prompt only, which was
+    backwards. Every word of `gateway/uiversion.py` is about the owner - it exists
+    because he and Claude Dev lost a day to a cached page, each reasoning about
+    code the other could not see - and he is the one role that was not being told
+    the number. A client has never once reported a stale build.
+    """
+    return SYSTEM_PROMPT + interface.prompt_paragraph() + uiversion.prompt_paragraph()
+
+
 
 def model_messages(history: list[dict]) -> list[dict]:
     """The stored transcript as the model's message list.
@@ -212,6 +236,8 @@ def run_turn(
 
         {"type": "text", "text": "..."}                 as the reply arrives
         {"type": "tool", "name": "...", "ok": bool}      one per executed call
+        {"type": "ui", "action": "...", "text": "..."}   a tool asking the page
+                                                         to do something visible
         {"type": "reply", "text": "..."}                 exactly one, last
 
     The `reply` event carries everything the user saw, including any text said
@@ -233,8 +259,11 @@ def run_turn(
     # A client talks to their representative; everyone else talks to the
     # project's assistant. One prompt for both was how a client ended up being
     # briefed on Jarvis architecture (§95).
+    #
+    # operator_prompt() is SYSTEM_PROMPT plus the two generated paragraphs; the
+    # client's is assembled separately and must not receive them.
     system = (client_prompt(agent_name or "your representative", role)
-              if role == roles.ROLE_CLIENT else SYSTEM_PROMPT)
+              if role == roles.ROLE_CLIENT else operator_prompt())
     messages = model_messages(history)
     said: list[str] = []
     conn = store.get_connection(db_path)
@@ -263,6 +292,19 @@ def run_turn(
                 outcome = tools.execute(conn, block["name"], block.get("input") or {},
                                         role=role, subject=subject)
                 yield {"type": "tool", "name": block["name"], "ok": "error" not in outcome}
+
+                # A tool whose effect is on the owner's screen says so here, and
+                # only in a shape declared in gateway/interface.UI_ACTIONS. The
+                # filter is the point: without it, "the model asked for it" would
+                # be enough to make the page do something, and the next tool that
+                # returned a dict with a `ui` key in it would be driving his
+                # phone. One name, checked against a list, forwarded with exactly
+                # two fields.
+                effect = outcome.get("ui") if isinstance(outcome, dict) else None
+                if isinstance(effect, dict) and effect.get("action") in interface.UI_ACTIONS:
+                    yield {"type": "ui", "action": effect["action"],
+                           "text": str(effect.get("text") or "")}
+
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block["id"],

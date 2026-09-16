@@ -440,6 +440,30 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     }
   }
 
+  /* Jarvis typing into box 2 himself, mid-conversation, because he was asked to.
+     Arrives as {type:"ui", action:"draft_relay", text}. The server sends it only
+     for a tool he actually holds, and the tool cannot send what it wrote - see
+     gateway/interface.py. So this function fills the box and stops, exactly as
+     the draft button's path does, and the send button stays his.
+
+     store.setItem is not optional here. Setting .value in script does NOT fire
+     the `input` event, so the listener in keepTheDraft never sees this text - and
+     a message Jarvis composed is more expensive to lose than a typed one, not
+     less, because reproducing it costs another model call. */
+  function putDraft(text) {
+    const body = (text || "").trim();
+    if (!body) return;
+    const field = $("relay");
+    if (!field) return;
+    field.value = body;
+    store.setItem(DRAFT_KEY, body);
+    setStatus("sending", "Jarvis put this in the box. Read it, then press Send to Claude.");
+    // Deliberately does not utter the phrase that would press the button: this
+    // page's own speech reaches this page's own microphone.
+    speak("I have put it in box two. Read it, then tell me when.");
+    try { field.scrollIntoView({ block: "center" }); } catch (_) {}
+  }
+
   /* ------------------------------------------------------------------ socket */
 
   function connect() {
@@ -467,6 +491,20 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   let current = null;   // { el, pre, buf }
 
   function handle(m) {
+    // Jarvis acting on the page rather than talking about it. Checked first, and
+    // before the relayDraft capture below, because it is the one frame that is an
+    // instruction to this page rather than part of a reply.
+    if (m.type === "ui") {
+      if (m.action === "draft_relay") {
+        // If he pressed "Jarvis, draft it", the reply-capture is no longer how
+        // the draft arrived. Close it, or the `done` frame that follows finds an
+        // empty buffer and tells him Jarvis returned nothing - directly under a
+        // box that has just been filled.
+        if (relayDraft) { relayDraft = null; $("draftRelay").disabled = false; }
+        putDraft(m.text);
+      }
+      return;
+    }
     // A draft for box 2 is in flight: its text belongs in the relay box, not
     // in the conversation log.
     if (relayDraft) {

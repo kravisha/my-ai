@@ -490,6 +490,16 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # a tool that is not built, and it would have belonged on the withdrawn
         # list below rather than here.
         "machine_status",
+        # `draft_message_to_claude` added 2026-09-16, on Krish's direction: *"he
+        # should be able to paste messages in the box where I send messages to
+        # you - currently he is unaware of this."* It is the only tool here whose
+        # effect is on his screen rather than in a store, and the bar this
+        # assertion guards is that it stayed a *paste*: it fills box 2 and cannot
+        # press the button underneath it. `gateway/interface.py` holds the
+        # reasoning and tests/test_gateway_interface.py holds the guarantee -
+        # box 2 appends to the file that wakes the Claude session on this
+        # machine, under an attribution that says Krish directed it.
+        "draft_message_to_claude",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so
@@ -505,7 +515,12 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
 
     assert not any(
         name in offered
-        for name in ("retire_agent", "resume_agent", "spawn_agent", "push_branch")
+        for name in ("retire_agent", "resume_agent", "spawn_agent", "push_branch",
+                     # The drafting tool's own forbidden sibling. Naming it here
+                     # rather than only in its own suite puts it in the list of
+                     # actions this Gateway has decided a model does not get, next
+                     # to the three lifecycle verbs it already refuses.
+                     "send_message_to_claude", "relay_to_claude")
     ), "the system tools are read-only and the Git tools do not push; neither may grow an action"
 
 

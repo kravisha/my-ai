@@ -46,7 +46,7 @@ from pydantic import BaseModel
 
 from app import model_budget
 from app.model_gateway import default_provider
-from gateway import auth, client_agent, clients, conversation, exposure, jarvis, machine, roles, scoreboard, store, technology, uiversion
+from gateway import auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -384,7 +384,11 @@ async def voice_relay(
     text = (body.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Nothing to send")
-    if len(text) > 20_000:
+    # The same ceiling the drafting tool refuses at, declared once in
+    # gateway/interface.py. Two numbers would mean an assistant that can fill the
+    # box with more than the box will accept, and he would find that out by
+    # pressing send.
+    if len(text) > interface.RELAY_MAX_CHARS:
         raise HTTPException(status_code=413, detail="Message too long")
 
     channel = Path(
@@ -780,8 +784,14 @@ async def conversation_socket(
     Server to client:
         {"type": "ready", "conversation_id": N, "messages": [...]}
         {"type": "delta", "text": "..."}      many, as the reply arrives
+        {"type": "tool", "name": "...", "ok": bool}
+        {"type": "ui", "action": "...", "text": "..."}   do this to the page
         {"type": "done", "message_id": N}
         {"type": "error", "error": "..."}
+
+    A client that does not know a frame type must ignore it rather than fail on
+    it: `static/index.html` has no relay box, so the `ui` frame means nothing
+    there, and both pages are served to whoever is signed in.
     """
     await websocket.accept()
 
@@ -919,6 +929,18 @@ async def conversation_socket(
                     # should see that it happened while it happens.
                     await websocket.send_json(
                         {"type": "tool", "name": event["name"], "ok": event["ok"]}
+                    )
+                elif event["type"] == "ui":
+                    # The assistant putting something on the page itself, rather
+                    # than describing it. Today there is one action and it types a
+                    # message into the relay box; `gateway/interface.UI_ACTIONS`
+                    # is the list, and the turn has already checked against it.
+                    #
+                    # Forwarded field by field rather than by passing the event
+                    # through, so whatever a tool returns cannot become a frame
+                    # the page trusts. Two fields is the whole contract.
+                    await websocket.send_json(
+                        {"type": "ui", "action": event["action"], "text": event.get("text", "")}
                     )
                 elif event["type"] == "reply":
                     reply = event["text"]

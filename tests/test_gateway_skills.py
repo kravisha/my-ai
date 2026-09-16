@@ -184,13 +184,23 @@ def test_the_client_prompt_is_not_the_super_user_s():
 
 def test_the_turn_picks_the_prompt_by_role():
     """Asserted at the source: one prompt for both roles is how the mismatch
-    happened, and a test on the strings alone would not notice it returning."""
+    happened, and a test on the strings alone would not notice it returning.
+
+    `operator_prompt` replaced the bare `SYSTEM_PROMPT` here on 2026-09-16, when
+    the operator's prompt gained two generated paragraphs - what his page has on
+    it, and which build of it he is holding. The assertion still says what it
+    always said: this branch reads the role and chooses between two prompts. What
+    changed is the name of the one on the else side."""
     import inspect
 
     source = inspect.getsource(conversation.run_turn)
     assert "ROLE_CLIENT" in source
     assert "client_prompt" in source
-    assert "SYSTEM_PROMPT" in source
+    assert "operator_prompt" in source
+
+    # And the operator's prompt is still that constant, extended rather than
+    # replaced - a generated paragraph must not be able to lose the instructions.
+    assert conversation.SYSTEM_PROMPT in conversation.operator_prompt()
 
 
 def test_the_capability_paragraph_comes_from_the_registry():

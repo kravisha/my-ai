@@ -7,12 +7,20 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Eleven tools: five Scoreboard, three Git, two for the running Jarvis system, one
-for the Technology and Architecture review. The
+Thirteen tools: five Scoreboard, three Git, two for the running Jarvis system,
+one for the Technology and Architecture review, one for this PC, and one that
+types a message into box 2 of the owner's page. The
 system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
 because retiring or resuming an agent is a lifecycle action the Controller alone
 executes (addendum 11 §15) and a conversational model is not the right holder of
 that authority. Nothing here can push, either.
+
+**One tool reaches the owner's screen, and it stops there.**
+`draft_message_to_claude` fills a text area and returns; it cannot press the
+button underneath it. The full reasoning is in `gateway/interface.py`, where the
+action is implemented, and it is worth reading before anything is added beside
+it: the frame the page will act on is named in `interface.UI_ACTIONS`, so a tool
+cannot invent one.
 
 **Publishing has a confirmation the model cannot supply on its own reasoning.**
 `publish_document` takes `confirm_public`, and `gateway/repositories.py` refuses a
@@ -35,7 +43,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import machine, roles
+from gateway import interface, machine, roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -285,7 +293,46 @@ TECHNOLOGY_TOOLS = [
     },
 ]
 
-TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS
+# The one tool whose effect is on the owner's screen rather than in a store.
+#
+# Krish asked for it in those words - *"he should be able to paste messages in the
+# box where I send messages to you"* - and the shape of the ask is the shape of
+# the guarantee: paste, not send. The description says so twice because the model
+# will be tempted to report the job as finished, and "I have sent it to Claude"
+# is the one sentence here that would be a lie with consequences.
+INTERFACE_TOOLS = [
+    {
+        "name": "draft_message_to_claude",
+        "description": (
+            "Type a message into box 2 of his page - the box he sends to Claude, the "
+            "engineer session working on this machine. Use it the moment he asks you to "
+            "tell Claude something or to put something in that box; do not offer to do "
+            "it and wait. It fills the box and stops: nothing is sent, no file is "
+            "written and nothing is executed until he presses 'Send to Claude' himself. "
+            "Afterwards say it is in box 2 and waiting for him - never that it has been "
+            "sent, and never that Claude has it. Write the message as he would send it, "
+            "because it goes out attributed to him. Whatever was in the box is "
+            "replaced, so if he may have been writing there himself, read it back to "
+            "him rather than overwriting it silently."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "The complete message, exactly as it should appear in the box. "
+                        "No preamble, no covering note, nothing addressed to him - this "
+                        "text is read by Claude, not by him."
+                    ),
+                },
+            },
+            "required": ["text"],
+        },
+    },
+]
+
+TOOLS = TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + INTERFACE_TOOLS
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -336,6 +383,13 @@ TOOL_CAPABILITY = {
     "jarvis_status": roles.CAP_SYSTEM_STATUS,
     "jarvis_agent": roles.CAP_SYSTEM_STATUS,
     "technology_review": roles.CAP_TECHNOLOGY_READ,
+    # `publish`, the same capability as /voice/relay and as the `relay_to_claude`
+    # skill, and for the reason stated in both: carrying a message out to the
+    # engineer who maintains this machine is not something `converse` should buy.
+    # Drafting is the first half of that act, so it is gated with the second half
+    # rather than one step below it - a client who could fill the operator's
+    # outbox has already put words in his mouth, whoever presses the button.
+    "draft_message_to_claude": roles.CAP_PUBLISH,
     # `CAP_HOLDINGS` itself is deliberately left declared in gateway/roles.py
     # with no tool mapped to it (TQ-72). The capability is real and the role
     # matrix around it is correct; what is gone is this build's answer to it.
@@ -477,6 +531,12 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
 
         if name == "jarvis_agent":
             return jarvis.JarvisClient().agent(str(arguments["identity"]))
+
+        if name == "draft_message_to_claude":
+            # Returns a `ui` effect rather than doing anything itself. The page is
+            # what types, `gateway/conversation.run_turn` is what forwards it, and
+            # `interface.UI_ACTIONS` is what bounds it.
+            return interface.draft_for_relay(arguments.get("text", ""))
 
         if name == "technology_review":
             report = technology.review()
