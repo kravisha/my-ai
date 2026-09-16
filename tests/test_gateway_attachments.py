@@ -100,7 +100,7 @@ class CapturingProvider:
         raise AssertionError("the Gateway conversation must stream, not complete")
 
     def stream(self, system, messages, tools, max_tokens=2048):
-        self.calls.append({"system": system, "messages": messages})
+        self.calls.append({"system": system, "messages": [dict(m) for m in messages]})
         yield {"type": "text", "text": self.reply}
         yield {"type": "final",
                "content": [{"type": "text", "text": self.reply}],
