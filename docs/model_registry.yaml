@@ -87,14 +87,30 @@ routing_stages:
       globally (§11).
 
 models:
+  # WITHDRAWN FROM THE RUNTIME on 2026-09-16, on Krish's instruction from
+  # abroad: the application must not call this vendor for normal model work, and
+  # no request may fall back to it. `app/model_routing.assert_no_anthropic`
+  # refuses to build a router containing it, so this row describes a model the
+  # runtime cannot reach - which is why its status is not `configured`.
+  #
+  # The row STAYS, and deliberately. It is where the measured facts about this
+  # deployment's first year of model behaviour live, and `status: retired` is a
+  # statement somebody can check against the code; deleting the row would make
+  # the same claim unverifiable. The Claude development sessions that build this
+  # system still use that vendor, and that is a different thing from the
+  # application runtime - see `app/model_routing.anthropic_key_consumers`.
   - id: claude-sonnet-5
     provider: anthropic
-    status: configured
+    status: retired
+    retired_on: 2026-09-16
+    retired_because: >
+      Krish's routing instruction of 2026-09-16 - local first, Kimi remote
+      second, explicit failure third, and never this vendor as a fallback.
+      Enforced at construction in app/model_routing.py rather than by a switch,
+      because a switch that can be turned on can be turned on by accident.
     provisional: true
-    # The one place the vendor is constructed: app/model_provider.py's
-    # AnthropicProvider, wrapped in the cost breaker at
-    # app/model_gateway.default_provider. AGENT != MODEL holds structurally -
-    # callers walk plain dictionaries, never SDK types (addendum 16 §24).
+    # The class remains in app/model_provider.py so this row is verifiable, and
+    # nothing in the runtime constructs it.
     interface: app/model_provider.py::AnthropicProvider
     deployment: cloud
     tool_support: true
@@ -125,6 +141,68 @@ models:
       - availability_history
     benchmark_date: null
 
+  # THE REMOTE TIER as of 2026-09-16. Krish's instruction named "Kimi K2" for
+  # the local half and "Kimi K3" for the key; neither is an API model id, and he
+  # warned in the same message not to assume the marketing name and the id are
+  # the same. He was right to. Everything on this row below `status` was
+  # MEASURED by Deployments/probe-kimi-api.ps1 at 2026-09-16T22:40 local, whose
+  # trace is _probe-kimi.log, because a session on that machine cannot make an
+  # outbound call and a router written against a guessed id is the failure he
+  # asked to be prevented.
+  #
+  # What the probe had to discover, and why the base url looks unusual: this
+  # credential was refused 401 by both Moonshot developer bases and 404 by
+  # api.kimi.com/v1. It authenticates against api.kimi.com/coding/v1. So it is a
+  # Kimi subscription key rather than a Moonshot platform key, and the working
+  # address is not the one any documentation search produces.
+  - id: k3-256k
+    provider: kimi
+    status: configured
+    provisional: true
+    # The one place this vendor is constructed. The dialect is OpenAI-shaped
+    # rather than Anthropic-shaped, which is the whole substance of that module:
+    # callers walk plain dictionaries, so AGENT != MODEL survives a second
+    # vendor (addendum 16 §24) - and this row is the evidence it does.
+    interface: app/kimi_provider.py::KimiProvider
+    deployment: cloud
+    base_url: https://api.kimi.com/coding/v1
+    dialect: openai
+    tool_support: true
+    streaming: true
+    # The breaker in app/model_budget.py is per-deployment rather than
+    # per-model, so the ceiling on the retired row above governs every call this
+    # system makes, including these. Not repeated here: two budget blocks would
+    # read as two budgets.
+    observed:
+      - fact: >
+          the credential authenticates against https://api.kimi.com/coding/v1
+          and is refused 401 by api.moonshot.ai and api.moonshot.cn
+        recorded_in: Deployments/_probe-kimi.log (measured 2026-09-16 22:40)
+      - fact: >
+          the provider's own catalogue at that base returns four ids -
+          kimi-for-coding, kimi-for-coding-highspeed, k3-256k, k3
+        recorded_in: Deployments/_probe-kimi.log (measured 2026-09-16 22:40)
+      - fact: >
+          k3-256k answered a real completion, 1741 ms for an 8-token reply,
+          cold, usage reported as prompt=93 completion=8
+        recorded_in: Deployments/_probe-kimi.log (measured 2026-09-16 22:40)
+    unmeasured:
+      - context_window
+      - coding_score
+      - reasoning_score
+      - language_score
+      - structured_output_reliability
+      - hallucination_rate
+      - rate_limits
+      - availability_history
+      # The one that matters most and is hardest to get: whether its tool calls
+      # are well-formed under this system's real tool definitions. The unit
+      # translation is tested (tests/test_kimi_provider.py); the model's own
+      # behaviour with thirty tools in front of it is not, and cannot be until
+      # it has served real turns.
+      - tool_call_fidelity
+    benchmark_date: null
+
 # The hand-authored provisional ordering each task leaderboard starts from
 # (addendum 45 §12, TQ-54, SPEC_RECONCILIATION §105).
 #
@@ -145,15 +223,23 @@ models:
 # that it is good at these eight things; a single-model ordering carries no
 # information and is scored at exact neutral to say so. When TQ-57 and TQ-58 add
 # local candidates, they enter here as an ordering somebody chose and defended.
+#
+# CHANGED 2026-09-16: the single entry is now k3-256k rather than claude-sonnet-5,
+# because the configured model changed. The retired row is deliberately NOT left
+# in these orderings - a leaderboard that ranked a model no routing decision can
+# reach would be the exact failure the `seeded_leaderboard` rung exists to catch,
+# pointing the other way. And it is still a single-model ordering, so it still
+# carries no information about whether this model is good at these eight things.
+# The day that becomes a real ranking is the day it has served real turns.
 seed_ordering:
-  GENERAL_REASONING_AND_PLANNING: [claude-sonnet-5]
-  CODING_AND_DEBUGGING: [claude-sonnet-5]
-  LONG_CONTEXT_AND_MEMORY: [claude-sonnet-5]
-  CLASSIFICATION_AND_ROUTING: [claude-sonnet-5]
-  FINANCIAL_AND_ANALYTICAL_REASONING: [claude-sonnet-5]
-  SUMMARIZATION_AND_KNOWLEDGE_EXTRACTION: [claude-sonnet-5]
-  CREATIVE_GENERATION: [claude-sonnet-5]
-  CAPABILITY_AND_ESCALATION_DECISION: [claude-sonnet-5]
+  GENERAL_REASONING_AND_PLANNING: [k3-256k]
+  CODING_AND_DEBUGGING: [k3-256k]
+  LONG_CONTEXT_AND_MEMORY: [k3-256k]
+  CLASSIFICATION_AND_ROUTING: [k3-256k]
+  FINANCIAL_AND_ANALYTICAL_REASONING: [k3-256k]
+  SUMMARIZATION_AND_KNOWLEDGE_EXTRACTION: [k3-256k]
+  CREATIVE_GENERATION: [k3-256k]
+  CAPABILITY_AND_ESCALATION_DECISION: [k3-256k]
 
 # One profile per code location that reaches the model. `code_ref` is the
 # consuming module (the test scans for undeclared consumers); `role` is the
@@ -169,7 +255,7 @@ profiles:
     task_type: deep multi-source reasoning, thesis challenge, report grading
     criticality: high
     latency_tolerance: minutes (measured ~2min/call, §42)
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape:
@@ -186,7 +272,7 @@ profiles:
     task_type: lightweight coherence gate over a deterministic detector's candidate
     criticality: low
     latency_tolerance: seconds
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape:
@@ -200,7 +286,7 @@ profiles:
     task_type: stance reading over social chatter
     criticality: low
     latency_tolerance: seconds
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape:
@@ -214,7 +300,7 @@ profiles:
     task_type: agent self-awareness answers to Universal Query Interface questions
     criticality: medium
     latency_tolerance: seconds (UQI_TIMEOUT_SECONDS is 60s; worst observed 24s)
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape:
@@ -228,7 +314,7 @@ profiles:
     task_type: answering operator questions from a bounded snapshot of real system state
     criticality: medium
     latency_tolerance: interactive
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape:
@@ -242,7 +328,7 @@ profiles:
     task_type: operator conversation with tool dispatch and consent pauses
     criticality: high
     latency_tolerance: interactive
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape: []   # sized per call at the surface, no module constant to bind
@@ -253,7 +339,7 @@ profiles:
     task_type: streaming super-user conversation
     criticality: high
     latency_tolerance: interactive (streaming; addendum 16 §9)
-    preferred_model: claude-sonnet-5
+    preferred_model: k3-256k
     fallback_models: []
     provisional: true
     call_shape: []   # sized per call at the surface, no module constant to bind

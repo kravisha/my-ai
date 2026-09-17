@@ -16,9 +16,12 @@ import os
 import time
 
 from app.model_budget import BudgetedProvider
-from app.model_provider import DEFAULT_MODEL, AnthropicProvider, ModelProvider
-from app.model_tiering import TieredProvider, capable_model, cheap_model
+from app.model_provider import DEFAULT_MODEL, ModelProvider
+from app.model_routing import assert_no_anthropic, build_router
 
+# The model id this system was built around, kept as the registry's key for the
+# row that records it. It is no longer what the runtime constructs: see
+# `default_provider` below and Krish's instruction of 2026-09-16.
 MODEL = DEFAULT_MODEL
 
 _provider: ModelProvider | None = None
@@ -118,18 +121,27 @@ def default_provider() -> ModelProvider:
     wrapped: it spends nothing."""
     global _provider
     if _provider is None:
-        # Tiering INSIDE the budget wrapper, deliberately. The ledger must count
+        # ROUTING INSIDE THE BUDGET WRAPPER, deliberately. The ledger must count
         # every call once, whichever model served it, so the breaker sits
         # outermost and refuses before the router ever chooses. Reversing these
         # would give each tier its own view of the budget and let the pair
         # collectively spend twice the limit - the same mistake the shared
         # SQLite ledger exists to prevent between processes.
-        _provider = BudgetedProvider(
-            TieredProvider(
-                cheap=AnthropicProvider(model=cheap_model()),
-                capable=AnthropicProvider(model=capable_model()),
-            )
-        )
+        #
+        # WHAT CHANGED ON 2026-09-16, and why it is a replacement rather than an
+        # addition. This was `TieredProvider(cheap=AnthropicProvider(...),
+        # capable=AnthropicProvider(...))`: a router between two models from one
+        # vendor. Krish's instruction from abroad was to take that vendor out of
+        # the application's routing chain entirely, run local first, and escalate
+        # to Kimi's API - so the tiering module stays (it is still the right
+        # shape, and its tests still hold it) but nothing constructs it here.
+        #
+        # `app/model_routing.build_router` refuses at construction to contain
+        # that vendor. The assertion is repeated here, on the assembled graph,
+        # because this is the line a future edit would break: a wrapper added
+        # around the router is exactly how a vendor gets back in by accident.
+        _provider = BudgetedProvider(build_router())
+        assert_no_anthropic(_provider)
         fault = _fault_delay()
         if fault is not None:
             # Outside the budget wrapper, so a stalled call still counts against

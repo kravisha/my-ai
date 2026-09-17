@@ -36,7 +36,15 @@ REGISTRY_PATH = REPO / "docs" / "model_registry.yaml"
 
 # Modules that DEFINE or WRAP the model interface rather than consuming it -
 # the only files allowed to touch the provider without a profile.
-_INTERFACE_MODULES = {"app/model_gateway.py", "app/model_provider.py", "app/model_budget.py"}
+_INTERFACE_MODULES = {"app/model_gateway.py", "app/model_provider.py", "app/model_budget.py",
+                      # Added 2026-09-16 with the local-first router. Both define
+                      # the interface rather than consume it: the router chooses a
+                      # provider and the Kimi provider implements one. Neither
+                      # calls into the model interface, so neither is exempted from
+                      # a check it would pass anyway - the entry is here so that a
+                      # future edit adding such a call fails loudly rather than
+                      # being read as a new undeclared consumer.
+                      "app/model_routing.py", "app/kimi_provider.py"}
 
 # The rungs of `routing_stages` this file actually asserts.
 #

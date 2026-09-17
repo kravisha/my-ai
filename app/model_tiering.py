@@ -1,5 +1,20 @@
 """Spend the small model by default and the large one only when the work needs it.
 
+**NOTHING IN THE RUNTIME CONSTRUCTS THIS ANY MORE, as of 2026-09-16.** Krish's
+instruction from abroad that evening removed Anthropic from the application's
+routing chain, and both tiers below were models from that vendor - so
+`app/model_gateway` builds `app/model_routing.LocalFirstRouter` instead, and this
+module is left intact rather than deleted.
+
+Left, rather than deleted, for two reasons worth stating. Its routing rule is
+still the right one for choosing between a frugal model and a capable one, which
+is exactly the decision the local tier will face when a runtime is installed; and
+its answer to *why* Anthropic was being called despite a local-first policy is
+recorded below, in the module that caused it. The hard boundary in the next
+paragraph - every request carrying tools goes to the capable model - combined
+with the Gateway assistant carrying tools on every single turn, is the whole
+reason his bill was what it was.
+
 Krish, 2026-09-14: keep the Anthropic key, but Jarvis's use of it must be
 "limited and marginal", and when he does go remote he should use "low level
 models that don't consume much resources". This is the half of that directive
