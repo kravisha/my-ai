@@ -7,15 +7,22 @@ item - not produce a description of an item for the Super User to then file
 somewhere. The transport the human is supposed to stop being (§26) includes the
 short hop between deciding something and recording it.
 
-Sixteen tools: five Scoreboard, three Git, two for the running Jarvis system,
+Eighteen tools: five Scoreboard, three Git, two for the running Jarvis system,
 one for the Technology and Architecture review, one for this PC, one for the
-*other* machines this one is authorised to look at, one that types a
-message into box 2 of the owner's page, and two for the channel the assistant
-shares with the Claude session on this machine. The
+*other* machines this one is authorised to look at, **two for recovering one of
+them**, one that types a message into box 2 of the owner's page, and two for the
+channel the assistant shares with the Claude session on this machine. The
 system ones are **read-only** - `gateway/jarvis.py` issues GETs and nothing else,
 because retiring or resuming an agent is a lifecycle action the Controller alone
 executes (addendum 11 §15) and a conversational model is not the right holder of
 that authority. Nothing here can push, either.
+
+**One tool changes another machine, and it is the only one.** `remote_recover`
+runs a command a person wrote, on a machine a person authorised, after a fresh
+diagnosis says the thing is actually down and a human says yes. It is gated by
+its own capability rather than by `system:status`, because looking at a machine
+and acting on it are different authorities; `gateway/recovery.py` carries the
+five gates and the reasoning for each.
 
 **Two tools write outside this system, and they are not the same act.**
 `message_claude` sends, with nobody's press, because the entry it writes is
@@ -52,7 +59,7 @@ truthful value.
 """
 
 from backend.db import Database
-from gateway import devchannel, interface, machine, remote, roles
+from gateway import devchannel, interface, machine, recovery, remote, roles
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -304,8 +311,10 @@ REMOTE_TOOLS = [
             "action. Use it when asked whether another machine or another agent "
             "is up, stuck or gone. "
             "READ-ONLY and safe to run whenever asked: it starts, stops, writes "
-            "and deletes nothing, here or there. It cannot recover anything - "
-            "say so rather than offering. "
+            "and deletes nothing, here or there. It cannot recover anything "
+            "itself; recovery is remote_recovery_options and remote_recover, and "
+            "those need his explicit yes. Diagnose first and say what you found "
+            "before offering to act - never in the same breath. "
             "Name a machine from the configured list; omit it for all of them. "
             "You cannot supply an address, and there is no way to look at a "
             "machine that is not in that list. "
@@ -331,6 +340,93 @@ REMOTE_TOOLS = [
                 },
             },
             "required": [],
+        },
+    },
+]
+
+# Recovery: the first thing in this file that changes another machine.
+#
+# Krish's plan made diagnosis Phase 1 and recovery Phase 3, deliberately apart.
+# The capability keeps them apart at the boundary too - `system:recover`, not
+# `system:status` - which is the line TOOL_CAPABILITY below wrote down before
+# there was anything to hold to it.
+#
+# Two tools, because "what could you do about it" must be answerable without any
+# risk of answering it by doing it. `remote_recovery_options` changes nothing and
+# is the one an operator wants first; `remote_recover` is the act, and it refuses
+# without a confirmation that no amount of reasoning can supply.
+RECOVERY_TOOLS = [
+    {
+        "name": "remote_recovery_options",
+        "description": (
+            "What recovery actions are configured for an authorized machine, what "
+            "each one does, the service state each answers, and its cooldown and "
+            "daily ceiling. READ-ONLY: it runs nothing. Use it after a diagnosis, "
+            "when asked what can be done about a service that is down, and to "
+            "quote the exact action name back before proposing one. "
+            "A machine with no actions configured says so - nothing is built in, "
+            "because a built-in restart command would assume what is running on "
+            "the far end."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "The name of a configured machine. Omit for all of them."
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "remote_recover",
+        "description": (
+            "Run ONE configured recovery action on ONE authorized machine - the "
+            "only tool here that changes anything on any machine. "
+            "It diagnoses first, every time, and obeys the verdict: a service that "
+            "is answering is not restarted, a machine that is unreachable is not "
+            "acted on, and a diagnosis of low confidence refuses. Low confidence is "
+            "usually an agent judged by a file that has not moved - quiet is not "
+            "stopped, and a restart on that evidence can kill a working session. "
+            "REQUIRES `confirm`, and you may not set it on your own reasoning. Call "
+            "once without it, tell him in plain words what would run and where, and "
+            "set it only after he says yes. Him asking about a problem is not a yes. "
+            "You cannot supply a command or an address: both the machine and the "
+            "action are names from the configuration, and the command behind an "
+            "action was written by a person. "
+            "Report the 'recovered' field, which is a fresh probe after the fact - "
+            "NOT 'command_ran', which only says the command executed. A restart can "
+            "exit zero and leave the service exactly as dead as it was. "
+            "Every attempt is journalled, and each action has a cooldown and a "
+            "daily ceiling; hitting either is a refusal to report plainly, not a "
+            "failure to retry around."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "The name of a configured machine.",
+                },
+                "action": {
+                    "type": "string",
+                    "description": (
+                        "The name of a recovery action configured for that machine, "
+                        "exactly as remote_recovery_options gives it."
+                    ),
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "True only when he has said yes to this specific action on "
+                        "this specific machine. Never inferred."
+                    ),
+                },
+            },
+            "required": ["target", "action"],
         },
     },
 ]
@@ -467,7 +563,7 @@ CHANNEL_TOOLS = [
 ]
 
 TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
-         + INTERFACE_TOOLS + CHANNEL_TOOLS)
+         + RECOVERY_TOOLS + INTERFACE_TOOLS + CHANNEL_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -515,6 +611,20 @@ TOOL_CAPABILITY = {
     # NOT reuse this - acting on another machine is a different authority from
     # looking at one, and that is the line this mapping is here to hold.
     "remote_diagnose": roles.CAP_SYSTEM_STATUS,
+    # And here is that line being held. Recovery does NOT reuse `system:status`:
+    # acting on another machine is a different authority from looking at one, so
+    # it is `system:recover`, which only the operator holds. `internal` keeps
+    # `remote_diagnose` and is refused both of these - a role that may watch a
+    # service die is not thereby a role that may bounce it.
+    #
+    # Listing the options is gated the same as taking one, deliberately. The
+    # catalogue of ways to act on a machine is part of the acting surface, and
+    # splitting it off would mean `internal` could enumerate exactly which
+    # commands the operator is able to fire and where - addendum 40 §14's
+    # sensitive operational view, for no gain that a diagnosis does not already
+    # provide.
+    "remote_recovery_options": roles.CAP_SYSTEM_RECOVER,
+    "remote_recover": roles.CAP_SYSTEM_RECOVER,
     "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
     "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
     "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
@@ -711,6 +821,19 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
         if name == "read_claude":
             return devchannel.read_from_claude(arguments.get("limit") or 5)
 
+        if name == "remote_recovery_options":
+            return recovery.available(arguments.get("target"))
+
+        if name == "remote_recover":
+            # `confirm` is read strictly: anything other than a literal true is
+            # not a confirmation. A model that passed "yes" as a string has not
+            # been told yes by anybody.
+            return recovery.recover(
+                str(arguments["target"]),
+                str(arguments["action"]),
+                confirm=arguments.get("confirm") is True,
+            )
+
         if name == "technology_review":
             report = technology.review()
             if arguments.get("file_findings"):
@@ -718,7 +841,7 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
             return report
 
     except (scoreboard.ScoreboardError, repositories.RepositoryError,
-            devchannel.ChannelRefused) as refusal:
+            devchannel.ChannelRefused, recovery.RecoveryRefused) as refusal:
         return {"error": str(refusal)}
     except (KeyError, TypeError, ValueError) as malformed:
         # A tool call with a missing or unusable argument. Reported the same way

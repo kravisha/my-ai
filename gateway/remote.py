@@ -375,6 +375,36 @@ def file_activity(path: str, *, stale_minutes: int = DEFAULT_STALE_MINUTES) -> d
     }
 
 
+def ssh_base_command(target: dict) -> list[str] | None:
+    """How this machine is reached over SSH, or None if it is not described.
+
+    Extracted so that `ssh_probe` and `gateway/recovery.py` cannot drift. The
+    same reasoning `gateway/devchannel.py` gives for sharing its header pattern
+    with the wake script: a connection that diagnoses over one set of options
+    and acts over a subtly different one would produce a report about a host it
+    did not recover, and the two would disagree without either being wrong.
+
+    `BatchMode=yes` is the option that must never differ. A recovery that drops
+    it hangs on a password prompt with nobody at the keyboard - which is the
+    exact circumstance recovery exists for."""
+    config = target.get("ssh")
+    if not isinstance(config, dict):
+        return None
+    host = config.get("host") or target.get("host")
+    user = config.get("user")
+    if not host or not user:
+        return None
+    base = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}"]
+    if config.get("port"):
+        base += ["-p", str(config["port"])]
+    if config.get("key"):
+        base += ["-i", str(config["key"])]
+    if config.get("strict_host_key_checking") is False:
+        base += ["-o", "StrictHostKeyChecking=no"]
+    base.append(f"{user}@{host}")
+    return base
+
+
 def ssh_probe(target: dict, *, runner=None) -> dict:
     """The read-only commands a person wrote for this host, run over SSH.
 
@@ -410,20 +440,10 @@ def ssh_probe(target: dict, *, runner=None) -> dict:
             ),
         }
 
-    host = config.get("host") or target.get("host")
-    user = config.get("user")
-    if not host or not user:
+    base = ssh_base_command(target)
+    if base is None:
         return {"configured": True, "ran": 0,
                 "reason": "The SSH block needs both a user and a host."}
-
-    base = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}"]
-    if config.get("port"):
-        base += ["-p", str(config["port"])]
-    if config.get("key"):
-        base += ["-i", str(config["key"])]
-    if config.get("strict_host_key_checking") is False:
-        base += ["-o", "StrictHostKeyChecking=no"]
-    base.append(f"{user}@{host}")
 
     def run(command: list[str]) -> dict:
         try:
@@ -733,6 +753,8 @@ def diagnose(name: str | None = None, *, ssh_runner=None) -> dict:
         ],
         "read_only": (
             "Nothing was started, stopped, written or deleted, on this machine or "
-            "any other. Recovery is a separate capability and it is not built yet."
+            "any other. Recovery is a separate capability - gateway/recovery.py, "
+            "reached by remote_recover - and it needs its own confirmation, so a "
+            "diagnosis never turns into an action by itself."
         ),
     }

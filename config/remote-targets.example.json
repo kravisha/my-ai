@@ -7,10 +7,14 @@
     "paths, which are properties of one deployment rather than of the code, and",
     "gateway/remote.py deliberately contains none of them.",
     "",
-    "Everything here is read-only. Nothing in this file can start, stop or change",
-    "anything - the ssh checks are run verbatim and their output is reported, so a",
-    "command that modifies the far end is the one way to break that, and it is your",
-    "responsibility not to write one.",
+    "Diagnosis is read-only. Nothing in the services, channels or ssh.checks blocks",
+    "can start, stop or change anything - the ssh checks are run verbatim and their",
+    "output is reported, so a command that modifies the far end is the one way to",
+    "break that, and it is your responsibility not to write one.",
+    "",
+    "THE 'recovery' BLOCK IS THE EXCEPTION, AND IT IS THE ONLY ONE. Commands listed",
+    "there are meant to change the far end, and gateway/recovery.py will run one on",
+    "a human's explicit confirmation. Everything else about them is a restriction.",
     "",
     "FIELDS",
     "  name        what to call it in a question. This is what the assistant passes",
@@ -26,11 +30,40 @@
     "  ssh         optional. Without it the report says plainly that the process",
     "              table, PIDs, directories and remote logs were not measured.",
     "              checks are named read-only commands; none are built in, because a",
-    "              built-in one would assume the remote operating system."
+    "              built-in one would assume the remote operating system.",
+    "              An ssh block is also what recovery needs: without one, every",
+    "              recovery action on this machine refuses, because there is no way",
+    "              to run anything on it from here.",
+    "",
+    "RECOVERY FIELDS (per action)",
+    "  name              what the assistant names when asking to run it. Quoted back",
+    "                    to the operator verbatim, so write it as a sentence a person",
+    "                    would say yes to.",
+    "  description       what it actually does, in the words you want read aloud",
+    "                    before somebody confirms it.",
+    "  command           run verbatim over ssh. Written by you. There are no built-in",
+    "                    recovery commands and there will not be: one would assume the",
+    "                    far end's operating system, its service manager and its paths.",
+    "  when.service      the service (by its name above) whose state justifies this.",
+    "                    Omit to judge on the machine's connectivity instead.",
+    "  when.states       the states in which this action may run, from the diagnosis'",
+    "                    own vocabulary: 'not listening', 'listening but not",
+    "                    answering', 'listening', 'answering' for a service;",
+    "                    'reachable', 'unreachable', 'unknown' for a machine.",
+    "                    AN ACTION WITH NO when, OR NO STATES, CAN NEVER RUN. That is",
+    "                    deliberate and it fails closed: an unconditional action is a",
+    "                    remote shell rather than a recovery.",
+    "  cooldown_minutes  how long before this action may run again. Default 15. A",
+    "                    restart that has not had time to take effect looks exactly",
+    "                    like one that did not work.",
+    "  max_per_day       how many times in 24 hours. Default 4. A service needing more",
+    "                    has a problem a restart does not fix, and continuing hides it.",
+    "",
+    "Every attempt is appended to remote-recovery-journal.jsonl beside this file",
+    "(or REMOTE_RECOVERY_JOURNAL). The cooldown and the ceiling are counted from it,",
+    "so if it cannot be written, recovery refuses rather than acting without a limit."
   ],
-
   "tailscale_exe": "C:\\Program Files\\Tailscale\\tailscale.exe",
-
   "targets": [
     {
       "name": "example-app-host",
@@ -38,9 +71,20 @@
       "hostname": "app-host",
       "host": "100.64.0.2",
       "services": [
-        { "name": "gateway", "port": 8100, "health_path": "/health" },
-        { "name": "backend", "port": 8000, "health_path": "/health" },
-        { "name": "database", "port": 5432 }
+        {
+          "name": "gateway",
+          "port": 8100,
+          "health_path": "/health"
+        },
+        {
+          "name": "backend",
+          "port": 8000,
+          "health_path": "/health"
+        },
+        {
+          "name": "database",
+          "port": 5432
+        }
       ],
       "channels": [
         {
@@ -55,8 +99,45 @@
         "port": 22,
         "key": "C:\\path\\to\\a\\private key",
         "checks": [
-          { "name": "who and where", "command": "hostname" },
-          { "name": "the process", "command": "the read-only command that lists it" }
+          {
+            "name": "who and where",
+            "command": "hostname"
+          },
+          {
+            "name": "the process",
+            "command": "the read-only command that lists it"
+          }
+        ]
+      },
+      "recovery": {
+        "actions": [
+          {
+            "name": "restart the gateway",
+            "description": "Restarts the gateway service and leaves everything else alone.",
+            "command": "the read-only-safe command that restarts just that service",
+            "when": {
+              "service": "gateway",
+              "states": [
+                "not listening",
+                "listening but not answering"
+              ]
+            },
+            "cooldown_minutes": 15,
+            "max_per_day": 4
+          },
+          {
+            "name": "start the engineer session",
+            "description": "Starts the agent session that reads the shared channel.",
+            "command": "the command that launches it, non-interactively",
+            "when": {
+              "service": "gateway",
+              "states": [
+                "answering"
+              ]
+            },
+            "cooldown_minutes": 30,
+            "max_per_day": 2
+          }
         ]
       }
     }

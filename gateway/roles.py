@@ -77,6 +77,13 @@ CAP_SCOREBOARD_WRITE = "scoreboard:write"
 CAP_TECHNOLOGY_READ = "technology:read"
 CAP_TECHNOLOGY_FILE = "technology:file"
 CAP_SYSTEM_STATUS = "system:status"
+# Acting on a machine, as opposed to looking at one. Deliberately NOT
+# `system:status` widened: gateway/tools.py holds that line explicitly, and the
+# difference between reading a machine and restarting something on it is the
+# difference this whole capability exists to make visible. Operator only, and
+# `internal` does not get it even though `internal` may watch - a role that can
+# see a service is down is not thereby a role that may bounce it.
+CAP_SYSTEM_RECOVER = "system:recover"
 CAP_CONVERSE = "converse"
 CAP_SESSION = "session"
 CAP_REPOSITORY_READ = "repository:read"
@@ -92,7 +99,8 @@ CAP_HOLDINGS = "holdings"
 
 CAPABILITIES = (
     CAP_SCOREBOARD_READ, CAP_SCOREBOARD_WRITE, CAP_TECHNOLOGY_READ,
-    CAP_TECHNOLOGY_FILE, CAP_SYSTEM_STATUS, CAP_CONVERSE, CAP_SESSION,
+    CAP_TECHNOLOGY_FILE, CAP_SYSTEM_STATUS, CAP_SYSTEM_RECOVER,
+    CAP_CONVERSE, CAP_SESSION,
     CAP_REPOSITORY_READ, CAP_PUBLISH, CAP_STUDIO, CAP_HOLDINGS,
 )
 
@@ -106,6 +114,7 @@ DESCRIPTIONS = {
     CAP_TECHNOLOGY_READ: "read the technology and architecture review",
     CAP_TECHNOLOGY_FILE: "file review findings onto the scoreboard",
     CAP_SYSTEM_STATUS: "see the running organization's operational status",
+    CAP_SYSTEM_RECOVER: "run a configured recovery action on an authorized machine",
     CAP_CONVERSE: "talk to the agent",
     CAP_SESSION: "end your own session",
     CAP_REPOSITORY_READ: "list and read the project's source files",

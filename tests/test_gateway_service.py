@@ -495,14 +495,35 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # authorized machines, not only its own machine ... Report findings
         # before taking corrective action."* Phase 1 of the plan he attached.
         #
-        # It is BUILT, in `gateway/remote.py`, and the bar this assertion guards
-        # is narrower than "it exists": the tool is *only* the diagnosis half.
-        # Phases 3 and 4 of the same plan - recovery and redeployment - are
-        # deliberately absent rather than declared, because a tool the assistant
-        # can see is a tool it will reach for, and the one thing Krish asked for
-        # twice is that nothing acts on another machine before a person has read
-        # the evidence.
+        # It is BUILT, in `gateway/remote.py`, and it is still *only* the
+        # diagnosis half - it starts and stops nothing, here or anywhere.
         "remote_diagnose",
+        # `remote_recovery_options` and `remote_recover` added 2026-09-17, on
+        # Krish's direction to build the remote recovery capability. They are
+        # Phase 3 of the same plan, and until this date this list asserted their
+        # ABSENCE - *"a tool the assistant can see is a tool it will reach for,
+        # and the one thing Krish asked for twice is that nothing acts on another
+        # machine before a person has read the evidence."*
+        #
+        # That sentence is still the bar. What changed is where it is enforced:
+        # it used to be enforced by the tool not existing, and it is now enforced
+        # by `gateway/recovery.py`, which will not act until a fresh diagnosis
+        # says the thing is actually down AND a human has confirmed this specific
+        # action on this specific machine. Absence was the cheaper guarantee; it
+        # was also the one that left an outage unfixable from another continent,
+        # which is what happened on 2026-09-15.
+        #
+        # So the bar this assertion now guards is that the pair arrived TOGETHER
+        # and that recovery did not arrive alone: the options tool is read-only
+        # and is how the assistant learns an action's exact name, which is what
+        # lets it quote the thing back before anybody says yes. A build offering
+        # `remote_recover` without it would be one where the assistant has to
+        # guess at action names in order to propose one.
+        #
+        # What must NOT appear here is Phase 4, redeployment. It is not built,
+        # and this list is the place that says so.
+        "remote_recovery_options",
+        "remote_recover",
         # `draft_message_to_claude` added 2026-09-16, on Krish's direction: *"he
         # should be able to paste messages in the box where I send messages to
         # you - currently he is unaware of this."* It is the only tool here whose
