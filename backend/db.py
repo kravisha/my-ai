@@ -196,5 +196,36 @@ class Database:
         self._conn.executescript(script)
         self._commit()
 
+    def backup_to(self, path: str | Path) -> dict:
+        """A consistent copy of this database, taken while it is in use.
+
+        SQLite's online backup API, **not** a file copy, and the difference is
+        the whole reason this method exists rather than a `shutil.copy` at the
+        call site. These databases run in WAL mode, so the bytes in the `.db`
+        file are not the database: committed pages can be sitting in the `-wal`
+        sidecar, and a copy taken mid-write is a file that opens cleanly and is
+        missing the last transactions. That is the worst failure a backup can
+        have, because it looks like success until somebody restores it.
+
+        The backup API copies pages under the engine's own lock and produces a
+        single self-contained file with the WAL already applied, which is also
+        what makes the copy restorable by pointing at it.
+
+        Engine-specific on purpose, and that is why it lives here: this class
+        is the seam a Postgres backend would reimplement (see the module
+        docstring), and `pg_dump` is its answer to the same question."""
+        import sqlite3 as _sqlite3
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        destination = _sqlite3.connect(target)
+        try:
+            self._conn.backup(destination)
+            destination.commit()
+        finally:
+            destination.close()
+        return {"path": str(target), "bytes": target.stat().st_size,
+                "method": "sqlite_online_backup"}
+
     def close(self) -> None:
         self._conn.close()

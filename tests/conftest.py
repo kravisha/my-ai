@@ -95,6 +95,14 @@ os.environ["LEARNING_DB_PATH"] = str(_SESSION_DB_DIR / "learning.db")
 # every other agent is told to believe.
 os.environ["DBA_DB_PATH"] = str(_SESSION_DB_DIR / "dba.db")
 
+# DBA_BACKUP_DIR: where the DBA writes backups, redirected for both directions.
+# A test that took one would otherwise drop a real database copy into the
+# repository's backup directory, and - the half that actually bit - a test
+# asking "is there a current backup?" would be answered by whatever Krish's
+# machine happens to have on disk, so the suite would pass or fail depending
+# on when he last ran one.
+os.environ["DBA_BACKUP_DIR"] = str(_SESSION_DB_DIR / "backups")
+
 
 def real_database_fingerprint() -> dict[str, str | None]:
     """Content hash of each real database and its WAL sidecar, or None per file

@@ -169,9 +169,10 @@ actions, the reason and what changed → the DBA has stored what it learned.
 
 ## 9. Still honest about what is not built
 
-- **Backup and restore** (§25/§26 of the requirements spec) — Phase 2. `health`
-  reports `last_backup: None` *with a reason* and `diagnose` fails its
-  `backup_age` check on purpose.
+- ~~**Backup and restore**~~ — **built**; see `docs/DBA_AGENT.md` §8. `health`
+  now reports the real current backup and `diagnose`'s `backup_age` check
+  fails only for real reasons: nothing taken, nothing verified, or nothing
+  recent.
 - **Semantic search / pgvector** (§18) — Phase 3.
 - **§12's full Jarvis state** — the `agent_state` type exists and survives a
   restart; what Jarvis chooses to persist through it is Jarvis's next piece of

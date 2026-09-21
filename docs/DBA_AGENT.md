@@ -70,10 +70,7 @@ machinery with no user does not get built. Each of these is a later phase in
 §46, and each is **reported as absent** rather than omitted, because an absent
 measurement reads as a clean one:
 
-- **§25 backup and §26 restore.** `health()` returns `last_backup: None` with a
-  reason, and `diagnose()` fails its `backup_age` check on purpose. A system
-  that reported a backup age of zero would be worse than one that says it has
-  never taken one.
+- ~~**§25 backup and §26 restore.**~~ **Built** — see §8 below.
 - **§7 agent mailbox, §41 event history, §18 vectors.** No tables. Phases 2–3.
 - **§12 conflict resolution.** `reconcile` returns `unknown_action` naming §12
   and §46 rather than a stub that appears to reconcile something. The
@@ -143,6 +140,109 @@ What changed here: a published capability's type is adopted at runtime, so a
 new schema becomes a working API without an edit to this repository; and a
 capability's own `grants` are enforced on top of the global policy, so an agent
 needs both.
+
+---
+
+## 8. Backup and restore (§25, §26)
+
+> *"A backup is not considered valid until restoration has been tested."*
+
+That line decides the design. **Taking a backup restores it** — into a
+throwaway database, integrity-checked, with its row counts compared table by
+table against the source — before it is recorded as good. `current()` returns
+only a verified backup, so recency alone never makes one eligible.
+
+### Four things it gets right on purpose
+
+**It is not a file copy.** These databases run in WAL mode, so the bytes in
+the `.db` file are not the database. The gap is not subtle: with five rows
+written, a file copy of the `.db` alone **does not contain the table at all**,
+while `Database.backup_to` — SQLite's online backup API — has everything.
+That is the first test in the file.
+
+**The catalogue does not live in the database it protects.** Each backup has a
+JSON manifest beside it and the catalogue is built by scanning the directory. A
+record of your backups stored inside the database you are restoring is a record
+you have lost at the moment you need it. A test deletes the database entirely
+and asserts the catalogue still answers.
+
+**Restoring backs up the current state first**, as a `pre_restore` backup — so
+a restore that was a mistake is itself undoable. A test restores, then restores
+the safety copy, and finds the "lost" row again.
+
+**The last verified backup is never pruned**, whatever `keep` says. The case it
+exists for is every recent backup silently failing verification while retention
+removes the only good one.
+
+### Restoring, and its four guards
+
+`administer` only · an explicit `confirmed` (the refusal names the recovery
+point, so whoever confirms has been told what they are giving up) · a verified
+backup unless overridden aloud · and the current state backed up first.
+
+Two defects the restore test found in this implementation:
+
+| | |
+|---|---|
+| `shutil.copy2` **truncates the destination in place**, so a connection open across the restore watched its database become a half-written file and got a disk I/O error. | Now written beside it and `os.replace`d — atomic. The open connection keeps the old inode, unlinked but alive, and finishes safely. |
+| Nothing checked whether another process was mid-write. | `BEGIN IMMEDIATE` before the swap; if it cannot take the lock the restore is refused, naming step 1 of the procedure. That makes "stop writers first" a check rather than a hope. |
+
+### What a review found after all of that passed
+
+Eight more, and the first two are the shape worth remembering: **the safety net
+was breaking the recovery path.**
+
+| Defect | Why it mattered |
+|---|---|
+| The pre-restore safety backup ended in `prune()`, which deleted **the backup being restored** once the new entry pushed it past `keep`. | Restoring the oldest copy destroyed it and then failed for its absence. `take(protect=…)` now exempts it. |
+| A restore from a **corrupt live database** died inside its own mandatory safety backup with an uncaught sqlite3 error — failing in exactly the situation a restore exists for. | A proper backup of a corrupt database is impossible; a byte copy is not, and is better evidence than nothing. It is written as `UNRESTORABLE-raw-copy-*` and deliberately given **no manifest**, so nothing can later mistake it for a backup. |
+
+The rest: row counts were read *before* the copy, so any concurrent write made
+a perfectly good backup verify as FAILED (they are now read from the snapshot,
+and drift is recorded rather than punished); `due()` asked for the newest
+*verified* backup, so a failing backup became an unbounded series of them;
+retention counted every entry against `keep`, so failures evicted the good
+copies — it now counts restorable ones; a `backup:` section written as a list
+was silently replaced by defaults, in the module that promises to refuse rather
+than default; and two smaller ones about the write-lock check and the swap
+order.
+
+Each is a regression test, and each was run against the unfixed code. One did
+not fail there and is labelled as such rather than kept as decoration.
+
+### One honest note about a guard
+
+`_replace` also unlinks the `-wal`/`-shm` sidecars. **No test could be made to
+require it** — in every case constructed, including one where the checkpoint is
+forced to fail, closing the probe connection already causes SQLite to delete
+the log. The code says so where it is, and the test asserts the *outcome* (no
+stale log survives a restore) rather than pretending to pin that line. A test
+that cannot fail is worse than no test.
+
+### Running it
+
+| | |
+|---|---|
+| `python -m dba.backup --if-due` | what a cron entry or timer calls |
+| `python -m dba.backup --take` / `--list` / `--verify ID` | by hand |
+| `POST /backups`, `/backups/run-if-due`, `/backups/{id}/verify`, `/backups/{id}/restore` | over HTTP, operator credential only |
+| `config/dba.yaml` | where backups go, how many are kept, the hour, the free-space floor |
+
+**Nothing runs on a timer by itself**, and pretending otherwise would be the
+worst kind of backup story — one everybody believes is running. Until a
+scheduler entry exists, `--if-due` is a command somebody or something has to
+call. `GET /backups` answers §26's documentation questions from what is
+actually on disk: how to restore, which backup is current, the recovery point,
+the schema version, the validation procedure.
+
+### Still not built
+
+**An encrypted secondary location** (§25 says *eventually*) — there is no
+second location configured and nothing is encrypted at rest. **The other two
+databases** — `financial_intelligence.db` and `gateway.db` belong to services
+that are still their own owners, and each needs its own restore story before it
+joins the list. Both are reported by `describe()` under `not_implemented`
+rather than left out.
 
 ---
 

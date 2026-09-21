@@ -85,14 +85,15 @@ def health(connect=None) -> dict:
                       "WHERE resolved_at IS NULL"),
             "handled_requests": _one(conn, "SELECT COUNT(*) AS n FROM handled_requests"),
             "pending_migrations": [],
-            "last_backup": None,
+            "last_backup": _last_backup(),
             "not_measured": {
-                "last_backup": "backup is §46 Phase 2 and is not implemented. "
-                               "Reporting None rather than omitting the field, "
-                               "because an absent measurement reads as a clean one.",
                 "query_latency_ms": "not instrumented yet; §27 asks for "
                                     "correctness before optimisation and "
                                     "nothing has asked this question.",
+                "encrypted_secondary_location":
+                    "§25 says this should eventually be supported. There is no "
+                    "second location configured and nothing is encrypted at "
+                    "rest. Reported rather than omitted.",
             },
             "policy": permissions.describe(),
         }
@@ -175,11 +176,7 @@ def diagnose(connect=None) -> dict:
             f"schema version {store.schema_version(conn)}; no migration steps "
             f"are declared because the schema has not changed shape yet"))
 
-        checks.append(_check(
-            "backup_age", False,
-            "no backup has ever been taken: backup is §46 Phase 2 and is not "
-            "implemented. This check fails on purpose rather than reporting a "
-            "backup age of zero."))
+        checks.append(_backup_check())
 
         checks.append(_check(
             "disk_usage", True,
@@ -220,6 +217,75 @@ def diagnose(connect=None) -> dict:
 
 def _check(name: str, passed: bool, detail: str, **extra) -> dict:
     return {"check": name, "passed": bool(passed), "detail": detail, **extra}
+
+
+# How old the newest verified backup may be before this reads as a problem.
+# The schedule is daily, so two days means a run was missed rather than that
+# one is merely due.
+STALE_BACKUP_DAYS = 2
+
+
+def _last_backup() -> dict | None:
+    """§28's `last_backup`, from the catalogue on disk.
+
+    Reads the manifests rather than a table, for the reason `dba/backup.py`
+    gives: a record of your backups kept inside the database you are restoring
+    is a record you have lost when you need it."""
+    try:
+        from dba import backup
+
+        latest = backup.current()
+        if latest is None:
+            everything = backup.catalogue()
+            if not everything:
+                return None
+            newest = everything[0]
+            return {"backup_id": newest.backup_id, "taken_at": newest.taken_at,
+                    "status": newest.status, "verified": False,
+                    "note": "the newest backup has not passed verification, so "
+                            "it is not the current one (§26)"}
+        return {"backup_id": latest.backup_id, "taken_at": latest.taken_at,
+                "status": latest.status, "verified": True,
+                "recovery_point": latest.recovery_point,
+                "schema_version": latest.schema_version}
+    except Exception as bad:  # noqa: BLE001 - health never fails on a sub-check
+        return {"error": f"{type(bad).__name__}: {bad}"}
+
+
+def _backup_check() -> dict:
+    """§29's backup age, answered from what is actually on disk.
+
+    It used to fail on purpose because backup did not exist. It now fails for
+    real reasons only: nothing taken, nothing verified, or nothing recent."""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        from dba import backup
+
+        everything = backup.catalogue()
+        if not everything:
+            return _check("backup_age", False,
+                          "no backup has ever been taken. Take one: "
+                          "POST /backups, or dba.backup.take().")
+        latest = backup.current()
+        if latest is None:
+            return _check(
+                "backup_age", False,
+                f"{len(everything)} backup(s) on disk and none verified. An "
+                f"untested backup is a belief rather than a backup (§26).")
+        taken = datetime.fromisoformat(latest.taken_at)
+        if taken.tzinfo is None:
+            taken = taken.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - taken
+        fresh = age <= timedelta(days=STALE_BACKUP_DAYS)
+        return _check(
+            "backup_age", fresh,
+            f"the current verified backup {latest.backup_id} is "
+            f"{age.days} day(s) old"
+            + ("" if fresh else f", past the {STALE_BACKUP_DAYS}-day limit; a "
+                                f"scheduled run has been missed"))
+    except Exception as bad:  # noqa: BLE001
+        return _check("backup_age", False, f"{type(bad).__name__}: {bad}")
 
 
 def _entity_counts(conn: Database) -> dict[str, int]:

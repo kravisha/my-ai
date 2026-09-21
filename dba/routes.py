@@ -287,6 +287,184 @@ def reject_capability(key: str, payload: dict = Body(...),
     return develop.reject(key, why=why, rejected_by=agent)
 
 
+# --- backup and restore (§25, §26) -------------------------------------------
+
+
+def _require_administer(agent: str) -> None:
+    if permissions.ADMINISTER not in permissions.permissions_of(agent):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{agent!r} cannot operate backups: that needs "
+                   f"{permissions.ADMINISTER!r}.")
+
+
+@router.get("/backups")
+def list_backups(x_dba_agent: str | None = Header(default=None),
+                 x_dba_token: str | None = Header(default=None)):
+    """The catalogue, and §26's documentation: how to restore, which backup is
+    current, the recovery point, the schema version, the validation
+    procedure."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import backup
+
+    return {
+        **backup.describe(),
+        "backups": [item.to_dict() for item in backup.catalogue()],
+    }
+
+
+@router.post("/backups")
+def take_backup(payload: dict = Body(default=None),
+                x_dba_agent: str | None = Header(default=None),
+                x_dba_token: str | None = Header(default=None)):
+    """§25: take a full, timestamped, verified backup now.
+
+    Verified means restored: the response carries the checks, and a backup
+    that failed them comes back as a 409 rather than as a cheerful id."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import audit as audit_module, backup
+
+    try:
+        taken = backup.take(reason=backup.REQUESTED)
+    except backup.BackupRefused as refused:
+        _audit_backup(agent, "take_backup", str(refused), succeeded=False)
+        return JSONResponse(status_code=409,
+                            content={"status": "refused", "why": str(refused)})
+    _audit_backup(agent, "take_backup",
+                  f"{taken.backup_id} ({taken.bytes} bytes, {taken.status})",
+                  succeeded=True)
+    del audit_module
+    # Nested rather than flattened: a Backup carries its own `status`
+    # (verified / unverified / failed), and spreading it here silently
+    # overwrote the response's. Two different meanings under one key is a
+    # field nobody can read correctly.
+    return {"status": "taken", "backup": taken.to_dict()}
+
+
+@router.post("/backups/run-if-due")
+def backup_if_due(x_dba_agent: str | None = Header(default=None),
+                  x_dba_token: str | None = Header(default=None)):
+    """§25's scheduled backup, for whatever actually does the scheduling.
+
+    Nothing in this repository runs on a timer by itself, so this is the
+    endpoint a cron entry or a timer calls - the same posture
+    `app/self_diagnosis.py` takes about its own schedule. Idempotent through
+    the catalogue: a backup already taken today is not taken twice."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import backup
+
+    try:
+        taken = backup.run_if_due()
+    except backup.BackupRefused as refused:
+        return JSONResponse(status_code=409,
+                            content={"status": "refused", "why": str(refused)})
+    if taken is None:
+        return {"status": "not_due",
+                "why": "today's backup already exists, or it is before the "
+                       "hour config/dba.yaml schedules"}
+    _audit_backup(agent, "take_backup", f"{taken.backup_id} (scheduled)",
+                  succeeded=True)
+    return {"status": "taken", "backup": taken.to_dict()}
+
+
+@router.get("/backups/{backup_id}")
+def one_backup(backup_id: str,
+               x_dba_agent: str | None = Header(default=None),
+               x_dba_token: str | None = Header(default=None)):
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import backup
+
+    found = backup.get(backup_id)
+    if found is None:
+        raise HTTPException(status_code=404,
+                            detail=f"no backup {backup_id!r} is on disk.")
+    return found.to_dict()
+
+
+@router.post("/backups/{backup_id}/verify")
+def verify_backup(backup_id: str,
+                  x_dba_agent: str | None = Header(default=None),
+                  x_dba_token: str | None = Header(default=None)):
+    """§26: restore it somewhere harmless and check it is really there.
+
+    Available on demand as well as at backup time, because a file that was
+    good a month ago is not evidence about the disk it is sitting on today."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import backup
+
+    found = backup.get(backup_id)
+    if found is None:
+        raise HTTPException(status_code=404,
+                            detail=f"no backup {backup_id!r} is on disk.")
+    verification = backup.verify(found)
+    _audit_backup(agent, "verify_backup",
+                  f"{backup_id}: {verification['why']}",
+                  succeeded=verification["passed"])
+    return JSONResponse(status_code=200 if verification["passed"] else 409,
+                        content={"backup_id": backup_id, **verification})
+
+
+@router.post("/backups/{backup_id}/restore")
+def restore_backup(backup_id: str, payload: dict = Body(default=None),
+                   x_dba_agent: str | None = Header(default=None),
+                   x_dba_token: str | None = Header(default=None)):
+    """§26: replace the live database with a backup.
+
+    The most destructive operation this service has. It needs `administer`,
+    an explicit `confirmed`, and a verified backup - and it backs the current
+    state up before replacing anything, so a restore that was a mistake is
+    itself undoable."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import backup
+
+    body = payload or {}
+    try:
+        outcome = backup.restore(
+            backup_id, accepted_by=agent,
+            confirmed=bool(body.get("confirmed", False)),
+            allow_unverified=bool(body.get("allow_unverified", False)))
+    except backup.BackupRefused as refused:
+        _audit_backup(agent, "restore_backup", str(refused), succeeded=False)
+        return JSONResponse(status_code=409,
+                            content={"status": "refused", "why": str(refused)})
+    _audit_backup(agent, "restore_backup",
+                  f"restored {backup_id} to {outcome['recovery_point']}",
+                  succeeded=True)
+    return {"status": "restored", **outcome}
+
+
+def _audit_backup(agent: str, action: str, detail: str, *,
+                  succeeded: bool) -> None:
+    """Record a backup operation in the audit trail.
+
+    Written after the operation, on its own connection, because a restore
+    replaces the database underneath any connection opened before it - an
+    audit row written into the file that is about to be overwritten is a row
+    that never happened."""
+    from dba import audit
+
+    conn = store.connect()
+    try:
+        store.init_schema(conn)
+        audit.record(conn, requesting_agent=agent, actor=agent, action=action,
+                     result=audit.COMMITTED if succeeded else audit.REFUSED,
+                     succeeded=succeeded, source=audit.SOURCE_MAINTENANCE,
+                     new={"detail": detail[:400]})
+    except Exception:  # noqa: BLE001 - the operation stands even unaudited
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @router.get("/experience")
 def dba_experience(x_dba_agent: str | None = Header(default=None),
                    x_dba_token: str | None = Header(default=None)):

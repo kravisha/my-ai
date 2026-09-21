@@ -869,20 +869,32 @@ def test_health_reports_an_unavailable_database_as_unavailable():
     assert report["database_connected"] is False
 
 
-def test_an_unimplemented_backup_is_reported_as_absent_not_as_healthy():
-    """§34 requires backup and restore tests. Neither exists yet - §46 puts
-    them in Phase 2 - so the only truthful assertion is that the system says
-    so rather than reporting a backup age of zero."""
+def test_having_taken_no_backup_is_reported_as_a_problem(_isolated):
+    """This test used to assert that backup was unimplemented and said so
+    honestly. It is implemented now (`tests/test_dba_backup.py`), so what is
+    left to assert is the state a fresh system is actually in: no backup has
+    been taken, and that is a failing check rather than silence.
+
+    A system reporting a backup age of zero because it has never taken one
+    would be worse than one that says it has never taken one."""
     report = health.health()
     assert report["last_backup"] is None
-    assert "not implemented" in report["not_measured"]["last_backup"]
 
     diagnosis = health.diagnose()
-    backup = next(check for check in diagnosis["checks"]
-                  if check["check"] == "backup_age")
-    assert backup["passed"] is False
-    assert "not implemented" in backup["detail"]
+    backup_check = next(check for check in diagnosis["checks"]
+                        if check["check"] == "backup_age")
+    assert backup_check["passed"] is False
+    assert "no backup has ever been taken" in backup_check["detail"]
     assert diagnosis["status"] == health.DEGRADED
+
+
+def test_the_encrypted_secondary_location_is_still_reported_as_absent():
+    """§25 says it should eventually be supported. It is not, and an absent
+    measurement reads as a clean one."""
+    not_measured = health.health()["not_measured"]
+    assert "encrypted_secondary_location" in not_measured
+    assert "nothing is encrypted at rest" in \
+        not_measured["encrypted_secondary_location"]
 
 
 def test_diagnostics_never_repair_anything(agent, conn):

@@ -1,0 +1,36 @@
+# The DBA Agent's operational configuration (expectations §32).
+#
+# "Database configuration should be externalized." Editing this file is how an
+# operator changes where backups go and how many are kept; nothing in the code
+# hard-codes a path. Secrets are not here - agent tokens are environment
+# variables (DBA_TOKEN_<AGENT>), per §18.
+
+schema_version: 1
+
+backup:
+  # Where backups are written. Relative paths resolve against the project root.
+  # Deliberately outside the repository's own tree by default is NOT the case
+  # here - it is inside it, because the alternative is guessing at a path that
+  # exists on Krish's machine. Point this at another volume when there is one.
+  directory: backups/dba
+
+  # §25's retention policy. The most recent N verified backups are kept.
+  # The newest verified backup is never pruned whatever this says - a retention
+  # rule that can delete the last good copy is not a retention rule.
+  keep: 14
+
+  # §25's scheduled backup, local time, 0-23. Hour-based rather than cron for
+  # the reason app/self_diagnosis.py gives: this runs inside whatever process
+  # happens to be up, and a scheduler that assumes it is running is one that
+  # silently stops.
+  hour: 2
+
+  # §26: a backup is not valid until restoration has been tested. Taking one
+  # restores it into a throwaway location and checks it before it is recorded
+  # as good. Turning this off makes every backup 'unverified' - it does not
+  # make them trusted.
+  verify_by_restoring: true
+
+  # Refuse to take a backup that would leave less than this much free space.
+  # A disk filled by backups takes the live database down with it.
+  minimum_free_megabytes: 50
