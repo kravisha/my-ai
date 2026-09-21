@@ -264,7 +264,17 @@ def stream_answer(system: str, messages: list[dict], provider=None):
             elif event.get("type") == "final":
                 yield {"type": "final"}
     except Exception as exc:  # noqa: BLE001 - the console must render the failure
-        yield {"type": "error", "error": f"{exc.__class__.__name__}: {exc}"}
+        # The console is a screen a person reads, so it gets Jarvis's sentence
+        # rather than the plumbing's (Task 01 §4.2). `{exc.__class__.__name__}:
+        # {exc}` put app/model_budget's token accounting on the operator
+        # console; the operator's version is still written, by the router, at
+        # WARN.
+        from app import capability_gaps, user_messages
+
+        spoken = user_messages.for_user(exc)
+        capability_gaps.record_failure(exc, user_visible_outcome=spoken,
+                                       request_summary=None)
+        yield {"type": "error", "error": spoken}
 
 
 def answer(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
@@ -291,21 +301,30 @@ def answer(conn: Database, question: str, *, language: str = DEFAULT_LANGUAGE,
                    f"OPERATOR QUESTION: {question}",
     })
 
+    from app import model_calls
+
     try:
         if provider is None:
             from app.model_gateway import default_provider
 
             provider = default_provider()
-        response = provider.complete(system, messages, [], max_tokens=MAX_TOKENS)
+        with model_calls.request_context(question):
+            response = provider.complete(system, messages, [], max_tokens=MAX_TOKENS)
         text = "".join(
             block.text for block in getattr(response, "content", [])
             if getattr(block, "type", None) == "text"
         )
     except Exception as exc:  # noqa: BLE001 - the console must render the failure
+        from app import capability_gaps, model_calls, user_messages
+
+        spoken = user_messages.for_user(exc)
+        capability_gaps.record_failure(
+            exc, user_visible_outcome=spoken,
+            request_summary=model_calls.summarise(question))
         return {
             "answer": "",
             "grounded_in": sorted(digest),
-            "error": f"{exc.__class__.__name__}: {exc}",
+            "error": spoken,
         }
 
     return {"answer": text.strip(), "grounded_in": sorted(digest), "error": None}

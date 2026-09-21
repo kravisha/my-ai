@@ -428,7 +428,17 @@ def test_a_model_failure_is_reported_and_the_partial_reply_kept(
     gateway_client, gateway_token, gateway_conn
 ):
     """What the user sees when the model errors mid-reply: an explanation, a
-    socket that still works, and no user turn left dangling without a response."""
+    socket that still works, and no user turn left dangling without a response.
+
+    The explanation is Jarvis's, not the exception's (Task 01 §4.2). This
+    assertion used to require the provider's own words - "upstream refused" -
+    on the wire, and that is the exact shape by which
+    `app/model_budget.BudgetExceededError`'s "Daily model token budget
+    exhausted" became an answer on Krish's screen. The frame still arrives, the
+    partial reply is still kept, and the provider's sentence is still recorded:
+    it goes to the `gateway` logger."""
+    from app import user_messages
+
     model_gateway.set_provider(FailingProvider())
     try:
         socket, ready = authenticated_socket(gateway_client, gateway_token)
@@ -438,7 +448,9 @@ def test_a_model_failure_is_reported_and_the_partial_reply_kept(
             assert socket.receive_json() == {"type": "delta", "text": "I can start "}
             failure = socket.receive_json()
             assert failure["type"] == "error"
-            assert "upstream refused" in failure["error"]
+            assert "upstream refused" not in failure["error"]
+            assert user_messages.is_clean(failure["error"]), failure["error"]
+            assert failure["error"] in user_messages.MESSAGES.values()
         finally:
             socket.__exit__(None, None, None)
     finally:

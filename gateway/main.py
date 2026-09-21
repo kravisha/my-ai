@@ -46,7 +46,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket,
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from app import model_budget
+from app import capability_gaps, model_budget, model_calls, user_messages
 from app.model_gateway import default_provider
 from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
@@ -1037,60 +1037,85 @@ async def conversation_socket(
         conversation.record_user_message(conn, conversation_id, text)
         history = store.history(conn, conversation_id)
 
-        said: list[str] = []
-        reply = None
-        try:
-            async for event in iterate_in_thread(
-                lambda: conversation.run_turn(db_path, history, provider, role=role,
-                                          subject=subject, agent_name=agent_name)
-            ):
-                if event["type"] == "text":
-                    said.append(event["text"])
-                    await websocket.send_json({"type": "delta", "text": event["text"]})
-                elif event["type"] == "tool":
-                    # Surfaced rather than hidden: a turn that files something on
-                    # the Scoreboard has done something durable, and the user
-                    # should see that it happened while it happens.
-                    await websocket.send_json(
-                        {"type": "tool", "name": event["name"], "ok": event["ok"]}
-                    )
-                elif event["type"] == "ui":
-                    # The assistant putting something on the page itself, rather
-                    # than describing it. Today there is one action and it types a
-                    # message into the relay box; `gateway/interface.UI_ACTIONS`
-                    # is the list, and the turn has already checked against it.
-                    #
-                    # Forwarded field by field rather than by passing the event
-                    # through, so whatever a tool returns cannot become a frame
-                    # the page trusts. Two fields is the whole contract.
-                    await websocket.send_json(
-                        {"type": "ui", "action": event["action"], "text": event.get("text", "")}
-                    )
-                elif event["type"] == "reply":
-                    reply = event["text"]
-        except WebSocketDisconnect:
-            # The user closed the tab mid-reply. Keep what arrived: a partial
-            # answer is still part of the conversation, and discarding it would
-            # leave a user turn with no reply at all on reconnect.
-            if said:
-                conversation.record_assistant_message(conn, conversation_id, "".join(said))
-            return
-        except Exception as exc:  # noqa: BLE001 - reported to the client, not swallowed
-            logger.exception("model turn failed")
-            if said:
-                conversation.record_assistant_message(conn, conversation_id, "".join(said))
-            await websocket.send_json({"type": "error", "error": f"model error: {exc}"})
-            continue
+        # ONE REQUEST, HOWEVER MANY MODEL CALLS IT TAKES (Task 01 §3.1).
+        #
+        # A turn is a tool loop: several calls to the model, interleaved with
+        # tool execution, all serving the sentence the user just typed. The
+        # request id set here is what ties them together in
+        # logs/model_calls.jsonl, and the 200-character summary is the only
+        # part of what he said that the log is ever allowed to hold.
+        #
+        # It survives the hop into the worker thread because
+        # gateway/streaming.iterate_in_thread copies the context (a thread
+        # starts with an empty one).
+        with model_calls.request_context(text):
+            said: list[str] = []
+            reply = None
+            try:
+                async for event in iterate_in_thread(
+                    lambda: conversation.run_turn(db_path, history, provider, role=role,
+                                              subject=subject, agent_name=agent_name)
+                ):
+                    if event["type"] == "text":
+                        said.append(event["text"])
+                        await websocket.send_json({"type": "delta", "text": event["text"]})
+                    elif event["type"] == "tool":
+                        # Surfaced rather than hidden: a turn that files something on
+                        # the Scoreboard has done something durable, and the user
+                        # should see that it happened while it happens.
+                        await websocket.send_json(
+                            {"type": "tool", "name": event["name"], "ok": event["ok"]}
+                        )
+                    elif event["type"] == "ui":
+                        # The assistant putting something on the page itself, rather
+                        # than describing it. Today there is one action and it types a
+                        # message into the relay box; `gateway/interface.UI_ACTIONS`
+                        # is the list, and the turn has already checked against it.
+                        #
+                        # Forwarded field by field rather than by passing the event
+                        # through, so whatever a tool returns cannot become a frame
+                        # the page trusts. Two fields is the whole contract.
+                        await websocket.send_json(
+                            {"type": "ui", "action": event["action"], "text": event.get("text", "")}
+                        )
+                    elif event["type"] == "reply":
+                        reply = event["text"]
+            except WebSocketDisconnect:
+                # The user closed the tab mid-reply. Keep what arrived: a partial
+                # answer is still part of the conversation, and discarding it would
+                # leave a user turn with no reply at all on reconnect.
+                if said:
+                    conversation.record_assistant_message(conn, conversation_id, "".join(said))
+                return
+            except Exception as exc:  # noqa: BLE001 - reported to the client, not swallowed
+                # WHAT THE USER IS TOLD IS NOT WHAT WENT WRONG (Task 01 §4.2).
+                #
+                # This line used to be `f"model error: {exc}"`, and that is how
+                # Krish came to be told by his own assistant that it had run out of
+                # tokens: app/model_budget's accounting sentence, addressed to an
+                # operator, arriving as an answer. The operator's version still
+                # exists - logger.exception above has the traceback, and the router
+                # logged the refusal at WARN - it is simply not what goes on the
+                # wire.
+                logger.exception("model turn failed: %s", user_messages.for_operator(exc))
+                if said:
+                    conversation.record_assistant_message(conn, conversation_id, "".join(said))
+                spoken = user_messages.for_user(exc)
+                capability_gaps.record_failure(
+                    exc, user_visible_outcome=spoken,
+                    request_summary=model_calls.summarise(text))
+                await websocket.send_json({"type": "error", "error": spoken})
+                continue
 
-        # `reply` is what the turn says it said; `said` is what actually went down
-        # the socket. They agree unless the turn ended early, and then the
-        # transcript should match what the user saw.
-        answer = reply if reply is not None else "".join(said)
-        message_id = (
-            conversation.record_assistant_message(conn, conversation_id, answer) if answer else None
-        )
-        await websocket.send_json({
-            "type": "done",
-            "message_id": message_id,
-            "open_counts": scoreboard.open_counts(conn),
-        })
+            # `reply` is what the turn says it said; `said` is what actually went down
+            # the socket. They agree unless the turn ended early, and then the
+            # transcript should match what the user saw.
+            answer = reply if reply is not None else "".join(said)
+            message_id = (
+                conversation.record_assistant_message(conn, conversation_id, answer) if answer else None
+            )
+            await websocket.send_json({
+                "type": "done",
+                "message_id": message_id,
+                "open_counts": scoreboard.open_counts(conn),
+            })

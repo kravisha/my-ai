@@ -44,7 +44,15 @@ _INTERFACE_MODULES = {"app/model_gateway.py", "app/model_provider.py", "app/mode
                       # a check it would pass anyway - the entry is here so that a
                       # future edit adding such a call fails loudly rather than
                       # being read as a new undeclared consumer.
-                      "app/model_routing.py", "app/kimi_provider.py"}
+                      "app/model_routing.py", "app/kimi_provider.py",
+                      # Added 2026-09-21 with the model call log (Task 01
+                      # Deliverable A). It is the instrumentation *inside* the
+                      # interface - it records calls and refuses ones that
+                      # skipped the router - and names `default_provider()`
+                      # only in the sentence that tells a caller to use it.
+                      # A consumer profile for it would declare what a logger
+                      # needs from a model, which is nothing.
+                      "app/model_calls.py"}
 
 # The rungs of `routing_stages` this file actually asserts.
 #

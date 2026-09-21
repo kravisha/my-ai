@@ -66,6 +66,8 @@ import json
 import os
 from typing import Iterator
 
+from app import model_calls
+
 # Measured, not assumed. See the module docstring and _probe-kimi.log.
 DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
 DEFAULT_MODEL = "k3-256k"
@@ -108,6 +110,71 @@ class KimiCallFailed(KimiError):
 
     Carries the HTTP status or the parse fault, never the request headers: the
     credential travels in a header and an exception string ends up in logs."""
+
+
+class KimiQuotaExhausted(KimiError):
+    """The remote model has nothing left to give today (Task 01 §4.2).
+
+    Its own class rather than a `KimiCallFailed` with a particular status,
+    because the router does something different with it - it falls back and
+    queues a retry instead of failing - and because the two attributes below
+    are what keep Krish from ever reading about it.
+
+    `model_call_outcome` is what `app/model_calls.classify` writes in the call
+    log. `user_message_category` is what `app/user_messages.classify` turns
+    into a sentence: "I can't do that reliably right now - I'll retry shortly".
+    Both are declared here, by the code that knows what happened, rather than
+    pattern-matched from this message somewhere else."""
+
+    model_call_outcome = "quota_exhausted"
+    user_message_category = "capacity"
+
+
+# HTTP statuses that mean "not now, and not because the request was wrong".
+# 429 is the ordinary rate limit; 402 is what a subscription endpoint answers
+# when the plan is spent. Both are capacity, and neither is a reason to retry
+# immediately or to show anybody a number.
+QUOTA_STATUSES = (402, 429)
+
+# Servers in this dialect answer 400 with a body that says the real reason more
+# often than they pick a status that does. Matched against the lower-cased body
+# as a last resolution, never as the first: a status is a contract and a
+# message is prose.
+QUOTA_MARKERS = (
+    "insufficient_quota", "insufficient quota", "quota exceeded",
+    "exceeded your current quota", "insufficient balance",
+    "rate_limit_exceeded", "rate limit", "billing", "out of credit",
+)
+
+
+def is_quota_exhaustion(status: int | None, body: str | None) -> bool:
+    """Whether this refusal is capacity rather than a bad request.
+
+    Errs towards "not quota": a genuine 400 misread as exhaustion would put the
+    request in the retry queue to fail identically three more times, and would
+    tell Krish to wait for something that is never going to work."""
+    if status in QUOTA_STATUSES:
+        return True
+    if status != 400 or not body:
+        return False
+    lowered = body.lower()
+    return any(marker in lowered for marker in QUOTA_MARKERS)
+
+
+def _refusal(status: int, body: str) -> KimiError:
+    """The right exception for a non-200, with the body truncated.
+
+    300 characters, and never the headers: the credential travels in a header
+    and an exception string ends up in a log."""
+    if is_quota_exhaustion(status, body):
+        return KimiQuotaExhausted(
+            f"the remote model refused with HTTP {status}, which this provider "
+            f"reads as exhausted capacity rather than a bad request. The router "
+            f"falls back and queues a retry; nothing about this reaches the user. "
+            f"First 300 characters of the body: {body[:300]!r}")
+    return KimiCallFailed(
+        f"the remote model answered HTTP {status}. "
+        f"First 300 characters of the body: {body[:300]!r}")
 
 
 class _Block:
@@ -455,29 +522,38 @@ class KimiProvider:
         return payload
 
     def complete(self, system: str, messages: list, tools: list, max_tokens: int = 2048):
+        """One blocking call, recorded whatever becomes of it.
+
+        THE RECORDING IS HERE, not in the router, and that is the whole point of
+        Task 01 Deliverable A: a caller that skipped the router still lands in
+        `logs/model_calls.jsonl` with `routed_by: direct_call`. It is also below
+        `self._transport`, so a substituted transport cannot make a call
+        invisible - only unreal."""
         import httpx
 
         url = f"{self.base_url()}/chat/completions"
         payload = self._payload(system, messages, tools, max_tokens, stream=False)
-        if self._transport is not None:
-            body = self._transport(url, self._headers(), payload, False, self.timeout())
-        else:
-            try:
-                response = httpx.post(url, headers=self._headers(), json=payload,
-                                      timeout=self.timeout())
-            except httpx.HTTPError as bad:
-                raise KimiCallFailed(f"the call to the remote model did not complete: {bad}") from bad
-            if response.status_code != 200:
-                raise KimiCallFailed(
-                    f"the remote model answered HTTP {response.status_code}. "
-                    f"First 300 characters of the body: {response.text[:300]!r}")
-            try:
-                body = response.json()
-            except ValueError as bad:
-                raise KimiCallFailed(
-                    f"the remote model answered HTTP 200 with a body that is not JSON. "
-                    f"First 300 characters: {response.text[:300]!r}") from bad
-        return self._response_from(body)
+        with model_calls.record_call(model_calls.HANDLER_KIMI) as call:
+            if self._transport is not None:
+                body = self._transport(url, self._headers(), payload, False, self.timeout())
+            else:
+                try:
+                    response = httpx.post(url, headers=self._headers(), json=payload,
+                                          timeout=self.timeout())
+                except httpx.HTTPError as bad:
+                    raise KimiCallFailed(
+                        f"the call to the remote model did not complete: {bad}") from bad
+                if response.status_code != 200:
+                    raise _refusal(response.status_code, response.text)
+                try:
+                    body = response.json()
+                except ValueError as bad:
+                    raise KimiCallFailed(
+                        f"the remote model answered HTTP 200 with a body that is not JSON. "
+                        f"First 300 characters: {response.text[:300]!r}") from bad
+            answer = self._response_from(body)
+            call.usage(answer.usage.input_tokens, answer.usage.output_tokens)
+            return answer
 
     def _response_from(self, body: dict) -> KimiResponse:
         choices = (body or {}).get("choices") or []
@@ -511,32 +587,58 @@ class KimiProvider:
         is also why nothing about a tool call is yielded mid-stream: a partially
         decoded argument string is not a tool call, and a caller that acted on
         one would act on half an instruction."""
+        # EAGER CAPTURE, DEFERRED BODY. `stream` is deliberately not a generator
+        # function: a generator's body does not run until the caller iterates
+        # it, and by then the router's routing context has been reset and every
+        # streamed call would be recorded as `direct_call`. The snapshot is
+        # taken here, while the router's `with` block is still open, and the
+        # generator below records against it. See app/model_calls.py.
+        snapshot = model_calls.capture()
+        return self._streamed(snapshot, system, messages, tools, max_tokens)
+
+    def _streamed(self, snapshot, system: str, messages: list, tools: list,
+                  max_tokens: int) -> Iterator[dict]:
         import httpx
 
         url = f"{self.base_url()}/chat/completions"
         payload = self._payload(system, messages, tools, max_tokens, stream=True)
 
-        if self._transport is not None:
-            lines = self._transport(url, self._headers(), payload, True, self.timeout())
-            yield from self._events_from(lines)
-            return
+        with model_calls.record_call(model_calls.HANDLER_KIMI, snapshot) as call:
+            if self._transport is not None:
+                lines = self._transport(url, self._headers(), payload, True, self.timeout())
+                yield from self._recorded(self._events_from(lines), call)
+                return
 
-        try:
-            with httpx.Client(timeout=self.timeout()) as client:
-                with client.stream("POST", url, headers=self._headers(), json=payload) as response:
-                    if response.status_code != 200:
-                        response.read()
-                        raise KimiCallFailed(
-                            f"the remote model answered HTTP {response.status_code} to a "
-                            f"streaming call. First 300 characters of the body: "
-                            f"{response.text[:300]!r}")
-                    # Inside both context managers while yielding, the same
-                    # discipline AnthropicProvider.stream documents: the
-                    # connection belongs to the manager, so an abandoned
-                    # generator closes it rather than leaking it.
-                    yield from self._events_from(response.iter_lines())
-        except httpx.HTTPError as bad:
-            raise KimiCallFailed(f"the streaming call to the remote model failed: {bad}") from bad
+            try:
+                with httpx.Client(timeout=self.timeout()) as client:
+                    with client.stream("POST", url, headers=self._headers(),
+                                       json=payload) as response:
+                        if response.status_code != 200:
+                            response.read()
+                            raise _refusal(response.status_code, response.text)
+                        # Inside both context managers while yielding, the same
+                        # discipline AnthropicProvider.stream documents: the
+                        # connection belongs to the manager, so an abandoned
+                        # generator closes it rather than leaking it.
+                        yield from self._recorded(
+                            self._events_from(response.iter_lines()), call)
+            except httpx.HTTPError as bad:
+                raise KimiCallFailed(
+                    f"the streaming call to the remote model failed: {bad}") from bad
+
+    @staticmethod
+    def _recorded(events: Iterator[dict], call) -> Iterator[dict]:
+        """Pass events through, keeping the token counts the final one carries.
+
+        Separate from `_events_from` so the translation of the wire format and
+        the accounting of it stay two things - `_events_from` is what
+        `tests/test_kimi_provider.py` holds to the dialect, and it should not
+        have to know a call log exists."""
+        for event in events:
+            if event.get("type") == "final":
+                usage = event.get("usage") or {}
+                call.usage(usage.get("input_tokens"), usage.get("output_tokens"))
+            yield event
 
     def _events_from(self, lines) -> Iterator[dict]:
         text_parts: list[str] = []

@@ -8,6 +8,14 @@
 # is what notices when it has been.
 anthropic==0.121.0
 python-dotenv==1.2.2
+# Read at runtime by app/router_config.py (config/router.yaml, Task 01 §4.3) and
+# by app/model_performance.py (docs/model_registry.yaml). It was already present
+# as a transitive dependency of uvicorn[standard] and pinned in
+# requirements-dev.txt for a test that reads a YAML document; naming it here is
+# the correction that follows from the router reading a YAML file on the live
+# path. Same pin as requirements-dev.txt, deliberately - two files disagreeing
+# about one package is worse than either version.
+pyyaml==6.0.3
 openpyxl==3.1.5
 bcrypt==5.0.0
 fastapi==0.141.1

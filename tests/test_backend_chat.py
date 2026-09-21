@@ -68,11 +68,24 @@ def test_simple_text_reply(backend_client, monkeypatch):
     assert response.json()["reply"] == "Hello!"
 
 
-def test_exhausted_model_budget_is_a_legible_503_not_a_500(backend_client, monkeypatch):
+def test_exhausted_model_budget_is_a_503_that_says_nothing_about_the_ledger(
+        backend_client, monkeypatch):
     """The cost circuit breaker's refusal reaches the client as service
-    unavailability with the remedy in the detail - a refusal is only a
-    defense if the person hitting it can tell what happened."""
+    unavailability, in the assistant's own words.
+
+    **This test previously asserted the opposite**, and the change is the
+    point rather than a relaxation. It required `MODEL_BUDGET_DAILY_CALLS` to
+    appear in the response body, on the reasoning that "a refusal is only a
+    defense if the person hitting it can tell what happened" - which is true of
+    the operator and false of the person chatting. Krish met the consequence
+    directly: his assistant told him it had run out of tokens (Task 01 §2.1).
+
+    The legibility was not deleted, it was re-addressed. The operator's
+    sentence goes to `backend.chat`'s log and to the brief; the client gets
+    "I can't do that reliably right now". `test_user_facing_language.py` holds
+    the general form of this."""
     from app.model_budget import BudgetExceededError
+    from app import user_messages
 
     headers = _register_and_auth_header(backend_client)
     monkeypatch.setattr(
@@ -86,7 +99,10 @@ def test_exhausted_model_budget_is_a_legible_503_not_a_500(backend_client, monke
     response = backend_client.post("/chat", json={"messages": [{"role": "user", "content": "hi"}]}, headers=headers)
 
     assert response.status_code == 503
-    assert "MODEL_BUDGET_DAILY_CALLS" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "MODEL_BUDGET_DAILY_CALLS" not in detail
+    assert user_messages.is_clean(detail), detail
+    assert detail == user_messages.MESSAGES[user_messages.CATEGORY_CAPACITY]
 
 
 def test_tool_use_with_stored_disposition_reaches_model_without_reprompt(backend_client, monkeypatch, mock_portfolio_path):

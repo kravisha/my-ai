@@ -121,10 +121,21 @@ def test_history_is_bounded(conn):
 
 def test_an_unavailable_model_is_reported_never_fabricated(conn):
     """The failure that matters most: a console that invents an answer when
-    the model is down is worse than one that says the model is down."""
+    the model is down is worse than one that says the model is down.
+
+    What changed in Task 01 is *which sentence* is reported. It used to be
+    `RuntimeError: no key`, i.e. the exception's own text, which is how
+    app/model_budget's token accounting reached a screen a person reads. The
+    refusal is still a refusal and still carries no fabricated answer; it is
+    now in the assistant's vocabulary, and the exception's text goes to the
+    log."""
+    from app import user_messages
+
     result = coo_chat.answer(conn, "status?", provider=FakeProvider(fail=RuntimeError("no key")))
     assert result["answer"] == ""
-    assert "RuntimeError: no key" in result["error"]
+    assert result["error"]
+    assert "RuntimeError" not in result["error"]
+    assert user_messages.is_clean(result["error"]), result["error"]
 
 
 def test_empty_question_is_refused_without_calling_the_model(conn):
@@ -148,10 +159,17 @@ def test_stream_reports_failure_as_an_event_not_an_exception(conn):
     """A stream that dies silently leaves the console waiting for a completion
     that never arrives - gateway/streaming.py's own reasoning."""
     system, messages = coo_chat.prepare(conn, "hello")
+    from app import user_messages
+
     events = list(coo_chat.stream_answer(system, messages,
                                          provider=FakeProvider(fail=RuntimeError("boom"))))
     assert events[-1]["type"] == "error"
-    assert "boom" in events[-1]["error"]
+    # The event still arrives, which is what this test is about. Its text is
+    # the assistant's rather than the exception's (Task 01 §4.2) - a console
+    # that rendered "boom" was one step from rendering the spend ledger.
+    assert events[-1]["error"]
+    assert "boom" not in events[-1]["error"]
+    assert user_messages.is_clean(events[-1]["error"])
 
 
 def test_prepare_reads_the_database_so_the_worker_thread_need_not(conn):

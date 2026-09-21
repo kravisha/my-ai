@@ -14,6 +14,7 @@ for the consent prompt - see the docstring on chat() below.
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,6 +29,7 @@ from app import server_auth
 from app.audit import AuditLog
 from app.main import SYSTEM_PROMPT
 from app import model_budget
+from app import capability_gaps, model_calls, user_messages
 from app.model_budget import BudgetExceededError
 from app.model_gateway import call_reasoning_model
 from app.permissions import RESOURCE_PATHS, PermissionManager
@@ -41,6 +43,8 @@ from backend import briefing, chatterbox, continuity, coo_chat, coo_identity, fi
 from backend import register as strategic_register
 from backend.controller import CONTROLLER_IDENTITY, Controller
 from backend.transcripts import TranscriptStore
+
+logger = logging.getLogger("backend.chat")
 
 # How often the background loop below checks coo_directives for new work -
 # see _controller_poll_loop. Same cadence as an agent's own heartbeat
@@ -1174,43 +1178,77 @@ def chat(request: ChatRequest, conn=Depends(panel_db),
             }],
         })
 
-    while True:
-        try:
-            response = call_reasoning_model(SYSTEM_PROMPT, messages, TOOLS)
-        except BudgetExceededError as exc:
-            # The cost circuit breaker (app/model_budget.py) refused before
-            # spending. 503 rather than 500: the service is fine, the budget
-            # is exhausted, and the message says which limit and how to raise
-            # it deliberately - a refusal is only a defense if it is legible.
-            raise HTTPException(status_code=503, detail=str(exc))
-        messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
+    # ONE REQUEST ID FOR THE WHOLE TOOL LOOP (Task 01 §3.1). The loop below
+    # can call the model several times to answer one question; without this
+    # they would arrive in logs/model_calls.jsonl as unrelated calls, and
+    # "how many calls did that question cost" - the question the escalation
+    # audit is made of - would have no answer.
+    user_text = next((m["content"] for m in reversed(messages)
+                      if m.get("role") == "user" and isinstance(m.get("content"), str)), None)
+    with model_calls.request_context(user_text):
+        while True:
+            try:
+                response = call_reasoning_model(SYSTEM_PROMPT, messages, TOOLS)
+            except BudgetExceededError as exc:
+                # The cost circuit breaker (app/model_budget.py) refused before
+                # spending. 503 rather than 500: the service is fine and the
+                # refusal is temporary.
+                #
+                # THE DETAIL IS NO LONGER str(exc) (Task 01 §4.2). It used to be,
+                # on the reasoning that "a refusal is only a defense if it is
+                # legible" - which is right about the operator and wrong about
+                # whose screen this lands on. An HTTP body is read by the client
+                # and shown to the person using it, so the ledger's sentence
+                # became an answer. The legibility is kept where it belongs: the
+                # operator's version goes to the log and the brief, the user gets
+                # Jarvis's own words.
+                logger.warning("chat refused before spending: %s",
+                               user_messages.for_operator(exc))
+                spoken = user_messages.for_user(exc)
+                capability_gaps.record_failure(
+                    exc, user_visible_outcome=spoken,
+                    request_summary=model_calls.summarise(user_text))
+                raise HTTPException(status_code=503, detail=spoken)
+            except Exception as exc:
+                # Everything else the router can raise - an explicit routing
+                # failure, exhausted remote capacity - reaches the user in the
+                # same vocabulary. Before this task it reached FastAPI as a 500
+                # with a traceback, which told the user nothing and the operator
+                # only what a log already had.
+                logger.exception("chat turn failed: %s", user_messages.for_operator(exc))
+                spoken = user_messages.for_user(exc)
+                capability_gaps.record_failure(
+                    exc, user_visible_outcome=spoken,
+                    request_summary=model_calls.summarise(user_text))
+                raise HTTPException(status_code=503, detail=spoken)
+            messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
 
-        if response.stop_reason != "tool_use":
-            reply = "".join(b.text for b in response.content if b.type == "text")
-            transcripts.record(username, "assistant", reply)
-            return {"reply": reply, "messages": messages}
+            if response.stop_reason != "tool_use":
+                reply = "".join(b.text for b in response.content if b.type == "text")
+                transcripts.record(username, "assistant", reply)
+                return {"reply": reply, "messages": messages}
 
-        tool_results = []
-        paused = None
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-            result = execute_tool(
-                block.name, conn, username, permissions, preferences, audit_log)
-            if result.get("status") == "needs_consent":
-                paused = result
-                break
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": json.dumps(result),
-                "is_error": "error" in result,
-            })
+            tool_results = []
+            paused = None
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                result = execute_tool(
+                    block.name, conn, username, permissions, preferences, audit_log)
+                if result.get("status") == "needs_consent":
+                    paused = result
+                    break
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result),
+                    "is_error": "error" in result,
+                })
 
-        if paused is not None:
-            return {"needs_consent": paused, "messages": messages}
+            if paused is not None:
+                return {"needs_consent": paused, "messages": messages}
 
-        messages.append({"role": "user", "content": tool_results})
+            messages.append({"role": "user", "content": tool_results})
 
 
 # --- Permissions ---

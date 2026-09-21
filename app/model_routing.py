@@ -61,6 +61,8 @@ from __future__ import annotations
 import logging
 import time
 
+from app import confidence, model_calls, retry_queue, router_config, user_messages
+
 LOG = logging.getLogger("model.routing")
 
 # Why a call left the local tier. A closed vocabulary, because these end up in a
@@ -70,6 +72,36 @@ LOCAL_UNAVAILABLE = "the local model is installed but reported itself unavailabl
 LOCAL_FAILED = "the local model was called and failed"
 LOCAL_NOT_OFFERED = "no local provider is configured in this deployment"
 STREAM_NOT_LOCAL = "streaming was requested and the local tier does not stream"
+LOCAL_NO_TOOLS = "the local model declares that it cannot invoke tools"
+LOCAL_CONTEXT_EXCEEDED = "the request is longer than the local model's context window"
+QUOTA_LOCAL_FALLBACK = "the remote model reported exhausted capacity, so the local attempt stands"
+
+# The §3.1 escalation vocabulary is closed and short, and the sentences above
+# are neither. This maps one to the other, and the mapping is the interesting
+# part rather than a formality:
+#
+# "no local runtime is installed" is recorded as `local_error`. It is not an
+# error in the ordinary sense - nothing broke - but the choice is between that
+# and `not_applicable`, which would say the call never left local when it did.
+# The schema's four permitted escalations are about the *local tier being
+# unable to serve*, and a tier that does not exist is the limiting case of
+# unable. docs/CONFIDENCE.md and docs/CURRENT_ARCHITECTURE.md both say this in
+# words, because a reader of the nightly report will otherwise conclude the
+# local model is crashing several hundred times a day.
+_LOG_REASONS = {
+    NO_LOCAL_RUNTIME: model_calls.REASON_LOCAL_ERROR,
+    LOCAL_UNAVAILABLE: model_calls.REASON_LOCAL_ERROR,
+    LOCAL_FAILED: model_calls.REASON_LOCAL_ERROR,
+    LOCAL_NOT_OFFERED: model_calls.REASON_LOCAL_ERROR,
+    LOCAL_NO_TOOLS: model_calls.REASON_TOOL_REQUIRED,
+    LOCAL_CONTEXT_EXCEEDED: model_calls.REASON_CONTEXT_LENGTH,
+}
+
+# Characters per token. The same admitted approximation `app/model_tiering.py`
+# makes, and for the same reason it gives: tokenising in order to decide which
+# tokeniser to use would be circular, and the decision this feeds is "is this
+# obviously too long", not "how much will it cost".
+_CHARS_PER_TOKEN = 4
 
 
 class ModelRoutingFailure(RuntimeError):
@@ -84,6 +116,23 @@ class ModelRoutingFailure(RuntimeError):
     thing he can act on from another continent is which one failed - a missing
     credential, an endpoint refusing, or a machine with no local model - and
     those need three different responses."""
+
+
+class ModelUnavailableNow(ModelRoutingFailure):
+    """Nothing can serve this request *right now*, and it has been queued.
+
+    Distinct from `ModelRoutingFailure`, which means nothing can serve it at
+    all, because the two need different things from the user: wait, or rephrase.
+    `user_message_category` is what turns this into Krish's own sentence - "I
+    can't do that reliably right now - I'll retry shortly" (§4.2.3) - instead of
+    the accounting underneath it.
+
+    The message this carries is for the log and the brief. `app/user_messages.py`
+    is the only thing allowed to write what the user reads, and
+    `tests/test_user_facing_language.py` holds that line."""
+
+    user_message_category = "capacity"
+    capability_gap_type = "missing_integration"
 
 
 def assert_no_anthropic(provider) -> None:
@@ -143,7 +192,17 @@ class LocalFirstRouter:
     name = "local-first"
 
     def __init__(self, local=None, remote=None, local_available=None):
-        self.local = local
+        # The local tier is wrapped here rather than in `build_router`, so that
+        # every construction is instrumented - including the ones tests and
+        # future callers make directly. The remote tier is not wrapped: it
+        # records itself, inside `KimiProvider`, below the transport seam.
+        # Instrumenting it here as well would double every remote record and
+        # would sit above the seam, which is the layering Deliverable A exists
+        # to avoid.
+        self.local = (model_calls.InstrumentedProvider(local)
+                      if local is not None
+                      and not isinstance(local, model_calls.InstrumentedProvider)
+                      else local)
         self.remote = remote
         # Injected so the router can be tested without a runtime, and so the
         # availability question stays the local service's to answer rather than
@@ -157,6 +216,13 @@ class LocalFirstRouter:
             "failed": 0,
             # Structurally zero. See the module docstring.
             "anthropic_runtime": 0,
+            # §4.2: how often the remote tier had nothing left, and how many
+            # requests were written down to be tried again. Counted because
+            # "did that ever actually happen" is the first question anybody
+            # asks of a fallback, and a fallback nobody can count is a fallback
+            # nobody trusts.
+            "quota_exhausted": 0,
+            "queued_retries": 0,
         }
 
     # --- the decision ------------------------------------------------------
@@ -230,17 +296,142 @@ class LocalFirstRouter:
     def _remote_model_name(self) -> str:
         return str(getattr(self.remote, "model", "") or "unknown")
 
+    # --- capability pre-checks ---------------------------------------------
+
+    def _estimated_context(self, system: str, messages: list, max_tokens: int) -> int:
+        """Roughly how many tokens this request needs, reply included.
+
+        Deliberately crude, and only ever compared against a window a provider
+        *declared*. It exists to catch "this conversation is four times the
+        window", not to shave the last ten per cent."""
+        text = len(system or "")
+        for message in messages or []:
+            text += len(str(message.get("content", "") if isinstance(message, dict) else message))
+        return text // _CHARS_PER_TOKEN + max_tokens
+
+    def _capability_block(self, system: str, messages: list, tools: list,
+                          max_tokens: int) -> tuple[str, str] | None:
+        """A reason to escalate *without* attempting local, or None.
+
+        §4.1 says local attempts every request, and then lists two exceptions
+        that are about the request rather than the answer: a tool the local
+        model cannot invoke, and a context length it cannot hold. Both are here.
+
+        **Only a declared incapacity counts.** A local tier that says nothing
+        about tools gets the request and is allowed to fail at it; an absent
+        attribute is not a claim, and inferring one would turn "we do not know"
+        into "do not try", which is how local-first quietly stops happening.
+        That is the difference between this and `app/model_tiering.py`'s hard
+        boundary, which sends every tool-carrying request to the capable model
+        on suspicion - the right rule there, because both tiers could run it,
+        and the wrong rule here, because skipping local is the thing this task
+        exists to stop."""
+        if tools and getattr(self.local, "supports_tools", None) is False:
+            return model_calls.REASON_TOOL_REQUIRED, LOCAL_NO_TOOLS
+        window = getattr(self.local, "context_window", None)
+        if isinstance(window, int) and window > 0:
+            needed = self._estimated_context(system, messages, max_tokens)
+            if needed > window:
+                return (model_calls.REASON_CONTEXT_LENGTH,
+                        f"{LOCAL_CONTEXT_EXCEEDED} (about {needed} tokens against a "
+                        f"declared window of {window})")
+        return None
+
+    @staticmethod
+    def _log_reason(escalation: str) -> str:
+        """The closed-vocabulary code for a human escalation sentence."""
+        for sentence, code in _LOG_REASONS.items():
+            if escalation.startswith(sentence):
+                return code
+        return model_calls.REASON_LOCAL_ERROR
+
+    @staticmethod
+    def _is_quota(bad: BaseException) -> bool:
+        """Whether a provider failure was exhausted capacity.
+
+        Asks the exception rather than importing the provider's class: the
+        router is the one place that must work with a second remote provider
+        the day there is one, and `model_call_outcome` is the contract
+        `app/model_calls.classify` already reads."""
+        return getattr(bad, model_calls.OUTCOME_ATTRIBUTE, None) == \
+            model_calls.OUTCOME_QUOTA_EXHAUSTED
+
+    # --- quota exhaustion (§4.2) -------------------------------------------
+
+    def _after_quota(self, bad: BaseException, local_answer, escalation: str):
+        """What happens when the remote model has nothing left.
+
+        §4.2, in its four numbered parts:
+
+        1. Nothing about the API's state reaches the user. Every path out of
+           here either returns an answer or raises `ModelUnavailableNow`, whose
+           user-facing wording is `app/user_messages.py`'s and contains no
+           number, no limit and no vendor.
+        2. The local model's best attempt is returned if there is one. "Best
+           attempt" means an answer the local tier actually produced and that
+           the router was escalating for some *other* reason, most usually low
+           confidence: an answer judged imperfect is better than no answer, and
+           the judgement that sent it upstream does not make it worthless.
+        3. Otherwise the request is queued and the refusal says so in Krish's
+           own words.
+        4. WARN, once, with the operator's version of the sentence. Not ERROR:
+           nothing is broken, and a page for a spent allowance would train
+           somebody to ignore the pager."""
+        self.counts["quota_exhausted"] += 1
+        LOG.warning(
+            "the remote model reported exhausted capacity; falling back rather than "
+            "surfacing it. detail=%s local_answer_available=%s",
+            user_messages.for_operator(bad), local_answer is not None)
+
+        if local_answer is not None:
+            self._record("local", str(getattr(self.local, "model", "local")), None,
+                         QUOTA_LOCAL_FALLBACK, getattr(local_answer, "usage", None))
+            return local_answer
+
+        self.counts["queued_retries"] += 1
+        retry_queue.enqueue(reason="remote capacity exhausted")
+        raise ModelUnavailableNow(
+            f"the remote model reported exhausted capacity and there is no local "
+            f"answer to fall back on. Local: {escalation}. The request has been "
+            f"queued for retry in {router_config.retry_after_seconds()}s and the "
+            f"user is told only that this will be retried shortly.") from bad
+
     # --- the interface -----------------------------------------------------
 
     def complete(self, system: str, messages: list, tools: list, max_tokens: int = 2048):
+        """Local first, then - and only then - Kimi.
+
+        The shape §4.1 asks for, with every branch recorded:
+
+            request -> router -> local attempt -> confidence assessment
+                                   sufficient?   return the local answer
+                                   insufficient? escalate
+
+        `confidence.assess` returns "sufficient, unmeasured" today, so the
+        escalations that happen are the availability ones. See
+        docs/CONFIDENCE.md, which says that in more words rather than leaving
+        somebody to deduce it from a threshold that never fires."""
         from app.model_budget import BudgetExceededError
 
+        local_answer = None
+        verdict = None
+        routed_by = model_calls.ROUTED_BY_ROUTER
+
         usable, escalation = self.local_is_usable()
+        if usable:
+            blocked = self._capability_block(system, messages, tools, max_tokens)
+            if blocked is not None:
+                usable, escalation = False, blocked[1]
+
         if usable:
             started = time.monotonic()
             self.counts["local"] += 1
             try:
-                answer = self.local.complete(system, messages, tools, max_tokens=max_tokens)
+                with model_calls.routing_context(
+                        routed_by=model_calls.ROUTED_BY_ROUTER,
+                        escalation_reason=model_calls.REASON_NOT_APPLICABLE):
+                    answer = self.local.complete(system, messages, tools,
+                                                 max_tokens=max_tokens)
             except BudgetExceededError:
                 # The ceiling stops work; it does not redirect it somewhere more
                 # expensive. Escalating here would make crossing the budget cost
@@ -248,23 +439,42 @@ class LocalFirstRouter:
                 raise
             except Exception as bad:
                 escalation = f"{LOCAL_FAILED}: {bad}"
+                routed_by = model_calls.ROUTED_BY_FALLBACK
                 self.counts["escalated"] += 1
             else:
+                verdict = confidence.assess(answer=answer, request=messages)
+                if verdict.sufficient:
+                    self._record("local", str(getattr(self.local, "model", "local")),
+                                 started, "", getattr(answer, "usage", None))
+                    return answer
+                # An answer exists and was judged short. It is kept, because
+                # §4.2 needs something to fall back to if the remote tier turns
+                # out to have nothing left.
+                local_answer = answer
+                escalation = verdict.detail
+                self.counts["escalated"] += 1
                 self._record("local", str(getattr(self.local, "model", "local")),
-                             started, "", getattr(answer, "usage", None))
-                return answer
+                             started, verdict.detail, getattr(answer, "usage", None))
 
         if self.remote is None:
             self.counts["failed"] += 1
             raise self._no_remote(escalation)
 
+        reason = (model_calls.REASON_LOW_CONFIDENCE if local_answer is not None
+                  else self._log_reason(escalation))
         started = time.monotonic()
         self.counts["remote"] += 1
         try:
-            answer = self.remote.complete(system, messages, tools, max_tokens=max_tokens)
+            with model_calls.routing_context(
+                    routed_by=routed_by, escalation_reason=reason,
+                    confidence_score=verdict.score if verdict else None,
+                    confidence_threshold=verdict.threshold if verdict else None):
+                answer = self.remote.complete(system, messages, tools, max_tokens=max_tokens)
         except BudgetExceededError:
             raise
         except Exception as bad:
+            if self._is_quota(bad):
+                return self._after_quota(bad, local_answer, escalation)
             self.counts["failed"] += 1
             raise ModelRoutingFailure(
                 f"no model could serve this request. Local: {escalation}; the remote "
@@ -281,12 +491,29 @@ class LocalFirstRouter:
         emitted fragments cannot be moved to another model without the reader
         seeing two different answers spliced together. So the tier is chosen
         once, and a failure part-way through is one honest failure rather than a
-        seam. The choice itself is identical to `complete`'s."""
+        seam. The choice itself is identical to `complete`'s, minus the
+        confidence assessment - there is no answer to assess until the stream
+        has been consumed, and by then it has been read.
+
+        **Not a generator**, deliberately. A generator would defer the tier
+        choice until the caller iterated, which would move an unservable request
+        from a raise at the call site to a raise inside somebody's `for` loop,
+        and would leave the routing context closed by the time the provider ran.
+        The choice is made here; only the quota guard is deferred, because that
+        failure genuinely arrives during consumption."""
         usable, escalation = self.local_is_usable()
+        if usable:
+            blocked = self._capability_block(system, messages, tools, max_tokens)
+            if blocked is not None:
+                usable, escalation = False, blocked[1]
+
         if usable:
             self.counts["local"] += 1
             self._record("local", str(getattr(self.local, "model", "local")), None, "")
-            return self.local.stream(system, messages, tools, max_tokens=max_tokens)
+            with model_calls.routing_context(
+                    routed_by=model_calls.ROUTED_BY_ROUTER,
+                    escalation_reason=model_calls.REASON_NOT_APPLICABLE):
+                return self.local.stream(system, messages, tools, max_tokens=max_tokens)
 
         if self.remote is None:
             self.counts["failed"] += 1
@@ -294,7 +521,32 @@ class LocalFirstRouter:
 
         self.counts["remote"] += 1
         self._record("remote", self._remote_model_name(), None, escalation)
-        return self.remote.stream(system, messages, tools, max_tokens=max_tokens)
+        with model_calls.routing_context(
+                routed_by=model_calls.ROUTED_BY_ROUTER,
+                escalation_reason=self._log_reason(escalation)):
+            events = self.remote.stream(system, messages, tools, max_tokens=max_tokens)
+        return self._guarded(events, escalation)
+
+    def _guarded(self, events, escalation: str):
+        """Pass a stream through, turning exhausted capacity into a queued retry.
+
+        The provider's `stream` returns an iterator whose body runs while the
+        caller consumes it, so a quota refusal arrives here rather than at the
+        call above. There is nothing to fall back to - the local tier was not
+        chosen, and a stream cannot be restarted on another model without the
+        reader seeing the seam - so this queues and raises the user-safe
+        refusal."""
+        from app.model_budget import BudgetExceededError
+
+        try:
+            for event in events:
+                yield event
+        except BudgetExceededError:
+            raise
+        except Exception as bad:
+            if self._is_quota(bad):
+                self._after_quota(bad, None, escalation)
+            raise
 
     # --- what Krish can see ------------------------------------------------
 
@@ -318,6 +570,9 @@ class LocalFirstRouter:
                 "model": self._remote_model_name() if self.remote is not None else None,
             },
             "anthropic": "not in the runtime routing chain (refused at construction)",
+            "confidence": confidence.describe(),
+            "policy": router_config.describe(),
+            "call_log": str(model_calls.log_path()),
             "counts": dict(self.counts),
         }
 
@@ -354,6 +609,8 @@ def counters(router) -> dict:
         "anthropic_runtime_requests": counts.get("anthropic_runtime", 0),
         "escalations": counts.get("escalated", 0),
         "routing_failures": counts.get("failed", 0),
+        "quota_exhaustions": counts.get("quota_exhausted", 0),
+        "queued_retries": counts.get("queued_retries", 0),
         "anthropic_runtime_note": (
             "structurally zero: app/model_routing.assert_no_anthropic refuses to "
             "build a router containing that vendor, so there is no path that could "

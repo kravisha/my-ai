@@ -18,9 +18,18 @@ queue. Two consequences worth stating, because both are load-bearing:
    nobody is joining. An API error mid-reply has to reach the socket as a
    reportable failure; a thread that died silently would leave the client waiting
    for a `done` that never comes.
+3. **The calling context crosses with it.** A new thread starts with an empty
+   `contextvars` context, so the request id that `app/model_calls.py` shares
+   across every model call serving one user turn would be lost at this
+   boundary - and every Gateway call would be logged under an id of its own,
+   which is precisely the grouping the call log exists to provide. The worker
+   runs inside `copy_context()` for that reason. It is a copy rather than the
+   live context: the worker must not be able to mutate what the event loop
+   sees.
 """
 
 import asyncio
+import contextvars
 import threading
 from typing import AsyncIterator, Callable, Iterator, TypeVar
 
@@ -47,7 +56,9 @@ async def iterate_in_thread(factory: Callable[[], Iterator[T]]) -> AsyncIterator
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, _END)
 
-    thread = threading.Thread(target=run, name="gateway-model-stream", daemon=True)
+    context = contextvars.copy_context()
+    thread = threading.Thread(target=lambda: context.run(run),
+                              name="gateway-model-stream", daemon=True)
     thread.start()
 
     while True:

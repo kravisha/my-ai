@@ -61,3 +61,16 @@ demo_summary.json
 # containing them. remote-targets.example.json IS tracked and documents the
 # shape; this is the live one.
 config/remote-targets.json
+
+# The model call log (app/model_calls.py, Task 01 Deliverable A), the retry
+# queue and the capability-gap log. Live local state, one line per model call,
+# rotated daily and kept 30 days. Not versionable for the same reason
+# model_spend.db is not: it is what this machine did, not what the code is.
+# MODEL_CALL_LOG_DIR moves the whole directory; the suite points it at a
+# temporary one (tests/conftest.py).
+logs/
+
+# Self-diagnosis and skills-audit reports (app/self_diagnosis.py,
+# app/capability_gaps.py). Generated from logs/ on a schedule, and regenerable
+# from it - committing them would version one machine's night.
+reports/

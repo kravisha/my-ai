@@ -1,0 +1,51 @@
+# How the model router behaves. Read by app/router_config.py.
+#
+# Task 01 §4.3: "Make the threshold configurable (config/router.yaml), not
+# hard-coded." This file is that, and it is committed on purpose - it is policy,
+# not a secret. Every credential still lives in .env.
+#
+# READ docs/CONFIDENCE.md BEFORE TUNING `confidence_threshold`. As of
+# 2026-09-21 there is no mechanism in this system that produces a confidence
+# score, so the threshold below is a configured number with nothing to compare
+# against it. It is here because the task asked for the knob rather than the
+# hard-coded constant, and because the day a local model arrives the knob must
+# already exist. Changing it today changes nothing, and docs/CONFIDENCE.md says
+# so in more detail rather than letting somebody discover it by tuning.
+schema_version: 1
+
+router:
+  # Below this, an answer from the local model is judged insufficient and the
+  # request escalates with reason `low_confidence`. Range 0.0-1.0.
+  confidence_threshold: 0.65
+
+  # Whether a score below the threshold escalates at all. Present so the
+  # threshold can be observed without acting on it while the scoring mechanism
+  # is being calibrated - §5.1's report suggests adjustments, and a suggestion
+  # is worth more when it can be trialled without a code change.
+  escalate_on_low_confidence: true
+
+  # An escalation reason not on this list is a bug, and the self-diagnosis
+  # counts it as an avoidable escalation. §4.1's permitted four.
+  permitted_escalations:
+    - low_confidence
+    - tool_required
+    - context_length
+    - local_error
+
+quota:
+  # §4.2.3: a request that could not be served is queued and retried, rather
+  # than the user being told about somebody else's accounting.
+  retry_after_seconds: 900
+  max_retries: 3
+
+self_diagnosis:
+  # §5.1: "Runs daily at a configurable hour." Local time, 0-23.
+  hour: 3
+  # §5.2's weekly roll-up, by weekday number with Monday as 0.
+  weekly_weekday: 0
+  # How many days of the call log the weekly roll-up covers.
+  weekly_days: 7
+
+logging:
+  # §3.2: "Log rotation: daily, keep 30 days."
+  retention_days: 30

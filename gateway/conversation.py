@@ -40,6 +40,7 @@ would be evidence rather than symmetry.
 import json
 from typing import Iterator
 
+from app import capability_gaps, model_calls
 from app.model_provider import ModelProvider
 from backend.db import Database
 from gateway import devchannel, interface, roles, skills, store, tools, uiversion
@@ -326,9 +327,25 @@ def run_turn(
         else:
             # Ran out of rounds with the model still asking for tools. Better to
             # say so than to answer as though the work finished.
-            said.append(
-                "\n\n[The assistant stopped after "
-                f"{MAX_TOOL_ROUNDS} rounds of tool calls without reaching an answer.]"
+            stopped = ("\n\n[The assistant stopped after "
+                       f"{MAX_TOOL_ROUNDS} rounds of tool calls without reaching "
+                       f"an answer.]")
+            said.append(stopped)
+            # §6.1's third case, and the one nobody would think to write down by
+            # hand: a request that was *answered only partially*. The turn did
+            # not raise, the user got prose, and something was still missing -
+            # which is exactly the shape of a capability this system does not
+            # have yet. Recorded here because this is the only place that knows
+            # it happened.
+            capability_gaps.record(
+                gap_type=capability_gaps.GAP_MISSING_TOOL,
+                what_was_needed=(
+                    f"a task that did not finish within {MAX_TOOL_ROUNDS} rounds "
+                    f"of tool calls - the available tools could not complete it"),
+                user_visible_outcome=stopped.strip(),
+                request_summary=model_calls.summarise(
+                    next((message.get("text") for message in reversed(history)
+                          if message.get("role") == "user"), None)),
             )
 
         yield {"type": "reply", "text": "".join(said)}

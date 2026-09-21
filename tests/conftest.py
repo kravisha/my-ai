@@ -49,6 +49,21 @@ from pathlib import Path
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
 
+# MODEL_CALL_LOG_DIR: app/model_calls.py, app/retry_queue.py and
+# app/capability_gaps.py all append to files under this directory, and they are
+# reached from the provider layer - which means any test that exercises a model
+# call writes to it, including tests that have no idea they are doing so.
+#
+# Redirected here for the same reason as the two databases above, plus one that
+# is specific to these files: they are append-only and cross-process, so a
+# leaked write does not merely touch a developer's file, it puts fabricated
+# rows into the log the nightly self-diagnosis reports on. A report that said
+# "seventeen direct calls last night" because the suite ran would be worse than
+# no report.
+#
+# Unconditional rather than a setdefault, and pointed at the same session
+# temporary directory the databases use.
+
 # Resolved before the redirect below, since afterwards nothing in the process
 # can still name the real databases. Deliberately not fi_db.DB_PATH or
 # store.DB_PATH: these are the files on disk that must not change, independent of
@@ -63,6 +78,7 @@ REAL_GATEWAY_DB_PATH = Path(__file__).resolve().parent.parent / "gateway.db"
 _SESSION_DB_DIR = Path(tempfile.mkdtemp(prefix="my-ai-test-fi-db-"))
 os.environ["FI_DB_PATH"] = str(_SESSION_DB_DIR / "financial_intelligence.db")
 os.environ["GATEWAY_DB_PATH"] = str(_SESSION_DB_DIR / "gateway.db")
+os.environ["MODEL_CALL_LOG_DIR"] = str(_SESSION_DB_DIR / "logs")
 
 
 def real_database_fingerprint() -> dict[str, str | None]:
