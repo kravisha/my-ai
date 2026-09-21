@@ -57,7 +57,54 @@ def _objective(**overrides):
     return Objective(**fields)
 
 
+# WHY THERE ARE TWO RECIPES BELOW, and it is not convenience.
+#
+# The first version of this file drove every lifecycle test with the /proc
+# recipe, and Windows CI failed seventeen of them - because `/proc` is not a
+# Windows thing and `os.path.abspath("/proc/net/tcp")` there is
+# `D:\proc\net\tcp`. Skipping them on Windows would have left the engine's
+# whole loop untested on the platform Krish actually runs.
+#
+# So the lifecycle is exercised by `_portable_recipe`, which reads a file
+# committed to this repository and therefore behaves identically everywhere, and
+# `_tcp_recipe` is kept for the posix-specific tests that are genuinely about
+# reading kernel state. The Windows route has its own test that needs no Windows
+# to run.
 _STATES = {"01": "ESTABLISHED", "06": "TIME_WAIT", "0A": "LISTEN"}
+
+
+def _portable_recipe(*, correct: bool = True, version: int = 1) -> Recipe:
+    """Reads `config/router.yaml`, which exists on every checkout of this repo.
+
+    `correct=False` makes the same mistake in kind as the little-endian one: a
+    pattern that matches nothing, so the recipe runs cleanly to an empty answer.
+    That is the failure shape `practice._collapse` exists to catch, which makes
+    it the right wrong-answer to test the loop with."""
+    pattern = r"^([a-z_]+):" if correct else r"^([A-Z]+):"
+    return Recipe(
+        name="config_keys", version=version, answer="answer",
+        summary="the top-level keys of the router policy file, read locally",
+        steps=(Step("read", "raw", {"path": "config/router.yaml"}),
+               Step("regex_rows", "rows", {"from": "raw", "pattern": pattern,
+                                           "names": ["key"]}),
+               Step("unique", "answer", {"from": "rows", "by": "key"})))
+
+
+def _portable_objective(**overrides):
+    fields = dict(
+        slug="router-policy-keys",
+        cannot_do="list the top-level settings in my own router policy file",
+        success_looks_like=("one row per top-level key in config/router.yaml, read "
+                            "from the file itself with no model call"),
+        inputs=("nothing - it reads a file in this repository",),
+        outputs=("key",),
+        environment="any machine with this repository checked out",
+        gap_it_closes="answering what my own policy says currently costs a model call",
+        deterministic_possible=True, llm_required=False,
+        cases=(Case("runs", "no_error"), Case("finds", "rows>=3"),
+               Case("named", "field_matches:key=^[a-z_]+$", held_out=True)))
+    fields.update(overrides)
+    return Objective(**fields)
 
 
 def _tcp_recipe(*, correct: bool = True, version: int = 1) -> Recipe:
@@ -120,11 +167,16 @@ def test_a_wildcard_cannot_be_walked_sideways_out_of_a_permitted_root():
 
 def test_the_deny_list_wins_over_a_permitted_pattern():
     """A second, explicit list, because the cost of one wrong wildcard in the
-    allow-list is every credential on the machine."""
+    allow-list is every credential on the machine.
+
+    `.env` and `*.db` are used rather than `/proc/*/environ` so the assertion is
+    about the deny-list on every platform - on Windows a `/proc` path is refused
+    earlier, for being absent, and would not reach this check."""
+    root = sandbox_module.PROJECT_ROOT
     with sandbox_module.Sandbox() as box:
-        for denied in ("/proc/1/environ", "/proc/1/mem"):
+        for denied in (root / "docs" / ".env", root / "logs" / "model_spend.db"):
             with pytest.raises(sandbox_module.SandboxRefusal, match="deny-list"):
-                box.read_file(denied)
+                box.read_file(str(denied))
 
 
 @pytest.mark.parametrize("argv", [
@@ -181,10 +233,10 @@ def test_a_recipe_cannot_use_a_transform_that_does_not_exist():
     box = sandbox_module.Sandbox()
     result = recipe_module.run(
         Recipe(name="r", version=1, summary="s", answer="a",
-               steps=(Step("read", "t", {"path": "/proc/uptime"}),
+               steps=(Step("read", "t", {"path": "config/router.yaml"}),
                       Step("lines", "l", {"from": "t"}),
-                      Step("fields", "f", {"from": "l", "names": ["up"]}),
-                      Step("derive", "a", {"from": "f", "field": "up",
+                      Step("fields", "f", {"from": "l", "names": ["word"]}),
+                      Step("derive", "a", {"from": "f", "field": "word",
                                            "using": "eval"}))), box)
     assert not result.ok and "not one of the transforms" in result.error
 
@@ -228,7 +280,7 @@ def test_a_failed_step_keeps_the_trace_up_to_it():
     box = sandbox_module.Sandbox()
     result = recipe_module.run(
         Recipe(name="r", version=1, summary="s", answer="a",
-               steps=(Step("read", "t", {"path": "/proc/uptime"}),
+               steps=(Step("read", "t", {"path": "config/router.yaml"}),
                       Step("parse_json", "a", {"from": "t"}))), box)
     assert not result.ok and result.failed_step == 1
     assert result.trace[0]["ok"] is True
@@ -392,10 +444,10 @@ def test_failures_are_classified_from_the_message_without_a_model(error, expecte
 
 def test_an_unparseable_expectation_blames_the_case_not_the_skill():
     engine = engine_module.default_engine()
-    engine.begin(_objective(cases=(Case("bad", "is it nice?"),
-                                   Case("held", "rows>=1", held_out=True))))
-    engine.propose_recipe("listening-ports", _tcp_recipe())
-    outcome = engine.practise("listening-ports")[0]
+    engine.begin(_portable_objective(cases=(
+        Case("bad", "is it nice?"), Case("held", "rows>=1", held_out=True))))
+    engine.propose_recipe(SLUG, _portable_recipe())
+    outcome = engine.practise(SLUG)[0]
     assert not outcome["passed"]
     assert outcome["diagnosis"]["failure_class"] == practice.INCORRECT_TEST_EXPECTATION
     assert "fix the expectation, not the recipe" in outcome["diagnosis"]["suggestion"]
@@ -403,10 +455,10 @@ def test_an_unparseable_expectation_blames_the_case_not_the_skill():
 
 def test_every_attempt_records_that_it_cost_no_model_call():
     engine = engine_module.default_engine()
-    engine.begin(_objective())
-    engine.propose_recipe("listening-ports", _tcp_recipe())
-    engine.practise("listening-ports")
-    episode = store.get_episode("listening-ports")
+    engine.begin(_portable_objective())
+    engine.propose_recipe(SLUG, _portable_recipe())
+    engine.practise(SLUG)
+    episode = store.get_episode(SLUG)
     costs = [a["cost"] for a in store.attempts(episode["id"]) if a["cost"]]
     assert costs and all(cost["model_calls"] == 0 for cost in costs)
 
@@ -439,16 +491,16 @@ def test_running_it_outranks_every_document():
 
 def test_a_recollection_is_debt_until_a_test_rests_on_it_and_passes():
     engine = engine_module.default_engine()
-    engine.begin(_objective())
-    engine.record_finding("listening-ports", research.Finding(
-        question="is the state column a name?", answer="no, a hex enum",
+    engine.begin(_portable_objective())
+    engine.record_finding(SLUG, research.Finding(
+        question="are the top-level keys lower case?", answer="yes, all of them",
         source_kind=research.MODEL_KNOWLEDGE))
-    episode_id = store.get_episode("listening-ports")["id"]
+    episode_id = store.get_episode(SLUG)["id"]
     assert len(research.confirmation_debt(episode_id)) == 1
 
-    engine.propose_recipe("listening-ports", _tcp_recipe())
-    engine.practise("listening-ports")
-    engine.examine("listening-ports")
+    engine.propose_recipe(SLUG, _portable_recipe())
+    engine.practise(SLUG)
+    engine.examine(SLUG)
     assert research.confirmation_debt(episode_id) == []
 
 
@@ -457,60 +509,64 @@ def test_a_recollection_is_debt_until_a_test_rests_on_it_and_passes():
 # =============================================================================
 
 
+SLUG = "router-policy-keys"
+
+
 def _learn_it(engine, *, with_mistake_first: bool = True) -> None:
-    engine.begin(_objective(cases=(
-        Case("runs", "no_error"), Case("finds", "rows>=1"),
-        Case("addresses", "field_matches:local_ip=^\\d{1,3}(\\.\\d{1,3}){3}$"),
-        Case("named", "field_matches:state=^[A-Z_]+$", held_out=True))))
-    engine.plan("listening-ports")
+    """The whole loop, on a recipe that behaves the same on every platform."""
+    engine.begin(_portable_objective())
+    engine.plan(SLUG)
     if with_mistake_first:
-        engine.propose_recipe("listening-ports", _tcp_recipe(correct=False))
-        engine.practise("listening-ports")
-    engine.propose_recipe("listening-ports", _tcp_recipe(correct=True, version=2))
-    engine.practise("listening-ports")
-    engine.examine("listening-ports")
-    engine.trial("listening-ports")
+        engine.propose_recipe(SLUG, _portable_recipe(correct=False))
+        engine.practise(SLUG)
+    engine.propose_recipe(SLUG, _portable_recipe(correct=True, version=2))
+    engine.practise(SLUG)
+    engine.examine(SLUG)
+    engine.trial(SLUG)
 
 
 def test_the_whole_loop_reaches_awaiting_feedback_and_stops_there():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    status = engine.status("listening-ports")
+    status = engine.status(SLUG)
     assert status["state"] == mastery.AWAITING_FEEDBACK
-    assert status["evidence"]["development"] == "3/3"
+    assert status["evidence"]["development"] == "2/2"
     assert status["evidence"]["held_out"] == "1/1"
 
 
 def test_a_wrong_recipe_fails_and_the_next_version_fixes_it():
-    """The little-endian mistake: `hex_int` gives 16777343 where the address is
-    127.0.0.1. A plausible number and a wrong answer."""
+    """A recipe that runs cleanly to an empty answer - the failure shape
+    `practice._collapse` exists for, and the one an empty result hides. The
+    posix equivalent is the little-endian mistake, where `hex_int` gives
+    16777343 for an address that is 127.0.0.1: a plausible number and a wrong
+    answer. That one is `test_addresses_are_little_endian...`."""
     engine = engine_module.default_engine()
-    engine.begin(_objective(cases=(
-        Case("addresses", "field_matches:local_ip=^\\d{1,3}(\\.\\d{1,3}){3}$"),
-        Case("named", "field_matches:state=^[A-Z_]+$", held_out=True))))
-    engine.propose_recipe("listening-ports", _tcp_recipe(correct=False))
-    first = engine.practise("listening-ports")
-    assert not first[0]["passed"]
+    engine.begin(_portable_objective())
+    engine.propose_recipe(SLUG, _portable_recipe(correct=False))
+    first = {outcome["case"]: outcome for outcome in engine.practise(SLUG)}
+    assert not first["finds"]["passed"]
+    assert first["finds"]["diagnosis"]["failure_class"] == \
+        practice.INCORRECT_ASSUMPTION
 
-    engine.propose_recipe("listening-ports", _tcp_recipe(correct=True, version=2))
-    assert engine.practise("listening-ports")[0]["passed"]
+    engine.propose_recipe(SLUG, _portable_recipe(correct=True, version=2))
+    assert all(outcome["passed"] for outcome in engine.practise(SLUG))
 
 
 def test_both_recipe_versions_are_kept_so_reverting_is_a_select():
     """§24: the old working version must not simply disappear."""
     engine = engine_module.default_engine()
     _learn_it(engine)
-    episode_id = store.get_episode("listening-ports")["id"]
+    episode_id = store.get_episode(SLUG)["id"]
     assert [v["version"] for v in store.recipe_versions(episode_id)] == [1, 2]
-    assert engine.revert_recipe("listening-ports", 1).version == 3
+    assert engine.revert_recipe(SLUG, 1).version == 3
 
 
 def test_the_commitment_is_a_condition_and_never_an_invented_duration():
     """Document 2 §5: *"Jarvis must not invent a time estimate merely to sound
     confident."*"""
     engine = engine_module.default_engine()
-    engine.begin(_objective())
-    commitment = engine.plan("listening-ports")["commitment"]
+    engine.begin(_portable_objective())
+    commitment = engine.plan(SLUG)["commitment"]
     assert commitment["time_estimate"] is None
     assert "no measured basis" in commitment["why_no_time_estimate"]
     assert commitment["uncertainties"]
@@ -518,9 +574,9 @@ def test_the_commitment_is_a_condition_and_never_an_invented_duration():
 
 def test_a_demonstration_is_refused_when_there_is_nothing_to_show():
     engine = engine_module.default_engine()
-    engine.begin(_objective())
-    engine.propose_recipe("listening-ports", _tcp_recipe())
-    shown = engine.demonstrate("listening-ports")
+    engine.begin(_portable_objective())
+    engine.propose_recipe(SLUG, _portable_recipe())
+    shown = engine.demonstrate(SLUG)
     assert not shown["ready"] and "nothing to show" in shown["why_not"]
 
 
@@ -528,12 +584,12 @@ def test_a_demonstration_carries_evidence_rather_than_a_claim():
     """Document 2 §6's list."""
     engine = engine_module.default_engine()
     _learn_it(engine)
-    shown = engine.demonstrate("listening-ports")
+    shown = engine.demonstrate(SLUG)
     assert shown["ready"]
     assert shown["ran_just_now"]["ok"]
     assert shown["no_model_was_called"]["model_calls"] == 0
     assert shown["test_results"]["held_out"]
-    assert "addresses" in shown["cases_that_used_to_fail_and_now_pass"]
+    assert "finds" in shown["cases_that_used_to_fail_and_now_pass"]
     assert shown["recipe_versions"] == [1, 2]
     assert shown["how_it_works"]
 
@@ -541,16 +597,16 @@ def test_a_demonstration_carries_evidence_rather_than_a_claim():
 def test_feedback_is_recorded_and_is_not_acceptance():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    after = engine.feedback("listening-ports", verdict="useful_with_changes",
+    after = engine.feedback(SLUG, verdict="useful_with_changes",
                             note="also show the remote address")
     assert after["state"] == mastery.AWAITING_FEEDBACK
-    assert store.feedback(store.get_episode("listening-ports")["id"])
+    assert store.feedback(store.get_episode(SLUG)["id"])
 
 
 def test_acceptance_cannot_skip_the_gates_before_it():
     engine = engine_module.default_engine()
-    engine.begin(_objective())
-    refused = engine.accept("listening-ports")
+    engine.begin(_portable_objective())
+    refused = engine.accept(SLUG)
     assert not refused["registered"]
     assert "last gate, not a shortcut" in refused["why_not"]
 
@@ -558,32 +614,32 @@ def test_acceptance_cannot_skip_the_gates_before_it():
 def test_his_word_is_what_makes_it_learned():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    assert engine.accept("listening-ports")["registered"]
-    assert engine.status("listening-ports")["state"] == mastery.MASTERED
+    assert engine.accept(SLUG)["registered"]
+    assert engine.status(SLUG)["state"] == mastery.MASTERED
 
 
 def test_accepting_twice_is_not_reported_as_a_failure():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    engine.accept("listening-ports")
-    again = engine.accept("listening-ports")
+    engine.accept(SLUG)
+    again = engine.accept(SLUG)
     assert again["registered"] and again["already_registered"]
 
 
 def test_a_learned_skill_runs_as_an_ordinary_skill_with_no_model_call():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    engine.accept("listening-ports")
-    run = engine.run_operationally("listening-ports")
+    engine.accept(SLUG)
+    run = engine.run_operationally(SLUG)
     assert run["ok"] and isinstance(run["answer"], list)
 
 
 def test_the_narration_describes_the_real_state():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    said = " ".join(engine.narrate("listening-ports"))
+    said = " ".join(engine.narrate(SLUG))
     assert "awaiting_user_feedback" in said
-    assert "development 3/3" in said
+    assert "development 2/2" in said
     assert "worth showing you now" in said
 
 
@@ -592,7 +648,7 @@ def test_a_fixed_failure_is_not_reported_as_the_current_one():
     failure was the most recent failure in the table."""
     engine = engine_module.default_engine()
     _learn_it(engine)
-    said = " ".join(engine.narrate("listening-ports"))
+    said = " ".join(engine.narrate(SLUG))
     assert "Most recent failure" not in said
     assert "were fixed" in said
 
@@ -623,7 +679,7 @@ def test_the_explanation_names_how_it_cannot_cheat():
 def test_meta_learning_refuses_to_generalise_from_one_episode():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    engine.accept("listening-ports")
+    engine.accept(SLUG)
     report = memory.meta_report()
     assert report["claims"] == []
     assert "one anecdote with a percentage sign" in report["note"]
@@ -640,11 +696,11 @@ def test_a_lesson_seen_twice_is_counted_rather_than_duplicated():
 def test_what_paid_off_is_recorded_after_an_episode():
     engine = engine_module.default_engine()
     _learn_it(engine)
-    engine.record_finding("listening-ports", research.Finding(
+    engine.record_finding(SLUG, research.Finding(
         question="format?", answer="little-endian hex",
         source_kind=research.PROBE))
-    engine.examine("listening-ports")
-    engine.accept("listening-ports")
+    engine.examine(SLUG)
+    engine.accept(SLUG)
     kinds = {lesson["kind"] for lesson in store.lessons()}
     assert memory.SOURCE_VALUE in kinds
 
@@ -708,48 +764,32 @@ def test_the_acceptance_conversation_runs_through_the_tools():
     assert len(_call("explain_how_i_learn")["steps"]) >= 14
     assert _call("what_to_learn_next", {"limit": 2})["candidates"]
 
-    begun = _call("begin_learning", {
-        "slug": "ports", "cannot_do": "say which TCP ports are listening here",
-        "success_looks_like": ("one row per listening socket with its address, "
-                               "port and state, read locally with no model call"),
-        "inputs": ["nothing"], "outputs": ["local_ip", "local_port", "state"],
-        "environment": "Linux with /proc mounted",
-        "gap_it_closes": "he cannot look at this machine himself",
-        "deterministic_possible": True, "llm_required": False,
-        "cases": [{"name": "runs", "expect": "no_error"},
-                  {"name": "finds", "expect": "rows>=1"},
-                  {"name": "named", "expect": "field_matches:state=^[A-Z_]+$",
-                   "held_out": True}]})
+    objective = _portable_objective().to_dict()
+    begun = _call("begin_learning", objective)
     assert begun["begun"]["state"] == mastery.IDENTIFIED
 
-    assert _call("plan_learning", {"slug": "ports"})["commitment"]["time_estimate"] is None
-    spec = _tcp_recipe().to_dict()
+    assert _call("plan_learning", {"slug": SLUG})["commitment"]["time_estimate"] is None
+    spec = _portable_recipe().to_dict()
     assert _call("propose_skill_recipe", {
-        "slug": "ports", "name": spec["name"], "summary": spec["summary"],
+        "slug": SLUG, "name": spec["name"], "summary": spec["summary"],
         "answer": spec["answer"], "steps": spec["steps"]})["version"] == 1
 
     for stage in ("practice", "held_out", "trial"):
-        result = _call("test_skill", {"slug": "ports", "stage": stage})
+        result = _call("test_skill", {"slug": SLUG, "stage": stage})
         assert result["passed"] == result["of"], (stage, result["outcomes"])
 
-    shown = _call("demonstrate_skill", {"slug": "ports"})
+    shown = _call("demonstrate_skill", {"slug": SLUG})
     assert shown["ready"] and shown["ran_just_now"]["ok"]
 
-    _call("record_skill_feedback", {"slug": "ports", "verdict": "useful"})
+    _call("record_skill_feedback", {"slug": SLUG, "verdict": "useful"})
     assert _call("register_learned_skill",
-                 {"slug": "ports", "krish_accepted": True})["registered"]
-    assert _call("use_learned_skill", {"slug": "ports"})["ok"]
+                 {"slug": SLUG, "krish_accepted": True})["registered"]
+    assert _call("use_learned_skill", {"slug": SLUG})["ok"]
 
 
 def test_an_unlearned_skill_cannot_be_used():
-    _call("begin_learning", {
-        "slug": "ports", "cannot_do": "say which TCP ports are listening here",
-        "success_looks_like": "one row per listening socket with address and port",
-        "inputs": ["nothing"], "outputs": ["local_ip"], "environment": "Linux",
-        "gap_it_closes": "he cannot look at this machine himself",
-        "deterministic_possible": True, "llm_required": False,
-        "cases": [{"name": "runs", "expect": "no_error"}]})
-    assert "not learned" in _call("use_learned_skill", {"slug": "ports"})["error"]
+    _call("begin_learning", _portable_objective().to_dict())
+    assert "not learned" in _call("use_learned_skill", {"slug": SLUG})["error"]
 
 
 # =============================================================================
@@ -776,27 +816,168 @@ def test_document_two_definition_of_done():
     done[5] = bool(picked and len(picked[0]["why"].split()) >= 8)
 
     _learn_it(engine)  # 7 & 8: executes the plan, diagnoses and revises
-    episode_id = store.get_episode("listening-ports")["id"]
+    episode_id = store.get_episode(SLUG)["id"]
     attempts = store.attempts(episode_id)
     # 6. a concrete plan
-    done[6] = store.get_episode("listening-ports")["plan"] is not None
+    done[6] = store.get_episode(SLUG)["plan"] is not None
     done[7] = len(attempts) > 0
     done[8] = any(a["passed"] is False and a["diagnosis"] for a in attempts)
     # 9. tested against defined criteria, including held out
-    done[9] = engine.status("listening-ports")["evidence"]["held_out"] != "0/0"
+    done[9] = engine.status(SLUG)["evidence"]["held_out"] != "0/0"
     # 10. a controlled demonstration
-    done[10] = engine.demonstrate("listening-ports")["ready"]
+    done[10] = engine.demonstrate(SLUG)["ready"]
     # 11. asks for and incorporates feedback
-    engine.feedback("listening-ports", verdict="useful")
+    engine.feedback(SLUG, verdict="useful")
     done[11] = bool(store.feedback(episode_id))
     # 12. represents its own state accurately
-    done[12] = engine.status("listening-ports")["state"] == mastery.AWAITING_FEEDBACK
-    engine.accept("listening-ports")
+    done[12] = engine.status(SLUG)["state"] == mastery.AWAITING_FEEDBACK
+    engine.accept(SLUG)
     # 13. retains learning history
-    done[13] = bool(memory.learn_from_episode("listening-ports"))
+    done[13] = bool(memory.learn_from_episode(SLUG))
     # 14. can repeat for another capability
-    engine.begin(_objective(slug="second-skill"))
+    engine.begin(_portable_objective(slug="second-skill"))
     done[14] = engine.status("second-skill")["exists"]
 
     unmet = sorted(number for number, met in done.items() if not met)
     assert not unmet, f"Document 2 §12 conditions not met: {unmet}"
+
+
+# =============================================================================
+# Windows. The platform Krish runs, and the one that found the last real defect.
+# =============================================================================
+
+# Captured shapes of real Windows output, so the Windows route can be proven from
+# any platform. `netstat -ano` prints four lines of preamble and omits the State
+# column for UDP; `tasklist /fo csv /nh` quotes every field and its image name
+# contains spaces.
+_NETSTAT_ANO = """
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1084
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4
+  TCP    127.0.0.1:50505        0.0.0.0:0              LISTENING       8724
+  TCP    127.0.0.1:50506        127.0.0.1:50505        ESTABLISHED     8724
+  TCP    [::]:135               [::]:0                 LISTENING       1084
+  UDP    0.0.0.0:500            *:*                                    1234
+"""
+_TASKLIST_CSV = (
+    '"System","4","Services","0","1,234 K"\n'
+    '"svchost.exe","1084","Services","0","12,345 K"\n'
+    '"jarvis-gateway.exe","8724","Console","1","98,765 K"\n')
+
+
+def _windows_recipe() -> Recipe:
+    """The Windows route to the first skill, parse half, over injected output.
+
+    Injected rather than run, so the assertion holds on any platform: what is
+    being proven is that the **primitives suffice** for Windows, which is the
+    thing that decides whether the engine can learn anything there at all. The
+    two `run` steps are asserted separately by
+    `test_the_windows_route_only_needs_allow_listed_commands`."""
+    return Recipe(
+        name="listening_tcp_windows", version=1, answer="answer",
+        summary="listening TCP sockets with owning process, from netstat and tasklist",
+        inputs=("netstat_out", "tasklist_out"),
+        steps=(
+            Step("lines", "nrows", {"from": "netstat_out", "skip": 4},
+                 "netstat prints four lines of preamble"),
+            Step("fields", "conns", {"from": "nrows", "names": [
+                "proto", "local", "foreign", "state", "pid"]},
+                 "UDP rows have no State column, so skip_short drops them - wanted"),
+            Step("filter", "tcp", {"from": "conns", "field": "proto", "op": "eq",
+                                   "value": "TCP"}),
+            Step("filter", "lis", {"from": "tcp", "field": "state", "op": "eq",
+                                   "value": "LISTENING"}),
+            Step("derive", "a1", {"from": "lis", "field": "local",
+                                  "using": "regex_group",
+                                  "pattern": r"^(.*):(\d+)$", "group": 1,
+                                  "into_field": "local_ip"},
+                 "greedy .* then digits, so [::]:135 splits and split_index would not"),
+            Step("derive", "a2", {"from": "a1", "field": "local",
+                                  "using": "regex_group",
+                                  "pattern": r"^(.*):(\d+)$", "group": 2,
+                                  "into_field": "port_text"}),
+            Step("derive", "a3", {"from": "a2", "field": "port_text",
+                                  "using": "to_int", "into_field": "local_port"}),
+            Step("derive", "a4", {"from": "a3", "field": "state", "using": "lookup",
+                                  "table": {"LISTENING": "LISTEN"},
+                                  "into_field": "state"},
+                 "renamed so both platform versions answer in one vocabulary"),
+            Step("lines", "trows", {"from": "tasklist_out"}),
+            Step("fields", "tasks", {"from": "trows", "sep": ",", "names": [
+                "image", "tpid", "session", "snum", "mem"]}),
+            Step("derive", "t1", {"from": "tasks", "field": "image",
+                                  "using": "strip", "chars": '"',
+                                  "into_field": "process"}),
+            Step("derive", "t2", {"from": "t1", "field": "tpid", "using": "strip",
+                                  "chars": '"', "into_field": "task_pid"}),
+            Step("join", "owned", {"left": "a4", "right": "t2", "left_on": "pid",
+                                   "right_on": "task_pid", "bring": ["process"]}),
+            Step("select", "picked", {"from": "owned", "fields": [
+                "local_ip", "local_port", "state", "pid", "process"]}),
+            Step("sort", "answer", {"from": "picked", "by": "local_port"}),
+        ))
+
+
+def test_the_windows_route_is_expressible_with_the_existing_primitives():
+    """The test that decides whether Krish's acceptance test can succeed at all.
+
+    He runs Windows. `/proc` is not there, so the skill has to be learnable from
+    `netstat -ano` and `tasklist` - and if the primitives could not express that
+    join, his test would fail for a reason that is mine rather than a failure of
+    learning. No new primitive was needed."""
+    with sandbox_module.Sandbox() as box:
+        result = recipe_module.run(_windows_recipe(), box, {
+            "netstat_out": _NETSTAT_ANO, "tasklist_out": _TASKLIST_CSV})
+
+    assert result.ok, result.error
+    answer = result.answer
+    assert len(answer) == 4
+    assert sorted(answer[0]) == sorted(
+        ["local_ip", "local_port", "state", "pid", "process"]), \
+        "the Windows version must answer in the same fields as the posix one"
+    assert any(row["local_ip"] == "[::]" for row in answer), "IPv6 handled"
+    assert all(row["state"] == "LISTEN" for row in answer), "ESTABLISHED excluded"
+    assert {row["process"] for row in answer} == {
+        "System", "svchost.exe", "jarvis-gateway.exe"}
+
+
+def test_the_windows_route_only_needs_allow_listed_commands():
+    for program in ("netstat", "tasklist"):
+        assert program in sandbox_module.COMMANDS
+
+
+def test_a_posix_path_on_windows_is_absent_rather_than_forbidden():
+    """The defect Windows CI found, and the reason it mattered.
+
+    `os.path.abspath("/proc/net/tcp")` on Windows is `D:\\proc\\net\\tcp`,
+    which matched no declared pattern - so a recipe written for Linux was refused
+    as a **permission** problem, and the diagnosis sent the learner off to
+    propose an allow-list change for a file that does not exist."""
+    absent = sandbox_module._platform_surface_for("/proc/net/tcp", platform="nt")
+    assert absent is not None
+    assert "netstat" in absent["instead"]
+    assert sandbox_module._platform_surface_for("/proc/net/tcp",
+                                                platform="posix") is None
+
+
+def test_that_refusal_is_diagnosed_as_an_environment_difference():
+    """Not `permission_issue`, and the signature order in `practice._SIGNATURES`
+    is what guarantees it - the message contains both phrases."""
+    message = ("/proc/net/tcp is a posix surface and this machine is nt. It is "
+               "not forbidden - it is not there. Do not propose a boundary for "
+               "it: on Windows the same information comes from commands.")
+    diagnosis = practice.diagnose(
+        recipe_module.Result(error=message, failed_step=0, trace=[]),
+        Case("runs", "no_error"))
+    assert diagnosis.failure_class == practice.ENVIRONMENT_DIFFERENCE
+    assert "Do not propose a boundary" in diagnosis.suggestion
+
+
+def test_the_sandbox_reports_which_surfaces_this_platform_lacks():
+    """So a learning plan says it up front rather than discovering it in a
+    failed attempt."""
+    described = sandbox_module.describe()
+    assert "platform" in described
+    assert "platform_surfaces_absent_here" in described

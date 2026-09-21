@@ -148,6 +148,62 @@ class SandboxRefusal(PermissionError):
     proposal rather than something to work around."""
 
 
+class SandboxUnavailable(SandboxRefusal):
+    """The path is a system surface this platform does not have.
+
+    A subclass, so existing handlers keep working, and a distinct class because
+    the two mean opposite things to a learner. `SandboxRefusal` says *you may not
+    read that* and the answer is to propose a boundary. This says *there is
+    nothing there on this machine* and the answer is to find the platform's own
+    route.
+
+    Windows CI found this the hard way: `os.path.abspath("/proc/net/tcp")` on
+    Windows is `D:\\proc\\net\\tcp`, which matched no declared pattern, so a
+    recipe written for Linux was refused as a **permission** problem. Jarvis
+    would have gone off to propose an allow-list change for a file that does not
+    exist, instead of reaching for `netstat`. A diagnosis that sends the learner
+    in the wrong direction is worse than no diagnosis."""
+
+
+# System surfaces that exist on one platform and not the other, with the route to
+# the same information on the other one. Named here rather than in a diagnosis
+# table because this module is the thing that knows a path was refused for being
+# absent rather than for being forbidden.
+PLATFORM_SURFACES = {
+    "/proc": {
+        "on": "posix",
+        "instead": ("on Windows the same information comes from commands: "
+                    "`netstat -ano` for sockets, `tasklist` for processes. Both "
+                    "are on the command allow-list"),
+    },
+    "/sys": {
+        "on": "posix",
+        "instead": ("on Windows use `ipconfig` for interfaces and `systeminfo` "
+                    "for machine state. Both are on the command allow-list"),
+    },
+}
+
+
+def _platform_surface_for(path: str, platform: str | None = None) -> dict | None:
+    """Whether this path belongs to a surface this platform does not have.
+
+    Matched on the path **as written**, before `abspath` mangles it with a drive
+    letter - which is the whole reason the Windows failure was misdiagnosed.
+
+    `platform` is a parameter rather than a direct `os.name` read so a test can
+    assert the Windows behaviour from Linux. The first attempt to probe this
+    monkeypatched `os.name` and broke `pathlib` instead, which is a good sign
+    that the dependency belonged in the signature."""
+    here = platform or os.name
+    written = str(path).replace("\\", "/")
+    for root, meta in PLATFORM_SURFACES.items():
+        if not (written == root or written.startswith(root + "/")):
+            continue
+        if meta["on"] == "posix" and here == "nt":
+            return {**meta, "root": root}
+    return None
+
+
 class Sandbox:
     """One practice environment. A context manager; its directory is removed.
 
@@ -229,6 +285,13 @@ class Sandbox:
            exempt because its symlinks pointing outside themselves is the whole
            reason the first exercise can map a socket to a process, and the
            kernel rather than this system decides what they say."""
+        absent = _platform_surface_for(path)
+        if absent is not None:
+            raise SandboxUnavailable(
+                f"{path} is a {absent['on']} surface and this machine is "
+                f"{os.name}. It is not forbidden - it is not there. Do not "
+                f"propose a boundary for it: {absent['instead']}.")
+
         raw = os.path.abspath(os.path.normpath(str(path)))
 
         if self.directory is not None:
@@ -287,6 +350,12 @@ class Sandbox:
         thousands of entries of which some vanish mid-listing, and a refusal on
         the first unreadable one would make the primitive useless for the thing
         it exists to do."""
+        absent = _platform_surface_for(pattern)
+        if absent is not None:
+            raise SandboxUnavailable(
+                f"{pattern} is a {absent['on']} surface and this machine is "
+                f"{os.name}. {absent['instead']}.")
+
         # The pattern itself is checked against the allow-list the same way a
         # concrete path is, so `/etc/*` is refused before anything is listed -
         # and every result is checked again below, because a pattern that
@@ -392,6 +461,10 @@ def describe() -> dict:
         "max_output_bytes": MAX_OUTPUT,
         "shell": False,
         "network": False,
+        "platform": os.name,
+        "platform_surfaces_absent_here": {
+            root: meta["instead"] for root, meta in PLATFORM_SURFACES.items()
+            if _platform_surface_for(root + "/x") is not None},
         "note": ("Both lists are fixed in app/learning/sandbox.py. Jarvis "
                  "composes primitives and cannot extend either; a skill that "
                  "needs more files a boundary proposal."),

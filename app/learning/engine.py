@@ -155,6 +155,13 @@ SEED_CANDIDATES = (
                 "own tables."),
         "evidence": "gateway/machine.py reports processes and disks, not sockets",
         "deterministic": True,
+        "note": ("The route differs by platform and the skill needs a version "
+                 "per platform, not a ported one. On posix it is the kernel's "
+                 "own tables (/proc/net/tcp joined to /proc/*/fd). On Windows "
+                 "those do not exist and the route is `netstat -ano` joined to "
+                 "`tasklist`; the sandbox says so if you reach for /proc there, "
+                 "and that refusal is an environment difference rather than "
+                 "something to propose a boundary about."),
     },
     {
         "what": "summarise my own model-call log without calling a model",

@@ -104,6 +104,25 @@ regression test:
 | `/proc/net` is a symlink | resolving first turned `/proc/net/tcp` into `/proc/<pid>/net/tcp`, so the declared pattern stopped matching | match the normalised path, then check the resolved one too (except under `/proc`, where symlinks pointing out are the point) |
 | `/proc/*/environ` | holds every API key on the machine, and one wrong wildcard would have exposed it | an explicit `DENIED_PATTERNS` list checked after the allow-list |
 
+### Platform surfaces, and the defect Windows CI found
+
+`/proc` and `/sys` are posix. On Windows, `os.path.abspath("/proc/net/tcp")` is
+`D:\proc\net\tcp`, which matched no declared pattern — so the first version
+refused a Linux recipe as a **permission** problem, and the diagnosis sent the
+learner off to propose an allow-list change for a file that does not exist.
+
+`SandboxUnavailable` is now a distinct refusal saying *it is not forbidden, it is
+not there*, naming the platform's own route, and `practice.py` classifies it as
+`environment_difference` rather than `permission_issue`. **A diagnosis that sends
+the learner in the wrong direction is worse than no diagnosis.**
+
+A skill therefore gets a **version per platform, not a ported one**. Both versions
+must answer in the same field vocabulary; `tests/test_learning.py` proves the
+Windows route for the first skill is expressible with the existing primitives
+(`netstat -ano` joined to `tasklist /fo csv /nh`, IPv6 handled, UDP excluded) —
+from any platform, because what is being proven is that the primitives suffice,
+not that this machine is Windows.
+
 ---
 
 ## 5. Diagnosis costs nothing, by construction

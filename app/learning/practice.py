@@ -290,6 +290,14 @@ def _store(episode_id: int, recipe, kind: str, outcome: Outcome) -> None:
 # Message fragments that identify a failure class without a model call. Ordered:
 # the first match wins, so more specific patterns come first.
 _SIGNATURES = (
+    # FIRST, and the order is the fix. This message also contains "is not
+    # there", and the permission signature below would otherwise claim it -
+    # sending the learner to propose an allow-list change for a file that does
+    # not exist. Windows CI found that; it is why the two have separate classes.
+    ("it is not there", ENVIRONMENT_DIFFERENCE, DETERMINISTIC_REASONING,
+     "this path belongs to a platform this machine is not. Do not propose a "
+     "boundary - the refusal names the route this platform uses instead, and "
+     "the skill needs a second recipe version for it"),
     ("is not permitted", PERMISSION_ISSUE, DETERMINISTIC_REASONING,
      "the sandbox refused a path. Either the skill needs a path it should not "
      "have, or it is reading the wrong one - check the path before proposing a "
