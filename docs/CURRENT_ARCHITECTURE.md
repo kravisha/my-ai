@@ -290,3 +290,66 @@ Recorded here rather than fixed, per §8 of the task:
   general information-disclosure shape, not only a "tokens" problem. This task
   fixes the user-facing wording and the classification; it does not rewrite the
   handler.
+
+---
+
+## Appendix — what Task 01 changed
+
+This document describes the system **as found on 2026-09-21, before the
+change**, and it is left that way on purpose: it is the evidence the repair was
+based on, and rewriting it into a description of the result would delete the
+finding. What follows is the delta.
+
+### New modules
+
+| Module | What it is |
+|---|---|
+| `app/model_calls.py` | The call log. One JSON record per model call, written *inside* `KimiProvider` rather than in the router, so a call that skipped the router is still recorded. Holds the `direct_call` guard. |
+| `app/router_config.py` | Reads `config/router.yaml`. The confidence threshold, the retry policy, the report schedule. |
+| `app/confidence.py` | The confidence seam. Returns "sufficient, unmeasured" — see `docs/CONFIDENCE.md`. |
+| `app/user_messages.py` | The only vocabulary a user-facing handler may speak in. |
+| `app/retry_queue.py` | Requests queued after exhausted capacity. |
+| `app/capability_gaps.py` | What was asked for and could not be done, and the monthly audit. |
+| `app/self_diagnosis.py` | The nightly and weekly reports, and what reaches the morning brief. |
+
+### Changed
+
+- `app/model_routing.py` — the four permitted escalations, quota fallback,
+  configurable threshold, two new counters.
+- `app/kimi_provider.py` — `KimiQuotaExhausted`, and the recording inside
+  `complete`/`stream`.
+- `gateway/streaming.py` — the worker thread now runs in a copy of the calling
+  context, so the request id survives the hop.
+- `gateway/main.py`, `backend/main.py`, `backend/coo_chat.py` — the four leaking
+  handlers from §5 now speak `app/user_messages.py`.
+- `gateway/conversation.py` — records a capability gap when a turn runs out of
+  tool rounds (§6.1's "answered only partially").
+- `backend/briefing.py` — a `_self_report` section, guarded.
+
+### Running the reports
+
+```bash
+python -m app.self_diagnosis --if-due     # what the schedule says is owed
+python -m app.self_diagnosis --nightly    # one now, for the last 24 hours
+python -m app.self_diagnosis --weekly
+python -m app.capability_gaps             # the monthly skills audit
+```
+
+`scripts/register-jarvis-self-diagnosis.ps1` registers the hourly
+`--if-due` check on Windows. Hourly rather than nightly deliberately: the
+schedule lives in `config/router.yaml`, and a machine asleep at 03:00 would
+otherwise skip a night without saying so.
+
+### Section 8's list, revisited
+
+Everything in §8 is still true and still unfixed, with two additions found
+while doing this work and deliberately left alone:
+
+- `backend/main.py`'s desk handlers (around lines 649 and 741) and
+  `backend/continuity.py`'s summary put `f"{exc}"` into an `error` key for the
+  operator console. Same shape as the fault this task fixed, different surface,
+  and no model exception can reach them.
+- Nothing re-executes a queued retry. The queue is written, counted, reported
+  and closed out; replaying a turn is a product decision about Jarvis's
+  behaviour rather than a routing change. `app/retry_queue.py`'s docstring
+  gives the full reasoning.

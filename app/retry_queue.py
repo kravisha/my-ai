@@ -29,6 +29,22 @@ The user's full request. `summary` is the same 200 characters the call log
 holds, for the same reason. A retry therefore re-runs a request by its id
 against whatever conversation state still exists; it does not replay a stored
 prompt, and this module deliberately does not have the material to.
+
+## What this does NOT do, stated here rather than discovered
+
+**Nothing automatically re-executes a queued request.** §4.2.3 asks for the
+request to be queued, and it is - written down, counted, reported in the
+nightly self-diagnosis and in the morning brief, and closed out by
+`abandon_exhausted` once its attempts are spent.
+
+Re-executing it is a larger change than this task, and doing it badly would be
+worse than not doing it. A Gateway turn is a tool loop over a conversation held
+in a database owned by the thread that opened it; replaying one means deciding
+what the user sees when an answer arrives twenty minutes after they asked, in a
+conversation they have since continued. That is a product decision about
+Jarvis's behaviour, and §8 rules it out of scope here. The queue is the part
+that has to exist first either way - without it the decision would have nothing
+to act on, and "I'll retry shortly" would be a sentence with nothing behind it.
 """
 
 from __future__ import annotations

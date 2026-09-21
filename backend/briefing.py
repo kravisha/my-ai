@@ -268,6 +268,27 @@ def _blocked(conn: Database, now) -> list[dict]:
     return items
 
 
+def _self_report(since: str | None) -> list[dict]:
+    """What Jarvis noticed about his own routing overnight (Task 01 §4.2.4, §5.2).
+
+    *"Notify Krish through the normal brief, not mid-conversation."* This is
+    the delivery half of that sentence: the router says nothing to him while he
+    is talking to it, and a quota exhaustion, a router bypass or a run of
+    avoidable escalations arrives here instead.
+
+    Guarded, like `compile`'s other sections, and for the sharper version of
+    the same reason: this one reads a file written by a different process. A
+    briefing that failed to render because a log line was truncated by a crash
+    would be a self-report that took down the report."""
+    try:
+        from app import self_diagnosis
+
+        return self_diagnosis.brief_items(
+            since=parse_timestamp(since) if since else None)
+    except Exception:  # noqa: BLE001 - a self-report must not break the briefing
+        return []
+
+
 def _order(items: list[dict]) -> list[dict]:
     """§16's rhythm: the main story first, then supporting material.
 
@@ -300,7 +321,8 @@ def compile(conn: Database, *, since: str | None = None, now: str | None = None)
     absence = _describe_absence(_away_seconds(since, stamp))
 
     items = (_attention(conn, since) + _completed(conn, since, absence)
-             + _underway(conn, stamp) + _blocked(conn, stamp))
+             + _underway(conn, stamp) + _blocked(conn, stamp)
+             + _self_report(since))
     items = _order(items)[:MAX_ITEMS]
 
     return {
