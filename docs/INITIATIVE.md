@@ -34,8 +34,8 @@ takes, and `app/initiative.py` is that doctrine as code. The ordering is the one
 Task 01 used and for the same reason: **instrument before you repair; write the
 rule before you relax the caution that was standing in for it.**
 
-The constitution itself is untouched. §7 below has the paragraph it would need,
-ready to lift, and §7 also explains why I did not put it there myself.
+The constitution itself is untouched. §10 below has the paragraph it would need,
+ready to lift, and §10 also explains why I did not put it there myself.
 
 ---
 
@@ -156,6 +156,7 @@ reading of an unclassified action is "nobody thought about this one", and
 | `technology_review`, `read_claude` | reversible | self | `act` |
 | `remote_diagnose` | reversible | self | `act` |
 | `file_scoreboard_item`, `add_scoreboard_note` | reversible | owner | `act_and_report` |
+| `propose_boundary_change` | reversible | owner | `act_and_report` |
 | `draft_message_to_claude` | reversible | owner | `act_and_report` |
 | `resolve_scoreboard_item` | recoverable | owner | `act_and_report` |
 | `message_claude` | recoverable | peer | `act_and_report` |
@@ -216,7 +217,117 @@ used — so the day a scheduler exists, the policy governing it already does.
 
 ---
 
-## 7. The constitution, and why I did not edit it
+## 7. Inquisitiveness, and which currency it spends
+
+**Instruction:** Krish, 2026-09-21 — *"Give agent the ability to be inquisitive
+and willing to cross boundaries as long as the actions are not harmful in
+nature."*
+
+The Gateway prompt has always said *"be brief"* and *"a spoken question gets one
+good answer"*, and a naive reading of "be inquisitive" contradicts it. It does
+not, once you notice that investigating and asking spend **different currencies**:
+
+| | Costs | Policy |
+|---|---|---|
+| Investigating the system — read the spec, read the state, probe the machine | a second, and nothing else | never gated; always `act`. Do it rather than answering from memory and hedging |
+| Asking Krish | his attention, which is the scarce thing in this organization | **one** question, and only when the answer genuinely forks on something only he knows |
+
+So: inquisitive toward the system, economical toward the person. A question he
+could have been spared by a file being read is the expensive kind of curiosity,
+and several questions at once is the same mistake compounded.
+
+## 8. Crossing a boundary means proposing that it move
+
+The constitution already named the mechanism, in the same section that asks for
+risk-taking:
+
+> Boundaries themselves can be subjects of redesign. An agent may expose why a
+> constraint prevents a useful outcome, **propose a better arrangement** and
+> help establish the capabilities and authority needed to move beyond it.
+> Challenging a boundary must remain a real avenue for progress in the product
+> design.
+
+Nothing implemented it. Until `app/boundaries.py`, a constraint produced one of
+two things: a sentence in one conversation that nobody kept, or silence. Neither
+is a boundary being challenged — the first is a complaint, and the second is an
+assistant quietly narrowing itself around a limit until nobody remembers it was
+a choice.
+
+`propose_boundary_change` is the third option. A constraint becomes a dated,
+repeatable, evidence-carrying argument: what it prevented, what he would do
+instead, **and what it costs if he is wrong about it**. That last field is
+required, and a proposal without it is refused rather than stored — the
+constitution's *"leaders make the stakes explicit"* is the entire difference
+between a boundary challenge and a request, and it is the first field to go when
+a hundred of these are written quickly.
+
+### He is invited to argue with these rules
+
+`kind: policy_gate` exists so that `app/initiative.py`'s own refusals can be
+disputed. If Jarvis is stopped from the same action twenty times and each time
+thought it was fine, that is evidence about the policy, and it belongs where
+Krish will see it rather than dying in twenty separate conversations.
+
+Building the register so it can indict its own author is not a flourish. **A
+constraint system with no channel for "this constraint is wrong" produces an
+agent that routes around it instead**, and routing around is the failure worth
+spending a module to avoid.
+
+### Arguing for authority is not a way to get it
+
+This is what makes boundary-crossing safe to encourage rather than alarming.
+
+| Jarvis may | Jarvis may not |
+|---|---|
+| Argue that any constraint here is wrong, including this document's | Remove or weaken one |
+| Say what authority he would need and why | Grant himself that authority — `HARM_WIDENS_ITS_OWN_AUTHORITY`, refused at every setting |
+| Point at how often the limit has cost something | Act as though filing the proposal moved it |
+
+Filing changes nothing by itself, and the prompt tells him not to describe it as
+though it had. **An agent that can argue for more authority and an agent that
+can take it are different animals, and only the first one can be told to be
+bold.**
+
+### Ranked by what actually gets things unblocked
+
+`reports/boundaries_YYYY-MM.md` orders open boundaries by how often each was hit
+— joined against `logs/capability_gaps.jsonl`, so "you have asked for this seven
+times" strengthens the case — and then **cheapest-to-try first**. A month spent
+deliberating the expensive one while three reversible experiments went unrun is
+what that second sort key is against.
+
+A declined boundary is remembered, so it is not re-proposed next month by an
+assistant with no memory of having asked.
+
+## 9. A note on "you know what is harmful"
+
+Krish, in the same message: *"I am sure you AI life forms know the definition
+between harmful actions and actions that cause no harm."*
+
+Mostly, and not reliably enough to be the gate — and that is the reason this
+design is shaped the way it is rather than an apology for it.
+
+A model asked *"is this harmful?"* answers plausibly every time and differently
+across runs. `gateway/machine.py` and `gateway/remote.py` already record this
+judgement for a much easier question: the thresholds that decide whether an
+agent is hung live in code, because *"the one place that must be reproducible is
+the sentence that decides whether somebody restarts a service."* Harm is a
+harder call than that, made under more pressure, by a thing that wants to be
+helpful.
+
+So the policy never asks the question. It asks two that have stable answers —
+*can this be corrected, and who has already seen it* — plus a closed list of five
+named harms. Those are checkable by something other than judgement, which is what
+lets the latitude above be wide.
+
+**The judgement is still doing work**, just further back and where it can be
+inspected: classifying an action, wording a proposal, deciding a constraint is
+costing something. What it is not doing is standing alone between a confident
+model and an irreversible act.
+
+---
+
+## 10. The constitution, and why I did not edit it
 
 `AI-CONSTITUTION.md` has a section called **"Take risks and challenge
 boundaries"** which is the spirit of this instruction already:
@@ -270,7 +381,7 @@ or put it through parliament, or leave it here:
 
 ---
 
-## 8. What to change, and where
+## 11. What to change, and where
 
 | You want | Change |
 |---|---|
@@ -278,6 +389,8 @@ or put it through parliament, or leave it here:
 | A new tool to be usable without asking | Add it to `gateway/tools.TOOL_RISK` with an honest classification |
 | To know why he asked about something | `app/initiative.decide()` returns the sentence; it is what he says |
 | To make an irreversible action automatic | **You cannot, and that is deliberate.** Change what the action *is* so it becomes correctable — a staging step, a branch instead of a push, a backup before a delete |
+| To see what limits he thinks are costing something | `reports/boundaries_YYYY-MM.md`, or `python -m app.boundaries` for one now |
+| To answer a boundary he raised | `app.boundaries.decide(constraint, "granted" \| "declined", note)` — a decline is recorded too, so he does not re-ask next month |
 
 That last row is the useful one. When the policy blocks something, the productive
 response is almost never to widen the policy; it is to notice that the action was
@@ -292,6 +405,7 @@ stopping at a branch.
 - `app/initiative.py` — the policy
 - `app/initiative_config.py`, `config/initiative.yaml` — the dial
 - `gateway/tools.py` — `TOOL_RISK`, the gate in `execute`, the generated prompt
+- `app/boundaries.py`, `tests/test_boundaries.py` — the register, and that arguing for authority is not a way to get it
 - `tests/test_initiative.py` — the floors, held for every setting
 - `docs/addenda/addendum_28_security_defense_framework.md` §1.8, §1.9 — the origin
 - `AI-CONSTITUTION.md` — "Take risks and challenge boundaries"

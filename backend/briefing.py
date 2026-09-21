@@ -289,6 +289,26 @@ def _self_report(since: str | None) -> list[dict]:
         return []
 
 
+def _boundaries(since: str | None) -> list[dict]:
+    """A constraint Jarvis has hit more than once, with a written case for
+    moving it (Krish, 2026-09-21; app/boundaries.py).
+
+    Here rather than left in the monthly report because a boundary hit
+    repeatedly is costing something *now*, and the whole point of the register
+    is that a limit stops being invisible. One line, never one per boundary -
+    the brief has a twelve-item ceiling and the report holds the detail.
+
+    Guarded like the section above, and for the sharper reason: this reads a
+    file a different process writes."""
+    try:
+        from app import boundaries
+
+        return boundaries.brief_items(
+            since=parse_timestamp(since) if since else None)
+    except Exception:  # noqa: BLE001 - a register must not break the briefing
+        return []
+
+
 def _order(items: list[dict]) -> list[dict]:
     """§16's rhythm: the main story first, then supporting material.
 
@@ -322,7 +342,7 @@ def compile(conn: Database, *, since: str | None = None, now: str | None = None)
 
     items = (_attention(conn, since) + _completed(conn, since, absence)
              + _underway(conn, stamp) + _blocked(conn, stamp)
-             + _self_report(since))
+             + _self_report(since) + _boundaries(since))
     items = _order(items)[:MAX_ITEMS]
 
     return {

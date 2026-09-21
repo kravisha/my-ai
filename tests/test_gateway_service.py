@@ -543,6 +543,25 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # wake an agent in his name.
         "message_claude",
         "read_claude",
+        # `propose_boundary_change` added 2026-09-21, on Krish's direction:
+        # *"Give agent the ability to be inquisitive and willing to cross
+        # boundaries as long as the actions are not harmful in nature."* It is
+        # BUILT, in `app/boundaries.py`, and it is the constitution's own
+        # mechanism for crossing one - "expose why a constraint prevents a
+        # useful outcome, propose a better arrangement" - which had nothing
+        # implementing it until now.
+        #
+        # The bar this assertion guards is the one that makes a tool like this
+        # safe to hand over at all: **it writes an argument and grants
+        # nothing.** Filing a proposal changes no capability, moves no gate and
+        # must not be described as though it had;
+        # `app/initiative.HARM_WIDENS_ITS_OWN_AUTHORITY` refuses self-granted
+        # authority at every boldness setting, and
+        # tests/test_boundaries.py::test_filing_one_grants_nothing holds that
+        # line by checking the role's capabilities are unchanged afterwards.
+        # An agent that can argue for more authority and one that can take it
+        # are different animals, and only the first can be told to be bold.
+        "propose_boundary_change",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so

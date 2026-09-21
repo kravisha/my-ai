@@ -535,6 +535,18 @@ def run_if_due(now: datetime | None = None, directory: Path | None = None) -> li
     if moment.day == 1 and not audit_path.exists() and due(moment):
         written.append(capability_gaps.monthly_report(month, target))
 
+    # The boundary register's monthly case (Krish, 2026-09-21). Alongside the
+    # skills audit rather than inside it, because they answer opposite
+    # questions: the audit ranks what he asked for and did not get, this ranks
+    # what Jarvis thinks is in the way. Deferred import for the same reason the
+    # module keeps its other cross-imports shallow - self_diagnosis is imported
+    # by the briefing, which must stay cheap.
+    boundaries_path = target / f"boundaries_{month}.md"
+    if moment.day == 1 and not boundaries_path.exists() and due(moment):
+        from app import boundaries
+
+        written.append(boundaries.report(month, target))
+
     # Close out requests that have had their attempts. Done here rather than
     # in the queue itself because something has to run on a clock for a queue
     # to have a lifecycle at all, and this is the thing that does. An entry

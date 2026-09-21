@@ -51,7 +51,7 @@ findings with their own attribution when that path exists; until then, one
 truthful value.
 """
 
-from app import initiative
+from app import boundaries, initiative
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
 from gateway import jarvis, repositories, scoreboard, technology
@@ -467,8 +467,96 @@ CHANNEL_TOOLS = [
     },
 ]
 
+# The constitution's own mechanism for crossing a boundary, which is to argue
+# that it should move (Krish, 2026-09-21; AI-CONSTITUTION.md "Take risks and
+# challenge boundaries"; app/boundaries.py).
+#
+# Every field below is required, and the descriptions say why rather than what,
+# because a model filling these in quickly will give the shape of an argument
+# without the substance of one unless each box says what a bad answer looks
+# like. `what_it_would_cost` is the field that would go first and is the one
+# that makes this a proposal rather than a request.
+BOUNDARY_TOOLS = [
+    {
+        "name": "propose_boundary_change",
+        "description": (
+            "Record the case for removing or moving a constraint that is "
+            "costing something. Use it the moment you hit a limit you think is "
+            "wrong - a capability you do not hold, a tool that does not exist, "
+            "a rule that stopped you, an assumption that need not be true - "
+            "rather than mentioning it in passing or working around it "
+            "silently. File it in the same turn; do not ask permission to file "
+            "one. This does not change anything: it writes an argument Krish "
+            "reads and answers. You cannot grant yourself authority and must "
+            "not imply that filing this has."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "constraint": {
+                    "type": "string",
+                    "description": (
+                        "The limit itself, in the same words every time you hit "
+                        "it - entries are grouped by this, and a constraint "
+                        "described differently each time ranks as several "
+                        "separate ones that each look rare."),
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": list(boundaries.KINDS),
+                    "description": (
+                        "missing_capability: a grant you do not hold. "
+                        "missing_tool: something nobody has built. "
+                        "policy_gate: a rule that stopped you, including "
+                        "app/initiative.py's own - you are expected to argue "
+                        "with it if you think it is wrong. missing_access: a "
+                        "credential, machine or file out of reach. "
+                        "design_assumption: something the system assumes that "
+                        "need not be true."),
+                },
+                "what_it_prevents": {
+                    "type": "string",
+                    "description": (
+                        "The outcome that did not happen. Concrete and from "
+                        "this conversation - \"I could not X for Krish just "
+                        "now\" beats \"this limits flexibility\"."),
+                },
+                "what_i_would_do": {
+                    "type": "string",
+                    "description": (
+                        "The better arrangement, specifically enough that "
+                        "somebody could build or grant it without asking you a "
+                        "follow-up question."),
+                },
+                "what_it_would_cost": {
+                    "type": "string",
+                    "description": (
+                        "What goes wrong if this is the wrong call - the risk "
+                        "you are asking him to accept. A proposal with only an "
+                        "upside is a request, not a boundary challenge, and is "
+                        "refused. Say it even when you think the risk is small; "
+                        "\"very little, because it is revocable\" is a real "
+                        "answer."),
+                },
+                "reversible_if_granted": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether granting this could be taken back if it turns "
+                        "out badly. True for a config change or a revocable "
+                        "grant; false for anything that publishes, sends or "
+                        "deletes. The report sorts cheap-to-try first, so an "
+                        "honest false here is what stops your reversible "
+                        "proposals waiting behind somebody's hard decision."),
+                },
+            },
+            "required": ["constraint", "kind", "what_it_prevents",
+                         "what_i_would_do", "what_it_would_cost"],
+        },
+    },
+]
+
 TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
-         + INTERFACE_TOOLS + CHANNEL_TOOLS)
+         + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -517,6 +605,15 @@ TOOL_CAPABILITY = {
     # looking at one, and that is the line this mapping is here to hold.
     "remote_diagnose": roles.CAP_SYSTEM_STATUS,
     "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
+    # The same capability as filing a Scoreboard item, and reusing it rather
+    # than minting a `boundary` one is deliberate, for the reason the
+    # remote_diagnose entry below gives: `scoreboard:write` already means
+    # "record something Krish will decide later", which is exactly what a
+    # boundary proposal is, and a new capability would mean editing GRANTS -
+    # the one change in gateway/roles.py that can silently widen or lock out a
+    # role. The authority being exercised is to write an argument down, not to
+    # act on it; app/initiative.HARMS refuses the latter at every setting.
+    "propose_boundary_change": roles.CAP_SCOREBOARD_WRITE,
     "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
     "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
     "add_scoreboard_note": roles.CAP_SCOREBOARD_WRITE,
@@ -610,6 +707,15 @@ TOOL_RISK = {
     "draft_message_to_claude": dict(
         reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
         summary="put a draft in Krish's outbox for him to send"),
+    # Writing down the case for moving a limit. Reversible - an entry can be
+    # answered or ignored and changes nothing by existing - and reaching the
+    # owner, because he is the one who decides. Deliberately NOT gated: an
+    # assistant that had to ask permission to say a constraint is wrong would
+    # be one that never says it, which is the failure the whole register is
+    # against.
+    "propose_boundary_change": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="write down the case for moving a constraint that is costing something"),
     # Recoverable rather than reversible: reopening a resolved item is possible
     # and is itself an event somebody reads, which is the definition.
     "resolve_scoreboard_item": dict(
@@ -740,6 +846,30 @@ def initiative_paragraph(role: str) -> str:
         "files read, read them. If something surfaced that deserves a decision "
         "later, file it now. Do not present a plan for work you could have "
         "finished while describing it.",
+        "",
+        "**Be inquisitive, and spend the right currency on it.** Reading costs "
+        "nothing and is never gated - check the specification, read the state, "
+        "probe the machine, rather than answering from memory and hedging. "
+        "Krish's attention is the scarce thing, not yours: investigate the "
+        "system freely, and put *one* question to him only when the answer "
+        "genuinely forks on something only he knows. Several questions at once, "
+        "or a question you could have answered by reading, spends the thing "
+        "that is actually short.",
+        "",
+        "**You are allowed to think a rule is wrong, and there is somewhere to "
+        "say so.** If you hit a limit that is costing something - a capability "
+        "you do not hold, a tool nobody built, an assumption that need not be "
+        "true, or one of the gates above stopping an action you believe is "
+        "fine - call `propose_boundary_change` in that turn. Say what it "
+        "prevented, what you would do instead, and what it costs if you are "
+        "wrong about it. Working around a constraint silently, or mentioning it "
+        "in passing and moving on, is how a limit stops being a decision "
+        "anybody remembers making.",
+        "",
+        "Filing one changes nothing by itself and must not be described as "
+        "though it had. You make the case; he moves the boundary or he does "
+        "not. That separation is exactly why you are free to argue for more "
+        "than you have.",
         "",
     ]
 
@@ -875,6 +1005,23 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
             # a machine could not be reached - which is what a silent empty
             # result would look like, and it is a different and worse claim.
             return remote.diagnose(arguments.get("target"))
+
+        if name == "propose_boundary_change":
+            try:
+                return {"proposed": boundaries.record(
+                    constraint=arguments.get("constraint", ""),
+                    kind=arguments.get("kind", ""),
+                    what_it_prevents=arguments.get("what_it_prevents", ""),
+                    what_i_would_do=arguments.get("what_i_would_do", ""),
+                    what_it_would_cost=arguments.get("what_it_would_cost", ""),
+                    reversible_if_granted=bool(
+                        arguments.get("reversible_if_granted", True)),
+                )}
+            except boundaries.BoundaryRefused as incomplete:
+                # Returned as data with the reason, so the model can complete
+                # the argument in the same turn rather than reporting to Krish
+                # that it could not file one.
+                return {"error": str(incomplete)}
 
         if name == "file_scoreboard_item":
             item_id = scoreboard.file_item(
