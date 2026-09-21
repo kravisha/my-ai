@@ -1,0 +1,33 @@
+# How much Jarvis does without being asked. Read by app/initiative_config.py.
+#
+# Krish, 2026-09-21: "make the agent a bit of a risk taker and being bold and
+# preemptive but always following the do no harm doctrine and pay even more
+# care if the action is irreversible."
+#
+# READ docs/INITIATIVE.md BEFORE CHANGING THIS. The short version:
+#
+#   boldness moves ONE thing - how far an action's effect may reach before
+#   Jarvis stops and asks. It applies only to actions that can be undone.
+#
+#   It does NOT move irreversible actions. Those are proposed and never taken
+#   unasked, at every setting, including ones nobody has invented yet.
+#   It does NOT move the harm list in app/initiative.py's HARMS.
+#
+# That is deliberate rather than cautious. A dial whose top setting is still
+# safe is a dial you can hand to somebody; a dial with an unsafe end is one
+# nobody dares move. Turning this to 'bold' should be a small decision, and it
+# is one only because the two floors below it are not on the dial at all.
+schema_version: 1
+
+# cautious | standard | bold
+#
+#   cautious  acts alone only where nothing leaves this machine, and never
+#             starts work unprompted
+#   standard  acts alone on anything Krish will see and can undo, and waits to
+#             be asked before starting
+#   bold      acts alone up to and including telling another agent in this
+#             system, and may start useful work unprompted where it is
+#             reversible
+#
+# Set to 'bold' on 2026-09-21 at Krish's instruction.
+boldness: bold

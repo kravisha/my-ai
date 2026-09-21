@@ -207,13 +207,20 @@ def operator_prompt() -> str:
     an engineer session exists on this machine, let alone that it can be written
     to.
 
+    The initiative paragraph (Krish, 2026-09-21) is generated for the same
+    reason and one more: it is the only one of the four whose subject is
+    something the code will refuse. A hand-typed "be bold" over a table that
+    stops the assistant produces one that tries, fails and apologises, which is
+    worse than either setting applied honestly.
+
     The version paragraph was reaching the *client* prompt only, which was
     backwards. Every word of `gateway/uiversion.py` is about the owner - it exists
     because he and Claude Dev lost a day to a cached page, each reasoning about
     code the other could not see - and he is the one role that was not being told
     the number. A client has never once reported a stale build.
     """
-    return (SYSTEM_PROMPT + interface.prompt_paragraph()
+    return (SYSTEM_PROMPT + tools.initiative_paragraph(roles.ROLE_OPERATOR)
+            + interface.prompt_paragraph()
             + devchannel.prompt_paragraph() + uiversion.prompt_paragraph())
 
 

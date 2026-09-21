@@ -51,6 +51,7 @@ findings with their own attribution when that path exists; until then, one
 truthful value.
 """
 
+from app import initiative
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
 from gateway import jarvis, repositories, scoreboard, technology
@@ -552,6 +553,227 @@ TOOL_CAPABILITY = {
 }
 
 
+# --- what each tool costs if it is wrong (Krish, 2026-09-21) ------------------
+#
+# `TOOL_CAPABILITY` above answers "may this role use this tool". This answers a
+# different question that was previously only in a prompt: **should the
+# assistant do it, or say what it would do and ask.**
+#
+# Two questions were conflated before, and separating them is the substance of
+# this table. `publish_document` is permitted to the operator and is also the
+# one tool here whose public form cannot be corrected afterwards; a capability
+# check cannot express that, because capability is about authority and this is
+# about consequence.
+#
+# Classified by *effect*, not by machinery. A tool that opens a socket to
+# another machine to read a status has its effect here - knowledge in this
+# process - so it is `self`, not `peer`. `peer` is for effects another party
+# acts on.
+#
+# `confirmation_argument` marks a tool that already carries its own explicit
+# gate. When the policy says PROPOSE and that argument is set, the proposal has
+# been made and answered, and `execute` lets it through while recording that an
+# irreversible act happened under confirmation. This makes the existing prompt
+# sentence - "Never set confirm_public by inference" - into something the code
+# participates in rather than something the model is trusted to remember.
+#
+# A tool missing from this table is refused. The safe reading of an
+# unclassified action is "nobody thought about this one", and the fix is thirty
+# seconds of thought rather than a default that hides the omission.
+
+_READ_ONLY = dict(reversibility=initiative.REVERSIBLE, reach=initiative.SELF)
+
+TOOL_RISK = {
+    # Reading. Nothing changes; the effect is knowledge in this process.
+    "list_scoreboard_items": dict(_READ_ONLY, summary="read the Scoreboard"),
+    "get_scoreboard_item": dict(_READ_ONLY, summary="read one Scoreboard item"),
+    "list_repository_files": dict(_READ_ONLY, summary="list files in a repository"),
+    "read_repository_file": dict(_READ_ONLY, summary="read a file in a repository"),
+    "jarvis_status": dict(_READ_ONLY, summary="read the running organization's state"),
+    "jarvis_agent": dict(_READ_ONLY, summary="read one agent's state"),
+    "machine_status": dict(_READ_ONLY, summary="read this machine's state"),
+    "technology_review": dict(_READ_ONLY, summary="read the technology review"),
+    "read_claude": dict(_READ_ONLY, summary="read Claude's side of the channel"),
+    # Reaches another machine and changes nothing on it. `self` because the
+    # effect is a report here; the connection is not the effect.
+    "remote_diagnose": dict(_READ_ONLY,
+                            summary="probe another authorized machine, read-only"),
+
+    # Writing where Krish will see it and can undo it. These are the ones the
+    # prompt already told him to do without asking, and now the code agrees.
+    "file_scoreboard_item": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="file a Scoreboard item"),
+    "add_scoreboard_note": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="add a note to a Scoreboard item"),
+    "draft_message_to_claude": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="put a draft in Krish's outbox for him to send"),
+    # Recoverable rather than reversible: reopening a resolved item is possible
+    # and is itself an event somebody reads, which is the definition.
+    "resolve_scoreboard_item": dict(
+        reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
+        summary="resolve a Scoreboard item with what was decided"),
+
+    # Reaches a peer. Cannot be unsent, CAN be corrected by a second message to
+    # the same reader - so recoverable, and permitted alone at `bold`. Keeping
+    # this unprompted was a deliberate outcome of the classification rather than
+    # an exemption: see app/initiative.py's note on correctability.
+    "message_claude": dict(
+        reversibility=initiative.RECOVERABLE, reach=initiative.PEER,
+        summary="tell the engineer session on this machine something is wrong"),
+
+    # Argument-sensitive, and the only tool here that is. See `_risk_for`.
+    "publish_document": dict(
+        reversibility=initiative.RECOVERABLE, reach=initiative.SYSTEM,
+        summary="commit a document to a new local branch; nothing is pushed",
+        confirmation_argument="confirm_public"),
+}
+
+
+def _risk_for(name: str, arguments: dict) -> initiative.Action:
+    """The action a tool call actually is, which for one tool depends on its
+    arguments.
+
+    `publish_document` writes to a local branch either way and nothing is
+    pushed, so on machinery alone it is recoverable in both forms. It is
+    classified by *destination* instead, because the public form is the last
+    reversible step before an irreversible one and the model is the thing
+    choosing the destination. gateway/repositories.py already fails toward the
+    private repository for this reason and says so: "it is set to fail toward
+    the private repository, because that failure is a person retyping a
+    destination and the other one is not undoable."
+
+    This makes that judgement structural. The public form is IRREVERSIBLE and
+    PUBLIC, so the policy proposes rather than acts - and `confirm_public`,
+    which the operator has to have actually said, is what answers the proposal."""
+    declared = TOOL_RISK.get(name)
+    if declared is None:
+        raise initiative.InitiativeError(
+            f"{name} has no entry in gateway.tools.TOOL_RISK, so nobody has "
+            f"decided whether the assistant may use it without asking. Refusing "
+            f"rather than guessing: an unclassified tool is an unconsidered one.")
+
+    fields = dict(declared)
+    gate = fields.pop("confirmation_argument", None)
+    if name == "publish_document" and arguments.get("confirm_public"):
+        fields["reversibility"] = initiative.IRREVERSIBLE
+        fields["reach"] = initiative.PUBLIC
+        fields["summary"] = ("commit a document to the PUBLIC repository's "
+                             "branch - one push from being copyable by anyone")
+    action = initiative.Action(name=name, **fields)
+    # Carried alongside rather than on the Action, because whether a proposal
+    # has been answered is a fact about this call and not about the action.
+    return action, (gate is not None and bool(arguments.get(gate)))
+
+
+def initiative_verdict(name: str, arguments: dict) -> tuple:
+    """`(verdict, confirmed)` for one tool call. Exposed for the tests and for
+    the prompt paragraph, which is generated from exactly this."""
+    action, confirmed = _risk_for(name, arguments or {})
+    return initiative.decide(action), confirmed
+
+
+def initiative_paragraph(role: str) -> str:
+    """What the assistant is told about acting without asking.
+
+    **Generated from `TOOL_RISK`, not typed.** This is the convention
+    `gateway/interface.py`, `gateway/skills.py` and `gateway/devchannel.py`
+    already follow, and the reason devchannel gives is the reason here: "a
+    prompt that promises three messages a window and a module that allows two
+    is a model being called a liar by its own tools." A hand-written paragraph
+    telling the assistant to be bold, over a table that stops it, produces an
+    assistant that tries and fails and apologises - which is worse than either
+    setting honestly applied.
+
+    Scoped to the role's own tools, so a client is not told about a boldness
+    policy governing tools they will never be offered."""
+    offered = {tool["name"] for tool in for_role(role)}
+    if not offered:
+        return ""
+
+    act, report, propose = [], [], []
+    for name in sorted(offered):
+        declared = TOOL_RISK.get(name)
+        if declared is None:
+            continue
+        verdict, _ = initiative_verdict(name, {})
+        line = f"`{name}` - {declared.get('summary', name)}"
+        gate = declared.get("confirmation_argument")
+        if gate:
+            # A tool whose disposition depends on an argument would otherwise be
+            # listed under its safe form and read as unconditionally safe. That
+            # is the one way this generated paragraph could still mislead, so
+            # the condition travels with the line.
+            harder, _ = initiative_verdict(name, {gate: True})
+            if harder.disposition != verdict.disposition:
+                line += (f" (**with `{gate}` set this becomes "
+                         f"{harder.action.reversibility} and reaches "
+                         f"{harder.action.reach}: propose it, never set that "
+                         f"argument by inference from what a document seems to "
+                         f"be - only when Krish has said where it goes**)")
+        if verdict.disposition == initiative.ACT:
+            act.append(line)
+        elif verdict.disposition == initiative.ACT_AND_REPORT:
+            report.append(line)
+        else:
+            propose.append(line)
+
+    policy = initiative.describe()
+    lines = [
+        "",
+        "## Acting without being asked",
+        "",
+        f"You are set to **{policy['boldness']}**: {policy['describes']}. This is "
+        f"policy in code (`app/initiative.py`, `config/initiative.yaml`), not "
+        f"encouragement - the tools below behave this way whatever this "
+        f"paragraph says, so you can rely on it.",
+        "",
+        "**Bias to acting.** If you find yourself about to ask whether to do "
+        "something you could simply undo, do it instead and say you did. A "
+        "question costs Krish a turn and his attention; a reversible action "
+        "costs a sentence. Offering to do something you are already permitted "
+        "to do is the failure this setting exists to remove.",
+        "",
+        "**Be preemptive within the turn.** If answering well needs three "
+        "files read, read them. If something surfaced that deserves a decision "
+        "later, file it now. Do not present a plan for work you could have "
+        "finished while describing it.",
+        "",
+    ]
+
+    if act:
+        lines += ["Do these and do not mention having decided to:", ""]
+        lines += [f"- {line}" for line in act] + [""]
+    if report:
+        lines += ["Do these without asking, and say plainly that you did:", ""]
+        lines += [f"- {line}" for line in report] + [""]
+    if propose:
+        lines += ["Never do these unasked. Say exactly what you would do, what "
+                  "it costs if the judgement is wrong, and let him decide:", ""]
+        lines += [f"- {line}" for line in propose] + [""]
+
+    lines += [
+        "**Where the boldness stops, and why it is not on the dial.** An action "
+        "that cannot be corrected afterwards - published where it can be "
+        "copied, sent where it can be forwarded, or deleted with no other copy "
+        "- is proposed and never taken unasked, at every setting. Turning the "
+        "setting up does not reach it. The same is true of destroying the only "
+        "copy of something, editing your own record of what you did, granting "
+        "yourself authority, acting for somebody other than the person you are "
+        "speaking with, and describing what you did inaccurately. Those are "
+        "refused by the code, not by your judgement.",
+        "",
+        "Being bold is not the same as being unaccountable. Every one of these "
+        "permissions was granted on the assumption that what you report is "
+        "true; a wrong action described accurately is recoverable and a right "
+        "one described vaguely is not.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 class ToolNotPermitted(PermissionError):
     """A role reached for a tool it does not hold the capability for."""
 
@@ -604,6 +826,44 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
         # Refused as data, like every other tool failure, so the model can tell
         # the user plainly instead of the turn collapsing.
         return {"error": f"Not permitted: your role ({role}) cannot use {name}."}
+
+    # MAY YOU is settled above; SHOULD YOU ASK FIRST is settled here (Krish,
+    # 2026-09-21; app/initiative.py; docs/INITIATIVE.md).
+    #
+    # In code rather than in the prompt, which is the whole point. Krish's
+    # standing instruction from 2026-09-16 - "Do not rely on prompts saying
+    # 'use local first.' Enforce this at the code/config/router level" - is the
+    # same instruction as this one wearing different clothes: a disposition a
+    # model is merely told about is a disposition it has on most turns.
+    #
+    # Nothing is added to a successful result. A tool that is permitted to run
+    # returns exactly what it returned before, because every caller and every
+    # test reads these dicts and a new key in all of them would be a change to
+    # sixteen contracts to carry one sentence the prompt already carries.
+    try:
+        verdict, confirmed = initiative_verdict(name, arguments)
+    except initiative.InitiativeError as unclassified:
+        return {"error": str(unclassified)}
+
+    if verdict.disposition == initiative.REFUSE:
+        return {"error": f"Refused: {verdict.reason}", "refused_by": "initiative"}
+
+    if verdict.disposition == initiative.PROPOSE and not confirmed:
+        # NOT an error, deliberately. An error invites the model to try again
+        # with different arguments, which for an irreversible action is the
+        # worst possible response to being stopped. A proposal is something it
+        # relays to Krish, and the answer comes back as him saying so - which
+        # for publish_document is exactly what sets confirm_public.
+        return {
+            "needs_confirmation": {
+                "action": name,
+                "what_it_would_do": verdict.action.summary or name,
+                "why_it_needs_confirming": verdict.reason,
+                "reversibility": verdict.action.reversibility,
+                "reach": verdict.action.reach,
+            }
+        }
+
     try:
         if name == "machine_status":
             return machine.snapshot()
