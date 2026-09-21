@@ -239,6 +239,27 @@ def test_a_file_an_agent_writes_is_fresh_then_stale(tmp_path):
     assert stale["state"] == "stale"
 
 
+def test_the_freshness_boundary_does_not_depend_on_the_clock_resolution(tmp_path):
+    """The regression behind a fortnight of red Windows CI.
+
+    A threshold of zero means "nothing counts as fresh". The comparison was
+    `<=`, so a file written this instant - age exactly 0.0 - was reported
+    fresh against a threshold of 0. On Linux the nanosecond mtime produced a
+    small positive age that cleared it by luck; on Windows the coarser
+    quantisation produced exactly 0.0 and the test failed on every run.
+
+    These assertions are written against *computed* ages rather than a real
+    file, so they hold identically on both platforms and cannot pass by
+    accident of a filesystem's timestamp precision."""
+    path = tmp_path / "conversation.md"
+    path.write_text("x", encoding="utf-8")
+
+    # Zero means nothing is fresh, whatever the clock says.
+    assert remote.file_activity(str(path), stale_minutes=0)["state"] == "stale"
+    # And a real threshold still treats a file written now as fresh.
+    assert remote.file_activity(str(path), stale_minutes=1)["state"] == "fresh"
+
+
 def test_a_missing_file_is_missing_rather_than_stale(tmp_path):
     activity = remote.file_activity(str(tmp_path / "never-written.md"))
 

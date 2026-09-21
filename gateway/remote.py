@@ -371,7 +371,25 @@ def file_activity(path: str, *, stale_minutes: int = DEFAULT_STALE_MINUTES) -> d
         "modified": modified.isoformat(timespec="seconds"),
         "age_minutes": round(age_minutes, 1),
         "stale_after_minutes": int(stale_minutes),
-        "state": "fresh" if age_minutes <= stale_minutes else "stale",
+        # STRICTLY LESS THAN, and the boundary is not a nicety.
+        #
+        # This was `<=`, which made a threshold of zero unable to mean what it
+        # says. `stale_after_minutes: 0` is "nothing counts as fresh", and a
+        # file written this instant has an age of zero, so `0 <= 0` reported it
+        # fresh. The bug was invisible on Linux and permanent on Windows:
+        # st_mtime there is quantised coarsely enough that a file written and
+        # stat'd in the same moment comes back with an age of exactly 0.0,
+        # while nanosecond mtimes on Linux produce a small positive number that
+        # happened to clear the comparison. `tests/test_gateway_remote.py::
+        # test_a_file_an_agent_writes_is_fresh_then_stale` had been red on
+        # windows-latest since 2026-09-17 for this reason and green locally
+        # every time anybody checked.
+        #
+        # With `<`, the threshold is a cutoff rather than an inclusive bound -
+        # at exactly N minutes the file has been untouched for N minutes and is
+        # stale, which is what "stale after N minutes" says - and the answer no
+        # longer depends on the filesystem's clock resolution.
+        "state": "fresh" if age_minutes < stale_minutes else "stale",
     }
 
 
