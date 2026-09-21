@@ -74,3 +74,12 @@ logs/
 # app/capability_gaps.py). Generated from logs/ on a schedule, and regenerable
 # from it - committing them would version one machine's night.
 reports/
+
+# The Learning Engine's store (app/learning/store.py): episodes, attempts,
+# recipes and lessons. Live local state - what this machine has learned, not
+# what the code is - so it is not versioned, for the same reason
+# model_performance.db is not. LEARNING_DB_PATH moves it; the suite points it at
+# a temporary file (tests/conftest.py).
+learning.db
+learning.db-wal
+learning.db-shm

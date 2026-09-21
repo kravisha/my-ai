@@ -220,6 +220,7 @@ def operator_prompt() -> str:
     the number. A client has never once reported a stale build.
     """
     return (SYSTEM_PROMPT + tools.initiative_paragraph(roles.ROLE_OPERATOR)
+            + tools.learning_paragraph(roles.ROLE_OPERATOR)
             + interface.prompt_paragraph()
             + devchannel.prompt_paragraph() + uiversion.prompt_paragraph())
 

@@ -52,6 +52,7 @@ truthful value.
 """
 
 from app import boundaries, initiative
+from app import learning as learning_package  # noqa: F401 - package docstring is the contract
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
 from gateway import jarvis, repositories, scoreboard, technology
@@ -555,8 +556,228 @@ BOUNDARY_TOOLS = [
     },
 ]
 
+# The Learning Engine's conversational surface (Krish, 2026-09-21; Document 2).
+#
+# Eleven tools rather than one `learning(action=...)`, and the extra schema cost
+# is bought deliberately: this is the surface Krish tests by talking to it, and a
+# single tool with a mode argument is the shape a model gets wrong under
+# pressure. Each one below is a question he actually asks in Document 2 §8.
+#
+# `register_learned_skill` is the only one gated. See its entry in TOOL_RISK.
+LEARNING_TOOLS = [
+    {
+        "name": "explain_how_i_learn",
+        "description": (
+            "Explain your own learning process. Use when asked whether you know "
+            "how to learn, or how you learn. The answer is generated from the "
+            "implementation - the real states, sources, primitives and failure "
+            "classes - so describe what it returns rather than what you think "
+            "the process should be."),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "what_to_learn_next",
+        "description": (
+            "What is worth learning next, ranked, with the evidence behind each. "
+            "Use when asked what you want to learn. Pick one and say why in the "
+            "candidate's own terms - what it prevents today - rather than "
+            "choosing something that sounds impressive."),
+        "input_schema": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "How many. Default 5."}},
+            "required": []},
+    },
+    {
+        "name": "begin_learning",
+        "description": (
+            "Define exactly what you are going to learn, and start an episode. "
+            "This REFUSES a vague objective and tells you which of the seven "
+            "requirements are unmet - that refusal is useful, so read it and "
+            "resubmit rather than reporting failure. Every field matters: the "
+            "cases become the tests, and held-out cases are how you prove you "
+            "learned rather than fitted."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string", "description": "short-kebab-case id"},
+            "cannot_do": {"type": "string", "description": (
+                "the specific thing that fails, with its input. Not a subject "
+                "area - 'learn networking' is refused")},
+            "success_looks_like": {"type": "string", "description": (
+                "the successful behaviour, observably, in at least 8 words")},
+            "inputs": {"type": "array", "items": {"type": "string"}},
+            "outputs": {"type": "array", "items": {"type": "string"},
+                        "description": "the fields it produces, named"},
+            "environment": {"type": "string", "description": (
+                "which machine and OS, and what must be present")},
+            "gap_it_closes": {"type": "string", "description": (
+                "why this is worth learning now rather than later")},
+            "deterministic_possible": {"type": "boolean"},
+            "llm_required": {"type": "boolean", "description": (
+                "answering true is a real answer; do not claim determinism to "
+                "get past the validator")},
+            "cases": {"type": "array", "description": (
+                "checkable properties of the output, not expected values. "
+                "Vocabulary: no_error, rows>=N, rows==N, has_field:NAME, "
+                "field_nonempty:NAME, field_is_int:NAME, "
+                "field_matches:NAME=REGEX, field_between:NAME=LO..HI, "
+                "unique:NAME, sorted_by:NAME, answer_is_int, "
+                "contains_field_value:NAME=VALUE. Mark at least one held_out."),
+                      "items": {"type": "object", "properties": {
+                          "name": {"type": "string"},
+                          "expect": {"type": "string"},
+                          "detail": {"type": "string"},
+                          "held_out": {"type": "boolean"}}}},
+            "competencies": {"type": "array", "items": {"type": "object",
+                "properties": {"name": {"type": "string"},
+                               "why": {"type": "string"},
+                               "already_have": {"type": "boolean"}}}},
+            "dependencies": {"type": "array", "items": {"type": "string"}},
+            "known_failure_modes": {"type": "array", "items": {"type": "string"}},
+            "required_reliability": {"type": "string"}},
+            "required": ["slug", "cannot_do", "success_looks_like", "inputs",
+                         "outputs", "environment", "gap_it_closes",
+                         "deterministic_possible", "llm_required", "cases"]},
+    },
+    {
+        "name": "plan_learning",
+        "description": (
+            "Produce and store the learning plan and your commitment. Returns "
+            "the questions to answer, what you already have, the sources in "
+            "preference order, the sandbox surface, and the criteria for partial "
+            "success and mastery. Do not invent a time estimate; the commitment "
+            "is a condition."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "uncertainties": {"type": "array", "items": {"type": "string"},
+                              "description": "what could prevent or delay this"},
+            "ready_when": {"type": "string", "description": (
+                "the completion condition, if you want to state it in your own "
+                "words rather than the default")}},
+            "required": ["slug"]},
+    },
+    {
+        "name": "record_learning_finding",
+        "description": (
+            "Record something you worked out, and where it came from. Use "
+            "empirical_probe when you ran it and observed the result - that "
+            "outranks every document. Use model_recollection honestly when you "
+            "are recalling rather than checking; it is marked unconfirmed until "
+            "a test rests on it and passes."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "question": {"type": "string"},
+            "answer": {"type": "string"},
+            "source_kind": {"type": "string", "description": (
+                "empirical_probe | jarvis_code_and_tests | local_documentation "
+                "| model_recollection")},
+            "source_ref": {"type": "string", "description": "file, path or command"}},
+            "required": ["slug", "question", "answer", "source_kind"]},
+    },
+    {
+        "name": "propose_skill_recipe",
+        "description": (
+            "Write or revise the skill as a recipe: steps over fixed primitives, "
+            "which run with no model call. Each call stores a new version and "
+            "keeps the old one, so revising after a failure is normal and "
+            "reverting is free. Call explain_how_i_learn for the full "
+            "vocabulary. A step is {op, into, args, note} - `into` names the "
+            "binding the result is stored under, and later steps read it via "
+            "args.from / args.left / args.right."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "name": {"type": "string"},
+            "summary": {"type": "string"},
+            "answer": {"type": "string", "description": (
+                "which binding is the skill's output")},
+            "needs_commands": {"type": "boolean", "description": (
+                "true only if a step runs a program; file reads do not need it")},
+            "steps": {"type": "array", "items": {"type": "object", "properties": {
+                "op": {"type": "string"},
+                "into": {"type": "string"},
+                "args": {"type": "object"},
+                "note": {"type": "string", "description": (
+                    "what you learned at this step - this is what makes the "
+                    "recipe reviewable")}}}},
+            "why": {"type": "string", "description": (
+                "what changed from the last version and why")}},
+            "required": ["slug", "name", "summary", "answer", "steps"]},
+    },
+    {
+        "name": "test_skill",
+        "description": (
+            "Run the recipe against its cases in a sandbox and diagnose any "
+            "failure, with no model call. Stages: 'practice' runs the "
+            "development cases; 'held_out' runs the cases you held back and is a "
+            "separate gate, because passing only what you built against shows "
+            "fitting rather than learning; 'trial' is the controlled real-world "
+            "run. Read the diagnosis before revising - it names the failing step "
+            "and what shape of mistake it is."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "stage": {"type": "string", "enum": ["practice", "held_out", "trial"]}},
+            "required": ["slug", "stage"]},
+    },
+    {
+        "name": "learning_status",
+        "description": (
+            "Where a skill has got to, in plain language: the state, what is "
+            "still missing, the evidence so far, the current approach, and the "
+            "most recent failure with its diagnosis. Use this to answer 'what "
+            "are you learning', 'what failed', 'are you ready to show me'. Omit "
+            "the slug for everything in progress."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"}}, "required": []},
+    },
+    {
+        "name": "demonstrate_skill",
+        "description": (
+            "Show the skill working: run it now on this machine, with its "
+            "output, the test results, the cases that used to fail, the step "
+            "trace, the provenance and the zero-model-call accounting. Refuses "
+            "when there is nothing worth showing and says what is missing. Show "
+            "the actual output - a demonstration described rather than performed "
+            "is the thing Document 2 §6 forbids."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"}}, "required": ["slug"]},
+    },
+    {
+        "name": "record_skill_feedback",
+        "description": (
+            "Record Krish's judgement of a demonstrated skill. Recording is not "
+            "acceptance: if he identified a weakness, revise the recipe and test "
+            "again before asking him to register it."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "verdict": {"type": "string", "description": (
+                "useful | useful_with_changes | not_useful | wrong")},
+            "note": {"type": "string", "description": "what he actually said"}},
+            "required": ["slug", "verdict"]},
+    },
+    {
+        "name": "register_learned_skill",
+        "description": (
+            "Register a skill as learned and usable. This is the one step "
+            "evidence cannot take on its own: set krish_accepted only when he "
+            "has actually said so in this conversation, never by inference from "
+            "passing tests. Tests show it works; only he can say it is what he "
+            "wanted."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"},
+            "krish_accepted": {"type": "boolean", "description": (
+                "true only when he said yes, in words, in this conversation")}},
+            "required": ["slug"]},
+    },
+    {
+        "name": "use_learned_skill",
+        "description": (
+            "Run a skill you have already learned, as an ordinary skill. Costs "
+            "no model call. The run is recorded, so a skill that stops working "
+            "falls to degraded rather than silently returning nothing."),
+        "input_schema": {"type": "object", "properties": {
+            "slug": {"type": "string"}}, "required": ["slug"]},
+    },
+]
+
 TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
-         + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS)
+         + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS + LEARNING_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -614,6 +835,24 @@ TOOL_CAPABILITY = {
     # role. The authority being exercised is to write an argument down, not to
     # act on it; app/initiative.HARMS refuses the latter at every setting.
     "propose_boundary_change": roles.CAP_SCOREBOARD_WRITE,
+    # The Learning Engine, split by what the tool actually does rather than by
+    # subsystem. Reading what I know and running something I already learned is
+    # `system:status` - observe, change nothing. Recording an objective, a
+    # finding, a recipe or a verdict is `scoreboard:write` - put something down
+    # that Krish will decide about later, which is what all of them are. No new
+    # capability, so GRANTS is untouched (see the remote_diagnose note above).
+    "explain_how_i_learn": roles.CAP_SYSTEM_STATUS,
+    "what_to_learn_next": roles.CAP_SYSTEM_STATUS,
+    "learning_status": roles.CAP_SYSTEM_STATUS,
+    "use_learned_skill": roles.CAP_SYSTEM_STATUS,
+    "demonstrate_skill": roles.CAP_SYSTEM_STATUS,
+    "begin_learning": roles.CAP_SCOREBOARD_WRITE,
+    "plan_learning": roles.CAP_SCOREBOARD_WRITE,
+    "record_learning_finding": roles.CAP_SCOREBOARD_WRITE,
+    "propose_skill_recipe": roles.CAP_SCOREBOARD_WRITE,
+    "test_skill": roles.CAP_SCOREBOARD_WRITE,
+    "record_skill_feedback": roles.CAP_SCOREBOARD_WRITE,
+    "register_learned_skill": roles.CAP_SCOREBOARD_WRITE,
     "list_scoreboard_items": roles.CAP_SCOREBOARD_READ,
     "get_scoreboard_item": roles.CAP_SCOREBOARD_READ,
     "add_scoreboard_note": roles.CAP_SCOREBOARD_WRITE,
@@ -730,6 +969,46 @@ TOOL_RISK = {
         reversibility=initiative.RECOVERABLE, reach=initiative.PEER,
         summary="tell the engineer session on this machine something is wrong"),
 
+    # The Learning Engine. Reading and explaining change nothing; recording an
+    # objective or a recipe is reversible and lands where Krish looks; running
+    # the tests happens in a temporary sandbox that is deleted with the attempt.
+    "explain_how_i_learn": dict(**_READ_ONLY, summary="explain how I learn"),
+    "what_to_learn_next": dict(**_READ_ONLY, summary="rank what is worth learning next"),
+    "learning_status": dict(**_READ_ONLY, summary="say where a skill has got to"),
+    "use_learned_skill": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.SYSTEM,
+        summary="run a skill I have already learned"),
+    "begin_learning": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="define what I am going to learn and start an episode"),
+    "plan_learning": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="write the learning plan and commit to a completion condition"),
+    "record_learning_finding": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="record something I worked out, and where it came from"),
+    "propose_skill_recipe": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="write or revise the skill as a recipe; old versions are kept"),
+    "test_skill": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.SYSTEM,
+        summary="run the recipe against its cases in a sandbox and diagnose it"),
+    "demonstrate_skill": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="show the skill working, with its evidence"),
+    "record_skill_feedback": dict(
+        reversibility=initiative.REVERSIBLE, reach=initiative.OWNER,
+        summary="record Krish's judgement of a demonstrated skill"),
+    # Argument-sensitive, and the sharpest entry in this table. Registering a
+    # skill makes it callable, which is authority. With `krish_accepted` it is
+    # authority he granted; without it, it is authority I granted myself - which
+    # is HARM_WIDENS_ITS_OWN_AUTHORITY exactly, and refused at every boldness
+    # setting. See `_risk_for`.
+    "register_learned_skill": dict(
+        reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
+        summary="register a learned skill as usable, on Krish's word",
+        confirmation_argument="krish_accepted"),
+
     # Argument-sensitive, and the only tool here that is. See `_risk_for`.
     "publish_document": dict(
         reversibility=initiative.RECOVERABLE, reach=initiative.SYSTEM,
@@ -763,6 +1042,15 @@ def _risk_for(name: str, arguments: dict) -> initiative.Action:
 
     fields = dict(declared)
     gate = fields.pop("confirmation_argument", None)
+
+    if name == "register_learned_skill" and not arguments.get("krish_accepted"):
+        # Not "propose", which would read as a step to be got past. This IS the
+        # harm: promoting my own work to operational on my own evidence. Refused
+        # with the sentence that says so, and the remedy is to ask him.
+        fields["harms"] = (initiative.HARM_WIDENS_ITS_OWN_AUTHORITY,)
+        fields["summary"] = ("register a skill as learned without Krish having "
+                             "said so")
+
     if name == "publish_document" and arguments.get("confirm_public"):
         fields["reversibility"] = initiative.IRREVERSIBLE
         fields["reach"] = initiative.PUBLIC
@@ -779,6 +1067,236 @@ def initiative_verdict(name: str, arguments: dict) -> tuple:
     the prompt paragraph, which is generated from exactly this."""
     action, confirmed = _risk_for(name, arguments or {})
     return initiative.decide(action), confirmed
+
+
+_LEARNING_TOOL_NAMES = frozenset(tool["name"] for tool in LEARNING_TOOLS)
+
+
+def _execute_learning(name: str, arguments: dict) -> dict:
+    """The Learning Engine's tool calls, in one place.
+
+    Deferred imports, and not for tidiness: `gateway/tools.py` is imported by
+    every Gateway turn, and the learning package opens a SQLite connection on
+    first use. A conversation that never mentions learning should not pay for
+    that, and more importantly should not fail to start because the learning
+    database could not be opened.
+
+    Every refusal comes back as `{"error": ...}` with the reason, never as an
+    exception, for the same reason the rest of this module does: the model has
+    to be able to tell Krish what happened, and a turn that collapses tells him
+    nothing. The refusals here are unusually worth reading - `begin_learning`
+    rejecting a vague objective lists every requirement it missed, which is the
+    difference between an error and a lesson."""
+    from app.learning import default_engine, memory, research
+    from app.learning.engine import candidates, explain_how_i_learn
+    from app.learning.objective import Case, Competency, Objective, ObjectiveRefused
+    from app.learning.recipe import Recipe, RecipeError, Step
+    from app.learning import store as learning_store
+
+    engine = default_engine()
+
+    if name == "explain_how_i_learn":
+        return explain_how_i_learn()
+
+    if name == "what_to_learn_next":
+        found = candidates(int(arguments.get("limit") or 5))
+        return {"candidates": found,
+                "note": ("Ranked by evidence: things asked for and refused "
+                         "outrank limits I hit, which outrank ones I declared "
+                         "myself. Pick one and say why in its own terms.")
+                if found else
+                "Nothing is queued. The declared starters are in app/learning/engine.SEED_CANDIDATES."}
+
+    if name == "begin_learning":
+        try:
+            objective = Objective(
+                slug=str(arguments["slug"]),
+                cannot_do=str(arguments.get("cannot_do", "")),
+                success_looks_like=str(arguments.get("success_looks_like", "")),
+                inputs=tuple(arguments.get("inputs") or ()),
+                outputs=tuple(arguments.get("outputs") or ()),
+                environment=str(arguments.get("environment", "")),
+                gap_it_closes=str(arguments.get("gap_it_closes", "")),
+                deterministic_possible=arguments.get("deterministic_possible"),
+                llm_required=arguments.get("llm_required"),
+                dependencies=tuple(arguments.get("dependencies") or ()),
+                known_failure_modes=tuple(arguments.get("known_failure_modes") or ()),
+                required_reliability=str(arguments.get("required_reliability", "")),
+                cases=tuple(Case(name=str(c.get("name")), expect=str(c.get("expect")),
+                                 detail=str(c.get("detail", "")),
+                                 held_out=bool(c.get("held_out")))
+                            for c in arguments.get("cases") or ()),
+                competencies=tuple(Competency(
+                    name=str(c.get("name")), why=str(c.get("why", "")),
+                    already_have=bool(c.get("already_have")))
+                    for c in arguments.get("competencies") or ()))
+        except ObjectiveRefused as vague:
+            return {"error": str(vague), "refused_by": "objective_validator"}
+        except (KeyError, TypeError, ValueError) as bad:
+            return {"error": f"the objective could not be read: {bad}"}
+        return {"begun": engine.begin(objective),
+                "what_i_already_have": __import__(
+                    "app.learning.objective", fromlist=["coverage"]).coverage(objective)}
+
+    slug = str(arguments.get("slug") or "")
+
+    try:
+        if name == "plan_learning":
+            return engine.plan(
+                slug,
+                uncertainties=tuple(arguments.get("uncertainties") or ()),
+                ready_when=arguments.get("ready_when"))
+
+        if name == "record_learning_finding":
+            try:
+                finding = research.Finding(
+                    question=str(arguments["question"]),
+                    answer=str(arguments["answer"]),
+                    source_kind=str(arguments["source_kind"]),
+                    source_ref=str(arguments.get("source_ref", "")))
+            except ValueError as bad:
+                return {"error": str(bad)}
+            return {"recorded": engine.record_finding(slug, finding),
+                    "provenance": research.provenance(
+                        learning_store.get_episode(slug)["id"])}
+
+        if name == "propose_skill_recipe":
+            try:
+                recipe = Recipe(
+                    name=str(arguments["name"]),
+                    version=0,
+                    summary=str(arguments.get("summary", "")),
+                    answer=str(arguments["answer"]),
+                    needs_commands=bool(arguments.get("needs_commands")),
+                    steps=tuple(Step(op=str(step.get("op")),
+                                     into=str(step.get("into")),
+                                     args=dict(step.get("args") or {}),
+                                     note=str(step.get("note", "")))
+                                for step in arguments.get("steps") or ()))
+            except (RecipeError, KeyError, TypeError) as bad:
+                return {"error": str(bad), "refused_by": "recipe_validator"}
+            version = engine.propose_recipe(slug, recipe,
+                                            why=str(arguments.get("why", "")))
+            return {"version": version, "steps": len(recipe.steps),
+                    "how_it_works": recipe.as_plain_language(),
+                    "next": "test_skill with stage 'practice'"}
+
+        if name == "test_skill":
+            stage = str(arguments.get("stage") or "practice")
+            runner = {"practice": engine.practise, "held_out": engine.examine,
+                      "trial": engine.trial}.get(stage)
+            if runner is None:
+                return {"error": f"stage={stage!r} is not practice, held_out or trial"}
+            outcomes = runner(slug)
+            status = engine.status(slug)
+            return {"stage": stage, "outcomes": outcomes,
+                    "passed": len([o for o in outcomes if o["passed"]]),
+                    "of": len(outcomes),
+                    "state": status["state"], "missing": status["missing"]}
+
+        if name == "learning_status":
+            if not slug:
+                return {"episodes": [
+                    {"slug": episode["slug"],
+                     **{key: engine.status(episode["slug"])[key]
+                        for key in ("state", "means", "missing")}}
+                    for episode in learning_store.list_episodes()]}
+            return {**engine.status(slug), "in_plain_language": engine.narrate(slug)}
+
+        if name == "demonstrate_skill":
+            return engine.demonstrate(slug)
+
+        if name == "record_skill_feedback":
+            return engine.feedback(slug, verdict=str(arguments.get("verdict", "")),
+                                   note=arguments.get("note"))
+
+        if name == "register_learned_skill":
+            # The initiative gate above already refused this without
+            # `krish_accepted`; reaching here means he said so.
+            outcome = engine.accept(slug)
+            if outcome.get("registered"):
+                outcome["lessons_kept"] = memory.learn_from_episode(slug)
+                outcome["meta"] = memory.meta_report()
+            return outcome
+
+        if name == "use_learned_skill":
+            status = engine.status(slug)
+            if status.get("state") not in ("learned", "degraded"):
+                return {"error": (f"{slug} is {status.get('state')}, not learned. "
+                                  f"Still missing: "
+                                  f"{'; '.join(status.get('missing') or [])}")}
+            return engine.run_operationally(slug)
+    except ValueError as bad:
+        return {"error": str(bad)}
+
+    return {"error": f"no handler for {name}"}  # pragma: no cover
+
+
+def learning_paragraph(role: str) -> str:
+    """What the assistant is told about its own learning, generated from the code.
+
+    The order matters more than the tool list, which is why this exists
+    separately from `initiative_paragraph`: the tools are individually obvious
+    and the *sequence* is not, and a model that demonstrates before it has held
+    out a case has skipped the only step that distinguishes learning from
+    fitting.
+
+    Generated from `app.learning` rather than typed, on the convention
+    `gateway/devchannel.py` states: a prompt that promises what the code refuses
+    is a model being called a liar by its own tools. The state names come from
+    `mastery.STATES` and the count of primitives from `recipe.OPS`."""
+    if not any(tool["name"] == "explain_how_i_learn" for tool in for_role(role)):
+        return ""
+
+    from app.learning import mastery, recipe as recipe_module
+
+    return "\n".join([
+        "",
+        "## Learning a new skill",
+        "",
+        "You can learn capabilities you do not have. A learned skill is a "
+        "**recipe** - a list of steps over "
+        f"{len(recipe_module.OPS)} fixed primitives - which runs with no model "
+        "call at all. You compose primitives; you cannot add one, and you cannot "
+        "widen the sandbox. When a skill genuinely needs something that does not "
+        "exist, that is a boundary proposal.",
+        "",
+        "The order is not optional, because each step is the evidence for the "
+        "next one:",
+        "",
+        "1. `what_to_learn_next`, then pick one and say why in its own terms.",
+        "2. `begin_learning` - and expect the first objective to be refused. "
+        "Vague is rejected with every reason listed; read them and resubmit "
+        "rather than reporting that you could not start. **Hold at least one "
+        "case back.**",
+        "3. `plan_learning`. Commit to a condition, never to a made-up duration.",
+        "4. `record_learning_finding` as you work things out. Say "
+        "`empirical_probe` when you ran it and saw the result, and "
+        "`model_recollection` honestly when you are remembering - the second is "
+        "marked unconfirmed until a test rests on it.",
+        "5. `propose_skill_recipe`, then `test_skill` with stage `practice`. "
+        "**Expect to be wrong first.** Read the diagnosis - it names the failing "
+        "step and the shape of the mistake - and revise. Each version is kept, so "
+        "revising costs nothing.",
+        "6. `test_skill` with `held_out`, then `trial`.",
+        "7. `demonstrate_skill`, and show the actual output. A demonstration "
+        "described rather than performed is not one.",
+        "8. `record_skill_feedback`, and act on it if he found a weakness.",
+        "9. `register_learned_skill` **only when he has said yes in words**. "
+        "Registering without that is refused as granting yourself authority, and "
+        "correctly so.",
+        "",
+        f"There are {len(mastery.STATES)} states and you cannot set any of them - "
+        "the state is computed from what is recorded, so you cannot say a skill "
+        "is learned. Report the state you are in, including "
+        "`partially_functional` and `needs_retraining`. An accurate incomplete "
+        "status is always better than a false success, and saying \"I have "
+        "learned it\" before he has accepted it is simply untrue.",
+        "",
+        "Use `learning_status` to answer what you are learning, what failed, what "
+        "changed after the failure, and whether you are ready to show him.",
+        "",
+    ])
 
 
 def initiative_paragraph(role: str) -> str:
@@ -1005,6 +1523,9 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
             # a machine could not be reached - which is what a silent empty
             # result would look like, and it is a different and worse claim.
             return remote.diagnose(arguments.get("target"))
+
+        if name in _LEARNING_TOOL_NAMES:
+            return _execute_learning(name, arguments)
 
         if name == "propose_boundary_change":
             try:

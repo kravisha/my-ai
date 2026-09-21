@@ -562,6 +562,33 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         # An agent that can argue for more authority and one that can take it
         # are different animals, and only the first can be told to be bold.
         "propose_boundary_change",
+        # The eleven Learning Engine tools, added 2026-09-21 on Krish's two
+        # specification documents. They are BUILT, in `app/learning/`, and the
+        # bar this assertion guards is the one that makes a self-improving
+        # subsystem safe to hand a conversational surface:
+        #
+        #   **A learned skill is data, not code, and registering one needs him.**
+        #
+        # A recipe is a list of steps over primitives fixed in
+        # app/learning/recipe.py, run by an interpreter with no provider and no
+        # network, inside a sandbox whose two allow-lists Jarvis cannot extend.
+        # `register_learned_skill` without `krish_accepted` is classified as
+        # HARM_WIDENS_ITS_OWN_AUTHORITY and refused at every boldness setting -
+        # tests/test_learning.py holds that line, and the mastery state is
+        # computed from recorded evidence so there is no function that can claim
+        # a skill is learned.
+        "explain_how_i_learn",
+        "what_to_learn_next",
+        "begin_learning",
+        "plan_learning",
+        "record_learning_finding",
+        "propose_skill_recipe",
+        "test_skill",
+        "learning_status",
+        "demonstrate_skill",
+        "record_skill_feedback",
+        "register_learned_skill",
+        "use_learned_skill",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so

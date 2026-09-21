@@ -79,6 +79,12 @@ _SESSION_DB_DIR = Path(tempfile.mkdtemp(prefix="my-ai-test-fi-db-"))
 os.environ["FI_DB_PATH"] = str(_SESSION_DB_DIR / "financial_intelligence.db")
 os.environ["GATEWAY_DB_PATH"] = str(_SESSION_DB_DIR / "gateway.db")
 os.environ["MODEL_CALL_LOG_DIR"] = str(_SESSION_DB_DIR / "logs")
+# LEARNING_DB_PATH: the Learning Engine's store. Redirected for the same reason
+# as the two databases above and one of its own - a test that runs a learning
+# episode would otherwise put practice attempts and half-built recipes into the
+# store Jarvis reports his own progress from, and "I have learned 40 skills"
+# would be the suite talking.
+os.environ["LEARNING_DB_PATH"] = str(_SESSION_DB_DIR / "learning.db")
 
 
 def real_database_fingerprint() -> dict[str, str | None]:
