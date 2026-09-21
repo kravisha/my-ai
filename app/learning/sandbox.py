@@ -96,8 +96,6 @@ READ_PATTERNS = (
     "/sys/class/net/*",
     "/sys/class/net/*/*",
     # process identity, and only identity
-    "/proc/*/fd",
-    "/proc/*/fd/*",
     "/proc/*/comm",
     "/proc/*/cmdline",
     "/proc/*/stat",
@@ -116,6 +114,25 @@ READ_PATTERNS = (
 # explicit list because the cost of one wrong wildcard here is every credential
 # on the machine, and a deny-list checked after the allow-list is the cheapest
 # insurance against that.
+# Paths whose **link target** may be read but whose **contents** may not.
+#
+# `/proc/<pid>/fd/<n>` is the only way to map a socket to a process, so the first
+# exercise cannot exist without `read_link` on it. Reading it as a *file*,
+# however, returns the contents of whatever that descriptor points at - and a
+# review of this module found exactly that: `read_file("/proc/self/fd/3")`
+# returned a `.env` that `read_file(".../.env")` had just refused. The deny-list
+# was intact and had been walked around through a descriptor.
+#
+# So the capability is split. `read_link` reads these; `read_file` never does,
+# whatever the deny-list says about the target, because the target is not
+# knowable from the pattern.
+LINK_ONLY_PATTERNS = (
+    "/proc/*/fd",
+    "/proc/*/fd/*",
+    "/proc/*/cwd",
+    "/proc/*/exe",
+)
+
 DENIED_PATTERNS = (
     "/proc/*/environ", "/proc/*/mem", "/proc/*/maps", "/proc/*/smaps",
     "/proc/*/root/**", "/proc/*/cwd/**", "/proc/*/task/**",
@@ -326,6 +343,14 @@ class Sandbox:
         return Path(raw)
 
     def read_file(self, path: str) -> str:
+        raw = os.path.abspath(os.path.normpath(str(path)))
+        if any(self._segments_match(pattern, raw)
+               for pattern in LINK_ONLY_PATTERNS):
+            raise SandboxRefusal(
+                f"{raw} is a file descriptor, and its contents are whatever it "
+                f"points at - which is how a deny-listed file gets read through a "
+                f"descriptor that is not deny-listed. Follow it with a link read "
+                f"instead; that is what the socket mapping needs and all it needs.")
         target = self._permitted(path)
         try:
             with target.open("rb") as handle:
@@ -363,7 +388,7 @@ class Sandbox:
         if not any(self._segments_match(allowed, os.path.abspath(
                 os.path.normpath(pattern))) or self._segments_match(
                 os.path.abspath(os.path.normpath(pattern)), allowed)
-                for allowed in READ_PATTERNS):
+                for allowed in READ_PATTERNS + LINK_ONLY_PATTERNS):
             raise SandboxRefusal(
                 f"listing {pattern} is not permitted: it does not overlap any of "
                 f"the declared readable path patterns.")
@@ -376,7 +401,7 @@ class Sandbox:
         kept = []
         for candidate in found:
             try:
-                self._permitted(candidate)
+                self._permitted_link(candidate)
             except SandboxRefusal:
                 continue
             kept.append(candidate)
@@ -384,13 +409,25 @@ class Sandbox:
                            "matched": len(kept)})
         return kept
 
+    def _permitted_link(self, path: str) -> Path:
+        """A link whose target may be *named*, though not read.
+
+        Separate from `_permitted` because the two permit different things: this
+        admits the descriptor patterns above, and `_permitted` deliberately does
+        not."""
+        raw = os.path.abspath(os.path.normpath(str(path)))
+        if any(self._segments_match(pattern, raw)
+               for pattern in LINK_ONLY_PATTERNS):
+            return Path(raw)
+        return self._permitted(path)
+
     def read_link(self, path: str) -> str | None:
         """A symlink's target, or None when it is not one or has gone.
 
         None rather than an exception because `/proc/<pid>/fd` is full of links
         belonging to processes that exit while you are reading, and that is the
         normal case rather than an error."""
-        target = self._permitted(path)
+        target = self._permitted_link(path)
         try:
             return os.readlink(target)
         except OSError:
@@ -407,7 +444,23 @@ class Sandbox:
         if not argv or not isinstance(argv, list):
             raise SandboxRefusal("a command is an argv list, never a string - "
                                  "there is no shell here to split one.")
-        program = os.path.basename(str(argv[0])).lower()
+        requested = str(argv[0])
+        if os.sep in requested or (os.altsep and os.altsep in requested):
+            # A REVIEW OF THIS MODULE FOUND THIS EXACT HOLE. The allow-list
+            # checked `basename(argv[0])` and then executed the path as given,
+            # so `run(["/tmp/anywhere/ss"])` ran a planted script and returned
+            # its output - the "read-only programs only" guarantee defeated by
+            # naming a file after one of them.
+            #
+            # A bare name only, resolved through PATH below and executed as the
+            # absolute path that resolution produced. There is no legitimate
+            # recipe that needs to name a directory.
+            raise SandboxRefusal(
+                f"{requested!r} names a path. A recipe may run a program by bare "
+                f"name only - the name is what is allow-listed, and executing a "
+                f"path the caller chose would let any file named after an "
+                f"allowed program run instead of it.")
+        program = requested.lower()
         program = program[:-4] if program.endswith(".exe") else program
         if program not in COMMANDS:
             raise SandboxRefusal(
@@ -421,14 +474,16 @@ class Sandbox:
                 raise SandboxRefusal(
                     f"{argument!r} is refused: it is how a read-only program "
                     f"stops being one.")
-        if shutil.which(argv[0]) is None:
+        resolved = shutil.which(requested)
+        if resolved is None:
             raise SandboxRefusal(
-                f"{argv[0]!r} is permitted but is not installed on this machine. "
-                f"That is a fact about the environment rather than a policy "
-                f"refusal, and a skill that needs it should say so.")
+                f"{requested!r} is permitted but is not installed on this "
+                f"machine. That is a fact about the environment rather than a "
+                f"policy refusal, and a skill that needs it should say so.")
         try:
             completed = subprocess.run(  # noqa: S603 - argv, no shell, allow-listed
-                [str(part) for part in argv],
+                # The RESOLVED absolute path, not what the caller wrote.
+                [resolved] + [str(part) for part in argv[1:]],
                 capture_output=True, text=True, timeout=self.timeout,
                 shell=False, cwd=str(self.directory) if self.directory else None,
             )
@@ -455,6 +510,7 @@ def describe() -> dict:
     """What the sandbox permits, for the learning plan and for a tool result."""
     return {
         "read_patterns": list(READ_PATTERNS),
+        "link_only_patterns": list(LINK_ONLY_PATTERNS),
         "denied_patterns": list(DENIED_PATTERNS),
         "commands": list(COMMANDS),
         "timeout_seconds": DEFAULT_TIMEOUT,

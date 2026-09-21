@@ -347,6 +347,22 @@ def log_path() -> Path:
     return log_dir() / LOG_FILE_NAME
 
 
+def retention_days() -> int:
+    """How many days of rotated logs to keep.
+
+    Read from `config/router.yaml` rather than the constant below, which is what
+    §3.2 asked for and what the config file has documented since it was written -
+    the value was validated and exposed and then never consulted, so editing it
+    did nothing. Falls back to the constant when the config cannot be read,
+    because a log write must not fail on a policy file."""
+    try:
+        from app import router_config
+
+        return int(router_config.retention_days())
+    except Exception:  # noqa: BLE001 - telemetry never fails on configuration
+        return RETENTION_DAYS
+
+
 def _rotate(path: Path, today: str) -> None:
     """Daily rotation, keeping 30 days, done at write time.
 
@@ -377,7 +393,8 @@ def _rotate(path: Path, today: str) -> None:
 
 
 def _prune(directory: Path, stem: str, suffix: str, today: str) -> None:
-    cutoff = (datetime.fromisoformat(today).date() - timedelta(days=RETENTION_DAYS))
+    cutoff = (datetime.fromisoformat(today).date()
+              - timedelta(days=retention_days()))
     for candidate in directory.glob(f"{stem}-*{suffix}"):
         try:
             day = datetime.fromisoformat(candidate.stem[len(stem) + 1:]).date()
@@ -545,6 +562,14 @@ def record_call(handler: str, snapshot: Snapshot | None = None):
     recording = Recording(taken, handler)
     try:
         yield recording
+    except GeneratorExit:
+        # The caller stopped consuming a stream - a closed browser tab, most
+        # often. That is not an error, and recording it as one inflated the
+        # nightly report's error count with every abandoned reply. The call is
+        # still recorded, with what it managed to produce.
+        recording.outcome(OUTCOME_SUCCESS, "the caller stopped reading the stream")
+        recording._emit()
+        raise
     except BaseException as bad:
         recording.outcome(classify(bad), f"{type(bad).__name__}: {bad}")
         recording._emit()

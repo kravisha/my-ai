@@ -28,7 +28,7 @@ authority nothing earned.
 
 from __future__ import annotations
 
-from app.learning import store
+from app.learning import practice, store
 
 # Lesson kinds. Closed, because `meta_report` groups on them.
 FAILURE_PATTERN = "failure_pattern"
@@ -110,7 +110,13 @@ def learn_from_episode(slug: str) -> list[dict]:
         if rung:
             rungs[rung] = rungs.get(rung, 0) + 1
     if rungs:
-        cheapest = min(rungs, key=lambda name: list(rungs).index(name))
+        # Cheapest ON THE LADDER, not first inserted. `list(rungs).index` is
+        # insertion order, so an episode whose first failure escalated would have
+        # reported `external_model` as its cheapest rung - the opposite of what
+        # this lesson is for. `practice.RESOLUTIONS` is the ordering.
+        cheapest = min(rungs, key=lambda name: (
+            practice.RESOLUTIONS.index(name)
+            if name in practice.RESOLUTIONS else len(practice.RESOLUTIONS)))
         written.append({
             "kind": TECHNIQUE, "pattern": "diagnosis_resolution",
             "lesson": (f"on {slug}, failures were resolved at: "

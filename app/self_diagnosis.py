@@ -115,8 +115,14 @@ def analyse(records: list[dict]) -> dict:
         "requests": len(by_request),
         "local_calls": len(local),
         "remote_calls": len(remote),
-        "escalations": [r for r in remote
-                        if r.get("escalation_reason") != model_calls.REASON_NOT_APPLICABLE],
+        # EVERY remote call, not only the ones carrying an escalation reason.
+        # Filtering on the reason excluded exactly the router-bypass case - a
+        # direct call has no reason - so the report could say "1 of 0
+        # escalation(s) could plausibly have stayed local", which is both
+        # nonsense and specifically wrong in the case the whole log exists to
+        # surface. A call that reached the remote model IS an escalation,
+        # whatever it recorded about why.
+        "escalations": remote,
         "avoidable": avoidable_escalations(records, by_request),
         "direct_calls": direct,
         "quota_events": quota,
@@ -503,6 +509,10 @@ def due(now: datetime | None = None, last_run: datetime | None = None) -> bool:
     a machine that was asleep at 03:00. `last_run` is passed in by the caller
     that knows, and a report already written today is not written twice."""
     moment = now or datetime.now()
+    # Compared in local time, which is what config/router.yaml documents. A
+    # caller holding a UTC instant converts first; `run_if_due` does.
+    if moment.tzinfo is not None:
+        moment = moment.astimezone()
     if moment.hour < router_config.self_diagnosis_hour():
         return False
     if last_run is not None and last_run.date() >= moment.date():
@@ -520,19 +530,28 @@ def run_if_due(now: datetime | None = None, directory: Path | None = None) -> li
     target = directory or reports_dir()
     written = []
 
+    # THE HOUR IS LOCAL, AND THE WINDOW IS UTC, and conflating them shifted the
+    # report by the machine's offset. config/router.yaml documents
+    # `self_diagnosis.hour` as local time and `due()` compares a naive local
+    # clock, but this function works in UTC so it can slice the call log - which
+    # is UTC because that is what the log stores. So the schedule check gets a
+    # local view of the same instant and the reporting window keeps its UTC one.
+    local_moment = (moment.astimezone() if moment.tzinfo is not None
+                    else moment)
+
     nightly_path = target / f"self_diagnosis_{moment.date().isoformat()}.md"
-    if not nightly_path.exists() and due(moment):
+    if not nightly_path.exists() and due(local_moment):
         written.append(nightly(moment, target))
 
     if moment.weekday() == router_config.weekly_weekday():
         week = moment.isocalendar()
         weekly_path = target / f"self_diagnosis_weekly_{week[0]}-W{week[1]:02d}.md"
-        if not weekly_path.exists() and due(moment):
+        if not weekly_path.exists() and due(local_moment):
             written.append(weekly(moment, target))
 
     month = moment.strftime("%Y-%m")
     audit_path = target / f"skills_audit_{month}.md"
-    if moment.day == 1 and not audit_path.exists() and due(moment):
+    if moment.day == 1 and not audit_path.exists() and due(local_moment):
         written.append(capability_gaps.monthly_report(month, target))
 
     # The boundary register's monthly case (Krish, 2026-09-21). Alongside the
@@ -542,7 +561,7 @@ def run_if_due(now: datetime | None = None, directory: Path | None = None) -> li
     # module keeps its other cross-imports shallow - self_diagnosis is imported
     # by the briefing, which must stay cheap.
     boundaries_path = target / f"boundaries_{month}.md"
-    if moment.day == 1 and not boundaries_path.exists() and due(moment):
+    if moment.day == 1 and not boundaries_path.exists() and due(local_moment):
         from app import boundaries
 
         written.append(boundaries.report(month, target))

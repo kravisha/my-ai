@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import capability_gaps, confidence, model_calls, retry_queue, self_diagnosis
+from app import (capability_gaps, confidence, model_calls, retry_queue,
+                 router_config, self_diagnosis)
 
 
 @pytest.fixture(autouse=True)
@@ -157,6 +158,66 @@ def test_the_avoidable_table_carries_the_three_columns_the_task_asked_for(_isola
 
 
 # --- quota, errors, latency ---------------------------------------------------------
+
+
+def test_a_direct_call_is_an_escalation_so_the_two_counts_can_be_compared(_isolated):
+    """The report could say *"1 of 0 escalation(s) could plausibly have stayed
+    local"*, which is nonsense, and specifically wrong in the one case the log
+    exists to surface: a direct call records no escalation reason, so filtering
+    on the reason excluded exactly the router bypass that is always avoidable.
+
+    A call that reached the remote model IS an escalation, whatever it recorded
+    about why."""
+    records = [_call(routed_by=model_calls.ROUTED_BY_DIRECT,
+                     escalation_reason=model_calls.REASON_NOT_APPLICABLE,
+                     user_request_summary="summarise my week")]
+    analysis = self_diagnosis.analyse(records)
+
+    assert len(analysis["escalations"]) == 1
+    assert len(analysis["avoidable"]) <= len(analysis["escalations"])
+
+    _seed(_isolated, records)
+    text = self_diagnosis.nightly(directory=_isolated / "reports").read_text(
+        encoding="utf-8")
+    assert "of 0 escalation" not in text
+    assert "1 of 1" in text
+
+
+def test_the_queue_summary_is_current_state_rather_than_history(_isolated):
+    """The brief says *"N request(s) are queued to retry"*. Counting the raw
+    log lines meant a request queued and then retried still counted as queued,
+    so that number could only ever grow - and a number that never comes down is
+    a number nobody acts on."""
+    retry_queue.enqueue(request_id="req-1", reason="remote capacity exhausted")
+    assert retry_queue.summary()["queued"] == 1
+
+    retry_queue.mark("req-1", retry_queue.STATUS_RETRIED)
+
+    after = retry_queue.summary()
+    assert after["queued"] == 0
+    assert after["retried"] == 1
+
+
+def test_the_schedule_hour_is_local_whatever_zone_the_caller_holds(_isolated):
+    """`config/router.yaml` documents `self_diagnosis.hour` as local time and
+    `due()` compares a naive local clock - but `run_if_due` works in UTC so it
+    can slice the call log, and passing that instant straight through shifted
+    the report by the machine's offset.
+
+    Asserted on two spellings of the *same instant*, so it holds in any
+    timezone including the UTC of CI."""
+    hour = router_config.self_diagnosis_hour()
+    if hour < 2:
+        pytest.skip(f"self_diagnosis.hour is {hour}; nothing is below it")
+
+    here = datetime.now().astimezone().replace(
+        hour=hour, minute=30, second=0, microsecond=0)
+    elsewhere = here.astimezone(timezone(here.utcoffset() - timedelta(hours=2)))
+
+    assert elsewhere.hour == hour - 2, "the same instant, an earlier wall clock"
+    assert self_diagnosis.due(here) is True
+    assert self_diagnosis.due(elsewhere) is True
+    assert self_diagnosis.due(here.astimezone(timezone.utc)) is True
 
 
 def test_quota_events_report_what_the_user_saw(_isolated):

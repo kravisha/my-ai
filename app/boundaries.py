@@ -308,7 +308,8 @@ def register(rows: list[dict] | None = None) -> list[dict]:
             "first_raised": group[0].get("timestamp"),
             "last_raised": newest.get("timestamp"),
             # The join that makes a proposal an argument rather than an opinion.
-            "related_requests": gap_counts.get(key, 0),
+            "related_requests": _related_requests(newest["constraint"],
+                                                  gap_counts),
         })
 
     return sorted(
@@ -336,6 +337,28 @@ def _gap_evidence() -> dict[str, int]:
             continue
         counts[needed] = counts.get(needed, 0) + 1
     return counts
+
+
+def _related_requests(constraint: str, gap_counts: dict[str, int]) -> int:
+    """How many recorded requests this constraint plausibly accounts for.
+
+    Loose, as the docstring above has always said and as the code did not do: it
+    was exact string equality, so a constraint worded even slightly differently
+    from the gap scored zero and `related_requests` dropped out of the ranking
+    key entirely - which removed the one piece of evidence that makes a proposal
+    an argument rather than an opinion.
+
+    Containment in either direction, on the normalised forms. A miss understates
+    a case; a false hit is visible to anybody reading the two entries side by
+    side, which is the trade the original comment described."""
+    key = _key(constraint)
+    if not key:
+        return 0
+    total = 0
+    for needed, count in gap_counts.items():
+        if key == needed or key in needed or needed in key:
+            total += count
+    return total
 
 
 # --- what reaches Krish --------------------------------------------------------

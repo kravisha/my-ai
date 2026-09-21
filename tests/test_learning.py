@@ -19,6 +19,9 @@ found real holes: `/proc/net` resolves through a symlink, `fnmatch`'s `*` crosse
 """
 
 import json
+import os
+import pathlib
+import shutil
 
 import pytest
 
@@ -208,6 +211,67 @@ def test_a_refusal_says_that_widening_the_list_is_a_boundary_proposal():
     with sandbox_module.Sandbox() as box:
         with pytest.raises(sandbox_module.SandboxRefusal, match="boundary"):
             box.read_file("/etc/hosts")
+
+
+def test_a_descriptor_is_not_a_readable_file_however_permitted_the_link_is():
+    """The second security probe of this module found this, and none of the
+    tests above did.
+
+    `/proc/<pid>/fd/<n>` has to be reachable: it is the only way to map a socket
+    to the process that owns it, which is the first exercise. But reading it as
+    a *file* returns the contents of whatever the descriptor points at, so
+    `read_file("/proc/self/fd/3")` returned a `.env` that `read_file` had just
+    refused by name. The deny-list was intact and had been walked around."""
+    assert not any(pattern.startswith("/proc/*/fd")
+                   for pattern in sandbox_module.READ_PATTERNS)
+    assert "/proc/*/fd/*" in sandbox_module.LINK_ONLY_PATTERNS
+
+
+@pytest.mark.skipif(not pathlib.Path("/proc/self/fd").is_dir(),
+                    reason="the descriptor route only exists where /proc is")
+def test_the_descriptor_route_is_closed_and_the_socket_mapping_still_works(tmp_path):
+    """Both halves matter. Closing the hole by removing the pattern entirely
+    would have taken the socket-to-process join with it, which is the skill."""
+    secret = tmp_path / ".env"
+    secret.write_text("KIMI_API_KEY=sk-not-a-real-key\n", encoding="utf-8")
+
+    with sandbox_module.Sandbox() as box:
+        with pytest.raises(sandbox_module.SandboxRefusal):
+            box.read_file(str(secret))
+        with secret.open("rb") as handle:
+            descriptor = f"/proc/self/fd/{handle.fileno()}"
+            with pytest.raises(sandbox_module.SandboxRefusal, match="descriptor"):
+                box.read_file(descriptor)
+            assert pathlib.Path(box.read_link(descriptor)).resolve() == \
+                secret.resolve(), "the link target is still readable"
+
+
+@pytest.mark.parametrize("named", [
+    "/tmp/planted/ss", "./ss", "../bin/ps", "subdir/netstat",
+])
+def test_a_program_may_be_named_but_never_pathed(named):
+    """The other hole from the same probe. The allow-list checked
+    `basename(argv[0])` and then executed `argv` as written, so
+    `run(["/tmp/anywhere/ss"])` ran a planted script and returned its output -
+    "read-only programs only" defeated by naming a file after one of them."""
+    with sandbox_module.Sandbox(allow_commands=True) as box:
+        with pytest.raises(sandbox_module.SandboxRefusal, match="names a path"):
+            box.run([named])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="plants an executable script")
+def test_a_file_named_after_an_allowed_program_does_not_get_to_be_it(tmp_path):
+    """The repro, kept. `ps` is on the allow-list; a file called `ps` is not."""
+    planted = tmp_path / "ps"
+    planted.write_text("#!/bin/sh\necho PWNED\n", encoding="utf-8")
+    planted.chmod(0o755)
+
+    with sandbox_module.Sandbox(allow_commands=True) as box:
+        with pytest.raises(sandbox_module.SandboxRefusal):
+            box.run([str(planted)])
+        if shutil.which("ps"):
+            assert "PWNED" not in box.run(["ps"]), \
+                "PATH resolution decides which ps runs, not the caller"
 
 
 def test_the_practice_directory_is_removed_with_the_sandbox():
@@ -693,6 +757,25 @@ def test_a_lesson_seen_twice_is_counted_rather_than_duplicated():
     assert len(lessons) == 1 and lessons[0]["times_seen"] == 2
 
 
+def test_the_cheapest_rung_reported_is_the_cheapest_on_the_ladder():
+    """`list(rungs).index` is insertion order, not cost order, so an episode
+    whose *first* failure had to escalate reported `external_model` as its
+    cheapest rung - the exact opposite of what this lesson is for."""
+    episode_id = store.create_episode("rungs", {"slug": "rungs"}, origin="test")
+    for resolution in (practice.EXTERNAL_MODEL, practice.DETERMINISTIC_REASONING):
+        store.record_attempt(
+            episode_id, kind=store.KIND_PRACTICE, passed=False, case_name="c",
+            diagnosis={"failure_class": practice.IMPLEMENTATION_BUG,
+                       "resolution": resolution})
+    store.record_attempt(episode_id, kind=store.KIND_PRACTICE, passed=True,
+                         case_name="c")
+
+    lesson = next(item for item in memory.learn_from_episode("rungs")
+                  if item["pattern"] == "diagnosis_resolution")
+    assert lesson["lesson"].endswith(
+        f"Cheapest rung used: {practice.DETERMINISTIC_REASONING}")
+
+
 def test_what_paid_off_is_recorded_after_an_episode():
     engine = engine_module.default_engine()
     _learn_it(engine)
@@ -785,6 +868,23 @@ def test_the_acceptance_conversation_runs_through_the_tools():
     assert _call("register_learned_skill",
                  {"slug": SLUG, "krish_accepted": True})["registered"]
     assert _call("use_learned_skill", {"slug": SLUG})["ok"]
+
+
+def test_registering_through_the_tool_counts_each_lesson_once():
+    """`meta_report` is entirely frequency claims - *"this has come up 14
+    times"* - so a lesson incremented twice per registration made the one thing
+    meta-learning says wrong by a factor of two. `engine.accept` writes the
+    lessons; the tool reads them back rather than re-deriving them."""
+    engine = engine_module.default_engine()
+    _learn_it(engine)
+
+    registered = _call("register_learned_skill",
+                       {"slug": SLUG, "krish_accepted": True})
+
+    assert registered["registered"]
+    assert registered["lessons_kept"], "the tool still reports what was learned"
+    assert all(lesson["times_seen"] == 1 for lesson in store.lessons()), \
+        [(item["pattern"], item["times_seen"]) for item in store.lessons()]
 
 
 def test_an_unlearned_skill_cannot_be_used():

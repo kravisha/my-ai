@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import model_calls
+from app import model_calls, router_config
 
 
 @pytest.fixture(autouse=True)
@@ -299,6 +299,57 @@ def test_yesterdays_file_is_rotated_and_old_ones_are_pruned(_isolated_log):
     assert rotated.exists(), "yesterday's lines moved to a dated file"
     assert not ancient.exists(), "a file older than the retention window is pruned"
     assert len(_written(_isolated_log)) == 1, "today's file holds only today"
+
+
+def test_a_caller_who_stops_reading_a_stream_is_not_an_error(_isolated_log):
+    """A closed browser tab throws `GeneratorExit` into the generator, which
+    the generic handler classified as a failure - so every abandoned reply
+    inflated the nightly report's error count. The call is still recorded, with
+    what it managed to produce."""
+    wrapped = model_calls.InstrumentedProvider(_Local())
+    stream = wrapped.stream("sys", [], [])
+    assert next(stream)["type"] == "text"
+
+    stream.close()
+
+    record = _written(_isolated_log)[0]
+    assert record["outcome"] == model_calls.OUTCOME_SUCCESS
+    assert "stopped reading" in record["error_detail"]
+
+
+def test_the_configured_retention_window_is_the_one_that_prunes(_isolated_log,
+                                                                tmp_path,
+                                                                monkeypatch):
+    """`logging.retention_days` was validated, exposed, documented - and never
+    read, so editing `config/router.yaml` did nothing. A policy file that is
+    ignored is not a policy."""
+    config = tmp_path / "router.yaml"
+    config.write_text("logging:\n  retention_days: 3\n", encoding="utf-8")
+    monkeypatch.setenv(router_config.PATH_ENV, str(config))
+    assert model_calls.retention_days() == 3
+
+    import os
+
+    _isolated_log.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    within = _isolated_log / f"model_calls-{(now - timedelta(days=2)).date()}.jsonl"
+    beyond = _isolated_log / f"model_calls-{(now - timedelta(days=9)).date()}.jsonl"
+    for path in (within, beyond):
+        path.write_text("{}\n", encoding="utf-8")
+
+    # Pruning happens at rotation, so there has to be something to rotate.
+    live = _isolated_log / model_calls.LOG_FILE_NAME
+    live.write_text('{"timestamp": "2020-01-01T00:00:00+00:00"}\n', encoding="utf-8")
+    yesterday = (now - timedelta(days=1)).timestamp()
+    os.utime(live, (yesterday, yesterday))
+
+    with model_calls.record_call(model_calls.HANDLER_KIMI):
+        pass
+
+    assert within.exists(), "inside the configured window"
+    assert not beyond.exists(), (
+        "outside it - and inside the 30 days the constant would have kept, "
+        "which is what makes this about the configuration")
 
 
 def test_reading_spans_the_live_file_and_the_rotated_ones(_isolated_log):

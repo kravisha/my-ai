@@ -167,6 +167,23 @@ def test_a_pipe_in_a_request_does_not_break_the_table(_isolated):
     assert "run `a \\| b`" in text
 
 
+def test_a_gap_type_this_build_does_not_know_does_not_take_the_report_down(_isolated):
+    """A row written by an older or a newer version of this file raised
+    `KeyError` out of a direct `REMEDIES[...]` lookup and took the whole
+    monthly report with it. A report that cannot be generated because one line
+    is unfamiliar is worse than a report with one unfamiliar line in it."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    _seed(_isolated, [_gap("something from a later build", "gap_type_from_the_future")] * 2
+          + [_gap("an email client", capability_gaps.GAP_MISSING_INTEGRATION)] * 3)
+
+    text = capability_gaps.monthly_report(month, _isolated / "reports").read_text(
+        encoding="utf-8")
+
+    assert "an email client" in text, "the rows it does understand still report"
+    assert "no remedy is recorded" in text
+    assert "gap_type_from_the_future" in text
+
+
 def test_only_the_requested_month_is_reported(_isolated):
     last_month = (datetime.now(timezone.utc) - timedelta(days=45))
     _seed(_isolated, [

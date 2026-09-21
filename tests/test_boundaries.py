@@ -194,6 +194,28 @@ def test_how_often_it_was_asked_for_strengthens_the_case(_isolated):
     assert leader["related_requests"] == 4
 
 
+def test_a_request_worded_differently_from_the_constraint_is_still_evidence(_isolated):
+    """The join was documented as loose and implemented as exact string
+    equality, so a constraint worded even slightly differently from the gap
+    scored zero - and `related_requests` then dropped out of the ranking key
+    entirely, removing the one thing that makes a proposal an argument rather
+    than an opinion.
+
+    A miss understates a case; a false hit is visible to anybody reading the two
+    entries side by side. That is the trade, and it is worth taking in this
+    direction."""
+    for _ in range(3):
+        capability_gaps.record(
+            gap_type=capability_gaps.GAP_MISSING_TOOL,
+            what_was_needed="a git push tool, because I cannot push to a remote",
+            user_visible_outcome="I can't push that branch myself yet.")
+    _file(constraint="cannot push to a remote")
+
+    entry = boundaries.register()[0]
+    assert entry["constraint"] == "cannot push to a remote"
+    assert entry["related_requests"] == 3
+
+
 # --- answering one ---------------------------------------------------------------------
 
 

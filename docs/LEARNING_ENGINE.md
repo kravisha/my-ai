@@ -104,6 +104,20 @@ regression test:
 | `/proc/net` is a symlink | resolving first turned `/proc/net/tcp` into `/proc/<pid>/net/tcp`, so the declared pattern stopped matching | match the normalised path, then check the resolved one too (except under `/proc`, where symlinks pointing out are the point) |
 | `/proc/*/environ` | holds every API key on the machine, and one wrong wildcard would have exposed it | an explicit `DENIED_PATTERNS` list checked after the allow-list |
 
+A **second** probe, run as a code review after the tests above were all passing,
+found two more. Both are worth stating plainly, because neither was a wrong
+wildcard — each was a correct-looking allow-list check followed by an operation
+that did not honour it:
+
+| Hole | Why it existed | Fix |
+|---|---|---|
+| `read_file("/proc/self/fd/3")` returned a `.env` the deny-list had just refused | `/proc/*/fd/*` has to be reachable — it is the only way to map a socket to its process — but reading a descriptor returns the contents of whatever it points at, which is not knowable from the pattern | `LINK_ONLY_PATTERNS`: `read_link` reads these, `read_file` never does. The socket mapping survives; the file read does not |
+| `run(["/tmp/anywhere/ss"])` ran a planted script | the allow-list checked `basename(argv[0])` and then executed `argv` **as written**, so any file named after an allowed program ran instead of it | a bare program name only — any separator in `argv[0]` is refused — resolved through `PATH` and executed as the absolute path that resolution returned |
+
+The pattern behind both: *the thing that was checked was not the thing that was
+done.* A name was checked and a path was run; a pattern was matched and a
+descriptor was followed. That is the shape to look for in the next probe.
+
 ### Platform surfaces, and the defect Windows CI found
 
 `/proc` and `/sys` are posix. On Windows, `os.path.abspath("/proc/net/tcp")` is

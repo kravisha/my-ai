@@ -1213,9 +1213,16 @@ def _execute_learning(name: str, arguments: dict) -> dict:
         if name == "register_learned_skill":
             # The initiative gate above already refused this without
             # `krish_accepted`; reaching here means he said so.
+            # `engine.accept` already calls `memory.learn_from_episode`.
+            # Calling it here too incremented every lesson's `times_seen` twice
+            # per registration - and `meta_report` is entirely frequency claims,
+            # so the one thing meta-learning says would have been wrong by a
+            # factor of two. Read the lessons back rather than re-deriving them.
             outcome = engine.accept(slug)
             if outcome.get("registered"):
-                outcome["lessons_kept"] = memory.learn_from_episode(slug)
+                outcome["lessons_kept"] = [
+                    lesson for lesson in learning_store.lessons()
+                    if slug in (lesson.get("episodes") or [])]
                 outcome["meta"] = memory.meta_report()
             return outcome
 

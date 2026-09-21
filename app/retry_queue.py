@@ -195,10 +195,16 @@ def _parse(stamp: str) -> datetime | None:
 
 def summary(since: datetime | None = None) -> dict:
     """What the brief and the nightly report say about the queue."""
-    rows = entries()
+    # CURRENT STATE, not the history that produced it. Counting the raw lines
+    # meant a request queued and then retried still counted as queued, so the
+    # brief's "N request(s) are queued to retry" could only ever grow - a number
+    # that never comes down is a number nobody acts on. `current()` already
+    # collapses by request id; this is what it is for.
+    state = current()
     if since is not None:
-        rows = [row for row in rows
-                if (_parse(row.get("timestamp", "")) or _now()) >= since]
+        state = {request_id: row for request_id, row in state.items()
+                 if (_parse(row.get("timestamp", "")) or _now()) >= since}
+    rows = list(state.values())
     queued = [row for row in rows if row.get("status") == STATUS_QUEUED]
     return {
         "queued": len(queued),

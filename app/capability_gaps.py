@@ -307,7 +307,8 @@ def monthly_report(month: str | None = None, reports_dir: Path | None = None) ->
                 f"**{position}. {_cell(gap['what_was_needed'])}** "
                 f"({gap['count']} requests, `{gap['gap_type']}`)",
                 "",
-                f"- *Capability that would close it:* {REMEDIES[gap['gap_type']]}",
+                f"- *Capability that would close it:* "
+                f"{_remedy(gap['gap_type'])}",
                 f"- *First asked:* {gap['first_seen']}",
                 f"- *Last asked:* {gap['last_seen']}",
             ]
@@ -333,7 +334,7 @@ def monthly_report(month: str | None = None, reports_dir: Path | None = None) ->
 
     counts = Counter(row.get("gap_type") for row in rows)
     lines += ["## By type", "", "| Type | Requests |", "|---|---|"]
-    for gap_type in GAP_TYPES:
+    for gap_type in sorted(set(GAP_TYPES) | set(counts)):
         if counts.get(gap_type):
             lines.append(f"| `{gap_type}` | {counts[gap_type]} |")
     lines.append("")
@@ -346,6 +347,20 @@ def monthly_report(month: str | None = None, reports_dir: Path | None = None) ->
             "",
         ]
     return _write(month, lines, reports_dir)
+
+
+def _remedy(gap_type: str) -> str:
+    """What would close this kind of gap, or an honest note that nobody knows.
+
+    A direct `REMEDIES[...]` lookup raised `KeyError` on any log line carrying a
+    `gap_type` this build does not recognise - a row written by an older or
+    newer version - and took the entire monthly report down with it. A report
+    that cannot be generated because one line is unfamiliar is worse than a
+    report with one unfamiliar line in it."""
+    return REMEDIES.get(gap_type, (
+        f"Unknown: no remedy is recorded for a gap of type {gap_type!r}. That is "
+        f"a row this build does not recognise rather than a capability question "
+        f"- check logs/capability_gaps.jsonl."))
 
 
 def _cell(text: str | None) -> str:

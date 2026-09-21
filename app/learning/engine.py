@@ -496,6 +496,9 @@ class LearningEngine:
                                 f"the others. Still missing: "
                                 f"{'; '.join(state.missing)}")}
         store.accept_episode(episode["id"])
+        # Once, here, and nowhere else. A second caller incrementing the same
+        # lessons would corrupt the only numbers meta-learning has; the
+        # already-accepted branch above is what makes a repeat call harmless.
         memory.learn_from_episode(slug)
         return {"registered": True, **self.status(slug)}
 
