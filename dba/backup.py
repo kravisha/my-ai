@@ -676,7 +676,24 @@ def _replace(live: Path, source: Path) -> None:
         # The order is this way round because it is strictly safer and costs
         # nothing, not because a test demanded it; the test asserts that a
         # failed restore loses nothing, which is the property either way.
-        os.replace(staging, live)
+        try:
+            os.replace(staging, live)
+        except PermissionError as denied:
+            # WINDOWS. A file that any process has open cannot be replaced -
+            # `os.replace` fails with access denied rather than doing what it
+            # does on POSIX, where the old inode survives for existing
+            # readers. Windows CI found this, on the platform Krish runs.
+            #
+            # Refused rather than falling back to overwriting in place. The
+            # in-place write is what gave an open connection a half-written
+            # database in the first place, and quietly choosing the unsafe
+            # path on one platform is how a restore becomes the incident.
+            raise BackupRefused(
+                f"the database could not be replaced because something still "
+                f"has {live.name} open ({denied}). On Windows a file in use "
+                f"cannot be swapped. Stop the DBA service and retry - that is "
+                f"step 1 of the restore procedure. Nothing was changed."
+            ) from denied
         for sidecar in (live.with_name(live.name + "-wal"),
                         live.with_name(live.name + "-shm")):
             try:

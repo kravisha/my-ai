@@ -11,6 +11,7 @@ untested assumption in a backup system gets tested at once.
 """
 
 import json
+import os
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -293,20 +294,24 @@ def test_a_restore_under_an_open_connection_is_clean(agent):
     """The realistic restore: somebody is using the database, which is usually
     why you are restoring it.
 
-    Two claims, and only the second one can currently fail.
+    AND IT BEHAVES DIFFERENTLY ON THE TWO PLATFORMS, which Windows CI found
+    and which is asserted here rather than papered over.
 
-    **The connection opened before the restore survives it.** `shutil.copy2`
-    opens the destination for writing, which truncates it *in place* - the
-    first version of `_replace` did that and gave the held connection a disk
-    I/O error. Writing beside the file and renaming is atomic, so the open
-    connection keeps the old inode, unlinked but alive.
+    On posix, replacing a file under an open reader is fine: the rename is
+    atomic and the old inode survives, unlinked but alive, so the held
+    connection finishes safely. That is why `shutil.copy2` was replaced - it
+    truncates the destination *in place* and gave the held connection a disk
+    I/O error.
 
-    **No stale write-ahead log is left beside the restored database**, which
-    would be corruption produced by a recovery. This assertion is kept and is
-    honestly labelled: no way was found to make it fail. `_replace` both
-    checkpoints and unlinks, and a probe showed SQLite removes the log on the
-    probe connection's close regardless. It is here to catch a future change
-    that removes all of that, not as evidence that any one line works."""
+    On Windows a file that any process has open **cannot be replaced at all**,
+    so the restore refuses with a message naming the real cause. Refusing is
+    the right answer: the alternative is the in-place overwrite that caused
+    the problem on posix, and quietly choosing the unsafe path on one platform
+    is how a restore becomes the incident.
+
+    The stale-log assertion is honestly labelled: no way was found to make it
+    fail, since SQLite removes the log on the probe connection's close
+    regardless. It is here to catch a future change that removes all of it."""
     _people(agent, 2)
     taken = backup.take()
     agent.handle(contract.Request(
@@ -320,6 +325,15 @@ def test_a_restore_under_an_open_connection_is_clean(agent):
             "INSERT INTO dba_meta (key, value) VALUES ('probe', 'x') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         assert Path(str(live) + "-wal").exists(), "the sidecar is really there"
+
+        if os.name == "nt":
+            with pytest.raises(backup.BackupRefused, match="still has"):
+                backup.restore(taken.backup_id, accepted_by=KRISH,
+                               confirmed=True)
+            # And nothing was changed by the refusal.
+            assert holding.fetchone(
+                "SELECT COUNT(*) AS n FROM entities")["n"] == 3
+            return
 
         backup.restore(taken.backup_id, accepted_by=KRISH, confirmed=True)
 
@@ -523,6 +537,87 @@ def test_the_safety_backup_does_not_delete_the_backup_being_restored(
 
     assert outcome["restored"] == oldest.backup_id
     assert oldest.path.exists(), "the backup being restored was deleted"
+
+
+def test_the_restore_holds_no_connection_when_it_swaps_the_file(agent,
+                                                                monkeypatch):
+    """A posix-runnable proxy for the Windows constraint.
+
+    Windows cannot replace a file any process has open, so a restore that
+    still held a connection of its own would fail there and pass here - which
+    is exactly what happened, and it took a seventeen-minute CI run to find.
+    This asserts the property directly: at the moment of the swap, the restore
+    is holding nothing."""
+    import gc
+    import sqlite3
+
+    _people(agent, 2)
+    taken = backup.take()
+
+    def still_open():
+        """Connections that are OPEN, not merely still referenced.
+
+        `isinstance(o, sqlite3.Connection)` counts closed ones too - a closed
+        connection is still an object - and a closed connection holds no file
+        handle. The first version of this test counted those and failed
+        against correct code, which would have sent me looking for a defect
+        that was not there."""
+        gc.collect()
+        live_ones = 0
+        for item in gc.get_objects():
+            if not isinstance(item, sqlite3.Connection):
+                continue
+            try:
+                item.total_changes
+            except sqlite3.ProgrammingError:
+                continue  # closed
+            except Exception:  # noqa: BLE001 - open but unhappy still counts
+                pass
+            live_ones += 1
+        return live_ones
+
+    original_replace = backup.os.replace
+    seen = {}
+
+    def counting_replace(source, destination):
+        seen["connections"] = still_open()
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(backup.os, "replace", counting_replace)
+    before = still_open()
+
+    backup.restore(taken.backup_id, accepted_by=KRISH, confirmed=True)
+
+    assert seen["connections"] <= before, (
+        f"the restore held {seen['connections']} open connection(s) when it "
+        f"replaced the file (was {before} before); on Windows that is an "
+        f"access-denied failure")
+
+
+def test_a_failed_open_does_not_leave_the_file_held(tmp_path):
+    """WINDOWS CI FOUND THIS, and it is a defect in `backend/db.py` rather
+    than in backup.
+
+    `sqlite3.connect` succeeds on any file - it does not read it - so a
+    corrupt one gets a live connection and then raises on the first PRAGMA.
+    That connection used to stay open until the garbage collector happened to
+    run. On posix a leaked descriptor; on Windows a held lock, which made a
+    restore unable to replace the corrupt database it was recovering from.
+    A recovery blocked by the damage it was recovering from."""
+    import gc
+    import sqlite3
+
+    corrupt = tmp_path / "corrupt.db"
+    corrupt.write_bytes(b"this is not a database at all")
+
+    before = len([item for item in gc.get_objects()
+                  if isinstance(item, sqlite3.Connection)])
+    with pytest.raises(sqlite3.DatabaseError):
+        Database(corrupt)
+    after = len([item for item in gc.get_objects()
+                 if isinstance(item, sqlite3.Connection)])
+
+    assert after == before, "the failed open left a connection behind"
 
 
 def test_a_restore_still_works_when_the_live_database_is_corrupt(agent):

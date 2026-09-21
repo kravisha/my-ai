@@ -210,6 +210,24 @@ order.
 Each is a regression test, and each was run against the unfixed code. One did
 not fail there and is labelled as such rather than kept as decoration.
 
+### What Windows CI found, on the platform Krish runs
+
+The suite was green on Linux and **red on Windows**, with three restore tests
+failing `os.replace` → *Access is denied*. Two distinct causes, and the first
+is not in this feature at all:
+
+| | |
+|---|---|
+| **`backend/db.py` leaked a handle on a failed open.** `sqlite3.connect` succeeds on any file — it does not read it — so a corrupt file got a live connection and then raised on the first PRAGMA, leaving that connection open until the garbage collector happened to run. | On posix, a leaked descriptor. On Windows, a **held lock** — so a restore could not replace the corrupt database it was recovering from. A recovery blocked by the damage it was recovering from. Every caller of `Database` had this; backup is just where it showed. |
+| **Windows cannot replace a file any process has open**, full stop — unlike posix, where the rename is atomic and the old inode survives for existing readers. | The restore now **refuses** with a message naming the cause, rather than falling back to the in-place overwrite. That overwrite is what gave an open connection a half-written database in the first place, and quietly taking the unsafe path on one platform is how a restore becomes the incident. |
+
+There is now a **posix-runnable proxy** for the Windows constraint: a test that
+asserts the restore holds *no open connection* at the moment it swaps the file.
+A restore that held one would pass on Linux and fail on Windows, which is
+precisely what happened and cost a seventeen-minute CI run to discover. Its
+first version counted closed connections too and failed against correct code —
+a closed connection is still an object and holds no handle.
+
 ### One honest note about a guard
 
 `_replace` also unlinks the `-wal`/`-shm` sidecars. **No test could be made to

@@ -89,10 +89,27 @@ def _as_contended(exc: sqlite3.OperationalError) -> sqlite3.OperationalError:
 
 class Database:
     def __init__(self, path: str | Path):
+        """Open the database, or leave nothing behind having failed to.
+
+        The try/finally is not defensive tidiness. `sqlite3.connect` succeeds
+        on any file - it does not read it - so a corrupt or non-database file
+        gets a live connection and then raises on the first PRAGMA. Without
+        this, that connection stayed open, unreferenced, until the garbage
+        collector happened to run.
+
+        On POSIX that is a leaked file descriptor. ON WINDOWS IT IS A HELD
+        LOCK, and Windows CI found what that costs: `dba/backup.py` could not
+        replace a corrupt database file during a restore, because the failed
+        attempt to open it was still holding it - a recovery blocked by the
+        damage it was recovering from."""
         self._conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
+        try:
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL;")
+            self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
+        except BaseException:
+            self._conn.close()
+            raise
         self._in_transaction = False
 
     @contextmanager
