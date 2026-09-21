@@ -70,6 +70,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
 # what any module thinks its database is.
 REAL_DB_PATH = Path(__file__).resolve().parent.parent / "financial_intelligence.db"
 REAL_GATEWAY_DB_PATH = Path(__file__).resolve().parent.parent / "gateway.db"
+REAL_DBA_DB_PATH = Path(__file__).resolve().parent.parent / "dba.db"
 
 # Session-wide stand-in for the real databases, for every code path that resolves
 # the default rather than being handed a path. One directory for the whole
@@ -85,6 +86,14 @@ os.environ["MODEL_CALL_LOG_DIR"] = str(_SESSION_DB_DIR / "logs")
 # store Jarvis reports his own progress from, and "I have learned 40 skills"
 # would be the suite talking.
 os.environ["LEARNING_DB_PATH"] = str(_SESSION_DB_DIR / "learning.db")
+
+# DBA_DB_PATH: the DBA Agent's store - the third service, which the guard
+# below always said would mean "adding a path, not a second guard". Its own
+# reason to be here is the sharpest of the three: this database is the one
+# the specification calls the source of truth, and a suite that seeded it
+# with test customers would be putting fabricated records into the store
+# every other agent is told to believe.
+os.environ["DBA_DB_PATH"] = str(_SESSION_DB_DIR / "dba.db")
 
 
 def real_database_fingerprint() -> dict[str, str | None]:
@@ -104,7 +113,7 @@ def real_database_fingerprint() -> dict[str, str | None]:
     which is what lets tests/test_db_isolation.py point the guard at a stand-in
     and prove it still detects a change."""
     fingerprint: dict[str, str | None] = {}
-    for database in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH):
+    for database in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH, REAL_DBA_DB_PATH):
         for path in (database, database.with_name(database.name + "-wal")):
             try:
                 fingerprint[path.name] = hashlib.md5(path.read_bytes()).hexdigest()
@@ -247,7 +256,7 @@ def _leak_report() -> str | None:
     if _leak_report_cached is _UNCHECKED:
         diff = _real_database_change()
         _leak_report_cached = None if diff is None else _LEAK_MESSAGE.format(
-            diff=diff, paths="\n  ".join(str(p) for p in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH))
+            diff=diff, paths="\n  ".join(str(p) for p in (REAL_DB_PATH, REAL_GATEWAY_DB_PATH, REAL_DBA_DB_PATH))
         )
     return _leak_report_cached
 
