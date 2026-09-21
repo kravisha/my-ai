@@ -42,7 +42,7 @@ from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from dba import agent as agent_module
-from dba import contract, entities, explain, health, permissions
+from dba import contract, entities, explain, health, permissions, tamil
 
 TOKEN_PREFIX = "DBA_TOKEN_"
 
@@ -77,6 +77,21 @@ def _authenticate(agent: str | None, token: str | None) -> str:
 
 
 app = FastAPI(title="DBA Agent")
+
+
+def _install_routes() -> None:
+    """The capability routes live in `dba/routes.py` and are attached here.
+
+    Imported inside a function rather than at module scope because that module
+    imports this one back - for `_authenticate` and `_http_status`, which must
+    be the same check and the same mapping rather than a second copy that
+    drifts."""
+    from dba import routes
+
+    app.include_router(routes.router)
+
+
+_install_routes()
 
 
 @app.post("/request")
@@ -167,6 +182,10 @@ def _body(response: contract.Response) -> dict:
     matters reads `status`."""
     out = response.to_dict()
     out["explanation"] = explain.explain(response)
+    # §16 and §43, in Tamil beside the English rather than instead of it. The
+    # structured response stays authoritative and nothing branches on either
+    # sentence.
+    out["explanation_ta"] = tamil.explain(response)
     return out
 
 

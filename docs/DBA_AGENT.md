@@ -132,6 +132,20 @@ its own first paragraph.
 
 ---
 
+## 5b. It can now design capabilities of its own
+
+The expectations document of the same date asks for more than this: an agent
+that reasons from a task sentence to a data model, builds the API, tests it,
+and learns from having done it. That is built, and it is documented in
+**`docs/DBA_AGENT_DEVELOPMENT.md`**.
+
+What changed here: a published capability's type is adopted at runtime, so a
+new schema becomes a working API without an edit to this repository; and a
+capability's own `grants` are enforced on top of the global policy, so an agent
+needs both.
+
+---
+
 ## 6. Running it
 
 ```

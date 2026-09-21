@@ -133,33 +133,105 @@ class EntityType:
 # has a use in the acceptance tests or in the examples §4 gives; the rest are
 # one declaration each on the day something needs them.
 
-_REGISTRY: dict[str, EntityType] = {}
+# Two registries, and the split is the point.
+#
+# `_BUILT_IN` is written in this file and changes only by a commit. `_ADOPTED`
+# holds the types of capabilities the DBA designed and Krish published, loaded
+# from the database at runtime - which is what lets a new capability become a
+# working API without an edit here, and is the whole of §6 and §7.
+#
+# A built-in is never shadowed by an adopted one. A published capability that
+# could redefine `person` would be a way to change the meaning of stored data
+# by writing a row, and the audit trail would be describing two different
+# things under one name.
+_BUILT_IN: dict[str, EntityType] = {}
+_ADOPTED: dict[str, EntityType] = {}
 
 
 def register(entity_type: EntityType) -> EntityType:
-    if entity_type.name in _REGISTRY:
+    """Declare a built-in type. Only this module calls it."""
+    if entity_type.name in _BUILT_IN:
         raise ValueError(f"entity type {entity_type.name!r} is already declared")
-    _REGISTRY[entity_type.name] = entity_type
+    _BUILT_IN[entity_type.name] = entity_type
     return entity_type
 
 
+def adopt(entity_type: EntityType) -> EntityType:
+    """Take on the type of a published capability (§6).
+
+    Refused for a name a built-in already holds, for the reason above."""
+    if entity_type.name in _BUILT_IN:
+        raise ValueError(
+            f"{entity_type.name!r} is a built-in type and a published "
+            f"capability may not redefine it. Publishing a type that shadowed "
+            f"one would change what stored rows mean by writing a row.")
+    _ADOPTED[entity_type.name] = entity_type
+    return entity_type
+
+
+def adopted() -> list[EntityType]:
+    return [_ADOPTED[name] for name in sorted(_ADOPTED)]
+
+
+def snapshot_adopted() -> dict:
+    """The adopted registry as it stands, for a caller that must put it back.
+
+    `dba/selfcheck.py` adopts a capability that is not published yet so it can
+    test it against the real agent. Without a way to restore, that test would
+    leave an unpublished type live in the process - a capability serving
+    traffic because somebody tested it, which is the gate in `dba/registry.py`
+    walked around from inside."""
+    return dict(_ADOPTED)
+
+
+def restore_adopted(snapshot: dict) -> None:
+    _ADOPTED.clear()
+    _ADOPTED.update(snapshot)
+
+
+def forget_adopted() -> None:
+    """Drop every adopted type. For a retire, and for test isolation."""
+    _ADOPTED.clear()
+
+
+def is_built_in(name: str) -> bool:
+    return name in _BUILT_IN
+
+
 def get(name: str) -> EntityType:
-    try:
-        return _REGISTRY[name]
-    except KeyError:
-        raise UnknownEntityType(
-            f"{name!r} is not a declared entity type. Declared: "
-            f"{', '.join(sorted(_REGISTRY))}. Declaring one is an edit to "
-            f"dba/entities.py, not something a request may do for itself."
-        ) from None
+    if name in _BUILT_IN:
+        return _BUILT_IN[name]
+    if name in _ADOPTED:
+        return _ADOPTED[name]
+    raise UnknownEntityType(
+        f"{name!r} is not a declared entity type. Declared: "
+        f"{', '.join(sorted(set(_BUILT_IN) | set(_ADOPTED)))}. A built-in type "
+        f"is an edit to dba/entities.py; anything else arrives by the DBA "
+        f"designing a capability and it being published."
+    ) from None
 
 
 def known(name: str) -> bool:
-    return name in _REGISTRY
+    return name in _BUILT_IN or name in _ADOPTED
 
 
 def all_types() -> list[EntityType]:
-    return [_REGISTRY[name] for name in sorted(_REGISTRY)]
+    merged = dict(_ADOPTED)
+    merged.update(_BUILT_IN)
+    return [merged[name] for name in sorted(merged)]
+
+
+def from_dict(payload: dict) -> EntityType:
+    """Rebuild a type from its stored declaration. The inverse of `to_dict`."""
+    return EntityType(
+        name=payload["name"],
+        fields=dict(payload["fields"]),
+        required=tuple(payload.get("required") or ()),
+        identifying=tuple(payload.get("identifying") or ()),
+        label=payload.get("label", NAME),
+        statuses=tuple(payload.get("statuses") or ()),
+        classification=payload.get("classification", INTERNAL),
+        note=payload.get("note", ""))
 
 
 PERSON = register(EntityType(
@@ -198,6 +270,30 @@ TASK = register(EntityType(
     required=(NAME,),
     statuses=("open", "in_progress", "blocked", "done", "cancelled"),
     classification=INTERNAL))
+
+# §12 and §13: Jarvis's own durable state, and any other agent's.
+#
+# BUILT IN RATHER THAN DESIGNED, and the reason is §12's own sentence: *"JARVIS
+# must be able to stop and restart without losing the persistent state that the
+# system has decided should be retained."* State that only works once somebody
+# publishes a capability is state that is missing on the first restart, which
+# is exactly the restart that matters.
+#
+# Its shape is not invented here: it is `dba/patterns.AGENT_STATE`, the same
+# archetype the designer reaches for when a requirement says "survive a
+# restart", and `tests/test_dba_development.py` asserts the two agree. So this
+# is the designer's own output, shipped rather than waiting to be asked for.
+AGENT_STATE = register(EntityType(
+    name="agent_state",
+    fields={NAME: TEXT, "agent": TEXT, "kind": TEXT, "value": TEXT,
+            STATUS: TEXT, "revision": INTEGER, "effective_from": TIMESTAMP},
+    required=(NAME, "agent", "kind"),
+    statuses=("current", "superseded"),
+    classification=CONFIDENTIAL,
+    note="§12/§13. One row per thing an agent must remember across restarts: "
+         "configuration, goals, tasks, plans, decisions, assignments. `agent` "
+         "is immutable in the archetype - state that could be reassigned to "
+         "another agent is state nobody owns."))
 
 DOCUMENT = register(EntityType(
     name="document",

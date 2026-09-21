@@ -180,6 +180,13 @@ class DBAgent:
 
     def _guarded(self, conn: Database, request: contract.Request, *,
                  own_transaction: bool = True) -> contract.Response:
+        # Adopt whatever is published before anything looks a type up, so a
+        # capability published a second ago serves and one retired a second
+        # ago does not.
+        from dba import registry
+
+        registry.sync_entities(conn)
+
         entity_type = None
         if request.entity_type is not None:
             if not entities.known(request.entity_type):
@@ -195,7 +202,9 @@ class DBAgent:
             permissions.check(
                 request.requested_by, request.action,
                 classification=entity_type.classification if entity_type else None,
-                writing=False if request.action == contract.VALIDATE else None)
+                writing=False if request.action == contract.VALIDATE else None,
+                capability_grants=registry.grants_for(request.entity_type)
+                if request.entity_type else None)
         except permissions.Refused as refused:
             return self._refuse(conn, request, code=contract.PERMISSION_DENIED,
                                 message=str(refused),

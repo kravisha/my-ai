@@ -46,6 +46,13 @@ PERMISSIONS = (READ, CREATE, UPDATE, ARCHIVE, DELETE, ADMINISTER,
 JARVIS = "JARVIS"
 LEARNING_ENGINE = "learning_engine"
 OPERATOR_CONSOLE = "operator_console"
+# The DBA acting as itself: designing capabilities, running their self-checks,
+# recording its own design experience (§11). Deliberately NOT an agent that can
+# publish - see POLICY below.
+DBA = "dba"
+# §13: any agent on this machine may need persistent state. The COO is the
+# first of the backend's own agents to have one.
+COO = "coo"
 
 POLICY: dict[str, frozenset[str]] = {
     # The orchestrator. Everything except `delete` and `administer`: §5.6 wants
@@ -61,6 +68,18 @@ POLICY: dict[str, frozenset[str]] = {
     # is exactly Document 1 §4.4's deterministic replacement for a model call;
     # a skill that can change one is a different proposition entirely.
     LEARNING_ENGINE: frozenset({READ}),
+    # THE DBA'S OWN HANDS, AND WHAT THEY CANNOT REACH. It designs capabilities,
+    # stages them and runs their self-checks, so it needs to create and update
+    # records of its own. It does NOT hold `administer`, which is what
+    # publishing a capability requires - so the agent that designs a new data
+    # surface cannot be the one that brings it into service. That is §31's
+    # stage 2 made structural rather than procedural, and it is the same shape
+    # as `register_learned_skill` refusing without Krish.
+    DBA: frozenset({READ, CREATE, UPDATE, ARCHIVE, READ_SENSITIVE,
+                    WRITE_SENSITIVE}),
+    # §13's "any agent operating on the computer may require persistent state".
+    # Ordinary working access, nothing sensitive, no deletion.
+    COO: frozenset({READ, CREATE, UPDATE}),
 }
 
 # §8's actions mapped to the permission each needs. Not derived from the action
@@ -127,12 +146,30 @@ def sensitivity_permission(classification: str, *, writing: bool) -> str | None:
 
 
 def check(agent: str, action: str, *, classification: str | None = None,
-          writing: bool | None = None) -> None:
+          writing: bool | None = None,
+          capability_grants: dict | None = None) -> None:
     """Raise `Refused` unless this agent may do this. Silent on success.
 
     `writing` defaults to whether the action is one of the writing actions, and
     is overridable only because `validate` inspects a write it will not perform
-    and should be judged as the read it actually is."""
+    and should be judged as the read it actually is.
+
+    `capability_grants` is the grant table of a published capability, and BOTH
+    it and the global policy must allow the action. The global policy is a
+    ceiling - what an agent could ever do - and the grant is the specific
+    allowance for this data. Requiring both is what makes §17's *"an agent
+    should receive only the data and operations it is authorized to use"* true
+    per capability rather than per system.
+
+    THE DBA'S OWN GENERATED TESTS FOUND THIS MISSING. A capability declared
+    grants and nothing read them, so any agent holding global `create` could
+    write to a capability that had granted it nothing - permissions defined and
+    not enforced, which is worse than not defining them, because the
+    declaration says otherwise to anybody reading it.
+
+    `None` means the type is a built-in and the global policy is the whole
+    answer. An empty dict is a capability that granted nobody anything, and it
+    denies - the two must not be conflated."""
     from dba import contract
 
     if not known_agent(agent):
@@ -150,11 +187,26 @@ def check(agent: str, action: str, *, classification: str | None = None,
             f"{agent!r} may not {action}: that needs {needed!r} and this agent "
             f"holds {sorted(held)}.", agent=agent, permission=needed)
 
+    if capability_grants is not None:
+        allowed = set(capability_grants.get(agent, ()))
+        if needed not in allowed:
+            raise Refused(
+                f"{agent!r} may not {action} this capability: it grants "
+                f"{sorted(allowed) if allowed else 'nothing'} to {agent!r}, and "
+                f"{action} needs {needed!r}. Holding {needed!r} generally is "
+                f"not the same as being granted it here.",
+                agent=agent, permission=needed)
+
     if classification is None:
         return
     is_write = contract.Request(action=action, requested_by=agent).writes \
         if writing is None else writing
     extra = sensitivity_permission(classification, writing=is_write)
+    if extra is not None and capability_grants is not None:
+        if extra not in set(capability_grants.get(agent, ())):
+            raise Refused(
+                f"{agent!r} is not granted {extra!r} on this "
+                f"{classification} capability.", agent=agent, permission=extra)
     if extra is not None and extra not in held:
         raise Refused(
             f"{agent!r} may {action} ordinary records but not {classification} "

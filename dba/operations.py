@@ -336,6 +336,14 @@ def _edge(conn: Database, request: contract.Request, *,
                      f"what holds between them."))
 
     # §10's referential integrity: both ends must exist as live records.
+    #
+    # AND BOTH ENDS' GRANTS ARE CHECKED HERE. The agent checks the capability
+    # grants of `request.entity_type`, and a link carries none - so any agent
+    # holding global `update` could relate records of a capability that had
+    # granted it nothing. A relationship is a write to both records, and it is
+    # checked as one.
+    from dba import ids as identifiers, permissions, registry
+
     for label, entity_id in (("from_id", from_id), ("to_id", to_id)):
         if not ids.is_id(entity_id):
             return contract.failure(
@@ -347,6 +355,18 @@ def _edge(conn: Database, request: contract.Request, *,
                 request, code=contract.NOT_FOUND,
                 message=f"{label}={entity_id} is not a live record, so nothing "
                         f"can be linked to it.")
+        end_type = identifiers.type_of(entity_id)
+        grants = registry.grants_for(end_type)
+        if grants is None:
+            continue
+        try:
+            permissions.check(request.requested_by, request.action,
+                              capability_grants=grants)
+        except permissions.Refused as refused:
+            return contract.failure(
+                request, code=contract.PERMISSION_DENIED,
+                message=(f"{label} is a {end_type}, and {refused}"),
+                details={"end": label, "entity_type": end_type})
 
     existing = conn.fetchone(
         "SELECT * FROM relationships WHERE from_id = ? AND relation = ? "

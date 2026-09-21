@@ -47,7 +47,11 @@ from backend.db import Database, now_iso
 
 PATH_ENV = "DBA_DB_PATH"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Bumped whenever a capability is published or retired, so a process holding
+# adopted entity types knows its view is stale without polling the table.
+CAPABILITIES_VERSION_KEY = "capabilities_version"
 
 # --- the tables ---------------------------------------------------------------
 
@@ -157,6 +161,61 @@ CREATE TABLE IF NOT EXISTS dba_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- §5-§7, §25, §26: the capabilities the DBA designed, one row per version.
+-- A published row is never edited; a change publishes a new version beside it.
+CREATE TABLE IF NOT EXISTS capabilities (
+    capability_key TEXT PRIMARY KEY,       -- name@version
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    declaration_json TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    requirement TEXT,
+    designed_at TEXT NOT NULL,
+    designed_by TEXT NOT NULL,
+    staged_at TEXT,
+    published_at TEXT,
+    retired_at TEXT,
+    accepted_by TEXT,
+    test_report_json TEXT,
+    self_check_json TEXT,
+    supersedes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_capabilities_name ON capabilities(name, version);
+CREATE INDEX IF NOT EXISTS idx_capabilities_status ON capabilities(status);
+
+-- §10, §11, §30: the DBA's own experience, persisted so it does not start from
+-- zero on the next requirement. One row per design attempt.
+CREATE TABLE IF NOT EXISTS design_episodes (
+    episode_id TEXT PRIMARY KEY,
+    capability_name TEXT,
+    capability_version INTEGER,
+    requirement TEXT NOT NULL,
+    questions_json TEXT NOT NULL DEFAULT '[]',
+    decisions_json TEXT NOT NULL DEFAULT '[]',
+    reused TEXT,
+    outcome TEXT NOT NULL,
+    detail TEXT,
+    at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_design_episodes_name ON design_episodes(capability_name);
+
+-- §30: a correction is learning material, not just a fix. Counted rather than
+-- duplicated, for the reason app/learning/memory.py gives: the value of "this
+-- keeps happening" is entirely in the count.
+CREATE TABLE IF NOT EXISTS design_lessons (
+    lesson_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    lesson TEXT NOT NULL,
+    times_seen INTEGER NOT NULL DEFAULT 1,
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    at TEXT NOT NULL,
+    UNIQUE (kind, pattern)
+);
 """
 
 
@@ -178,10 +237,38 @@ def connect() -> Database:
 
 def init_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
+    # WRITTEN ONCE, ON A DATABASE THAT HAD NO VERSION.
+    #
+    # An upsert here would stamp every existing database as current on the
+    # next connection, so a store that genuinely needed a migration would
+    # report itself already migrated - and the version column would be the one
+    # thing that could no longer be trusted. A database whose recorded version
+    # is behind `SCHEMA_VERSION` stays behind until something migrates it; the
+    # additive `CREATE TABLE IF NOT EXISTS` above is safe either way.
     if conn.fetchone("SELECT value FROM dba_meta WHERE key = 'schema_version'") is None:
         conn.execute(
             "INSERT INTO dba_meta (key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),))
+
+
+def capabilities_version(conn: Database) -> int:
+    """A counter bumped on every publish or retire (§6).
+
+    Cheaper than comparing the whole capability table on every request, and it
+    is what lets `entities` hold adopted types in memory without ever serving a
+    type that was retired a second ago."""
+    row = conn.fetchone("SELECT value FROM dba_meta WHERE key = ?",
+                        (CAPABILITIES_VERSION_KEY,))
+    return int(row["value"]) if row else 0
+
+
+def bump_capabilities_version(conn: Database) -> int:
+    current = capabilities_version(conn) + 1
+    conn.execute(
+        "INSERT INTO dba_meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (CAPABILITIES_VERSION_KEY, str(current)))
+    return current
 
 
 def schema_version(conn: Database) -> int:
@@ -189,6 +276,15 @@ def schema_version(conn: Database) -> int:
     schema version is currently active")."""
     row = conn.fetchone("SELECT value FROM dba_meta WHERE key = 'schema_version'")
     return int(row["value"]) if row else 0
+
+
+def behind(conn: Database) -> bool:
+    """Whether this store predates the schema this build expects.
+
+    Exists so the answer is askable at all: with the version stamped on every
+    connection there was no state in which this could return True, and a
+    check that cannot fail is not a check."""
+    return schema_version(conn) < SCHEMA_VERSION
 
 
 __all__ = ["PATH_ENV", "SCHEMA", "SCHEMA_VERSION", "database_path", "connect",

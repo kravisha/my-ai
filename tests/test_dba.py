@@ -21,7 +21,7 @@ import pytest
 
 from dba import (agent as agent_module, askback, audit, contract, duplicates,
                  entities, explain, health, ids, operations, permissions,
-                 records, store, validate)
+                 records, registry, store, validate)
 
 JARVIS = permissions.JARVIS
 OPERATOR = permissions.OPERATOR_CONSOLE
@@ -31,8 +31,13 @@ OPERATOR = permissions.OPERATOR_CONSOLE
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv(store.PATH_ENV, str(tmp_path / "dba.db"))
     agent_module._AGENT = None
+    # Adopted capability types and the sync stamp are process globals; without
+    # this a capability published by one test would still be live in the next,
+    # against a database that has never heard of it.
+    registry.reset_sync()
     yield tmp_path
     agent_module._AGENT = None
+    registry.reset_sync()
 
 
 @pytest.fixture()
@@ -678,8 +683,10 @@ def test_a_deleted_record_is_still_recoverable_and_still_explicable(agent, conn)
 
 
 def test_the_active_schema_version_is_knowable(conn):
-    """§5.7."""
-    assert store.schema_version(conn) == store.SCHEMA_VERSION == 1
+    """§5.7. Against the constant rather than a literal, so the assertion
+    tracks the schema instead of having to be edited every time it moves."""
+    assert store.schema_version(conn) == store.SCHEMA_VERSION
+    assert store.SCHEMA_VERSION >= 2, "version 2 added the capability tables"
 
 
 # =============================================================================
@@ -850,7 +857,7 @@ def test_health_answers_the_question_jarvis_asks(agent):
     report = health.health()
     assert report["status"] == health.OK
     assert report["database_connected"] is True
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == store.SCHEMA_VERSION
     assert report["entity_counts"]["person"] == 1
 
 
