@@ -249,7 +249,34 @@ class Sandbox:
     # --- paths ----------------------------------------------------------------
 
     @staticmethod
-    def _segments_match(pattern: str, path: str) -> bool:
+    def _split(text: str, platform: str | None = None) -> list[str]:
+        """Path segments, by whatever this platform counts as a separator.
+
+        WINDOWS CI FOUND THIS, AND IT WAS TWO HOLES RATHER THAN A FAILING TEST.
+        Splitting on `/` alone meant a Windows path was ONE segment, and:
+
+        1. **The deny-list never fired.** `**/.env` needs two segments to match
+           against, so `D:\\...\\docs\\.env` missed it - and the deny-list is the
+           thing standing between a recipe and every credential in this project.
+        2. **`*` crossed separators again.** The project patterns are built with
+           `Path`, so on Windows `PROJECT_ROOT/docs/*` was also one segment, and
+           `fnmatch` on one segment is exactly the whole-string match whose `*`
+           spans `/` - the first probe's hole, reopened by the platform.
+
+        So on Windows both separators count. On posix only `/` does, because
+        there a backslash is an ordinary character in a filename and treating it
+        as a separator would be a second bug wearing the first one's clothes.
+
+        `platform` is an `os.name` value and exists so that the Windows
+        behaviour can be asserted from a posix machine, which is the same reason
+        `_platform_surface_for` takes one. It is never passed in production."""
+        if (platform or os.name) == "nt":
+            text = text.replace("\\", "/")
+        return [part for part in text.split("/") if part != ""]
+
+    @staticmethod
+    def _segments_match(pattern: str, path: str,
+                        platform: str | None = None) -> bool:
         """Glob one path against one pattern, **segment by segment**.
 
         Not `fnmatch` on the whole string, and the difference is a security hole
@@ -258,11 +285,15 @@ class Sandbox:
         `/proc/net/../../etc/passwd`. The first security probe of this module
         found exactly that. Here `*` and `?` are confined within one segment and
         `**` is the only thing that spans them, which is what everybody already
-        assumes a path glob means."""
+        assumes a path glob means.
+
+        Segments are split by `_split`, which knows what a separator is on this
+        platform. Windows CI found why that matters, and it was not cosmetic -
+        see that method."""
         import fnmatch as _fn
 
-        parts = [part for part in pattern.split("/") if part != ""]
-        actual = [part for part in path.split("/") if part != ""]
+        parts = Sandbox._split(pattern, platform)
+        actual = Sandbox._split(path, platform)
 
         def walk(pi: int, ai: int) -> bool:
             while pi < len(parts):

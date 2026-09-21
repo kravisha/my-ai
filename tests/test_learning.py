@@ -213,6 +213,48 @@ def test_a_refusal_says_that_widening_the_list_is_a_boundary_proposal():
             box.read_file("/etc/hosts")
 
 
+@pytest.mark.parametrize("denied", [
+    r"D:\a\my-ai\my-ai\docs\.env",
+    r"D:\a\my-ai\my-ai\logs\model_spend.db",
+    r"D:\a\my-ai\my-ai\config\server.key",
+    r"D:\a\my-ai\my-ai\logs\id_rsa",
+])
+def test_the_deny_list_fires_on_a_windows_path_too(denied):
+    """Windows CI found that it did not, and the failing assertion was the
+    smaller half of the news.
+
+    `_segments_match` split on `/` only, so a Windows path was a single
+    segment: `**/.env` had nothing to match its two parts against and the
+    deny-list never fired at all. The project's own `logs/`, `docs/` and
+    `config/` are readable by design, so on the platform Krish actually runs
+    the one list standing between a recipe and every credential in this project
+    was inert.
+
+    Asserted with an explicit platform so it holds from a posix machine - the
+    same device `_platform_surface_for` already uses."""
+    assert any(
+        sandbox_module.Sandbox._segments_match(pattern, denied, platform="nt")
+        for pattern in sandbox_module.DENIED_PATTERNS), denied
+
+
+def test_a_wildcard_cannot_be_walked_sideways_across_a_backslash_either():
+    """The other half, and it is the first probe's hole reopened by the
+    platform. The project patterns are built with `Path`, so on Windows the
+    pattern was one segment too - and `fnmatch` on one segment is exactly the
+    whole-string match whose `*` crosses separators."""
+    match = sandbox_module.Sandbox._segments_match
+    assert not match(r"D:\p\docs\*", r"D:\p\docs\nested\deep.txt", platform="nt")
+    assert not match(r"D:\p\docs\*", r"D:\p\docs\..\..\etc\passwd", platform="nt")
+    assert match(r"D:\p\docs\*", r"D:\p\docs\ARCHITECTURE.md", platform="nt")
+
+
+def test_a_backslash_is_an_ordinary_character_in_a_posix_filename():
+    """The fix must not become a second bug wearing the first one's clothes:
+    on posix a backslash is a legal character in a name, not a separator."""
+    assert sandbox_module.Sandbox._split(r"a\b", platform="posix") == [r"a\b"]
+    assert sandbox_module.Sandbox._split(r"a\b", platform="nt") == ["a", "b"]
+
+
 def test_a_descriptor_is_not_a_readable_file_however_permitted_the_link_is():
     """The second security probe of this module found this, and none of the
     tests above did.

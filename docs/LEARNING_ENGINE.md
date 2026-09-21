@@ -118,6 +118,21 @@ The pattern behind both: *the thing that was checked was not the thing that was
 done.* A name was checked and a path was run; a pattern was matched and a
 descriptor was followed. That is the shape to look for in the next probe.
 
+And a third probe, which was Windows CI rather than a review, found that **the
+deny-list was inert on the platform Krish actually runs**. `_segments_match`
+split on `/` alone, so a Windows path was a single segment: `**/.env` had two
+parts and nothing to match them against. The project's own `logs/`, `docs/` and
+`config/` are readable by design, so the one list standing between a recipe and
+every credential in this project never fired there. The same single segment
+reopened the first probe's hole from the other side — the project patterns are
+built with `Path`, and `fnmatch` on one segment is the whole-string match whose
+`*` crosses separators.
+
+`_split` now knows what a separator is on the platform it is running on, and
+takes an explicit `platform` so both behaviours are asserted from either kind of
+machine. On posix a backslash stays an ordinary character in a filename, because
+the fix must not become a second bug wearing the first one's clothes.
+
 ### Platform surfaces, and the defect Windows CI found
 
 `/proc` and `/sys` are posix. On Windows, `os.path.abspath("/proc/net/tcp")` is
