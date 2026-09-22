@@ -89,11 +89,18 @@ CAP_STUDIO = "studio"
 # (TQ-42, §96). Subject-scoped by construction: every function behind it takes
 # the client id, so the capability cannot reach anybody else's positions.
 CAP_HOLDINGS = "holdings"
+# Deciding a proposed change to Jarvis's own code. Operator-only by
+# construction - `ROLE_OPERATOR` holds every capability and no other role holds
+# this one - because §13 of the Persistence specification makes Krish the final
+# authority over self-modification, and a capability that some other role could
+# be granted would be an approval gate with a second key.
+CAP_SELF_CHANGE = "self:change"
 
 CAPABILITIES = (
     CAP_SCOREBOARD_READ, CAP_SCOREBOARD_WRITE, CAP_TECHNOLOGY_READ,
     CAP_TECHNOLOGY_FILE, CAP_SYSTEM_STATUS, CAP_CONVERSE, CAP_SESSION,
     CAP_REPOSITORY_READ, CAP_PUBLISH, CAP_STUDIO, CAP_HOLDINGS,
+    CAP_SELF_CHANGE,
 )
 
 # What each capability guards, in the words an operator would use. Carried here
@@ -112,6 +119,7 @@ DESCRIPTIONS = {
     CAP_PUBLISH: "publish documents into the repository",
     CAP_STUDIO: "see the full command centre",
     CAP_HOLDINGS: "record and review the holdings you have told me about",
+    CAP_SELF_CHANGE: "review and decide changes Jarvis proposes to his own code",
 }
 
 # §14: "Sensitive operational views must be withheld from roles that do not

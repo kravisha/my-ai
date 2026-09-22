@@ -587,3 +587,118 @@ def test_the_cli_says_so_when_the_dba_is_unreachable(monkeypatch, capsys):
     monkeypatch.setattr(dbaclient, "DBAClient", dead)
     assert selfmod.main(["list"]) == 2
     assert failures.DBA_UNAVAILABLE in capsys.readouterr().out
+
+
+# =============================================================================
+# The conversation half of the approval gate (decision 3a)
+# =============================================================================
+
+
+@pytest.fixture()
+def conversation(client, monkeypatch):
+    """The Gateway's tool surface, wired to the real DBA through the real client."""
+    from gateway import tools
+
+    monkeypatch.setattr(dbaclient, "DBAClient", lambda **kwargs: client)
+    return tools
+
+
+def test_only_the_operator_is_offered_the_approval_tools(conversation):
+    """§13 makes Krish the final authority. A second role holding this would be
+    an approval gate with a second key."""
+    from gateway import roles
+
+    offered = {tool["name"] for tool in conversation.for_role(roles.ROLE_OPERATOR)}
+    assert {"pending_self_changes", "show_self_change",
+            "decide_self_change"} <= offered
+    for role in (roles.ROLE_INTERNAL, roles.ROLE_CLIENT):
+        names = {tool["name"] for tool in conversation.for_role(role)}
+        assert not (names & {"pending_self_changes", "show_self_change",
+                             "decide_self_change"})
+        assert conversation.permitted(role, "decide_self_change") is False
+
+
+def test_the_decider_is_the_session_and_never_an_argument(client, conversation):
+    """The single most important line in this surface.
+
+    An assistant that could write down who approved a change to its own code
+    holds the approval gate's key, whatever the gate then checks. So the tool
+    is called with a name the model supplied *and* a different session owner,
+    and the record must show the session's."""
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes, go ahead",
+         # Everything a model might try to steer the record with:
+         "decided_by": "jarvis", "subject": "jarvis", "by": "jarvis"},
+        role="operator", subject="krish")
+
+    assert result["decided_by"] == "krish"
+    decision = client.find("approval_decision",
+                           {"proposal_id": proposal["id"]})[0]
+    assert decision["decided_by"] == "krish"
+    assert decision["interface"] == "conversation"
+
+
+def test_a_session_with_no_owner_cannot_record_a_decision(client, conversation):
+    proposal = _proposal(client)
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes"}, role="operator", subject=None)
+
+    assert "error" in result
+    assert "nobody to record" in result["error"]
+    assert client.count("approval_decision", {}) == 0
+
+
+def test_a_decision_without_his_words_is_refused(client, conversation):
+    """Not proof against fabrication - a model that invents an approval will
+    invent a quote - but it makes it visible, which an empty status field does
+    not."""
+    proposal = _proposal(client)
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve", "krish_said": "  "},
+        role="operator", subject="krish")
+
+    assert "error" in result and "krish_said" in result["error"]
+    assert client.count("approval_decision", {}) == 0
+
+
+def test_his_words_are_stored_verbatim_on_the_decision(client, conversation):
+    proposal = _proposal(client)
+    conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "reject",
+         "krish_said": "no - use the phone's own PDF viewer"},
+        role="operator", subject="krish")
+
+    decision = client.find("approval_decision",
+                           {"proposal_id": proposal["id"]})[0]
+    assert "use the phone's own PDF viewer" in decision["note"]
+
+
+def test_the_conversation_can_list_and_show_without_deciding(client, conversation):
+    proposal = _proposal(client)
+
+    listed = conversation.execute(None, "pending_self_changes", {},
+                                  role="operator", subject="krish")
+    assert listed["count"] == 1
+    assert listed["waiting"][0]["change_id"] == proposal["id"]
+
+    shown = conversation.execute(None, "show_self_change",
+                                 {"change_id": proposal["id"]},
+                                 role="operator", subject="krish")
+    assert "Approval requested:   YES" in shown["proposal"]
+    assert client.count("approval_decision", {}) == 0
+
+
+def test_deciding_a_change_that_does_not_exist_says_so(client, conversation):
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": "change_proposal-0123456789abcdef", "decision": "approve",
+         "krish_said": "yes"}, role="operator", subject="krish")
+    assert "error" in result and "no proposed change" in result["error"]

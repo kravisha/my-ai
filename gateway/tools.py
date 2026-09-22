@@ -55,6 +55,7 @@ from app import boundaries, initiative
 from app import learning as learning_package  # noqa: F401 - package docstring is the contract
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
+from gateway import dbaclient, failures, selfmod
 from gateway import jarvis, repositories, scoreboard, technology
 
 # Who filed it, when it came through the Super User's conversation. Agents get
@@ -776,8 +777,79 @@ LEARNING_TOOLS = [
     },
 ]
 
+
+# The conversation half of the approval gate (§13, §18, and §38 q15's second
+# interface). The CLI in `gateway/selfmod.py` is the other.
+#
+# THE ONE THING THAT MATTERS HERE. `decide_self_change` records who decided,
+# and that name is taken from the authenticated session - never from an
+# argument the model supplied. Letting the model name the decider would mean
+# the agent whose code is being changed could write down that the owner
+# approved it, which is §16's "alter the approval mechanism so that approval is
+# no longer required" reached by the shortest possible route.
+#
+# `krish_said` is required and stored verbatim. It does not make fabrication
+# impossible - a model that will invent an approval will invent a quote - but
+# it makes it *visible*, because the decision record then carries words Krish
+# can read back and say he never said. An approval whose only trace is a status
+# field leaves nothing to dispute.
+SELF_CHANGE_TOOLS = [
+    {
+        "name": "pending_self_changes",
+        "description": (
+            "List the changes you have proposed to your own code that are "
+            "waiting for Krish to decide. Use when he asks what you want to "
+            "change about yourself, or what is waiting on him. Read-only."),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "show_self_change",
+        "description": (
+            "Show one proposed change in full - the reason, the evidence, the "
+            "files, the risks, the test plan and the rollback plan. Show this "
+            "BEFORE asking him to decide; a decision taken on your summary "
+            "rather than on the proposal is not the decision the gate is for. "
+            "Read-only."),
+        "input_schema": {"type": "object", "properties": {
+            "change_id": {"type": "string",
+                          "description": "The change id, as pending_self_changes gives it."}},
+            "required": ["change_id"]},
+    },
+    {
+        "name": "decide_self_change",
+        "description": (
+            "Record Krish's decision on a proposed change to your own code. "
+            "Call this ONLY after he has said what he wants, in this "
+            "conversation, having seen the proposal. You are recording his "
+            "answer, not making one: you may not approve your own change, and "
+            "the record says the decision came from his session. If he has not "
+            "answered, or you are not certain what he meant, ask him instead "
+            "of calling this - a wrong approve is not recoverable by "
+            "apologising afterwards."),
+        "input_schema": {"type": "object", "properties": {
+            "change_id": {"type": "string"},
+            "decision": {"type": "string", "enum": list(selfmod.DECISIONS),
+                         "description":
+                             "approve: go ahead. reject: do not. modify_scope: "
+                             "approve fewer files. request_more_evidence: he "
+                             "is not convinced the problem is real. defer: not "
+                             "now."},
+            "krish_said": {"type": "string",
+                           "description":
+                               "His own words, quoted, not your summary of "
+                               "them. Stored on the decision so he can read "
+                               "back what you recorded him as saying."},
+            "files": {"type": "string",
+                      "description":
+                          "For modify_scope only: the comma-separated files "
+                          "the narrower approval covers."},
+        }, "required": ["change_id", "decision", "krish_said"]},
+    },
+]
+
 TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
-         + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS + LEARNING_TOOLS)
+         + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS + LEARNING_TOOLS
+         + SELF_CHANGE_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -826,6 +898,15 @@ TOOL_CAPABILITY = {
     # looking at one, and that is the line this mapping is here to hold.
     "remote_diagnose": roles.CAP_SYSTEM_STATUS,
     "file_scoreboard_item": roles.CAP_SCOREBOARD_WRITE,
+    # Operator-only, and a capability of its own rather than a reuse. Every
+    # other mapping here reuses an existing capability where the authority is
+    # genuinely the same; this one is not the same as anything, because §13
+    # makes Krish the final authority over self-modification and folding it
+    # into `studio` would mean a future grant of the command centre silently
+    # handed somebody the approval gate.
+    "pending_self_changes": roles.CAP_SELF_CHANGE,
+    "show_self_change": roles.CAP_SELF_CHANGE,
+    "decide_self_change": roles.CAP_SELF_CHANGE,
     # The same capability as filing a Scoreboard item, and reusing it rather
     # than minting a `boundary` one is deliberate, for the reason the
     # remote_diagnose entry below gives: `scoreboard:write` already means
@@ -930,6 +1011,9 @@ TOOL_RISK = {
     "machine_status": dict(_READ_ONLY, summary="read this machine's state"),
     "technology_review": dict(_READ_ONLY, summary="read the technology review"),
     "read_claude": dict(_READ_ONLY, summary="read Claude's side of the channel"),
+    "pending_self_changes": dict(_READ_ONLY,
+                                 summary="list changes waiting on Krish's decision"),
+    "show_self_change": dict(_READ_ONLY, summary="read one proposed change in full"),
     # Reaches another machine and changes nothing on it. `self` because the
     # effect is a report here; the connection is not the effect.
     "remote_diagnose": dict(_READ_ONLY,
@@ -957,6 +1041,15 @@ TOOL_RISK = {
         summary="write down the case for moving a constraint that is costing something"),
     # Recoverable rather than reversible: reopening a resolved item is possible
     # and is itself an event somebody reads, which is the definition.
+    # Recording Krish's decision on a change to Jarvis's own code. RECOVERABLE
+    # rather than reversible - the record is append-only, so a wrong entry is
+    # corrected by a later decision and never by erasing this one - and
+    # reaching OWNER, because it is his authority being written down. That
+    # combination makes `initiative.decide` return act_and_report: Jarvis must
+    # say plainly what he recorded, which is the whole safeguard.
+    "decide_self_change": dict(
+        reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
+        summary="record Krish's decision on a proposed change to Jarvis's own code"),
     "resolve_scoreboard_item": dict(
         reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
         summary="resolve a Scoreboard item with what was decided"),
@@ -1429,6 +1522,80 @@ def initiative_paragraph(role: str) -> str:
     return "\n".join(lines)
 
 
+_SELF_CHANGE_TOOL_NAMES = frozenset(tool["name"] for tool in SELF_CHANGE_TOOLS)
+
+
+def _execute_self_change(name: str, arguments: dict, *, subject: str | None) -> dict:
+    """The conversation half of the approval gate (§13).
+
+    `subject` is the authenticated session's owner and is the only thing this
+    function will write as the decider. There is deliberately no argument the
+    model can set to name somebody else: an assistant that could write down who
+    approved a change to its own code is an assistant that has the approval
+    gate's key, whatever the gate then checks."""
+    try:
+        client = dbaclient.DBAClient(actor="conversation")
+    except dbaclient.Unavailable as exc:
+        return {"error": f"{failures.DBA_UNAVAILABLE}: {exc}"}
+
+    try:
+        if name == "pending_self_changes":
+            waiting = selfmod.waiting(client)
+            return {"waiting": [
+                {"change_id": row["id"], "what": row.get("name"),
+                 "reason": row.get("reason"), "files": row.get("affected_files")}
+                for row in waiting],
+                "count": len(waiting)}
+
+        change_id = (arguments.get("change_id") or "").strip()
+        proposal = client.get(change_id) if change_id else None
+        if proposal is None:
+            return {"error": f"there is no proposed change {change_id!r}. Use "
+                             f"pending_self_changes to list them."}
+        gap = (client.get(proposal.get("gap_id"))
+               if proposal.get("gap_id") else None)
+
+        if name == "show_self_change":
+            return {"change_id": change_id,
+                    "proposal": selfmod.render(proposal, gap),
+                    "status": proposal.get("status")}
+
+        if name == "decide_self_change":
+            if not (subject or "").strip():
+                return {"error":
+                        "this session has no authenticated owner, so there is "
+                        "nobody to record as having decided. Refusing rather "
+                        "than writing down an anonymous approval."}
+            said = (arguments.get("krish_said") or "").strip()
+            if not said:
+                return {"error":
+                        "krish_said is required: quote what he actually said. "
+                        "A decision recorded without his words leaves nothing "
+                        "he can read back and dispute."}
+            decision = arguments.get("decision")
+            if decision not in selfmod.DECISIONS:
+                return {"error": f"decision must be one of {selfmod.DECISIONS}"}
+
+            updated = selfmod.decide(
+                client, proposal, decision=decision,
+                # From the session. Never from `arguments`.
+                decided_by=subject,
+                interface=selfmod.CONVERSATION,
+                note=f"recorded from the conversation. He said: {said}",
+                scope_granted=arguments.get("files", ""))
+            return {"recorded": decision, "change_id": change_id,
+                    "decided_by": subject,
+                    "status": updated["status"],
+                    "say_to_krish":
+                        f"Recorded: {decision}. I have written it down as "
+                        f"coming from you, with your words attached."}
+    except (dbaclient.Unavailable, dbaclient.Refused) as exc:
+        return {"error": f"the DBA refused or was unavailable: {exc}"}
+    except (ValueError, selfmod.Denied, selfmod.NotApproved) as exc:
+        return {"error": str(exc)}
+    return {"error": f"unknown self-change tool {name!r}"}
+
+
 class ToolNotPermitted(PermissionError):
     """A role reached for a tool it does not hold the capability for."""
 
@@ -1533,6 +1700,9 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
 
         if name in _LEARNING_TOOL_NAMES:
             return _execute_learning(name, arguments)
+
+        if name in _SELF_CHANGE_TOOL_NAMES:
+            return _execute_self_change(name, arguments, subject=subject)
 
         if name == "propose_boundary_change":
             try:

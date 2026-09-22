@@ -48,7 +48,7 @@ from pydantic import BaseModel
 
 from app import capability_gaps, model_budget, model_calls, user_messages
 from app.model_gateway import default_provider
-from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, roles, scoreboard, store, technology, uiversion
+from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, store, technology, uiversion
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -97,6 +97,24 @@ async def lifespan(app: FastAPI):
     if not auth.is_configured():
         logger.warning(auth.NOT_CONFIGURED_MESSAGE)
     app.state.db = conn
+
+    # §3: a newly launched Jarvis process begins as a generic runtime and does
+    # not assume its prior identity is present. Rehydration happens here rather
+    # than on the first request, because the first request is exactly where a
+    # Jarvis who has not yet checked would answer from a memory he does not
+    # have.
+    #
+    # It runs in a worker thread: it is blocking HTTP to the DBA, and a
+    # lifespan that waited on it on the event loop would hold the whole service
+    # closed for as long as an unreachable DBA takes to time out. It never
+    # raises - `bootstrap` reports a failed restore as a state, and a Gateway
+    # that refused to start because its memory was unavailable would be a
+    # Gateway Krish cannot reach to ask about it.
+    app.state.restoration = await asyncio.to_thread(rehydrate.bootstrap)
+    for line in app.state.restoration.sentences():
+        logger.warning("rehydration: %s", line)
+    logger.info("rehydration: %s, %d item(s) restored",
+                app.state.restoration.status, len(app.state.restoration.items))
 
     reviewer = asyncio.create_task(_technology_review_loop())
     try:

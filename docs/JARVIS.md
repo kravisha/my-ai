@@ -33,6 +33,8 @@ exist and none of them replaces this one:
 | [`TASK_QUEUE.md`](TASK_QUEUE.md) | Detailed work tracking (47 §11). | When you need to know what is queued and in what order. |
 | [`JARVIS_GAP_ANALYSIS.md`](JARVIS_GAP_ANALYSIS.md) | Built-versus-Constitution measurement. | When you need the axiom scorecard. |
 | [`HANDOFF.md`](HANDOFF.md) | Where the last session stopped, and what to do first. Nothing else — it points here rather than repeating this. | Starting a session. |
+| [`DBA_AGENT.md`](DBA_AGENT.md) + [`DBA_AGENT_DEVELOPMENT.md`](DBA_AGENT_DEVELOPMENT.md) | The DBA Agent: the separate service that owns persistent information, and how it designs a data surface a task needs. | When you need to know where stored state lives, or how a new one is added. |
+| [`JARVIS_PERSISTENCE.md`](JARVIS_PERSISTENCE.md) | How Jarvis survives being stopped: durable state, checkpoints, the life ledger, capability gaps, and governed self-modification. | When you need to know what Jarvis remembers across a restart, or what stops him changing his own code. |
 
 **Two rules about how these relate.**
 
