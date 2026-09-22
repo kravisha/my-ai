@@ -18,8 +18,11 @@ by name, as a checklist.
 """
 
 import json
+import re
 
 import pytest
+
+import conftest
 
 from dba import (agent as agent_module, apispec, capability, contract,
                  design as design_module, develop, entities, experience,
@@ -1095,6 +1098,18 @@ def test_a_rejection_needs_a_reason(client, conn):
     assert "teaches nothing" in response.json()["detail"]
 
 
+def test_the_import_ban_still_catches_every_real_form():
+    """The probe. If this passes vacuously the ban above is decoration."""
+    for spelling in ("import dba", "from dba import entities",
+                     "from dba.entities import PERSON", "import dba as d",
+                     "    import dba", "from dba import (agent, contract)"):
+        assert conftest.IMPORTS_THE_DBA_PACKAGE.search(spelling), spelling
+    for allowed in ("from gateway import dbaclient", "import dbaclient",
+                    "# the dba agent", 'text = "from dba"',
+                    "from gateway import dba_url"):
+        assert not conftest.IMPORTS_THE_DBA_PACKAGE.search(allowed), allowed
+
+
 def test_gateway_and_backend_know_nothing_about_this_schema():
     """§36: they should know the DBA Agent's published interface, and that is
     all. Asserted as an absence, which is the only way to assert it."""
@@ -1103,9 +1118,8 @@ def test_gateway_and_backend_know_nothing_about_this_schema():
     repo = pathlib.Path(__file__).resolve().parent.parent
     for folder in ("gateway", "backend"):
         for path in (repo / folder).glob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            assert "task_handoff" not in text, path
-            assert "from dba" not in text and "import dba" not in text, path
+            assert "task_handoff" not in path.read_text(encoding="utf-8"), path
+    assert conftest.modules_importing_dba(repo) == []
 
 
 # =============================================================================
@@ -1119,10 +1133,7 @@ def test_the_twelve_first_practical_goals(conn):
     import pathlib
 
     repo = pathlib.Path(__file__).resolve().parent.parent
-    embedded = [path.name for path in
-                list((repo / "gateway").glob("*.py")) + list((repo / "backend").glob("*.py"))
-                if "from dba" in path.read_text(encoding="utf-8")
-                or "import dba" in path.read_text(encoding="utf-8")]
+    embedded = conftest.modules_importing_dba(repo)
     assert embedded == [], embedded
 
     # 2. A stable API interface for Jarvis.

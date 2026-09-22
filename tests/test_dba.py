@@ -19,6 +19,8 @@ import sqlite3
 
 import pytest
 
+import conftest
+
 from dba import (agent as agent_module, askback, audit, contract, duplicates,
                  entities, explain, health, ids, operations, permissions,
                  records, registry, store, validate)
@@ -1269,10 +1271,7 @@ def test_the_minimum_viable_dba_agent(agent, conn, client):
     # 1. Runs independently from JARVIS: it is its own package and its own
     #    service, and nothing in gateway/ or backend/ imports it.
     repo = pathlib.Path(__file__).resolve().parent.parent
-    importers = [path.name for path in list((repo / "gateway").glob("*.py"))
-                 + list((repo / "backend").glob("*.py"))
-                 if "import dba" in path.read_text(encoding="utf-8")
-                 or "from dba" in path.read_text(encoding="utf-8")]
+    importers = conftest.modules_importing_dba(repo)
     assert importers == [], f"the DBA is embedded in: {importers}"
 
     # 2. Receives structured requests.

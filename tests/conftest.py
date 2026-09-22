@@ -41,6 +41,7 @@ docstring for why all three layers are worth having.
 import json
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -636,3 +637,31 @@ def executable_source(path) -> str:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             node.value = ""
     return ast.unparse(tree).lower()
+
+
+# The DBA Agent is a separate service, and `gateway/` and `backend/` must reach
+# it over its published HTTP interface rather than by importing it. Three test
+# files assert that, and all three used to do it with a bare substring check.
+#
+# That check had the same flaw as the tripwires above: it caught prose, and it
+# caught *names*. `gateway/dbaclient.py` - the HTTP client whose whole purpose
+# is to keep the boundary - tripped it, because "import dbaclient" contains
+# "import dba". A rule that fails on the module written to obey it is a rule
+# people route around.
+#
+# The word boundary makes it stricter about what it means rather than looser:
+# `from dba import x`, `from dba.entities import y` and `import dba as d` all
+# still match, because a dot and a space are not word characters.
+# `tests/test_dba_development.py::test_the_import_ban_still_catches_every_real_form`
+# holds it to that.
+IMPORTS_THE_DBA_PACKAGE = re.compile(r"^\s*(?:from|import)\s+dba\b", re.MULTILINE)
+
+
+def modules_importing_dba(repo, folders=("gateway", "backend")):
+    """Module names in those folders that import the DBA package. Should be []."""
+    found = []
+    for folder in folders:
+        for path in sorted((pathlib.Path(repo) / folder).glob("*.py")):
+            if IMPORTS_THE_DBA_PACKAGE.search(path.read_text(encoding="utf-8")):
+                found.append(path.name)
+    return found

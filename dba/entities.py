@@ -305,3 +305,162 @@ DOCUMENT = register(EntityType(
     identifying=("hash", EXTERNAL_ID),
     statuses=("ingested", "indexed", "failed"),
     classification=CONFIDENTIAL))
+
+
+# --- the vocabulary for persisting an agent's life ----------------------------
+#
+# Added for the Persistence / Life Ledger / Self-Modification specification, and
+# deliberately written in the DBA's own terms rather than Jarvis's: none of these
+# names the Gateway, and a second agent asking the DBA to remember its life gets
+# the same types. The DBA stores lives; whose life it is arrives in `agent`.
+#
+# Built in rather than designed, for `AGENT_STATE`'s reason above. A ledger that
+# only exists once somebody publishes a capability has no entry for the restart
+# that lost it.
+
+LEDGER_EVENT = register(EntityType(
+    name="ledger_event",
+    # `external_id` is "<agent>:<zero-padded sequence>", and it is `identifying`
+    # so that two racing appends cannot both take one sequence number. The
+    # loser is refused as a duplicate and re-reads the tip, which is the whole
+    # of the concurrency story - see `gateway/ledger.py`.
+    fields={NAME: TEXT, EXTERNAL_ID: TEXT, STATUS: TEXT,
+            "agent": TEXT, "sequence_number": INTEGER, "occurred_at": TIMESTAMP,
+            "session_id": TEXT, "event_type": TEXT, "actor": TEXT,
+            "origin": TEXT, "origin_id": TEXT,
+            "input_reference": TEXT, "observation": TEXT,
+            # §27 calls this "classification"; renamed because `classification`
+            # is a column on every record and means how sensitive it is, not
+            # what the agent made of the event.
+            "assessment": TEXT, "confidence": NUMBER,
+            "verification_state": TEXT, "risk_level": TEXT,
+            "related_event_ids": TEXT, "supersedes_event_id": TEXT,
+            "checkpoint_id": TEXT, "code_version": TEXT,
+            "ledger_schema_version": INTEGER,
+            "integrity_hash": TEXT, "previous_event_hash": TEXT},
+    required=(NAME, "agent", "sequence_number", "event_type", "occurred_at"),
+    identifying=(EXTERNAL_ID,),
+    # One status and one only. §4.3 says historical entries are not edited in
+    # place, and marking the original "superseded" would be exactly that edit.
+    # Supersession is carried by the *later* event's `supersedes_event_id`,
+    # which is the direction §6 asks for: a new layer, not a changed record.
+    statuses=("recorded",),
+    classification=CONFIDENTIAL,
+    note="§4.3's life ledger. Append-oriented and hash-chained: each event "
+         "carries the hash of its own content and of the one before it, so a "
+         "replay can prove the chain was not edited."))
+
+CHECKPOINT = register(EntityType(
+    name="checkpoint",
+    fields={NAME: TEXT, EXTERNAL_ID: TEXT, STATUS: TEXT,
+            "agent": TEXT, "sequence_number": INTEGER, "taken_at": TIMESTAMP,
+            "parent_checkpoint_id": TEXT, "reason": TEXT,
+            "code_version": TEXT, "state_schema_version": INTEGER,
+            "ledger_tip_sequence": INTEGER, "ledger_tip_hash": TEXT,
+            "contents_hash": TEXT, "item_counts": TEXT,
+            "validated_at": TIMESTAMP, "invalid_reason": TEXT},
+    required=(NAME, "agent", "sequence_number", "taken_at"),
+    identifying=(EXTERNAL_ID,),
+    # §8: a checkpoint is not authoritative until it has been validated, and a
+    # corrupted one is rejected rather than quietly skipped. "writing" is the
+    # write-complete marker §8 asks for - a checkpoint still in that state when
+    # the process died is one that never finished.
+    statuses=("writing", "valid", "invalid", "superseded"),
+    classification=CONFIDENTIAL,
+    note="§8. `ledger_tip_sequence` is what makes a restore honest: it says "
+         "which ledger events the checkpoint had seen, so the interval that "
+         "may have been lost can be named rather than guessed."))
+
+KNOWLEDGE_ITEM = register(EntityType(
+    name="knowledge_item",
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "subject": TEXT,
+            "statement": TEXT, "evidence": TEXT, "learned_at": TIMESTAMP,
+            "origin": TEXT, "confidence": NUMBER, "verification_state": TEXT,
+            "superseded_by": TEXT, "ledger_event_id": TEXT},
+    required=(NAME, "agent", "statement"),
+    statuses=("provisional", "confirmed", "superseded", "retracted"),
+    classification=CONFIDENTIAL,
+    note="§4.1's knowledge state. `verification_state` is what §10 rests on: "
+         "an item restored as 'provisional' may not be asserted as fact."))
+
+SKILL_STATE = register(EntityType(
+    name="skill_state",
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "skill": TEXT,
+            "level": TEXT, "evidence": TEXT, "last_practised_at": TIMESTAMP,
+            "episode_slug": TEXT, "notes": TEXT},
+    required=(NAME, "agent", "skill"),
+    statuses=("learning", "practising", "demonstrated", "stale", "lost"),
+    classification=CONFIDENTIAL,
+    note="§4.1's skill state. `episode_slug` points back into the Learning "
+         "Engine's own episode rather than copying it (§23)."))
+
+COMMITMENT = register(EntityType(
+    name="commitment",
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "owed_to": TEXT,
+            "promise": TEXT, "made_at": TIMESTAMP, "due_on": DATE,
+            "settled_at": TIMESTAMP, "outcome": TEXT, "ledger_event_id": TEXT},
+    required=(NAME, "agent", "promise"),
+    statuses=("open", "kept", "broken", "released"),
+    classification=CONFIDENTIAL,
+    note="§4.1. Separate from `task` because a commitment is owed to somebody "
+         "and a task is not - and 'what did I promise and not deliver' is the "
+         "question a restart must still be able to answer."))
+
+CAPABILITY_GAP = register(EntityType(
+    name="capability_gap",
+    # §28's fields. The lifecycle is §11's, and the reason it is a status
+    # rather than a boolean is §11's own sentence: a perceived lack is not a
+    # confirmed lack.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "description": TEXT,
+            "detected_at": TIMESTAMP, "detected_by": TEXT,
+            "evidence": TEXT, "counter_evidence": TEXT,
+            "impact": TEXT, "frequency": INTEGER, "severity": TEXT,
+            "confidence": NUMBER, "affected_capability": TEXT,
+            "requires_code_change": BOOLEAN, "alternative_remedies": TEXT,
+            "user_review_required": BOOLEAN, "user_decision": TEXT,
+            "approved_scope": TEXT, "resolution": TEXT,
+            "resolved_at": TIMESTAMP},
+    required=(NAME, "agent", "description", "detected_at"),
+    statuses=("suspected", "investigating", "unsupported", "confirmed",
+              "rejected", "deferred", "approved_for_remediation",
+              "remediating", "resolved", "unresolved"),
+    classification=CONFIDENTIAL,
+    note="§11/§12/§28."))
+
+CHANGE_PROPOSAL = register(EntityType(
+    name="change_proposal",
+    # §29's fields, plus §18's proposal format. `approval_state` is deliberately
+    # not the record's `status`: the record's status is where the *work* is, and
+    # the two answer different questions - an approved proposal whose build
+    # failed is approved and failed at once.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "gap_id": TEXT,
+            "proposal_version": INTEGER, "reason": TEXT, "scope": TEXT,
+            "affected_components": TEXT, "affected_files": TEXT,
+            "risk": TEXT, "expected_benefit": TEXT, "test_plan": TEXT,
+            "rollback_plan": TEXT, "baseline_version": TEXT,
+            "target_branch": TEXT, "approval_state": TEXT,
+            "approved_by": TEXT, "approved_at": TIMESTAMP,
+            "implementation_state": TEXT, "commit_id": TEXT,
+            "build_id": TEXT, "deployment_id": TEXT,
+            "post_validation_state": TEXT, "checkpoint_id": TEXT},
+    required=(NAME, "agent", "reason", "scope"),
+    statuses=("drafted", "awaiting_approval", "denied", "approved",
+              "implementing", "tested", "committed", "deploying",
+              "accepted", "degraded", "failed", "rolled_back"),
+    classification=CONFIDENTIAL,
+    note="§18/§29. The record the approval gate turns on, and the record a "
+         "relaunched runtime reads to learn what was done to it."))
+
+APPROVAL_DECISION = register(EntityType(
+    name="approval_decision",
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "proposal_id": TEXT,
+            "decided_by": TEXT, "decided_at": TIMESTAMP, "decision": TEXT,
+            "scope_granted": TEXT, "note": TEXT, "interface": TEXT,
+            "ledger_event_id": TEXT},
+    required=(NAME, "proposal_id", "decided_by", "decision", "decided_at"),
+    statuses=("recorded",),
+    classification=CONFIDENTIAL,
+    note="§18's last line - *the decision must be persisted* - as its own "
+         "record rather than a field on the proposal, so that a denial "
+         "followed by a later approval leaves both, in order. `interface` is "
+         "which surface Krish answered on: the conversation, or the CLI."))
