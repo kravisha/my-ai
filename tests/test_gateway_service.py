@@ -589,6 +589,17 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "record_skill_feedback",
         "register_learned_skill",
         "use_learned_skill",
+        # The conversation half of the self-modification approval gate, added
+        # 2026-09-22 with the Persistence specification's §13. All three are
+        # BUILT - the proposal record, the §18 render and the persisted
+        # decision all exist - and the bar this assertion guards is met in a
+        # particular way worth stating: `decide_self_change` RECORDS a decision
+        # and cannot make one. The decider's name comes from the authenticated
+        # session and there is no argument that can name somebody else, so the
+        # assistant holding this tool is not the assistant holding the gate.
+        "pending_self_changes",
+        "show_self_change",
+        "decide_self_change",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so
