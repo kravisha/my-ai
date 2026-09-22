@@ -39,9 +39,9 @@ def _isolated(tmp_path, monkeypatch):
 @pytest.fixture()
 def client():
     with TestClient(dba_main.app) as service:
-        def transport(path, payload):
-            response = service.post(
-                path, json=payload,
+        def transport(method, path, payload):
+            response = service.request(
+                method, path, json=payload if method != "GET" else None,
                 headers={"X-DBA-Agent": "JARVIS", "X-DBA-Token": TOKEN})
             try:
                 return response.status_code, response.json()

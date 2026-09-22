@@ -155,14 +155,14 @@ class DBAClient:
     failure worth catching."""
 
     def __init__(self,
-                 transport: Callable[[str, dict], tuple[int, dict]] | None = None,
+                 transport: Callable[[str, str, dict], tuple[int, dict]] | None = None,
                  *, actor: str = "jarvis") -> None:
         self._transport = transport or self._http
         self._actor = actor
 
     # --- transport -----------------------------------------------------------
 
-    def _http(self, path: str, payload: dict) -> tuple[int, dict]:
+    def _http(self, method: str, path: str, payload: dict) -> tuple[int, dict]:
         secret = token()
         if secret is None:
             raise Unavailable(
@@ -170,9 +170,9 @@ class DBAClient:
                 f"DBA issued for {AGENT}. Refusing rather than calling "
                 f"unauthenticated, which would be a 401 dressed up as an outage.")
         try:
-            response = requests.post(
-                f"{service_url()}{path}",
-                json=payload,
+            response = requests.request(
+                method, f"{service_url()}{path}",
+                json=payload if method != "GET" else None,
                 headers={"X-DBA-Agent": AGENT, "X-DBA-Token": secret},
                 timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
             )
@@ -195,7 +195,7 @@ class DBAClient:
                                    "actor": self._actor}
         payload.update({name: value for name, value in fields.items()
                         if value is not None})
-        status, body = self._transport("/request", payload)
+        status, body = self._transport("POST", "/request", payload)
 
         if status in (502, 503, 504):
             raise Unavailable(
@@ -287,23 +287,21 @@ class DBAClient:
     def health(self) -> dict:
         """What §3 step 4 calls "verify database availability and integrity".
 
-        Raises `Unavailable` rather than returning a falsy dict, so that the
+        Goes through `transport` like everything else. It used to call
+        `requests` directly, which meant the one call the bootstrap sequence
+        depends on was the one call the contract tests could not reach - so the
+        suite had to stub it, and stubbing it is how a test comes to assert
+        that a health check works without ever running one.
+
+        Raises `Unavailable` rather than returning a falsy dict, so the
         bootstrap sequence cannot proceed on a service that is not there."""
-        try:
-            response = requests.get(f"{service_url()}/health",
-                                    timeout=(CONNECT_TIMEOUT_SECONDS,
-                                             READ_TIMEOUT_SECONDS))
-        except requests.RequestException as exc:
+        status, body = self._transport("GET", "/health", {})
+        if status != 200:
             raise Unavailable(
-                f"the DBA Agent at {service_url()} did not answer /health: "
-                f"{exc}") from exc
-        if response.status_code != 200:
-            raise Unavailable(
-                f"the DBA Agent's /health answered {response.status_code}")
-        try:
-            return response.json()
-        except ValueError:
-            raise Unavailable("the DBA Agent's /health did not return JSON") from None
+                f"the DBA Agent's /health answered {status}")
+        if not isinstance(body, dict) or not body:
+            raise Unavailable("the DBA Agent's /health did not return JSON")
+        return body
 
 
 def describe() -> dict:

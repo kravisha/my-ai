@@ -46,20 +46,16 @@ def service():
 def client(service):
     """A real `DBAClient` speaking to the real DBA over a test transport."""
 
-    def transport(path, payload):
-        response = service.post(
-            path, json=payload,
+    def transport(method, path, payload):
+        response = service.request(
+            method, path, json=payload if method != "GET" else None,
             headers={"X-DBA-Agent": "JARVIS", "X-DBA-Token": TOKEN})
         try:
             return response.status_code, response.json()
         except ValueError:
             return response.status_code, {}
 
-    made = dbaclient.DBAClient(transport=transport)
-    # /health is a GET and does not go through `transport`; point it at the
-    # test service too, so `bootstrap` exercises the real route.
-    made.health = lambda: service.get("/health").json()
-    return made
+    return dbaclient.DBAClient(transport=transport)
 
 
 # =============================================================================
@@ -100,7 +96,7 @@ def test_a_question_from_the_dba_is_carried_up_not_answered_for_krish(client):
 
 
 def test_an_unreachable_dba_raises_unavailable_rather_than_returning_nothing():
-    def dead_transport(path, payload):
+    def dead_transport(method, path, payload):
         raise dbaclient.Unavailable("connection refused")
 
     made = dbaclient.DBAClient(transport=dead_transport)
@@ -109,7 +105,8 @@ def test_an_unreachable_dba_raises_unavailable_rather_than_returning_nothing():
 
 
 def test_the_service_answering_503_is_unavailable_not_refused(client, service):
-    made = dbaclient.DBAClient(transport=lambda path, payload: (503, {"detail": "down"}))
+    made = dbaclient.DBAClient(
+        transport=lambda method, path, payload: (503, {"detail": "down"}))
     with pytest.raises(dbaclient.Unavailable):
         made.count("agent_state", {})
 
@@ -318,7 +315,7 @@ def test_this_module_contains_no_update_or_delete_of_a_ledger_event():
 
 
 def test_a_ledger_write_that_fails_is_raised_not_swallowed(client):
-    def refusing(path, payload):
+    def refusing(method, path, payload):
         return 503, {"detail": "store is down"}
 
     dead = dbaclient.DBAClient(transport=refusing)
