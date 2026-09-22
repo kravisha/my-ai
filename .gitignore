@@ -83,3 +83,17 @@ reports/
 learning.db
 learning.db-wal
 learning.db-shm
+
+# The DBA Agent's own store (dba/store.py): capabilities, records, the audit
+# trail. Live local state and exactly as unversionable as gateway.db - the
+# audit trail in particular is a record of what was done to real data.
+dba.db
+dba.db-wal
+dba.db-shm
+# The handoff between Jarvis and the build controller (gateway/selfmod.py and
+# scripts/deploy_jarvis.py). Machine-local and about one machine's deployment:
+# a deploy request committed to the repository is a request every checkout
+# would appear to be waiting on.
+deploy-request.json
+deploy-result.json
+DEPLOYED-COMMIT.txt

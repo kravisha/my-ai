@@ -394,6 +394,46 @@ def test_requesting_a_build_for_nothing_committed_is_refused(client):
         selfmod.request_build(client, approved)
 
 
+def test_the_commit_stages_only_the_files_the_approval_named(client, monkeypatch):
+    """§17 item 8 is a boundary, not a description.
+
+    `git add -A` was the first version, and it would have swept in the DBA's
+    live store, the deploy request, and any half-edited file in the tree -
+    committing changes Krish never saw under an approval he did give."""
+    approved = selfmod.decide(client, _proposal(client, files=["gateway/tools.py"]),
+                              decision=selfmod.APPROVE, decided_by="krish")
+    client.update(approved["id"], {"status": selfmod.TESTED})
+
+    seen = []
+
+    class Done:
+        returncode = 0
+        stdout = "abc123"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        seen.append(list(command))
+        return Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    selfmod.commit_candidate(client, client.get(approved["id"]), message="m")
+
+    staged = [command for command in seen if "add" in command]
+    assert staged and staged[0][-1] == "gateway/tools.py"
+    assert "-A" not in staged[0]
+    assert "." not in staged[0]
+
+
+def test_a_proposal_naming_no_files_cannot_be_committed(client, monkeypatch):
+    approved = selfmod.decide(client, _proposal(client),
+                              decision=selfmod.APPROVE, decided_by="krish")
+    client.update(approved["id"], {"status": selfmod.TESTED,
+                                   "affected_files": "[]"})
+    with pytest.raises(selfmod.PreconditionsUnmet) as raised:
+        selfmod.commit_candidate(client, client.get(approved["id"]), message="m")
+    assert "no files" in str(raised.value)
+
+
 def test_this_module_cannot_restart_the_gateway():
     """§19 as an absence: no call in `selfmod` can stop or start this process."""
     import ast

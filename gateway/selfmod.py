@@ -564,8 +564,21 @@ def commit_candidate(client: dbaclient.DBAClient, proposal: dict, *,
             f"is the first step of doing so.")
 
     branch = proposal.get("target_branch") or f"{BRANCH_PREFIX}unnamed"
+    # Only the files the approval named. `git add -A` was the first version and
+    # it was wrong twice over: it would sweep in whatever else happened to be in
+    # the working tree - the DBA's live store, the deploy request, a half-edited
+    # file - and it would commit changes outside the approved scope, which makes
+    # §17 item 8 a description rather than a boundary. Krish approved a list of
+    # files; this stages that list.
+    approved_files = _list(proposal.get("affected_files"))
+    if not approved_files:
+        raise PreconditionsUnmet(
+            "this proposal names no files, so there is no approved scope to "
+            "commit. Refusing rather than committing everything.")
+    introspect.require_modifiable(approved_files)
+
     for command in (["git", "checkout", "-B", branch],
-                    ["git", "add", "-A"],
+                    ["git", "add", "--"] + approved_files,
                     ["git", "commit", "-m", message]):
         result = subprocess.run(
             ["git", "-C", str(introspect.PROJECT_ROOT)] + command[1:],
