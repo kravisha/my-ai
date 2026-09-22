@@ -13,6 +13,7 @@ untested assumption in a backup system gets tested at once.
 import json
 import os
 import shutil
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -505,9 +506,88 @@ def test_nothing_is_due_before_the_configured_hour(agent):
     assert backup.due(before) is False
 
 
-def test_backing_up_a_store_this_agent_does_not_own_is_refused(agent):
-    with pytest.raises(backup.BackupRefused, match="still their own owners"):
+def test_a_store_this_agent_does_not_own_is_still_backed_up(agent, tmp_path,
+                                                            monkeypatch):
+    """Backing a database up is a read. It does not take responsibility for
+    what is in it, does not serve it and does not change it - so "the other
+    two belong to services that are still their own owners" and "the DBA keeps
+    everything backed up" are both true at once."""
+    gateway_db = tmp_path / "gateway.db"
+    other = Database(gateway_db)
+    other.executescript("CREATE TABLE sessions(id TEXT);")
+    other.execute("INSERT INTO sessions VALUES ('s-1')")
+    other.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+
+    taken = backup.take(source="gateway")
+
+    assert taken.verified
+    assert taken.source == "gateway"
+    assert taken.row_counts["sessions"] == 1
+
+
+def test_a_store_this_agent_does_not_own_is_not_restored_by_it(agent, tmp_path,
+                                                               monkeypatch):
+    """Restoring is the part that belongs to whoever owns the service: putting
+    gateway.db back means stopping the Gateway and starting it again, and that
+    is the Gateway's story to tell."""
+    gateway_db = tmp_path / "gateway.db"
+    other = Database(gateway_db)
+    other.executescript("CREATE TABLE sessions(id TEXT);")
+    other.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+    taken = backup.take(source="gateway")
+
+    with pytest.raises(backup.BackupRefused, match="does not restore"):
+        backup.restore(taken.backup_id, accepted_by=KRISH, confirmed=True)
+
+
+def test_an_unknown_store_is_still_refused(agent):
+    with pytest.raises(backup.BackupRefused, match="not a store this agent"):
+        backup.take(source="somebody_elses_database")
+
+
+def test_retention_is_counted_per_store(agent, tmp_path, monkeypatch):
+    """Counted across all of them, three databases backed up daily would evict
+    each other and `keep: 14` would mean four or five days of each - a policy
+    that means something different from what it says."""
+    monkeypatch.setattr(config, "keep", lambda: 2)
+    gateway_db = tmp_path / "gateway.db"
+    other = Database(gateway_db)
+    other.executescript("CREATE TABLE sessions(id TEXT);")
+    other.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+    _people(agent, 1)
+
+    for _ in range(3):
         backup.take(source="gateway")
+    mine = backup.take(source="dba")
+
+    assert len(backup.catalogue(source="gateway")) == 2
+    assert [item.backup_id for item in backup.catalogue(source="dba")] == \
+        [mine.backup_id], "another store's churn evicted this one's backup"
+
+
+def test_the_scheduled_run_covers_every_store(agent, tmp_path, monkeypatch):
+    gateway_db = tmp_path / "gateway.db"
+    other = Database(gateway_db)
+    other.executescript("CREATE TABLE sessions(id TEXT);")
+    other.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+    monkeypatch.setenv("FI_DB_PATH", str(tmp_path / "never-created.db"))
+    _people(agent, 1)
+    moment = datetime.now().astimezone().replace(
+        hour=max(config.backup_hour(), 12), minute=0)
+
+    outcome = backup.run_all_if_due(moment)
+
+    assert outcome["dba"]["taken"]
+    assert outcome["gateway"]["taken"]
+    # A database that has never existed is an ordinary fact, not a failure
+    # that should stop the DBA backing itself up.
+    assert outcome["financial_intelligence"]["taken"] is None
+    assert "nothing has been stored" in \
+        outcome["financial_intelligence"]["refused"]
 
 
 def test_backing_up_nothing_is_said_plainly(tmp_path, monkeypatch):
@@ -772,6 +852,215 @@ def test_a_restore_that_fails_partway_leaves_the_database_untouched(
 
 
 # =============================================================================
+# The DBA takes its own backups
+#
+# Krish's correction, and he is right: an agent whose job is that persistent
+# information is safe, and which needs somebody else to remember to run it, is
+# not keeping anything safe.
+# =============================================================================
+
+
+@pytest.fixture()
+def scheduler(monkeypatch):
+    """The scheduler, enabled, with the schedule hour pinned to midnight.
+
+    THE HOUR MATTERS AND THE FIRST VERSION DID NOT PIN IT. These tests call
+    `check_once` and then assert a backup appeared - which is only true when
+    the wall clock is past `backup.hour` (2am by default). They passed all
+    afternoon and failed the moment the date rolled past midnight, which is
+    the definition of a flake that would have gone off at 3am on somebody
+    else's machine. Hour 0 means "any time of day is past it"."""
+    from dba import config as config_module
+    from dba import scheduler as module
+
+    monkeypatch.setenv(module.ENABLED_ENV, "1")
+    monkeypatch.setattr(config_module, "backup_hour", lambda: 0)
+    module.reset_for_test()
+    yield module
+    module.reset_for_test()
+
+
+def test_the_scheduler_is_on_by_default(monkeypatch):
+    """A default of off would mean every fresh install is unprotected until
+    somebody notices."""
+    from dba import scheduler as module
+
+    monkeypatch.delenv(module.ENABLED_ENV, raising=False)
+    assert module.enabled() is True
+
+
+def test_the_service_starting_starts_the_scheduler(scheduler, agent,
+                                                   monkeypatch):
+    """The whole point: the running DBA backs itself up, with nothing else
+    installed on the machine."""
+    from fastapi.testclient import TestClient
+
+    from dba.main import app
+
+    monkeypatch.setenv("DBA_TOKEN_OPERATOR_CONSOLE", "krish-token-not-real")
+    _people(agent, 2)
+
+    with TestClient(app):  # entering runs the lifespan
+        deadline = time.time() + 10
+        while not backup.catalogue(source="dba") and time.time() < deadline:
+            time.sleep(0.05)
+        assert scheduler.state()["running"] is True
+        assert backup.catalogue(source="dba"), \
+            "the service started and nothing backed itself up"
+
+    assert scheduler.state()["running"] is False, "shutdown stopped it"
+
+
+def test_it_backs_up_immediately_rather_than_at_the_next_wake(scheduler, agent):
+    """A machine that was off at the scheduled hour is protected the moment it
+    comes back, not tomorrow."""
+    _people(agent, 1)
+
+    assert scheduler.start() is True
+    deadline = time.time() + 10
+    while not backup.catalogue(source="dba") and time.time() < deadline:
+        time.sleep(0.05)
+
+    assert backup.current(source="dba") is not None
+
+
+def test_a_second_pass_does_not_take_a_second_backup(scheduler, agent):
+    """It wakes often and acts rarely. What stops fifteen-minute wakes being
+    fifteen backups an hour is `due`, which is idempotent through the
+    catalogue."""
+    _people(agent, 1)
+
+    scheduler.check_once()
+    scheduler.check_once()
+    scheduler.check_once()
+
+    assert len(backup.catalogue(source="dba")) == 1
+
+
+def test_a_failing_backup_does_not_stop_the_scheduler(scheduler, agent,
+                                                      monkeypatch):
+    """A DBA that stopped serving requests because it could not back itself up
+    would have turned a backup problem into an outage."""
+    _people(agent, 1)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the disk caught fire")
+
+    monkeypatch.setattr(backup, "run_all_if_due", explode)
+    outcome = scheduler.check_once()
+
+    assert "failed" in outcome
+    assert scheduler.state()["failures"] == 1
+    assert scheduler.state()["last_result"]["failed"].startswith("RuntimeError")
+
+
+def test_the_scheduler_notices_when_every_backup_is_failing(scheduler, agent,
+                                                             monkeypatch):
+    """THE FINDING THAT MATTERED MOST in this round: the observability was
+    blind to the failure it was added to catch.
+
+    `run_all_if_due` catches every per-store error and returns them inside its
+    result, so the `except` around it never fired, `failures` stayed 0 for
+    ever, and the health check built to catch failing backups passed while
+    every single one of them failed."""
+    _people(agent, 1)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the disk caught fire")
+
+    monkeypatch.setattr(backup, "take", explode)
+    outcome = scheduler.check_once()
+
+    assert scheduler.failed_stores(outcome), outcome
+    assert scheduler.state()["failures"] == 1
+    check = next(item for item in health.diagnose()["checks"]
+                 if item["check"] == "backup_scheduler")
+    assert not check["passed"], "the scheduler reported healthy while failing"
+
+
+def test_a_store_not_being_due_is_not_a_failure(scheduler, agent):
+    """A store that is simply not due, or has never existed on this machine,
+    is an ordinary fact. Counting those as failures would make the check cry
+    wolf on every machine where the Gateway has not run."""
+    _people(agent, 1)
+    scheduler.check_once()
+
+    second = scheduler.check_once()
+
+    assert scheduler.failed_stores(second) == []
+    assert scheduler.state()["failures"] == 0
+
+
+def test_the_dbas_own_backup_is_not_reported_from_another_stores(
+        scheduler, agent, tmp_path, monkeypatch):
+    """Mixing a dba-scoped `current()` with an all-store `catalogue()` meant
+    that with no DBA backup it reported a *gateway* backup as its own - with
+    `status: verified` and `verified: False` in the same object."""
+    gateway_db = tmp_path / "gateway.db"
+    other = Database(gateway_db)
+    other.executescript("CREATE TABLE sessions(id TEXT);")
+    other.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+    _people(agent, 1)
+    backup.take(source="gateway")
+
+    reported = health.health()["last_backup"]
+    check = next(item for item in health.diagnose()["checks"]
+                 if item["check"] == "backup_age")
+
+    assert reported is None, "a gateway backup was reported as the DBA's"
+    assert "has ever been taken" in check["detail"]
+
+
+def test_the_scheduler_is_visible_rather_than_assumed(scheduler, agent):
+    """"It should be running" is not a measurement. A backup system with no
+    scheduler running is one where every existing backup quietly gets older,
+    and nothing else in the report would say so."""
+    _people(agent, 1)
+
+    stopped = health.diagnose()
+    assert "backup_scheduler" in stopped["failing"]
+
+    scheduler.start()
+    deadline = time.time() + 10
+    while not backup.catalogue(source="dba") and time.time() < deadline:
+        time.sleep(0.05)
+
+    running = health.diagnose()
+    check = next(item for item in running["checks"]
+                 if item["check"] == "backup_scheduler")
+    assert check["passed"], check["detail"]
+    assert "running since" in check["detail"]
+
+
+def test_health_says_when_each_store_was_last_backed_up(scheduler, agent):
+    """"The last backup was an hour ago" is no comfort if it was an hour ago
+    for one database and never for the other two."""
+    _people(agent, 1)
+    backup.take(source="dba")
+
+    reported = health.health()["backups"]
+
+    assert set(reported) == set(backup.STORES)
+    assert reported["dba"]["current"]
+    assert reported["gateway"]["current"] is None
+    assert reported["dba"]["restorable_by_the_dba"] is True
+    assert reported["gateway"]["restorable_by_the_dba"] is False
+
+
+def test_turning_it_off_says_what_that_means(monkeypatch):
+    from dba import scheduler as module
+
+    monkeypatch.setenv(module.ENABLED_ENV, "0")
+    module.reset_for_test()
+
+    assert module.start() is False
+    reported = module.state()
+    assert reported["enabled"] is False
+    assert "Nothing is scheduling backups" in reported["why_not_running"]
+
+
+# =============================================================================
 # §32: the configuration is externalised, and validated
 # =============================================================================
 
@@ -851,10 +1140,17 @@ def test_the_documentation_answers_what_section_twenty_six_asks_for(agent):
 
 
 def test_the_documentation_is_honest_about_what_is_missing(agent):
-    missing = backup.describe()["not_implemented"]
+    described = backup.describe()
+    missing = described["not_implemented"]
+
     assert "encrypted_secondary_location" in missing
-    assert "other_databases" in missing
-    assert "financial_intelligence.db" in missing["other_databases"]
+    assert "readable copy" in missing["encrypted_secondary_location"]
+
+    # The other two are backed up now; what is missing is restoring them.
+    assert "restoring_the_other_stores" in missing
+    assert "gateway.db" in missing["restoring_the_other_stores"]
+    assert set(described["protects"]) == set(backup.STORES)
+    assert described["protects"]["gateway"]["restorable_by_the_dba"] is False
 
 
 def test_health_reports_no_backup_as_a_failure_rather_than_silence(agent):
@@ -874,7 +1170,9 @@ def test_health_reports_a_real_backup_once_one_exists(agent):
     assert reported["backup_id"] == taken.backup_id
     assert reported["verified"] is True
     assert reported["recovery_point"] == taken.recovery_point
-    assert health.diagnose()["failing"] == []
+    # `backup_scheduler` is the one thing still failing, correctly: the suite
+    # runs with DBA_AUTOBACKUP off, so nothing is scheduling backups here.
+    assert health.diagnose()["failing"] == ["backup_scheduler"]
 
 
 def test_backups_that_exist_but_are_unverified_do_not_count_as_healthy(
@@ -907,20 +1205,72 @@ def test_a_stale_backup_is_reported_as_stale(agent, monkeypatch):
     assert "scheduled run has been missed" in check["detail"]
 
 
-def test_the_command_a_scheduler_calls(agent, capsys):
-    """Nothing here runs on a timer by itself. Pretending otherwise would be
-    the worst kind of backup story - one everybody believes is running."""
+def test_the_command_that_covers_every_store(agent, monkeypatch, capsys):
+    """`--if-due` backs up every protected store, not only the DBA's own.
+
+    The schedule hour is pinned, for the reason the `scheduler` fixture gives:
+    a test that calls `--if-due` and expects a backup is asserting about the
+    wall clock unless it does."""
+    monkeypatch.setattr(config, "backup_hour", lambda: 0)
     _people(agent, 1)
 
-    assert backup.main(["--take"]) == 0
+    assert backup.main(["--take", "--store", "dba"]) == 0
     assert "took" in capsys.readouterr().out
 
     assert backup.main(["--if-due"]) == 0
-    assert "already exists" in capsys.readouterr().out
+    said = capsys.readouterr().out
+    assert set(backup.STORES) <= {line.split(":")[0] for line in
+                                  said.splitlines() if ":" in line}
+    assert "dba: not due" in said, "the DBA's own is already taken today"
 
-    taken = backup.catalogue()[0]
+    taken = backup.catalogue(source="dba")[0]
     assert backup.main(["--verify", taken.backup_id]) == 0
     assert backup.main(["--verify", "dba-19700101T000000Z-00000000"]) == 1
+
+
+def test_a_store_that_cannot_be_opened_is_a_refusal_not_a_crash(agent,
+                                                                tmp_path,
+                                                                monkeypatch):
+    """Backing up a store this agent does not own must not raise a bare
+    sqlite3 error out of `take` - and opening one read-write issued a PRAGMA
+    that writes to its header, which is not what "backing up is a read"
+    means."""
+    not_a_database = tmp_path / "gateway.db"
+    not_a_database.write_bytes(b"this is not a database")
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(not_a_database))
+
+    with pytest.raises(backup.BackupRefused, match="could not be"):
+        backup.take(source="gateway")
+
+
+def test_another_services_store_is_opened_read_only(agent, tmp_path,
+                                                    monkeypatch):
+    """The claim, made true: the file the DBA reads is not modified by the
+    reading. Asserted on the bytes, which is the only way to mean it.
+
+    The store is deliberately in rollback-journal mode rather than WAL. A
+    database that is *already* WAL is unchanged by `PRAGMA journal_mode=WAL`,
+    so the first version of this test passed against a read-write open and
+    proved nothing. On one that is not, the pragma rewrites the header - and
+    that is a write to another service's database performed by backing it
+    up."""
+    import sqlite3 as raw
+
+    gateway_db = tmp_path / "gateway.db"
+    plain = raw.connect(gateway_db)
+    plain.execute("PRAGMA journal_mode=DELETE;")
+    plain.execute("CREATE TABLE sessions(id TEXT);")
+    plain.execute("INSERT INTO sessions VALUES ('s-1')")
+    plain.commit()
+    plain.close()
+    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+    before = gateway_db.read_bytes()
+
+    taken = backup.take(source="gateway")
+
+    assert taken.row_counts["sessions"] == 1, "it really was read"
+    assert gateway_db.read_bytes() == before, \
+        "backing it up rewrote the database it was backing up"
 
 
 def test_the_command_refuses_a_restore_that_was_not_confirmed(agent, capsys):

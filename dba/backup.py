@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import sqlite3
 import json
 import os
 import shutil
@@ -62,10 +63,59 @@ from pathlib import Path
 from backend.db import Database, now_iso
 from dba import config, ids, store
 
-# Which stores this agent backs up. One today, and the reason the list exists
-# rather than a constant is that adding the second one should be a line plus a
-# restore story, not a rewrite.
-STORES = ("dba",)
+# WHICH STORES THIS AGENT KEEPS SAFE. All three, and the distinction that
+# makes that consistent with the DBA not *owning* the other two:
+#
+# Backing a database up is a read. It does not take responsibility for what is
+# in it, does not serve it, and does not change it - so "the other two belong
+# to services that are still their own owners" and "the DBA keeps everything
+# backed up" are both true at once. Restoring is the part that belongs to
+# whoever owns the service, and `restore` refuses anything but `dba` for
+# exactly that reason: putting gateway.db back needs the Gateway stopped, and
+# that is the Gateway's story to tell.
+#
+# Paths are resolved from the same environment variables those services read,
+# rather than by importing them. `tests/test_dba_development.py` asserts that
+# gateway/ and backend/ know nothing about the DBA; importing them here would
+# make that a one-way ignorance rather than independence, and would drag their
+# start-up into this process.
+def _project_file(name: str) -> Path:
+    return Path(__file__).resolve().parent.parent / name
+
+
+STORES: dict[str, dict] = {
+    "dba": {
+        "path": lambda: store.database_path(),
+        "describes": "the DBA's own store: capabilities, records, the audit "
+                     "trail, its design experience",
+        "restorable": True,
+        "essential_tables": ("capabilities", "audit_events", "entities"),
+    },
+    "gateway": {
+        "path": lambda: Path(os.environ.get("GATEWAY_DB_PATH")
+                             or _project_file("gateway.db")),
+        "describes": "the Gateway's sessions, conversations and scoreboard",
+        "restorable": False,
+        "essential_tables": (),
+    },
+    "financial_intelligence": {
+        "path": lambda: Path(os.environ.get("FI_DB_PATH")
+                             or _project_file("financial_intelligence.db")),
+        "describes": "the backend's financial intelligence database",
+        "restorable": False,
+        "essential_tables": (),
+    },
+}
+
+
+def store_path(source: str) -> Path:
+    """Where one protected store lives."""
+    try:
+        return STORES[source]["path"]()
+    except KeyError:
+        raise BackupRefused(
+            f"{source!r} is not a store this agent protects. It protects "
+            f"{', '.join(sorted(STORES))}.") from None
 
 MANIFEST_SUFFIX = ".manifest.json"
 BACKUP_SUFFIX = ".db"
@@ -154,13 +204,7 @@ def take(*, reason: str = REQUESTED, source: str = "dba",
     The safety net removed the thing it was protecting."""
     if reason not in REASONS:
         raise ValueError(f"backup reason={reason!r} is not one of {REASONS}")
-    if source not in STORES:
-        raise BackupRefused(
-            f"{source!r} is not a store this agent backs up. It backs up "
-            f"{', '.join(STORES)}; the others belong to services that are "
-            f"still their own owners.")
-
-    live = store.database_path()
+    live = store_path(source)
     if not live.exists():
         raise BackupRefused(
             f"there is no database at {live} to back up. That is a fact about "
@@ -174,11 +218,27 @@ def take(*, reason: str = REQUESTED, source: str = "dba",
     backup_id = f"{source}-{stamp}-{ids.new_id('b').split('-')[1][:8]}"
     path = target_dir / f"{backup_id}{BACKUP_SUFFIX}"
 
-    conn = store.connect()
+    # READ-ONLY FOR A STORE THIS AGENT DOES NOT OWN. Opening it read-write
+    # issues `PRAGMA journal_mode=WAL`, which is a write to the header - so
+    # the claim that backing up is a read was not true, and a store its owner
+    # had locked or opened read-only would have raised a bare sqlite3 error
+    # out of `take`.
+    mine = source == "dba"
     try:
-        store.init_schema(conn)
+        conn = Database(live, read_only=not mine)
+    except sqlite3.Error as bad:
+        raise BackupRefused(
+            f"{live} could not be opened to back it up ({bad}). Nothing was "
+            f"written.") from bad
+    try:
+        if mine:
+            store.init_schema(conn)
         live_counts = row_counts(conn)
         conn.backup_to(path)
+    except sqlite3.Error as bad:
+        raise BackupRefused(
+            f"{live} could not be read to back it up ({bad}). Nothing "
+            f"usable was written.") from bad
     finally:
         conn.close()
 
@@ -214,7 +274,7 @@ def take(*, reason: str = REQUESTED, source: str = "dba",
     # had. A frozen dataclass has one correct way to make a changed copy.
     if config.verify_by_restoring():
         verification = verify(backup, expected_counts=source_counts,
-                              expected_version=source_version)
+                              expected_version=source_version, source=source)
         if drifted:
             verification = {**verification, "wrote_while_copying": drifted}
         backup = dataclasses.replace(
@@ -263,7 +323,8 @@ def _require_room(target_dir: Path, live: Path) -> None:
 
 
 def verify(backup: Backup, *, expected_counts: dict | None = None,
-           expected_version: int | None = None) -> dict:
+           expected_version: int | None = None,
+           source: str | None = None) -> dict:
     """Restore the backup somewhere harmless and check it is really there.
 
     Four questions, and the third is the one §26 is actually about:
@@ -329,12 +390,17 @@ def verify(backup: Backup, *, expected_counts: dict | None = None,
                                     "faithfully contains nothing"),
             ))
 
-            essential = [table for table in ("capabilities", "audit_events",
-                                             "entities")
-                         if table not in counts]
+            # Per store: the Gateway's database has no `capabilities` table
+            # and never will, and a check that demanded one would fail every
+            # backup of it for ever.
+            wanted = STORES.get(source or backup.source, {}).get(
+                "essential_tables", ())
+            essential = [table for table in wanted if table not in counts]
             checks.append(_check(
                 "essential_tables_present", not essential,
-                "the capability, audit and record tables restored"
+                (f"the tables this store cannot be without restored: "
+                 f"{', '.join(wanted)}" if wanted
+                 else "no table is declared essential for this store")
                 if not essential else f"missing: {', '.join(essential)}"))
         finally:
             restored.close()
@@ -364,7 +430,8 @@ def _check(name: str, passed: bool, detail: str) -> dict:
 # --- the catalogue, which does not live in the database it protects -----------
 
 
-def catalogue(directory: Path | None = None) -> list[Backup]:
+def catalogue(directory: Path | None = None,
+              source: str | None = None) -> list[Backup]:
     """Every backup on disk, newest first, read from the manifests beside them.
 
     Built by scanning rather than by querying, because a record of your backups
@@ -385,16 +452,19 @@ def catalogue(directory: Path | None = None) -> list[Backup]:
             continue
         if not backup.path.exists():
             continue
+        if source is not None and backup.source != source:
+            continue
         found.append(backup)
     return sorted(found, key=lambda item: item.taken_at, reverse=True)
 
 
-def current(directory: Path | None = None) -> Backup | None:
+def current(directory: Path | None = None,
+            source: str | None = "dba") -> Backup | None:
     """§26's "which backup is current": the newest **verified** one.
 
     Never an unverified backup, however recent. The whole point of §26 is that
     recency is not the property that matters."""
-    for backup in catalogue(directory):
+    for backup in catalogue(directory, source=source):
         if backup.verified:
             return backup
     return None
@@ -428,22 +498,27 @@ def prune(directory: Path | None = None,
     limit = config.keep()
     protect = set(protect or ())
 
+    # PER STORE. Counted across all of them, three databases backed up daily
+    # would evict each other and `keep: 14` would mean four or five days of
+    # each - a retention policy that means something different from what it
+    # says.
     keeping: set[str] = set(protect)
-    verified_kept = 0
-    other_kept = 0
-    for backup in everything:  # newest first
-        if backup.verified:
-            if verified_kept < limit:
+    for name in {backup.source for backup in everything}:
+        mine = [backup for backup in everything if backup.source == name]
+        verified_kept = 0
+        other_kept = 0
+        for backup in mine:  # newest first
+            if backup.verified:
+                if verified_kept < limit:
+                    keeping.add(backup.backup_id)
+                    verified_kept += 1
+            elif other_kept < limit:
                 keeping.add(backup.backup_id)
-                verified_kept += 1
-        elif other_kept < limit:
-            keeping.add(backup.backup_id)
-            other_kept += 1
-
-    newest_verified = next((backup.backup_id for backup in everything
-                            if backup.verified), None)
-    if newest_verified:
-        keeping.add(newest_verified)
+                other_kept += 1
+        newest_verified = next((backup.backup_id for backup in mine
+                                if backup.verified), None)
+        if newest_verified:
+            keeping.add(newest_verified)
 
     removed: list[str] = []
     for backup in everything:
@@ -491,6 +566,15 @@ def restore(backup_id: str, *, accepted_by: str, confirmed: bool = False,
     backup = get(backup_id, directory)
     if backup is None:
         raise BackupRefused(f"no backup {backup_id!r} is on disk.")
+
+    if not STORES.get(backup.source, {}).get("restorable"):
+        raise BackupRefused(
+            f"{backup_id} is a backup of {backup.source!r}, which this agent "
+            f"protects but does not restore. Putting it back means stopping "
+            f"the service that owns it and starting it again, and that is "
+            f"that service's story to tell rather than this one's. The file is "
+            f"at {backup.path} and is verified; restoring it is a deliberate "
+            f"act by whoever owns it.")
 
     if not backup.verified and not allow_unverified:
         raise BackupRefused(
@@ -711,7 +795,7 @@ def _replace(live: Path, source: Path) -> None:
 
 
 def due(now: datetime | None = None, last_backup: datetime | None = None,
-        directory: Path | None = None) -> bool:
+        directory: Path | None = None, source: str = "dba") -> bool:
     """Whether a backup should be taken.
 
     Hour-based rather than cron, for the reason `app/self_diagnosis.py` gives
@@ -728,7 +812,7 @@ def due(now: datetime | None = None, last_backup: datetime | None = None,
         # newer unverified or failed backup was invisible, so the schedule
         # thought nothing had been taken and took another on every call -
         # a failing backup turning into an unbounded loop of failing backups.
-        everything = catalogue(directory)
+        everything = catalogue(directory, source=source)
         latest = everything[0] if everything else None
         if latest is not None:
             try:
@@ -743,13 +827,36 @@ def due(now: datetime | None = None, last_backup: datetime | None = None,
     return True
 
 
-def run_if_due(now: datetime | None = None,
-               directory: Path | None = None) -> Backup | None:
-    """Take today's backup if it has not been taken. Idempotent through the
-    catalogue, so a caller that invokes this hourly gets one a day."""
-    if not due(now, directory=directory):
+def run_if_due(now: datetime | None = None, directory: Path | None = None,
+               source: str = "dba") -> Backup | None:
+    """Take today's backup of one store if it has not been taken. Idempotent
+    through the catalogue, so a caller invoking this hourly gets one a day."""
+    if not due(now, directory=directory, source=source):
         return None
-    return take(reason=SCHEDULED, directory=directory)
+    return take(reason=SCHEDULED, directory=directory, source=source)
+
+
+def run_all_if_due(now: datetime | None = None,
+                   directory: Path | None = None) -> dict:
+    """Every store the DBA protects, not only its own.
+
+    One store failing does not stop the others: a missing `gateway.db` on a
+    machine where the Gateway has never run is an ordinary fact, and letting
+    it prevent the DBA backing *itself* up would be the tail wagging the
+    dog."""
+    outcome: dict[str, dict] = {}
+    for name in sorted(STORES):
+        try:
+            taken = run_if_due(now, directory=directory, source=name)
+            outcome[name] = ({"taken": taken.backup_id,
+                              "status": taken.status} if taken
+                             else {"taken": None, "why": "not due"})
+        except BackupRefused as refused:
+            outcome[name] = {"taken": None, "refused": str(refused)}
+        except Exception as bad:  # noqa: BLE001 - one store must not stop the rest
+            outcome[name] = {"taken": None,
+                             "failed": f"{type(bad).__name__}: {bad}"}
+    return outcome
 
 
 # --- §26's documentation ------------------------------------------------------
@@ -791,17 +898,22 @@ def describe(directory: Path | None = None) -> dict:
             "The same verification runs again immediately before a restore "
             "overwrites anything.",
         ],
+        "protects": {name: {"describes": details["describes"],
+                            "path": str(details["path"]()),
+                            "restorable_by_the_dba": details["restorable"]}
+                     for name, details in sorted(STORES.items())},
         "not_implemented": {
             "encrypted_secondary_location":
                 "§25 says this should eventually be supported. There is no "
                 "second location configured on this machine to write to, and "
-                "nothing is encrypted at rest. Reported rather than omitted, "
-                "because an absent measurement reads as a clean one.",
-            "other_databases":
-                "financial_intelligence.db and gateway.db are not backed up "
-                "here. They belong to services that are still their own "
-                "owners, and each needs its own restore story before it joins "
-                "this list.",
+                "nothing is encrypted at rest - every backup is a readable "
+                "copy of the database sitting beside it. Reported rather than "
+                "omitted, because an absent measurement reads as a clean one.",
+            "restoring_the_other_stores":
+                "gateway.db and financial_intelligence.db are backed up and "
+                "verified here, and are not restored here. Putting one back "
+                "means stopping the service that owns it, which is that "
+                "service's story to tell.",
         },
     }
 
@@ -825,7 +937,20 @@ def row_counts(conn: Database) -> dict[str, int]:
 
 
 def _schema_version_of(conn: Database) -> int:
-    row = conn.fetchone("SELECT value FROM dba_meta WHERE key = 'schema_version'")
+    """The DBA's schema version, or 0 for a store that does not keep one.
+
+    The Gateway's database has no `dba_meta` table and never will. Letting
+    that raise made every backup of another service's store fail on the one
+    line that assumes the store is this agent's own."""
+    try:
+        row = conn.fetchone(
+            "SELECT value FROM dba_meta WHERE key = 'schema_version'")
+    except sqlite3.OperationalError:
+        # "no such table" - a store that does not keep one. NARROW on
+        # purpose: a blanket except also swallowed `DatabaseError` from a
+        # genuinely corrupt dba store, so an allow_unverified restore of a
+        # damaged file reported schema_version 0 and called itself a success.
+        return 0
     return int(row["value"]) if row else 0
 
 
@@ -863,6 +988,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirmed", action="store_true",
                         help="required by --restore; it discards every write "
                              "made since the backup")
+    parser.add_argument("--store", metavar="NAME",
+                        help="limit --take to one protected store")
     arguments = parser.parse_args(argv)
 
     try:
@@ -872,14 +999,26 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(described, indent=2, default=str))
             return 0
         if arguments.if_due:
-            taken = run_if_due()
-            print(f"took {taken.backup_id}" if taken
-                  else "nothing was due; today's backup already exists")
+            # EVERY PROTECTED STORE, not only the DBA's own. The advice in
+            # the "scheduler is off" message points here, and pointing an
+            # operator at a command that quietly covers one database out of
+            # three would leave the other two unprotected with nothing saying
+            # so.
+            outcome = run_all_if_due()
+            for name, result in sorted(outcome.items()):
+                said = (result.get("taken") or result.get("why")
+                        or result.get("refused") or result.get("failed"))
+                print(f"{name}: {said}")
             return 0
         if arguments.take:
-            taken = take(reason=REQUESTED)
-            print(f"took {taken.backup_id} ({taken.bytes} bytes, "
-                  f"{taken.status})")
+            for name in ([arguments.store] if arguments.store
+                         else sorted(STORES)):
+                try:
+                    taken = take(reason=REQUESTED, source=name)
+                    print(f"{name}: took {taken.backup_id} ({taken.bytes} "
+                          f"bytes, {taken.status})")
+                except BackupRefused as refused:
+                    print(f"{name}: refused - {refused}")
             return 0
         if arguments.verify:
             found = get(arguments.verify)

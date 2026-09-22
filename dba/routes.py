@@ -370,6 +370,36 @@ def backup_if_due(x_dba_agent: str | None = Header(default=None),
     return {"status": "taken", "backup": taken.to_dict()}
 
 
+@router.get("/backups/scheduler")
+def backup_scheduler(x_dba_agent: str | None = Header(default=None),
+                     x_dba_token: str | None = Header(default=None)):
+    """Is anything actually taking backups? (§28)"""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import scheduler
+
+    return scheduler.state()
+
+
+@router.post("/backups/scheduler/check")
+def backup_scheduler_check(x_dba_agent: str | None = Header(default=None),
+                           x_dba_token: str | None = Header(default=None)):
+    """Run the scheduler's pass now rather than waiting for its next wake."""
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    _require_administer(agent)
+    from dba import scheduler
+
+    outcome = scheduler.check_once()
+    # `check_once` returns a per-store dict, so a top-level "failed" key is
+    # something it never produces - the first version audited every run as a
+    # success, including the ones where every store failed.
+    broken = scheduler.failed_stores(outcome) or ("failed" in outcome
+                                                  and ["scheduler"]) or []
+    _audit_backup(agent, "take_backup", f"scheduler pass: {outcome}",
+                  succeeded=not broken)
+    return {"status": "checked", "result": outcome, "failed_stores": broken}
+
+
 @router.get("/backups/{backup_id}")
 def one_backup(backup_id: str,
                x_dba_agent: str | None = Header(default=None),

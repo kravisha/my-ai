@@ -103,6 +103,13 @@ os.environ["DBA_DB_PATH"] = str(_SESSION_DB_DIR / "dba.db")
 # on when he last ran one.
 os.environ["DBA_BACKUP_DIR"] = str(_SESSION_DB_DIR / "backups")
 
+# DBA_AUTOBACKUP: the DBA schedules its own backups in a background thread
+# when its service starts. On in production - that is the whole point - and
+# off here, because a thread taking backups underneath a test that is counting
+# them is nondeterminism nobody asked for. `tests/test_dba_backup.py` starts
+# the scheduler deliberately where it is the thing being tested.
+os.environ["DBA_AUTOBACKUP"] = "0"
+
 
 def real_database_fingerprint() -> dict[str, str | None]:
     """Content hash of each real database and its WAL sidecar, or None per file

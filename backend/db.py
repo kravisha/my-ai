@@ -88,8 +88,16 @@ def _as_contended(exc: sqlite3.OperationalError) -> sqlite3.OperationalError:
 
 
 class Database:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, read_only: bool = False):
         """Open the database, or leave nothing behind having failed to.
+
+        `read_only` opens it through SQLite's `mode=ro` URI and skips the
+        journal-mode PRAGMA, which is a WRITE to the database header. It
+        exists for `dba/backup.py`, which backs up two databases belonging to
+        other services and states that backing one up is a read - a claim that
+        was not true while the backup issued `PRAGMA journal_mode=WAL` on
+        them, and that would fail outright on a store opened read-only or
+        locked exclusively by its owner.
 
         The try/finally is not defensive tidiness. `sqlite3.connect` succeeds
         on any file - it does not read it - so a corrupt or non-database file
@@ -102,14 +110,21 @@ class Database:
         replace a corrupt database file during a restore, because the failed
         attempt to open it was still holding it - a recovery blocked by the
         damage it was recovering from."""
-        self._conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
+        if read_only:
+            self._conn = sqlite3.connect(
+                f"file:{Path(path).as_posix()}?mode=ro", uri=True,
+                timeout=BUSY_TIMEOUT_MS / 1000)
+        else:
+            self._conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
         try:
             self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL;")
+            if not read_only:
+                self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS};")
         except BaseException:
             self._conn.close()
             raise
+        self._read_only = read_only
         self._in_transaction = False
 
     @contextmanager

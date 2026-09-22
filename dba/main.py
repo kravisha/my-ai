@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -76,7 +77,26 @@ def _authenticate(agent: str | None, token: str | None) -> str:
     return agent
 
 
-app = FastAPI(title="DBA Agent")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the backup scheduler with the service, stop it with the service.
+
+    THE DBA TAKES ITS OWN BACKUPS. Krish's correction, and he is right: an
+    agent whose job is that persistent information is safe, and which needs
+    somebody else to remember to run it, is not keeping anything safe.
+
+    Nothing else is constructed here - the database is opened per request, the
+    lesson `tests/test_db_isolation.py` exists to keep."""
+    from dba import scheduler
+
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.stop()
+
+
+app = FastAPI(title="DBA Agent", lifespan=lifespan)
 
 
 def _install_routes() -> None:

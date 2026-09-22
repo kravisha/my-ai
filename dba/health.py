@@ -86,6 +86,8 @@ def health(connect=None) -> dict:
             "handled_requests": _one(conn, "SELECT COUNT(*) AS n FROM handled_requests"),
             "pending_migrations": [],
             "last_backup": _last_backup(),
+            "backups": _per_store_backups(),
+            "backup_scheduler": _scheduler_state(),
             "not_measured": {
                 "query_latency_ms": "not instrumented yet; §27 asks for "
                                     "correctness before optimisation and "
@@ -177,6 +179,7 @@ def diagnose(connect=None) -> dict:
             f"are declared because the schema has not changed shape yet"))
 
         checks.append(_backup_check())
+        checks.append(_scheduler_check())
 
         checks.append(_check(
             "disk_usage", True,
@@ -225,6 +228,33 @@ def _check(name: str, passed: bool, detail: str, **extra) -> dict:
 STALE_BACKUP_DAYS = 2
 
 
+def _scheduler_check() -> dict:
+    """§29: is anything actually scheduling backups?
+
+    The check this system most needed and did not have. A backup system with
+    no scheduler running is one where every existing backup gets quietly
+    older, and nothing else in the report says so."""
+    try:
+        from dba import scheduler
+
+        reported = scheduler.state()
+        if not reported["enabled"]:
+            return _check("backup_scheduler", False,
+                          reported.get("why_not_running", "disabled"))
+        if not reported["running"]:
+            return _check("backup_scheduler", False,
+                          reported.get("why_not_running",
+                                       "not running in this process"))
+        failures = reported.get("failures") or 0
+        return _check(
+            "backup_scheduler", failures == 0,
+            f"running since {reported['started_at']}; "
+            f"{reported['checks']} check(s), {failures} failure(s)"
+            + (f"; last: {reported['last_result']}" if failures else ""))
+    except Exception as bad:  # noqa: BLE001
+        return _check("backup_scheduler", False, f"{type(bad).__name__}: {bad}")
+
+
 def _last_backup() -> dict | None:
     """§28's `last_backup`, from the catalogue on disk.
 
@@ -234,9 +264,13 @@ def _last_backup() -> dict | None:
     try:
         from dba import backup
 
-        latest = backup.current()
+        # SCOPED TO THE DBA'S OWN STORE, both halves. Mixing a dba-scoped
+        # `current()` with an all-store `catalogue()` meant that when the DBA
+        # had no verified backup it reported a *gateway* backup as its own -
+        # with `status: verified` and `verified: False` in the same object.
+        latest = backup.current(source="dba")
         if latest is None:
-            everything = backup.catalogue()
+            everything = backup.catalogue(source="dba")
             if not everything:
                 return None
             newest = everything[0]
@@ -252,6 +286,56 @@ def _last_backup() -> dict | None:
         return {"error": f"{type(bad).__name__}: {bad}"}
 
 
+def _by_store() -> dict:
+    """One scan of the backup directory, grouped by store.
+
+    ONE, not six. The first version called `current()` and `catalogue()` per
+    store and each of those re-scanned and re-parsed every manifest on disk -
+    with three stores and `keep: 14` that is around 250 JSON parses on every
+    `/health` request, to answer a question one pass already answers."""
+    from dba import backup
+
+    grouped: dict[str, list] = {name: [] for name in backup.STORES}
+    for item in backup.catalogue():
+        grouped.setdefault(item.source, []).append(item)
+    return grouped
+
+
+def _per_store_backups(grouped: dict | None = None) -> dict:
+    """Every store the DBA protects, and when each was last backed up.
+
+    Per store rather than one number, because "the last backup was an hour
+    ago" is no comfort if it was an hour ago for one database and never for
+    the other two."""
+    try:
+        from dba import backup
+
+        grouped = _by_store() if grouped is None else grouped
+        out = {}
+        for name in sorted(backup.STORES):
+            mine = grouped.get(name, [])
+            latest = next((item for item in mine if item.verified), None)
+            out[name] = {
+                "describes": backup.STORES[name]["describes"],
+                "restorable_by_the_dba": backup.STORES[name]["restorable"],
+                "on_disk": len(mine),
+                "current": latest.backup_id if latest else None,
+                "taken_at": latest.taken_at if latest else None,
+            }
+        return out
+    except Exception as bad:  # noqa: BLE001
+        return {"error": f"{type(bad).__name__}: {bad}"}
+
+
+def _scheduler_state() -> dict:
+    try:
+        from dba import scheduler
+
+        return scheduler.state()
+    except Exception as bad:  # noqa: BLE001
+        return {"error": f"{type(bad).__name__}: {bad}"}
+
+
 def _backup_check() -> dict:
     """§29's backup age, answered from what is actually on disk.
 
@@ -262,17 +346,19 @@ def _backup_check() -> dict:
     try:
         from dba import backup
 
-        everything = backup.catalogue()
+        everything = backup.catalogue(source="dba")
         if not everything:
             return _check("backup_age", False,
-                          "no backup has ever been taken. Take one: "
-                          "POST /backups, or dba.backup.take().")
-        latest = backup.current()
+                          "no backup of the DBA's own store has ever been "
+                          "taken. Take one: POST /backups, or "
+                          "dba.backup.take().")
+        latest = backup.current(source="dba")
         if latest is None:
             return _check(
                 "backup_age", False,
-                f"{len(everything)} backup(s) on disk and none verified. An "
-                f"untested backup is a belief rather than a backup (§26).")
+                f"{len(everything)} backup(s) of the DBA's own store on disk "
+                f"and none verified. An untested backup is a belief rather "
+                f"than a backup (§26).")
         taken = datetime.fromisoformat(latest.taken_at)
         if taken.tzinfo is None:
             taken = taken.replace(tzinfo=timezone.utc)

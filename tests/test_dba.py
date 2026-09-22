@@ -884,7 +884,7 @@ def test_having_taken_no_backup_is_reported_as_a_problem(_isolated):
     backup_check = next(check for check in diagnosis["checks"]
                         if check["check"] == "backup_age")
     assert backup_check["passed"] is False
-    assert "no backup has ever been taken" in backup_check["detail"]
+    assert "has ever been taken" in backup_check["detail"]
     assert diagnosis["status"] == health.DEGRADED
 
 

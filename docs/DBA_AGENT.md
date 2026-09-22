@@ -228,6 +228,41 @@ precisely what happened and cost a seventeen-minute CI run to discover. Its
 first version counted closed connections too and failed against correct code —
 a closed connection is still an object and holds no handle.
 
+### What a review found in the scheduler itself
+
+Nine, and the first is the one worth carrying forward: **the observability was
+blind to the failure it was added to catch.**
+
+`run_all_if_due` catches every per-store error and returns them inside its
+result — so the `except` wrapped around it never fired, `failures` stayed `0`
+for ever, and the `backup_scheduler` health check built to notice failing
+backups would have reported healthy while every one of them failed. A green
+light wired to nothing.
+
+The rest, each now a regression test:
+
+- `_last_backup` mixed a dba-scoped `current()` with an all-store
+  `catalogue()`, so with no DBA backup it reported a **gateway** backup as the
+  DBA's own — `status: verified` and `verified: False` in the same object.
+- `stop()` cleared the thread handle even when the join timed out, so a later
+  `start()` could run **two schedulers at once**: duplicate backups, and one
+  thread's `prune()` able to unlink a file the other was hashing.
+- Backing up another service's database opened it **read-write** and issued
+  `PRAGMA journal_mode=WAL` — a write to its header. "Backing up is a read"
+  was a claim, not a fact. It is now opened `mode=ro`, and the test asserts it
+  on the bytes.
+- The scheduler-pass endpoint audited every run as a success, checking a
+  top-level key its own result never contains.
+- `/health` re-scanned and re-parsed every manifest six times per request.
+- A blanket `except` hid real corruption in the DBA's own store behind
+  `schema_version: 0`.
+
+And a flake the clock caught rather than the review: three scheduler tests
+called `check_once()` and asserted a backup appeared, which is only true past
+`backup.hour`. They passed all afternoon and failed the moment the date rolled
+past midnight — a test that would have gone off at 3am on somebody else's
+machine. The fixture pins the hour now.
+
 ### One honest note about a guard
 
 `_replace` also unlinks the `-wal`/`-shm` sidecars. **No test could be made to
@@ -246,21 +281,63 @@ that cannot fail is worse than no test.
 | `POST /backups`, `/backups/run-if-due`, `/backups/{id}/verify`, `/backups/{id}/restore` | over HTTP, operator credential only |
 | `config/dba.yaml` | where backups go, how many are kept, the hour, the free-space floor |
 
-**Nothing runs on a timer by itself**, and pretending otherwise would be the
-worst kind of backup story — one everybody believes is running. Until a
-scheduler entry exists, `--if-due` is a command somebody or something has to
-call. `GET /backups` answers §26's documentation questions from what is
-actually on disk: how to restore, which backup is current, the recovery point,
-the schema version, the validation procedure.
+**The DBA takes its own backups.** Starting the service starts a scheduler
+thread; stopping it stops the thread. Nothing else has to be installed on the
+machine.
+
+> *"This should be done by the DBA who keeps everything backed up and safe."*
+> — Krish
+
+He is right, and the first version was wrong in a way worth recording: it left
+scheduling to a cron entry somebody had to install, and said so honestly.
+Honest and wrong. An agent whose responsibility is that persistent information
+is safe, and which needs someone else to remember to run it, is not keeping
+anything safe — it is a tool that describes a backup system.
+
+It is a thread rather than an async task because `take` blocks on SQLite pages
+and file hashing, and doing that on the event loop would stall every request.
+It wakes every fifteen minutes and **acts rarely**: `due` is idempotent through
+the catalogue, so a machine that runs all day gets exactly one backup, and a
+machine asleep at 02:00 gets one at 09:15 when it wakes. A failing backup never
+stops the loop — a DBA that stopped serving requests because it could not back
+itself up would have turned a backup problem into an outage.
+
+`DBA_AUTOBACKUP=0` turns it off, and `state()` then says so in words rather
+than reporting a scheduler that merely isn't there. The test suite sets it off:
+a thread taking backups underneath a test counting them is nondeterminism
+nobody asked for.
+
+`GET /backups` answers §26's documentation questions from what is actually on
+disk. `GET /backups/scheduler` answers the one this system most needed and did
+not have: **is anything actually taking backups?** A backup system with no
+scheduler running is one where every existing backup quietly gets older, and
+nothing else in the report would say so.
+
+### "Everything", which means all three databases
+
+The same sentence settled a scope question I had been ducking. The DBA now
+backs up `dba.db`, `gateway.db` **and** `financial_intelligence.db`, and that
+is consistent with the other two still belonging to their own services:
+
+**Backing a database up is a read.** It takes no responsibility for what is in
+it, does not serve it and does not change it. **Restoring is the part that
+belongs to whoever owns the service** — putting `gateway.db` back means
+stopping the Gateway and starting it again, which is the Gateway's story to
+tell. So `restore` refuses anything but `dba`, names the verified file, and
+leaves the decision with its owner.
+
+Retention is counted **per store**. Counted across all three, daily backups
+would evict each other and `keep: 14` would quietly mean four or five days of
+each — a policy that means something different from what it says.
 
 ### Still not built
 
 **An encrypted secondary location** (§25 says *eventually*) — there is no
-second location configured and nothing is encrypted at rest. **The other two
-databases** — `financial_intelligence.db` and `gateway.db` belong to services
-that are still their own owners, and each needs its own restore story before it
-joins the list. Both are reported by `describe()` under `not_implemented`
-rather than left out.
+second location configured and nothing is encrypted at rest, so every backup
+is a readable copy of the database sitting beside it. **Restoring the other
+two databases** — they are backed up and verified; putting one back is its
+owner's deliberate act. Both are reported by `describe()` under
+`not_implemented` rather than left out.
 
 ---
 
