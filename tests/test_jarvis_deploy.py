@@ -11,6 +11,7 @@ file" into "anything that can replace Jarvis".
 
 import importlib.util
 import json
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,6 +37,33 @@ def _load():
 
 
 deploy = _load()
+
+
+# The same guard as tests/test_jarvis_selfmod.py, and for the same reason: a
+# probe there once disabled a check and the code underneath reached git, which
+# made a branch and a commit in the real checkout. This module's subject runs
+# `git checkout --force` and the whole test suite, so it is the one place where
+# a disabled guard would do the most damage.
+_MUTATING = ("commit", "add", "checkout", "push", "reset", "rebase", "merge",
+             "clean", "rm", "fetch")
+
+
+@pytest.fixture(autouse=True)
+def _no_mutating_subprocesses(monkeypatch):
+    real = subprocess.run
+
+    def guarded(command, **kwargs):
+        argv = [str(part) for part in command]
+        if argv and "git" in argv[0] and any(part in _MUTATING for part in argv):
+            raise AssertionError(
+                f"a test tried to run a mutating git command against the real "
+                f"repository: {' '.join(argv)}")
+        if any("pytest" in part for part in argv):
+            raise AssertionError(
+                f"a test tried to run the suite inside the suite: {' '.join(argv)}")
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
 
 
 @pytest.fixture(autouse=True)

@@ -54,6 +54,41 @@ def client():
 _GAP_COUNTER = iter(range(1, 10_000))
 
 
+# A test in this file once ran `git checkout -B`, `git add -A` and `git commit`
+# against the real repository. Not through a bug in the code: through a *probe*.
+# Disabling `commit_candidate`'s "is it tested?" guard - to prove the guard's
+# test could fail - let the function reach git, and it made a branch and a
+# commit in the working checkout.
+#
+# So no test in this file may run a mutating command, whatever it is probing.
+# Read-only git (the `rev-parse` that answers "is source control available?")
+# is allowed through, because refusing it would make §17's precondition report
+# lie in the opposite direction.
+_MUTATING = ("commit", "add", "checkout", "push", "reset", "rebase", "merge",
+             "clean", "rm")
+
+
+@pytest.fixture(autouse=True)
+def _no_mutating_subprocesses(monkeypatch):
+    real = subprocess.run
+
+    def guarded(command, **kwargs):
+        argv = [str(part) for part in command]
+        if argv and argv[0].endswith("git") or "git" in argv[:1]:
+            if any(part in _MUTATING for part in argv):
+                raise AssertionError(
+                    f"a test tried to run a mutating git command against the "
+                    f"real repository: {' '.join(argv)}. Monkeypatch "
+                    f"subprocess.run in the test that needs this.")
+        if "pytest" in argv:
+            raise AssertionError(
+                f"a test tried to run the suite inside the suite: "
+                f"{' '.join(argv)}")
+        return real(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
+
+
 def _confirmed_gap(client, remedy=None):
     # A fresh title each time: `suspect` deliberately de-duplicates by title,
     # so reusing one would hand back the gap that is already confirmed and the
