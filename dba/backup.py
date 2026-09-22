@@ -40,11 +40,12 @@ is no second location on this machine to write to. `describe()` reports it as
 absent with that reason rather than leaving the field out, because an absent
 measurement reads as a clean one.
 
-Only `dba.db` is covered. `financial_intelligence.db` and `gateway.db` belong
-to services that are still their own owners (see `dba/__init__.py`), and
-backing up a database this agent does not govern would be taking
-responsibility it has not been given. `STORES` is the list; adding one is a
-line, and each needs its own restore story before it goes in.
+Only `dba.db` is covered, and the reason is not the one you would guess. It is
+not that backing up somebody else's database would be a write - it would not.
+It is that the three systems here are evolving separately on purpose, and
+reaching into another one's store would make this module depend on where that
+system keeps its files and which of its tables matter. Each of those is a
+thing that breaks quietly when the other system changes. See `STORES`.
 """
 
 from __future__ import annotations
@@ -63,26 +64,34 @@ from pathlib import Path
 from backend.db import Database, now_iso
 from dba import config, ids, store
 
-# WHICH STORES THIS AGENT KEEPS SAFE. All three, and the distinction that
-# makes that consistent with the DBA not *owning* the other two:
+# WHICH STORES THIS AGENT KEEPS SAFE. One: its own.
 #
-# Backing a database up is a read. It does not take responsibility for what is
-# in it, does not serve it, and does not change it - so "the other two belong
-# to services that are still their own owners" and "the DBA keeps everything
-# backed up" are both true at once. Restoring is the part that belongs to
-# whoever owns the service, and `restore` refuses anything but `dba` for
-# exactly that reason: putting gateway.db back needs the Gateway stopped, and
-# that is the Gateway's story to tell.
+# THIS IS A DELIBERATE LIMIT AND IT WAS TIGHTENED ON PURPOSE. An earlier
+# version backed up `gateway.db` and `financial_intelligence.db` too, on the
+# reasoning that backing a database up is only a read. Krish's correction,
+# 2026-09-22:
 #
-# Paths are resolved from the same environment variables those services read,
-# rather than by importing them. `tests/test_dba_development.py` asserts that
-# gateway/ and backend/ know nothing about the DBA; importing them here would
-# make that a one-way ignorance rather than independence, and would drag their
-# start-up into this process.
-def _project_file(name: str) -> Path:
-    return Path(__file__).resolve().parent.parent / name
-
-
+#     "we are building three separate systems for separate purposes and only
+#      eventually they will be merged. For now they evolve separately for
+#      simplicity."
+#
+# Which is the answer to a question the read/write distinction does not
+# reach. The cost of reaching into another system's database is not the write
+# - there was none. It is the coupling: this module would have had to know
+# where two other systems keep their files, what their databases are called,
+# and which of their tables matter, and each of those is a thing that breaks
+# quietly when the other system evolves. Three systems that can change shape
+# without consulting each other is the property being protected, and it is
+# worth more right now than a second copy of a database its own system is
+# responsible for.
+#
+# When they do merge, deciding what gets backed up across all three is
+# **Jarvis's** job - it is the orchestrator, and that is a coordination
+# question rather than a database one.
+#
+# The registry keeps its shape rather than collapsing to a constant, because
+# "for now just one" is a statement about now. Adding the second is a line
+# plus a restore story, on the day the systems are one.
 STORES: dict[str, dict] = {
     "dba": {
         "path": lambda: store.database_path(),
@@ -90,20 +99,6 @@ STORES: dict[str, dict] = {
                      "trail, its design experience",
         "restorable": True,
         "essential_tables": ("capabilities", "audit_events", "entities"),
-    },
-    "gateway": {
-        "path": lambda: Path(os.environ.get("GATEWAY_DB_PATH")
-                             or _project_file("gateway.db")),
-        "describes": "the Gateway's sessions, conversations and scoreboard",
-        "restorable": False,
-        "essential_tables": (),
-    },
-    "financial_intelligence": {
-        "path": lambda: Path(os.environ.get("FI_DB_PATH")
-                             or _project_file("financial_intelligence.db")),
-        "describes": "the backend's financial intelligence database",
-        "restorable": False,
-        "essential_tables": (),
     },
 }
 
@@ -115,7 +110,12 @@ def store_path(source: str) -> Path:
     except KeyError:
         raise BackupRefused(
             f"{source!r} is not a store this agent protects. It protects "
-            f"{', '.join(sorted(STORES))}.") from None
+            f"{', '.join(sorted(STORES))}, and deliberately not the other "
+            f"systems' databases: they are separate systems evolving "
+            f"separately, and backing one up from here would mean this module "
+            f"knowing where it keeps its files and which of its tables "
+            f"matter. When the systems merge, what gets backed up across them "
+            f"is Jarvis's call.") from None
 
 MANIFEST_SUFFIX = ".manifest.json"
 BACKUP_SUFFIX = ".db"
@@ -218,21 +218,16 @@ def take(*, reason: str = REQUESTED, source: str = "dba",
     backup_id = f"{source}-{stamp}-{ids.new_id('b').split('-')[1][:8]}"
     path = target_dir / f"{backup_id}{BACKUP_SUFFIX}"
 
-    # READ-ONLY FOR A STORE THIS AGENT DOES NOT OWN. Opening it read-write
-    # issues `PRAGMA journal_mode=WAL`, which is a write to the header - so
-    # the claim that backing up is a read was not true, and a store its owner
-    # had locked or opened read-only would have raised a bare sqlite3 error
-    # out of `take`.
-    mine = source == "dba"
+    # A store that cannot be opened is a refusal, not a bare sqlite3 error
+    # escaping `take` - which is what a corrupt database used to produce.
     try:
-        conn = Database(live, read_only=not mine)
+        conn = Database(live)
     except sqlite3.Error as bad:
         raise BackupRefused(
             f"{live} could not be opened to back it up ({bad}). Nothing was "
             f"written.") from bad
     try:
-        if mine:
-            store.init_schema(conn)
+        store.init_schema(conn)
         live_counts = row_counts(conn)
         conn.backup_to(path)
     except sqlite3.Error as bad:
@@ -498,10 +493,11 @@ def prune(directory: Path | None = None,
     limit = config.keep()
     protect = set(protect or ())
 
-    # PER STORE. Counted across all of them, three databases backed up daily
-    # would evict each other and `keep: 14` would mean four or five days of
-    # each - a retention policy that means something different from what it
-    # says.
+    # PER STORE, and dormant while there is one. Counted across several,
+    # daily backups would evict each other and `keep: 14` would quietly mean
+    # four or five days of each. That bug was found the hard way when this
+    # agent briefly protected three databases; the grouping is four lines and
+    # is kept so the second store does not rediscover it.
     keeping: set[str] = set(protect)
     for name in {backup.source for backup in everything}:
         mine = [backup for backup in everything if backup.source == name]
@@ -909,11 +905,13 @@ def describe(directory: Path | None = None) -> dict:
                 "nothing is encrypted at rest - every backup is a readable "
                 "copy of the database sitting beside it. Reported rather than "
                 "omitted, because an absent measurement reads as a clean one.",
-            "restoring_the_other_stores":
-                "gateway.db and financial_intelligence.db are backed up and "
-                "verified here, and are not restored here. Putting one back "
-                "means stopping the service that owns it, which is that "
-                "service's story to tell.",
+            "the_other_two_systems":
+                "gateway.db and financial_intelligence.db are NOT backed up "
+                "here, on purpose. They belong to systems that are evolving "
+                "separately from this one, and reaching into them would "
+                "couple this module to where they keep their files and which "
+                "of their tables matter. When the three merge, what gets "
+                "backed up across them is Jarvis's call as the orchestrator.",
         },
     }
 

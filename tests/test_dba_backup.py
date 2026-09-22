@@ -506,88 +506,66 @@ def test_nothing_is_due_before_the_configured_hour(agent):
     assert backup.due(before) is False
 
 
-def test_a_store_this_agent_does_not_own_is_still_backed_up(agent, tmp_path,
-                                                            monkeypatch):
-    """Backing a database up is a read. It does not take responsibility for
-    what is in it, does not serve it and does not change it - so "the other
-    two belong to services that are still their own owners" and "the DBA keeps
-    everything backed up" are both true at once."""
-    gateway_db = tmp_path / "gateway.db"
-    other = Database(gateway_db)
-    other.executescript("CREATE TABLE sessions(id TEXT);")
-    other.execute("INSERT INTO sessions VALUES ('s-1')")
-    other.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+def test_the_dba_protects_its_own_store_and_no_others(agent):
+    """A deliberate limit, tightened on purpose.
 
-    taken = backup.take(source="gateway")
+    An earlier version backed up `gateway.db` and `financial_intelligence.db`
+    too, reasoning that backing a database up is only a read. Krish's
+    correction: *"we are building three separate systems for separate purposes
+    and only eventually they will be merged. For now they evolve separately
+    for simplicity."*
 
-    assert taken.verified
-    assert taken.source == "gateway"
-    assert taken.row_counts["sessions"] == 1
+    Which answers a question the read/write distinction does not reach. The
+    cost was never the write - there was none. It was the coupling: this
+    module would have had to know where two other systems keep their files and
+    which of their tables matter, and each of those breaks quietly when the
+    other system evolves."""
+    assert sorted(backup.STORES) == ["dba"]
 
-
-def test_a_store_this_agent_does_not_own_is_not_restored_by_it(agent, tmp_path,
-                                                               monkeypatch):
-    """Restoring is the part that belongs to whoever owns the service: putting
-    gateway.db back means stopping the Gateway and starting it again, and that
-    is the Gateway's story to tell."""
-    gateway_db = tmp_path / "gateway.db"
-    other = Database(gateway_db)
-    other.executescript("CREATE TABLE sessions(id TEXT);")
-    other.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
-    taken = backup.take(source="gateway")
-
-    with pytest.raises(backup.BackupRefused, match="does not restore"):
-        backup.restore(taken.backup_id, accepted_by=KRISH, confirmed=True)
+    for other in ("gateway", "financial_intelligence", "somebody_elses"):
+        with pytest.raises(backup.BackupRefused,
+                           match="not a store this agent protects"):
+            backup.take(source=other)
 
 
-def test_an_unknown_store_is_still_refused(agent):
-    with pytest.raises(backup.BackupRefused, match="not a store this agent"):
-        backup.take(source="somebody_elses_database")
-
-
-def test_retention_is_counted_per_store(agent, tmp_path, monkeypatch):
-    """Counted across all of them, three databases backed up daily would evict
-    each other and `keep: 14` would mean four or five days of each - a policy
-    that means something different from what it says."""
-    monkeypatch.setattr(config, "keep", lambda: 2)
-    gateway_db = tmp_path / "gateway.db"
-    other = Database(gateway_db)
-    other.executescript("CREATE TABLE sessions(id TEXT);")
-    other.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
-    _people(agent, 1)
-
-    for _ in range(3):
+def test_the_refusal_says_whose_job_that_becomes(agent):
+    """Not "no", but "not here, and here is who decides when it is"."""
+    with pytest.raises(backup.BackupRefused) as refused:
         backup.take(source="gateway")
-    mine = backup.take(source="dba")
 
-    assert len(backup.catalogue(source="gateway")) == 2
-    assert [item.backup_id for item in backup.catalogue(source="dba")] == \
-        [mine.backup_id], "another store's churn evicted this one's backup"
+    said = str(refused.value)
+    assert "separate systems evolving separately" in said
+    assert "Jarvis" in said, "the orchestrator is who decides, once they merge"
 
 
-def test_the_scheduled_run_covers_every_store(agent, tmp_path, monkeypatch):
-    gateway_db = tmp_path / "gateway.db"
-    other = Database(gateway_db)
-    other.executescript("CREATE TABLE sessions(id TEXT);")
-    other.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
-    monkeypatch.setenv("FI_DB_PATH", str(tmp_path / "never-created.db"))
+def test_the_scheduled_run_covers_every_protected_store(agent, monkeypatch):
+    """Every store in `STORES`, which is one. The loop reads the registry
+    rather than a hard-coded name, so the day a second arrives it is already
+    scheduled."""
+    monkeypatch.setattr(config, "backup_hour", lambda: 0)
     _people(agent, 1)
-    moment = datetime.now().astimezone().replace(
-        hour=max(config.backup_hour(), 12), minute=0)
 
-    outcome = backup.run_all_if_due(moment)
+    outcome = backup.run_all_if_due()
 
+    assert set(outcome) == set(backup.STORES)
     assert outcome["dba"]["taken"]
-    assert outcome["gateway"]["taken"]
-    # A database that has never existed is an ordinary fact, not a failure
-    # that should stop the DBA backing itself up.
-    assert outcome["financial_intelligence"]["taken"] is None
-    assert "nothing has been stored" in \
-        outcome["financial_intelligence"]["refused"]
+
+
+def test_one_store_failing_does_not_stop_the_others(agent, monkeypatch):
+    """Dormant with one store and kept deliberately: a database that has
+    never existed is an ordinary fact, and letting it stop the DBA backing
+    *itself* up would be the tail wagging the dog."""
+    monkeypatch.setattr(config, "backup_hour", lambda: 0)
+    monkeypatch.setitem(backup.STORES, "imaginary", {
+        "path": lambda: Path("/nowhere/at/all.db"),
+        "describes": "a store that is not there",
+        "restorable": False, "essential_tables": ()})
+    _people(agent, 1)
+
+    outcome = backup.run_all_if_due()
+
+    assert outcome["dba"]["taken"], "the real store was still backed up"
+    assert "nothing has been stored" in outcome["imaginary"]["refused"]
 
 
 def test_backing_up_nothing_is_said_plainly(tmp_path, monkeypatch):
@@ -991,61 +969,15 @@ def test_a_store_not_being_due_is_not_a_failure(scheduler, agent):
     assert scheduler.state()["failures"] == 0
 
 
-def test_the_dbas_own_backup_is_not_reported_from_another_stores(
-        scheduler, agent, tmp_path, monkeypatch):
-    """Mixing a dba-scoped `current()` with an all-store `catalogue()` meant
-    that with no DBA backup it reported a *gateway* backup as its own - with
-    `status: verified` and `verified: False` in the same object."""
-    gateway_db = tmp_path / "gateway.db"
-    other = Database(gateway_db)
-    other.executescript("CREATE TABLE sessions(id TEXT);")
-    other.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
+def test_health_says_when_the_store_was_last_backed_up(scheduler, agent):
     _people(agent, 1)
-    backup.take(source="gateway")
-
-    reported = health.health()["last_backup"]
-    check = next(item for item in health.diagnose()["checks"]
-                 if item["check"] == "backup_age")
-
-    assert reported is None, "a gateway backup was reported as the DBA's"
-    assert "has ever been taken" in check["detail"]
-
-
-def test_the_scheduler_is_visible_rather_than_assumed(scheduler, agent):
-    """"It should be running" is not a measurement. A backup system with no
-    scheduler running is one where every existing backup quietly gets older,
-    and nothing else in the report would say so."""
-    _people(agent, 1)
-
-    stopped = health.diagnose()
-    assert "backup_scheduler" in stopped["failing"]
-
-    scheduler.start()
-    deadline = time.time() + 10
-    while not backup.catalogue(source="dba") and time.time() < deadline:
-        time.sleep(0.05)
-
-    running = health.diagnose()
-    check = next(item for item in running["checks"]
-                 if item["check"] == "backup_scheduler")
-    assert check["passed"], check["detail"]
-    assert "running since" in check["detail"]
-
-
-def test_health_says_when_each_store_was_last_backed_up(scheduler, agent):
-    """"The last backup was an hour ago" is no comfort if it was an hour ago
-    for one database and never for the other two."""
-    _people(agent, 1)
-    backup.take(source="dba")
+    taken = backup.take(source="dba")
 
     reported = health.health()["backups"]
 
     assert set(reported) == set(backup.STORES)
-    assert reported["dba"]["current"]
-    assert reported["gateway"]["current"] is None
+    assert reported["dba"]["current"] == taken.backup_id
     assert reported["dba"]["restorable_by_the_dba"] is True
-    assert reported["gateway"]["restorable_by_the_dba"] is False
 
 
 def test_turning_it_off_says_what_that_means(monkeypatch):
@@ -1146,11 +1078,12 @@ def test_the_documentation_is_honest_about_what_is_missing(agent):
     assert "encrypted_secondary_location" in missing
     assert "readable copy" in missing["encrypted_secondary_location"]
 
-    # The other two are backed up now; what is missing is restoring them.
-    assert "restoring_the_other_stores" in missing
-    assert "gateway.db" in missing["restoring_the_other_stores"]
-    assert set(described["protects"]) == set(backup.STORES)
-    assert described["protects"]["gateway"]["restorable_by_the_dba"] is False
+    # The other two systems are deliberately not backed up here, and the
+    # documentation says whose decision that becomes.
+    assert "the_other_two_systems" in missing
+    assert "gateway.db" in missing["the_other_two_systems"]
+    assert "Jarvis" in missing["the_other_two_systems"]
+    assert set(described["protects"]) == {"dba"}
 
 
 def test_health_reports_no_backup_as_a_failure_rather_than_silence(agent):
@@ -1231,46 +1164,14 @@ def test_the_command_that_covers_every_store(agent, monkeypatch, capsys):
 def test_a_store_that_cannot_be_opened_is_a_refusal_not_a_crash(agent,
                                                                 tmp_path,
                                                                 monkeypatch):
-    """Backing up a store this agent does not own must not raise a bare
-    sqlite3 error out of `take` - and opening one read-write issued a PRAGMA
-    that writes to its header, which is not what "backing up is a read"
-    means."""
-    not_a_database = tmp_path / "gateway.db"
-    not_a_database.write_bytes(b"this is not a database")
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(not_a_database))
+    """A corrupt store must not raise a bare sqlite3 error out of `take`. The
+    caller gets a structured refusal like every other failure here."""
+    corrupt = tmp_path / "corrupt-dba.db"
+    corrupt.write_bytes(b"this is not a database")
+    monkeypatch.setenv(store.PATH_ENV, str(corrupt))
 
     with pytest.raises(backup.BackupRefused, match="could not be"):
-        backup.take(source="gateway")
-
-
-def test_another_services_store_is_opened_read_only(agent, tmp_path,
-                                                    monkeypatch):
-    """The claim, made true: the file the DBA reads is not modified by the
-    reading. Asserted on the bytes, which is the only way to mean it.
-
-    The store is deliberately in rollback-journal mode rather than WAL. A
-    database that is *already* WAL is unchanged by `PRAGMA journal_mode=WAL`,
-    so the first version of this test passed against a read-write open and
-    proved nothing. On one that is not, the pragma rewrites the header - and
-    that is a write to another service's database performed by backing it
-    up."""
-    import sqlite3 as raw
-
-    gateway_db = tmp_path / "gateway.db"
-    plain = raw.connect(gateway_db)
-    plain.execute("PRAGMA journal_mode=DELETE;")
-    plain.execute("CREATE TABLE sessions(id TEXT);")
-    plain.execute("INSERT INTO sessions VALUES ('s-1')")
-    plain.commit()
-    plain.close()
-    monkeypatch.setenv("GATEWAY_DB_PATH", str(gateway_db))
-    before = gateway_db.read_bytes()
-
-    taken = backup.take(source="gateway")
-
-    assert taken.row_counts["sessions"] == 1, "it really was read"
-    assert gateway_db.read_bytes() == before, \
-        "backing it up rewrote the database it was backing up"
+        backup.take()
 
 
 def test_the_command_refuses_a_restore_that_was_not_confirmed(agent, capsys):

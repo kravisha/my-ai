@@ -249,8 +249,9 @@ The rest, each now a regression test:
   thread's `prune()` able to unlink a file the other was hashing.
 - Backing up another service's database opened it **read-write** and issued
   `PRAGMA journal_mode=WAL` — a write to its header. "Backing up is a read"
-  was a claim, not a fact. It is now opened `mode=ro`, and the test asserts it
-  on the bytes.
+  was a claim, not a fact. That finding is now moot: the DBA no longer touches
+  another system's database at all, and the read-only open was removed with
+  its only caller rather than left as machinery nothing uses.
 - The scheduler-pass endpoint audited every run as a success, checking a
   top-level key its own result never contains.
 - `/health` re-scanned and re-parsed every manifest six times per request.
@@ -313,31 +314,43 @@ not have: **is anything actually taking backups?** A backup system with no
 scheduler running is one where every existing backup quietly gets older, and
 nothing else in the report would say so.
 
-### "Everything", which means all three databases
+### One store, on purpose
 
-The same sentence settled a scope question I had been ducking. The DBA now
-backs up `dba.db`, `gateway.db` **and** `financial_intelligence.db`, and that
-is consistent with the other two still belonging to their own services:
+I briefly took "everything" to mean all three databases and had the DBA back
+up `gateway.db` and `financial_intelligence.db` as well, reasoning that
+backing a database up is only a read. Krish's correction:
 
-**Backing a database up is a read.** It takes no responsibility for what is in
-it, does not serve it and does not change it. **Restoring is the part that
-belongs to whoever owns the service** — putting `gateway.db` back means
-stopping the Gateway and starting it again, which is the Gateway's story to
-tell. So `restore` refuses anything but `dba`, names the verified file, and
-leaves the decision with its owner.
+> *"we are building three separate systems for separate purposes and only
+> eventually they will be merged. For now they evolve separately for
+> simplicity."*
 
-Retention is counted **per store**. Counted across all three, daily backups
-would evict each other and `keep: 14` would quietly mean four or five days of
-each — a policy that means something different from what it says.
+Which answers a question the read/write distinction does not reach. **The cost
+was never the write — there was none. It was the coupling.** This module would
+have had to know where two other systems keep their files, what their
+databases are called and which of their tables matter, and every one of those
+is a thing that breaks quietly when the other system evolves. Three systems
+able to change shape without consulting each other is the property being
+protected, and it is worth more right now than a second copy of a database its
+own system is responsible for.
+
+When they merge, what gets backed up across all three is **Jarvis's** call —
+it is the orchestrator, and that is a coordination question rather than a
+database one.
+
+`STORES` keeps its registry shape rather than collapsing to a constant,
+because "for now just one" is a statement about now. The scheduler loops over
+the registry, `run_all_if_due` tolerates one store failing without stopping
+the others, and retention groups by store — all dormant with one, all kept
+because the bug each prevents was found the hard way while there were three.
 
 ### Still not built
 
 **An encrypted secondary location** (§25 says *eventually*) — there is no
 second location configured and nothing is encrypted at rest, so every backup
-is a readable copy of the database sitting beside it. **Restoring the other
-two databases** — they are backed up and verified; putting one back is its
-owner's deliberate act. Both are reported by `describe()` under
-`not_implemented` rather than left out.
+is a readable copy of the database sitting beside it. **The other two
+systems** — not backed up here, on purpose, per the section above. Both are
+reported by `describe()` under `not_implemented` rather than left out, the
+second one naming Jarvis as whose decision it becomes.
 
 ---
 
