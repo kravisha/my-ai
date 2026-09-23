@@ -51,12 +51,16 @@ findings with their own attribution when that path exists; until then, one
 truthful value.
 """
 
+import logging
+
 from app import boundaries, initiative
 from app import learning as learning_package  # noqa: F401 - package docstring is the contract
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
-from gateway import dbaclient, failures, selfmod
+from gateway import dbaclient, failures, persistence, selfmod
 from gateway import jarvis, repositories, scoreboard, technology
+
+logger = logging.getLogger("gateway.tools")
 
 # Who filed it, when it came through the Super User's conversation. Agents get
 # their own attribution when addendum 17 §6's ingestion path is built (G7).
@@ -778,6 +782,133 @@ LEARNING_TOOLS = [
 ]
 
 
+
+# Jarvis's own memory, as things he does rather than things that happen to him.
+#
+# `gateway/recording.py` captures what a turn *did* - the request, the failed
+# tool, the partial answer - deterministically, from code, because those are
+# facts about the turn and a model should not be trusted to remember to write
+# them down. These four are the other half: what a turn *meant*, which no hook
+# can see. Only the assistant knows that a sentence was a correction rather
+# than a remark, or that something said in passing was a promise.
+#
+# That split is the same one `app/capability_gaps.py` and `gateway/gaps.py`
+# already use, and it is deliberate: the deterministic half cannot be forgotten
+# and the declared half cannot be inferred.
+#
+# All four are operator-only. Every record is keyed agent="jarvis", so a client
+# using `remember` would be writing into Jarvis's own memory.
+MEMORY_TOOLS = [
+    {
+        "name": "remember",
+        "description": (
+            "Write something down so it survives a restart. Use it the moment "
+            "Krish tells you a fact worth keeping, corrects something you "
+            "believed, states a preference about how you should work, or names "
+            "a limit you have. Do not use it for things you can look up, for "
+            "the content of this conversation (that is already stored), or for "
+            "your own summaries of what was said. A correction is the most "
+            "important case and the one most often missed: if he tells you "
+            "that you were wrong about something, write the corrected version "
+            "down in the same turn."),
+        "input_schema": {"type": "object", "properties": {
+            "kind": {"type": "string",
+                     "enum": ["knowledge", "correction", "preference",
+                              "limitation", "goal"],
+                     "description":
+                         "knowledge: a fact. correction: something you "
+                         "believed that was wrong. preference: how he wants "
+                         "you to work. limitation: something you cannot do. "
+                         "goal: something you are working towards."},
+            "name": {"type": "string",
+                     "description":
+                         "A short stable key, the same each time this thing is "
+                         "updated - 'krish-timezone', not 'the timezone he "
+                         "mentioned today'. Writing under a new key each time "
+                         "makes a pile rather than a memory."},
+            "value": {"type": "string", "description": "What to remember."},
+            "time_sensitive": {"type": "boolean",
+                               "description":
+                                   "True if this can go stale - an address, a "
+                                   "price, a URL, a schedule. It comes back "
+                                   "after a restart flagged for re-checking "
+                                   "rather than as plain memory, so mark it "
+                                   "honestly."},
+        }, "required": ["kind", "name", "value"]},
+    },
+    {
+        "name": "record_commitment",
+        "description": (
+            "Write down something you have undertaken to do for somebody. Use "
+            "it when you say you will do a thing, not when you do it. A "
+            "commitment nobody wrote down is one you will not remember owing "
+            "after a restart, and 'what did I promise and not deliver' is the "
+            "question that matters most on the other side of one."),
+        "input_schema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "A short stable key."},
+            "promise": {"type": "string",
+                        "description": "What you undertook, in full."},
+            "owed_to": {"type": "string", "description": "Who to."},
+            "due": {"type": "string",
+                    "description": "When, if anything was said. Leave it out "
+                                   "rather than inventing a date."},
+        }, "required": ["name", "promise"]},
+    },
+    {
+        "name": "record_task_state",
+        "description": (
+            "Save where you have got to on a piece of work that is not "
+            "finished. Use it before a long step, and whenever the next action "
+            "changes. After a restart this is the difference between resuming "
+            "and asking him what you were doing."),
+        "input_schema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "A short stable key."},
+            "doing": {"type": "string", "description": "What the task is."},
+            "step": {"type": "string",
+                     "description": "Where you have got to."},
+            "next_action": {"type": "string",
+                            "description": "The next thing to do, "
+                                           "specifically enough to act on."},
+        }, "required": ["name", "doing", "next_action"]},
+    },
+    {
+        "name": "recall",
+        "description": (
+            "Look up what you remember about something, and how you came to "
+            "believe it. Returns durable memory and the life-ledger events "
+            "that mention it, oldest first. Use it when he refers to something "
+            "from before, when you are about to state something as remembered, "
+            "or when he asks what you know about a subject. If it returns "
+            "nothing, say you do not remember rather than reconstructing "
+            "something plausible."),
+        "input_schema": {"type": "object", "properties": {
+            "subject": {"type": "string",
+                        "description": "What to look for. A key you wrote "
+                                       "under, or a word to search the ledger "
+                                       "for."},
+        }, "required": ["subject"]},
+    },
+    {
+        "name": "reconsider",
+        "description": (
+            "Record that you now read an earlier event differently. Use it "
+            "when later evidence changes what an earlier lesson meant. This "
+            "ADDS a layer and never edits the original: what you believed then "
+            "stays exactly as it was recorded, which is the point - 'what did "
+            "I think before I changed my mind' has to stay answerable."),
+        "input_schema": {"type": "object", "properties": {
+            "event_id": {"type": "string",
+                         "description": "The ledger event to reinterpret, as "
+                                        "recall returns it."},
+            "new_understanding": {"type": "string",
+                                  "description": "What you now think."},
+            "what_changed_it": {"type": "string",
+                                "description": "The evidence or correction "
+                                               "that moved you."},
+        }, "required": ["event_id", "new_understanding", "what_changed_it"]},
+    },
+]
+
 # The conversation half of the approval gate (§13, §18, and §38 q15's second
 # interface). The CLI in `gateway/selfmod.py` is the other.
 #
@@ -849,7 +980,7 @@ SELF_CHANGE_TOOLS = [
 
 TOOLS = (TOOLS + JARVIS_TOOLS + TECHNOLOGY_TOOLS + MACHINE_TOOLS + REMOTE_TOOLS
          + INTERFACE_TOOLS + CHANNEL_TOOLS + BOUNDARY_TOOLS + LEARNING_TOOLS
-         + SELF_CHANGE_TOOLS)
+         + SELF_CHANGE_TOOLS + MEMORY_TOOLS)
 
 
 # The client's holdings tools are withdrawn (TQ-72, §111, §115).
@@ -904,6 +1035,11 @@ TOOL_CAPABILITY = {
     # makes Krish the final authority over self-modification and folding it
     # into `studio` would mean a future grant of the command centre silently
     # handed somebody the approval gate.
+    "remember": roles.CAP_MEMORY,
+    "record_commitment": roles.CAP_MEMORY,
+    "record_task_state": roles.CAP_MEMORY,
+    "recall": roles.CAP_MEMORY,
+    "reconsider": roles.CAP_MEMORY,
     "pending_self_changes": roles.CAP_SELF_CHANGE,
     "show_self_change": roles.CAP_SELF_CHANGE,
     "decide_self_change": roles.CAP_SELF_CHANGE,
@@ -1014,6 +1150,24 @@ TOOL_RISK = {
     "pending_self_changes": dict(_READ_ONLY,
                                  summary="list changes waiting on Krish's decision"),
     "show_self_change": dict(_READ_ONLY, summary="read one proposed change in full"),
+    "recall": dict(_READ_ONLY, summary="look up what Jarvis remembers"),
+    # Writing to Jarvis's own memory. REACH is `self` - it changes what he
+    # knows and touches nothing of Krish's - and REVERSIBLE because every write
+    # is a new revision with the old one kept, so a wrong entry is corrected by
+    # writing again rather than by undoing anything. That combination is the
+    # one `initiative.decide` lets him simply do, which is correct: an
+    # assistant that had to ask permission to remember a correction is one that
+    # will not remember it.
+    "remember": dict(reversibility=initiative.REVERSIBLE, reach=initiative.SELF,
+                     summary="remember something across restarts"),
+    "record_commitment": dict(reversibility=initiative.REVERSIBLE,
+                              reach=initiative.SELF,
+                              summary="write down something undertaken"),
+    "record_task_state": dict(reversibility=initiative.REVERSIBLE,
+                              reach=initiative.SELF,
+                              summary="save where a piece of work has got to"),
+    "reconsider": dict(reversibility=initiative.REVERSIBLE, reach=initiative.SELF,
+                       summary="record a new reading of an earlier event"),
     # Reaches another machine and changes nothing on it. `self` because the
     # effect is a report here; the connection is not the effect.
     "remote_diagnose": dict(_READ_ONLY,
@@ -1522,6 +1676,139 @@ def initiative_paragraph(role: str) -> str:
     return "\n".join(lines)
 
 
+_MEMORY_TOOL_NAMES = frozenset(tool["name"] for tool in MEMORY_TOOLS)
+
+# Which kind of durable state each `remember` kind writes to. A mapping rather
+# than passing the string through, so the tool's vocabulary and the store's can
+# be different words for the same thing without either having to change.
+_REMEMBER_KIND = {
+    "knowledge": persistence.KNOWLEDGE,
+    "correction": persistence.CORRECTION,
+    "preference": persistence.PREFERENCE,
+    "limitation": persistence.LIMITATION,
+    "goal": persistence.GOAL,
+}
+
+
+def _execute_memory(name: str, arguments: dict) -> dict:
+    """Jarvis's own memory, written through the DBA like everything else.
+
+    Every path returns `{"error": ...}` rather than raising, and an unreachable
+    DBA says so in words the assistant can repeat. That matters more here than
+    anywhere else on this surface: the failure mode to avoid is an assistant
+    that believes it remembered something and did not, so "I could not write
+    that down" has to come back as an answer rather than as silence."""
+    from gateway import ledger, persistence as state, rehydrate
+
+    try:
+        client = dbaclient.DBAClient(actor="conversation")
+    except dbaclient.Unavailable as exc:
+        return {"error": f"{failures.DBA_UNAVAILABLE}: {exc}. Nothing was "
+                         f"remembered - say so rather than carrying on as "
+                         f"though it was."}
+
+    try:
+        if name == "remember":
+            kind = _REMEMBER_KIND.get(arguments.get("kind") or "")
+            if kind is None:
+                return {"error": f"kind must be one of {sorted(_REMEMBER_KIND)}"}
+            key = (arguments.get("name") or "").strip()
+            value = arguments.get("value")
+            if not key or value in (None, ""):
+                return {"error": "remember needs a name and a value"}
+            payload = {"value": value}
+            if arguments.get("time_sensitive"):
+                payload[rehydrate.TIME_SENSITIVE_FLAG] = True
+            record = state.put(client, kind, key, payload,
+                               reason="remembered in conversation")
+            _remember_note(client, ledger.OBSERVATION if kind != state.CORRECTION
+                           else ledger.USER_CORRECTION,
+                           f"remembered {kind}/{key}", str(value)[:500])
+            return {"remembered": key, "kind": kind,
+                    "revision": record["revision"],
+                    "survives_restart": True}
+
+        if name == "record_commitment":
+            key = (arguments.get("name") or "").strip()
+            promise = (arguments.get("promise") or "").strip()
+            if not key or not promise:
+                return {"error": "a commitment needs a name and a promise"}
+            payload = {"promise": promise,
+                       "owed_to": arguments.get("owed_to") or "krish"}
+            if arguments.get("due"):
+                payload["due"] = arguments["due"]
+            state.put(client, state.COMMITMENT, key, payload,
+                      reason="commitment made in conversation")
+            _remember_note(client, ledger.DECISION,
+                           f"committed: {promise[:120]}",
+                           f"owed to {payload['owed_to']}")
+            return {"recorded": key, "promise": promise,
+                    "survives_restart": True}
+
+        if name == "record_task_state":
+            key = (arguments.get("name") or "").strip()
+            if not key or not (arguments.get("next_action") or "").strip():
+                return {"error": "a task state needs a name and a next_action"}
+            state.put(client, state.TASK, key,
+                      {"doing": arguments.get("doing"),
+                       "step": arguments.get("step"),
+                       "next": arguments.get("next_action")},
+                      reason="task state saved in conversation")
+            return {"saved": key, "next": arguments.get("next_action"),
+                    "survives_restart": True}
+
+        if name == "recall":
+            subject = (arguments.get("subject") or "").strip()
+            if not subject:
+                return {"error": "recall needs a subject"}
+            remembered = [
+                {"kind": row.get("kind"), "name": row.get("name"),
+                 "value": state.decode(row), "revision": row.get("revision")}
+                for row in state.current(client, limit=200)
+                if subject.lower() in f"{row.get('kind')} {row.get('name')}".lower()
+                or subject.lower() in str(state.decode(row)).lower()]
+            events = [
+                {"event_id": row.get("id"), "at": row.get("occurred_at"),
+                 "type": row.get("event_type"), "what": row.get("name"),
+                 "supersedes": row.get("supersedes_event_id")}
+                for row in ledger.history_of(client, subject=subject, limit=20)]
+            return {"subject": subject, "remembered": remembered,
+                    "events": events,
+                    "nothing_found": not remembered and not events}
+
+        if name == "reconsider":
+            event_id = (arguments.get("event_id") or "").strip()
+            written = ledger.reinterpret(
+                client, original_event_id=event_id,
+                lesson=arguments.get("new_understanding") or "",
+                why_changed=arguments.get("what_changed_it") or "")
+            return {"recorded": written["id"],
+                    "supersedes": event_id,
+                    "original_kept": True}
+    except (dbaclient.Unavailable, dbaclient.Refused,
+            ledger.LedgerWriteFailed, ledger.ChainBroken) as exc:
+        return {"error": f"nothing was written down: {exc}"}
+    except (ValueError, state.UnknownKind) as exc:
+        return {"error": str(exc)}
+    return {"error": f"unknown memory tool {name!r}"}
+
+
+def _remember_note(client, event_type: str, summary: str, observation: str) -> None:
+    """The ledger entry beside the state write.
+
+    The state record is what Jarvis knows; the ledger entry is how he came to
+    know it, and §25 wants both. A failure here does not fail the tool - the
+    thing was remembered - so it is logged and moves on."""
+    from gateway import ledger
+
+    try:
+        ledger.append(client, event_type=event_type, summary=summary,
+                      observation=observation, actor="conversation",
+                      verification_state=ledger.ASSERTED_BY_USER)
+    except (ledger.LedgerWriteFailed, ledger.ChainBroken, ValueError):
+        logger.warning("state was written but its ledger entry was not: %s", summary)
+
+
 _SELF_CHANGE_TOOL_NAMES = frozenset(tool["name"] for tool in SELF_CHANGE_TOOLS)
 
 
@@ -1703,6 +1990,9 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
 
         if name in _SELF_CHANGE_TOOL_NAMES:
             return _execute_self_change(name, arguments, subject=subject)
+
+        if name in _MEMORY_TOOL_NAMES:
+            return _execute_memory(name, arguments)
 
         if name == "propose_boundary_change":
             try:

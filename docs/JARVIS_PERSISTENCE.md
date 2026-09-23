@@ -68,6 +68,82 @@ arbitrarily would give two callers different answers about one fact.
 
 ---
 
+## 3a. What actually writes to it
+
+For a while this was the honest gap: every mechanism below worked and almost
+nothing fed it. After a restart the life ledger held a series of boot reports
+and nothing else. The tests passed because the tests wrote the events.
+
+Two producers, and the split between them is deliberate.
+
+**Deterministic, from code** — `gateway/recording.py`, called by
+`run_turn`. One `user_request` per turn as a 200-character summary,
+`action_failed` for every tool that errored, `action_succeeded` only for tools
+that changed something, and the partial-answer case. These are facts about a
+turn and a model should not be trusted to remember to write them down.
+
+Which tools count as "changed something" is read from `tools.TOOL_RISK` — the
+same declaration that already decides whether a tool needs confirming — rather
+than from a second list that could disagree with the first.
+
+**Declared, by the model** — five tools: `remember`, `record_commitment`,
+`record_task_state`, `recall`, `reconsider`. These are what a turn *meant*,
+which no hook can see: only the assistant knows that a sentence was a
+correction rather than a remark, or that something said in passing was a
+promise. `recall` is not optional — an assistant that can write memory and not
+read it will answer from whatever is in its context and call that remembering.
+
+The same split `app/capability_gaps.py` and `gateway/gaps.py` already use: the
+deterministic half cannot be forgotten, the declared half cannot be inferred.
+
+**Both are operator-only.** Every record is keyed `agent="jarvis"`, so a
+client's request summary or a client's "remember" would land in Jarvis's own
+memory, readable by Krish through his own `recall`. That is a privacy
+regression arriving by the back door of a feature about continuity. Client
+conversations stay in `gateway.db` where they already are; this is a decision to
+revisit when client agents have identities of their own.
+
+**A failure never costs a turn, and is never silent.** An unreachable DBA means
+Jarvis operates without memory, which is the honest degraded state; killing the
+user's request over it would be the worst available trade. So a missed write is
+counted, logged, *and* filed through `app/capability_gaps.py` — which puts it in
+the ranked monthly report Krish already reads rather than in a log nobody opens.
+
+---
+
+## 3b. The upkeep loop, and what "periodic" means
+
+`gateway/upkeep.py` runs in the Gateway's lifespan and does three things:
+milestone checkpoints on a cadence, promoting detected gaps into the §11
+lifecycle, and (from the lifespan's shutdown path) §9's before-shutdown
+checkpoint.
+
+**Periodic does not mean buffered, and that is worth stating plainly.** Every
+`persistence.put` is written the moment it happens, whatever tier its kind is
+declared at. Buffering the periodic ones would add a loss window in exchange
+for nothing, because each write is one small record rather than the
+whole-system serialisation §9 warns against.
+
+So `persistence.TIER` earns its keep a different way: **an immediate-tier write
+since the last checkpoint forces the next sweep to take one.** A correction, a
+commitment, an approval or an identity change is therefore never more than one
+sweep from a validated recovery point, while a task-state update — written just
+as promptly — does not cost a checkpoint by itself. That is §9's distinction
+with something actually hanging on it.
+
+Before this, the only checkpoint anything took was §20's pre-self-modification
+one. A system whose only known-good point is the one before a code change has
+no known-good point at all on the ordinary days.
+
+**Detected gaps now reach you.** `app/capability_gaps.py` had been recording
+gaps on the failure paths for some time and nothing read that file into the
+lifecycle, so no gap your own usage produced ever surfaced as a finding. The
+daily sweep calls `gaps.suspect_from_detector`, which promotes them as
+`suspected` and no further — confirming one still needs evidence, and proposing
+a change still needs you.
+
+---
+
 ## 4. Checkpoints are markers, not copies
 
 A checkpoint records the moment, the ledger tip, per-kind counts and a hash of
@@ -248,8 +324,10 @@ decide about.
 - **Automatic rollback.** `request_rollback` writes the request; nothing
   triggers it without Jarvis or Krish deciding to. §22 says *"automatically or
   procedurally"*, and procedurally is what exists.
-- **§9's periodic flush as a timer.** The tiers are declared and the immediate
-  ones are written immediately; nothing yet runs a periodic sweep on a clock.
 - **Proactive proposal in conversation.** Krish can ask what is waiting and
   decide it, and the Gateway rehydrates at startup; what does not yet happen is
   Jarvis raising a pending proposal unprompted at the start of a turn.
+- **Client turns are not in the ledger**, for the privacy reason in §3a. Jarvis's
+  life is his conversations with Krish; a client's stays in `gateway.db`.
+- **Nothing summarises a session.** §4.2's human-readable learning record is
+  reconstructable from the ledger but is not generated as a document.

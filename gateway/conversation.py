@@ -43,7 +43,7 @@ from typing import Iterator
 from app import capability_gaps, model_calls
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import devchannel, interface, roles, skills, store, tools, uiversion
+from gateway import devchannel, interface, recording, roles, skills, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -248,7 +248,8 @@ def record_assistant_message(conn: Database, conversation_id: int, text: str) ->
 def run_turn(
     db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS,
     *, role: str, subject: str | None = None,
-    agent_name: str | None = None,
+    agent_name: str | None = None, conversation_id: int | None = None,
+    recorder=None,
 ) -> Iterator[dict]:
     """One turn, tools and all, as a stream of events:
 
@@ -272,7 +273,22 @@ def run_turn(
     their client id (TQ-42, §96). It travels from the session rather than from
     anything the model can say, which is what makes "read another client's
     positions" not a call the model is able to construct.
+
+    `recorder` writes this turn's meaningful transactions into the life ledger
+    (`gateway/recording.py`). It is a parameter rather than a global so a test
+    can watch what a turn records, and it is deliberately allowed to be absent:
+    a caller that does not pass one gets a real Recorder, and a Recorder with
+    no DBA configured is a no-op. No arrangement of those makes a turn fail
+    because its diary could not be written.
     """
+    if recorder is None:
+        recorder = recording.Recorder(role=role, subject=subject,
+                                      conversation_id=conversation_id)
+    latest = next((message.get("text") for message in reversed(history)
+                   if message.get("role") == "user"), None)
+    if latest:
+        recorder.request(latest)
+
     offered = tools.for_role(role)
     # A client talks to their representative; everyone else talks to the
     # project's assistant. One prompt for both was how a client ended up being
@@ -309,7 +325,18 @@ def run_turn(
                     continue
                 outcome = tools.execute(conn, block["name"], block.get("input") or {},
                                         role=role, subject=subject)
-                yield {"type": "tool", "name": block["name"], "ok": "error" not in outcome}
+                succeeded = "error" not in outcome
+                yield {"type": "tool", "name": block["name"], "ok": succeeded}
+
+                # §5's "failed action" and "successful action". The failure is
+                # always worth an event; the success only when the tool
+                # actually changed something, which `recording` decides from
+                # the risk each tool already declares rather than from a second
+                # list that could disagree with the first.
+                if succeeded:
+                    recorder.tool_succeeded(block["name"])
+                else:
+                    recorder.tool_failed(block["name"], outcome.get("error", ""))
 
                 # A tool whose effect is on the owner's screen says so here, and
                 # only in a shape declared in gateway/interface.UI_ACTIONS. The
@@ -351,10 +378,9 @@ def run_turn(
                     f"a task that did not finish within {MAX_TOOL_ROUNDS} rounds "
                     f"of tool calls - the available tools could not complete it"),
                 user_visible_outcome=stopped.strip(),
-                request_summary=model_calls.summarise(
-                    next((message.get("text") for message in reversed(history)
-                          if message.get("role") == "user"), None)),
+                request_summary=model_calls.summarise(latest),
             )
+            recorder.answered_only_partially(stopped.strip())
 
         yield {"type": "reply", "text": "".join(said)}
     finally:

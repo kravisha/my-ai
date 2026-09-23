@@ -48,7 +48,7 @@ from pydantic import BaseModel
 
 from app import capability_gaps, model_budget, model_calls, user_messages
 from app.model_gateway import default_provider
-from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, store, technology, uiversion
+from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, store, technology, uiversion, upkeep
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -117,11 +117,49 @@ async def lifespan(app: FastAPI):
                 app.state.restoration.status, len(app.state.restoration.items))
 
     reviewer = asyncio.create_task(_technology_review_loop())
+    keeper = asyncio.create_task(_upkeep_loop())
     try:
         yield
     finally:
         reviewer.cancel()
+        keeper.cancel()
+        # §9's "before controlled shutdown". In a worker thread for the same
+        # reason the boot restore is, and allowed to fail: the process is
+        # going away either way, and the next boot's honest account of what it
+        # could restore is a better place to notice than a traceback nobody
+        # reads. A crash skips this, which is exactly what TEST B is about.
+        record = await asyncio.to_thread(upkeep.checkpoint_before_shutdown)
+        if record is not None:
+            logger.info("took %s before shutting down", record["name"])
         conn.close()
+
+
+async def _upkeep_loop() -> None:
+    """Checkpoints on a cadence, and detected gaps promoted into the lifecycle.
+
+    Defensive throughout, for the reason the technology review loop gives: a
+    maintenance task that raised would stop existing silently, and this is the
+    one whose absence nobody would notice until a restore needed the checkpoint
+    it did not take.
+
+    Each pass runs in a worker thread - `upkeep.run_once` is blocking HTTP to
+    the DBA, and doing that on the event loop would stall every request for as
+    long as an unreachable service takes to time out."""
+    if not upkeep.enabled():
+        logger.info("upkeep disabled (%s=0)", upkeep.ENABLED_ENV)
+        return
+
+    while True:
+        await asyncio.sleep(upkeep.interval_seconds())
+        try:
+            result = await asyncio.to_thread(upkeep.run_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a failed sweep must not end the loop
+            logger.exception("upkeep sweep failed; will try again next interval")
+            continue
+        for problem in result.get("problems") or []:
+            logger.warning("upkeep: %s", problem)
 
 
 async def _technology_review_loop() -> None:

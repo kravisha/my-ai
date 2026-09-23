@@ -95,12 +95,18 @@ CAP_HOLDINGS = "holdings"
 # authority over self-modification, and a capability that some other role could
 # be granted would be an approval gate with a second key.
 CAP_SELF_CHANGE = "self:change"
+# Writing to and reading from Jarvis's own durable memory. Operator-only, and
+# for a reason worth stating: every record this system writes is keyed
+# `agent="jarvis"`, so a client remembering something would write into Jarvis's
+# own memory, readable by Krish through his own recall tool. Client agents get
+# this when they have identities of their own to key it by.
+CAP_MEMORY = "memory"
 
 CAPABILITIES = (
     CAP_SCOREBOARD_READ, CAP_SCOREBOARD_WRITE, CAP_TECHNOLOGY_READ,
     CAP_TECHNOLOGY_FILE, CAP_SYSTEM_STATUS, CAP_CONVERSE, CAP_SESSION,
     CAP_REPOSITORY_READ, CAP_PUBLISH, CAP_STUDIO, CAP_HOLDINGS,
-    CAP_SELF_CHANGE,
+    CAP_SELF_CHANGE, CAP_MEMORY,
 )
 
 # What each capability guards, in the words an operator would use. Carried here
@@ -120,6 +126,7 @@ DESCRIPTIONS = {
     CAP_STUDIO: "see the full command centre",
     CAP_HOLDINGS: "record and review the holdings you have told me about",
     CAP_SELF_CHANGE: "review and decide changes Jarvis proposes to his own code",
+    CAP_MEMORY: "remember things across restarts, and look them back up",
 }
 
 # §14: "Sensitive operational views must be withheld from roles that do not

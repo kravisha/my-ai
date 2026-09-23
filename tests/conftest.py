@@ -111,6 +111,13 @@ os.environ["DBA_BACKUP_DIR"] = str(_SESSION_DB_DIR / "backups")
 # the scheduler deliberately where it is the thing being tested.
 os.environ["DBA_AUTOBACKUP"] = "0"
 
+# JARVIS_UPKEEP: the Gateway's maintenance loop takes checkpoints and promotes
+# capability gaps in a background thread. Off in the suite for the same reason
+# and with the same spelling as DBA_AUTOBACKUP above - a thread taking
+# checkpoints underneath a test that counts them is nondeterminism nobody asked
+# for. `tests/test_jarvis_upkeep.py` calls run_once directly instead.
+os.environ["JARVIS_UPKEEP"] = "0"
+
 
 def real_database_fingerprint() -> dict[str, str | None]:
     """Content hash of each real database and its WAL sidecar, or None per file

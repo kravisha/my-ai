@@ -600,6 +600,23 @@ def test_the_assistant_is_told_what_it_cannot_do(gateway_client, gateway_token, 
         "pending_self_changes",
         "show_self_change",
         "decide_self_change",
+        # Jarvis's own memory, added 2026-09-23. The store, the ledger and the
+        # restore path were all built and tested before these existed, and
+        # almost nothing wrote to them - after a restart the ledger held boot
+        # reports and nothing else. These are the producers, and the bar this
+        # assertion guards is met plainly: each one writes a record the restore
+        # path reads back, asserted end to end in
+        # tests/test_jarvis_upkeep.py::test_a_turn_is_remembered_across_a_restart.
+        #
+        # `recall` is here rather than left out because the alternative is worse
+        # than useless: an assistant that can write memory and not read it will
+        # answer from what happens to be in its context and call that
+        # remembering.
+        "remember",
+        "record_commitment",
+        "record_task_state",
+        "recall",
+        "reconsider",
         # The five holdings tools were here until TQ-72 (§111). TQ-41 had added
         # them because §96 answered "where do a client's holdings come from" with
         # *the client tells you, and you remember*; §115 retired both halves, so
