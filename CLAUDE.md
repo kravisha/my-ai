@@ -148,6 +148,18 @@ the route taken, and do not pre-empt questions he has not asked. Reasoning belon
 in the code comments and the docs, where it survives; a reply is not the place to
 prove the thinking happened. He will ask for more.
 
+### Run the full suite before replying, not alongside it
+
+Owner instruction, 2026-09-23. Three commits in a row went out with the suite
+still running, each carrying an honest caveat that it had not been checked. The
+caveat is not the fix — a stop hook fires every turn, so "I'll report the number
+later" means shipping unverified every time.
+
+So: when a turn changes code, `pytest -q` finishes **before** the reply is
+written. It takes about three and a half minutes. Waiting is the work, not a gap
+in the work to be filled with activity — which is the same failure as the
+caffeinated-rabbit turn, wearing a different hat.
+
 ---
 
 ## Two rules about what gets built
