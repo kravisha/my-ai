@@ -406,7 +406,7 @@ link **before** the new text. A crash between them leaves a link with no matchin
 text, which `verify` reports as damage; the other order leaves changed text with
 no link, which is indistinguishable from the attack.
 
-### The constitution is a wall; the amendments are a door
+### Both charter documents are walls
 
 Krish, 2026-09-23: *"Please don't add anything to the constitution directly - add
 only as amendment which means additional to the constitution. And don't allow
@@ -426,15 +426,26 @@ argument does not apply to the document every other rule is derived from: an
 agent that can edit the source of its own limits does not have limits, it has a
 preference.
 
-`AI-CONSTITUTION-AMENDMENTS.md` is the release valve and is ordinary. Amendments
-add and are numbered; they never rewrite. Nothing stops Jarvis proposing one,
-arguing for one, or pointing out that the constitution contradicts itself - what
-he cannot be is the one who writes it.
+`AI-CONSTITUTION-AMENDMENTS.md` is walled too, on Krish's instruction the same
+day: *"Yes wall the amendments too."* It was briefly keyed, on the reasoning that
+a charter nobody may draft is a cage - which was thinner than it looked, because
+**drafting is not writing**. Nothing stops Jarvis proposing an amendment, arguing
+for one at length, or pointing out that the constitution contradicts itself. He
+writes the argument; Krish writes the amendment. A cage would be an agent
+forbidden to raise the subject.
 
-`verify` now compares the sealed constitution against what the newest amendment
-was added **alongside**. A mismatch is no longer "an amendment did not finish
-writing" - nothing writes it - so it means either Krish edited it by hand, which
-clears on a re-seal, or something changed it that should not have been able to.
+So `gateway/constitution.py` has no function that composes either document. Two
+were removed the hour after they were written: `amend`, which rewrote the
+constitution behind the charter key, and `add_amendment`, which composed an
+amendment from a caller's string. What remains is `seal_what_krish_wrote`, which
+takes both texts whole and records them, and a test that asserts over the parsed
+module that exactly two functions write that file and neither authors a word.
+
+`verify` compares the sealed constitution against what the newest seal was taken
+**alongside**. A mismatch means Krish edited by hand - which clears on a re-seal -
+or something changed it that should not have been able to. A hand seal carries no
+grant, by design: Krish does not grant himself permission, he is the permission.
+What it must carry is a name, and an entry with neither is reported.
 
 ### The limit, stated rather than footnoted
 

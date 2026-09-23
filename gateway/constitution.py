@@ -32,22 +32,29 @@ being wrong.
 
 Krish, 2026-09-23: *"don't allow Jarvis or yourself to ever change the
 constitution. Only I should be able to change the main document, manually,
-myself."*
+myself."* And, on the amendments: *"Yes wall the amendments too."*
 
-So the constitution's text has no writer in this module at all. `read` decrypts
-and returns it; `install` seals what Krish already wrote, once, and refuses to
-overwrite. There is no `amend` for the text. An earlier version had one, gated on
-his key - which was the wrong shape, because a key is a thing that can be in
-force when nobody meant it to be, and this document is the one where that costs
-everything.
+So neither document has a writer here. `read` and `amendments` decrypt and
+return; `seal_what_krish_wrote` takes both files exactly as he left them and
+records them, and it is the only function in this module that writes anything.
+It does not compose, edit, merge or generate a word of either.
 
-Additions go to `AI-CONSTITUTION-AMENDMENTS.md`, which is an ordinary file, and
-`add_amendment` records them here as links in a chain. An amendment **adds**; it
-never rewrites the constitution, and nothing here can.
+Two things were removed to get here, both of which had looked reasonable an hour
+earlier. `amend` rewrote the constitution's text behind his key - wrong shape,
+because a key can be in force at a moment nobody intended and this is the
+document where that costs everything. `add_amendment` composed an amendment from
+a caller's string - wrong for the same reason once the amendments were walled,
+and the argument for keeping it ("a charter nobody may draft is a cage") was
+thinner than it looked: **drafting is not writing**. Jarvis may argue for an
+amendment at any length. Krish writes it.
 
-The chain link is written before anything else, deliberately: a crash leaves a
-link with no matching amendment, which `verify` reports as damage. The other
-order leaves a change with no link, which is indistinguishable from the attack.
+## What is left is evidence, not control
+
+The sealed copies exist to answer one question: *has either document changed
+since Krish last recorded it?* `verify` answers it, and every problem it reports
+is a fact about files rather than a judgement about intent - "this is not what
+was sealed" rather than "somebody tampered with this". The first is something a
+program can know.
 """
 
 from __future__ import annotations
@@ -172,19 +179,20 @@ def amendments(*, key: bytes) -> list[dict]:
 # --- installing and amending ----------------------------------------------------
 
 
-def install(text: str, *, key: bytes, granted_by: str) -> dict:
-    """Seal a constitution for the first time.
+def install(text: str, *, key: bytes, granted_by: str,
+            amendments_text: str = "") -> dict:
+    """Seal what Krish wrote, the first time.
 
-    Refuses to overwrite. Installing over an existing one would be an amendment
-    with no chain link and no grant - exactly the shape `verify` exists to
-    catch, offered as a convenience."""
+    Refuses to overwrite: a second `install` would be a rewrite wearing a
+    setup-step's name. When he edits either document by hand afterwards, the way
+    to record it is `seal_what_krish_wrote`, which leaves a link saying so."""
     if not (text or "").strip():
         raise ValueError("a constitution cannot be empty")
     if installed():
         raise Unauthorised(
-            "a constitution is already sealed here. Changing it is `amend`, "
-            "which needs Krish's key and leaves a link in the chain. Replacing "
-            "it wholesale would leave neither.")
+            "a constitution is already sealed here. Nothing in this module "
+            "rewrites it. If Krish has edited it by hand, "
+            "`seal_what_krish_wrote` records that; there is no other path.")
     if not (granted_by or "").strip():
         raise ValueError("installing a constitution must say who authorised it")
     _write(_path(CONSTITUTION_FILE),
@@ -192,36 +200,32 @@ def install(text: str, *, key: bytes, granted_by: str) -> dict:
     _write(_path(AMENDMENTS_FILE),
            secretbox.seal(json.dumps([]).encode("utf-8"), key=key,
                           aad=AMENDMENTS_AAD))
-    return {"installed_at": _now(), "granted_by": granted_by,
-            "digest": _digest(text)}
+    sealed = {"installed_at": _now(), "granted_by": granted_by,
+              "digest": _digest(text)}
+    if amendments_text.strip():
+        seal_what_krish_wrote(text, amendments_text, key=key, by=granted_by)
+    return sealed
 
 
-def add_amendment(client: dbaclient.DBAClient, text: str, *, key: bytes,
-                  why: str, agent: str = identity.AGENT_ID) -> dict:
-    """Record an addition to the charter. **Never touches the constitution.**
+def seal_what_krish_wrote(constitution_text: str, amendments_text: str, *,
+                          key: bytes, by: str) -> dict:
+    """Record the two documents exactly as Krish left them.
 
-    `text` is the amendment, not a replacement constitution. The sealed
-    constitution is not read, not re-sealed and not referred to by this function
-    beyond noting which text the amendment was added alongside.
+    Not an edit and not an author: the text comes in whole and is written down
+    whole. This is how a hand edit stops looking like tampering - `verify`
+    compares the live files against the last thing sealed, so after Krish changes
+    one he runs this and the report clears.
 
-    The grant is read from the DBA, not taken as an argument - see
-    `gateway/charter.py` for why a key a caller can name is not a key."""
-    if not (text or "").strip():
-        raise ValueError("an amendment cannot be empty")
-    if not (why or "").strip():
+    It is deliberately not a tool, and `by` is required: a re-seal that nobody
+    signed is indistinguishable from the thing this all exists to catch."""
+    if not (by or "").strip():
         raise ValueError(
-            "an amendment must say why. The chain records the reason, and an "
-            "amendment nobody can account for later is the thing this whole "
-            "arrangement is against.")
+            "a re-seal must say who did it. An unsigned one is exactly what a "
+            "tampered file would look like.")
+    if not (constitution_text or "").strip():
+        raise ValueError("a constitution cannot be empty")
     if not installed():
-        raise NotInstalled("there is nothing to amend yet")
-
-    grant = _active_charter_grant(client, agent=agent)
-    if grant is None:
-        raise Unauthorised(
-            f"amending the constitution needs the "
-            f"{charter.introspect.KEY_CHARTER!r} key. "
-            f"{charter.explain(client, charter.introspect.KEY_CHARTER, agent=agent)}")
+        raise NotInstalled("nothing is sealed yet; `install` comes first")
 
     existing = amendments(key=key)
     previous = existing[-1]["link"] if existing else GENESIS
@@ -229,39 +233,22 @@ def add_amendment(client: dbaclient.DBAClient, text: str, *, key: bytes,
     entry = {
         "at": at,
         "previous": previous,
-        "text": _digest(text),
-        # Which constitution this was added alongside. Recorded so a reader can
-        # tell whether an amendment predates a hand edit Krish made - NOT as
-        # something this module keeps in step, because it never writes that file.
-        "alongside": _digest(read(key=key)),
-        "grant_id": grant["id"],
-        "granted_by": grant.get("granted_by"),
-        "why": why.strip(),
+        "text": _digest(amendments_text),
+        "alongside": _digest(constitution_text),
+        "grant_id": "",
+        "granted_by": by.strip(),
+        "why": "sealed as written by hand",
     }
     entry["link"] = _link(previous, at=at, text_digest=entry["text"],
                           grant_id=entry["grant_id"], why=entry["why"])
 
-    # The amendments file, and nothing else. The constitution is not re-sealed
-    # here and there is no branch in this module that re-seals it.
     _write(_path(AMENDMENTS_FILE),
            secretbox.seal(json.dumps(existing + [entry]).encode("utf-8"),
                           key=key, aad=AMENDMENTS_AAD))
-
-    charter.note_amendment(client, what=why.strip()[:120], why=why.strip(),
-                           granted_by=grant.get("granted_by") or "unknown",
-                           agent=agent)
+    _write(_path(CONSTITUTION_FILE),
+           secretbox.seal(constitution_text.encode("utf-8"), key=key,
+                          aad=CONSTITUTION_AAD))
     return entry
-
-
-def _active_charter_grant(client: dbaclient.DBAClient, *, agent: str) -> dict | None:
-    """One call, to the one place that decides what "live" means.
-
-    This used to test `keys_in_force` and then filter the raw grants again by
-    status alone. The second filter did not check expiry, so it was relying on
-    the first - and a probe that made the first useless broke nothing, because
-    the duplicate was carrying it. Two checks that must agree are one check and
-    one bug waiting."""
-    return charter.live_grant(client, charter.introspect.KEY_CHARTER, agent=agent)
 
 
 # --- detecting an amendment nobody authorised -----------------------------------
@@ -326,9 +313,13 @@ def verify(client: dbaclient.DBAClient, *, key: bytes,
 
         grant_id = entry.get("grant_id")
         if not grant_id:
-            report["problems"].append(
-                f"amendment {position} names no grant. Every amendment needs "
-                f"one, and one that does not is a change nobody authorised.")
+            # A hand seal carries no grant, by design: Krish does not grant
+            # himself permission, he is the permission. What it must carry is a
+            # name, and an entry with neither is a change nobody signed.
+            if not (entry.get("granted_by") or "").strip():
+                report["problems"].append(
+                    f"entry {position} carries neither a grant nor a name. A "
+                    f"change nobody signed is the thing this exists to catch.")
             continue
         try:
             grant = client.get(grant_id)
@@ -367,8 +358,8 @@ def describe() -> dict:
         "installed": installed(),
         "encryption": secretbox.describe(),
         "constitution_is_writable": False,
-        "amendments_added_by": ("the owner's charter key, granted from the "
-                                "operator console"),
+        "amendments_are_writable": False,
+        "written_by": "Krish, by hand; this module only records what he wrote",
         "detects": ["an amendment with no grant",
                     "an amendment whose grant was never issued",
                     "a chain link removed, reordered or altered",

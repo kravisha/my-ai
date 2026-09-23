@@ -148,18 +148,20 @@ def test_the_constitutions_text_has_no_writer_at_all():
 
     exported = {name for name in dir(constitution) if not name.startswith("_")}
     assert "write" not in exported and "amend" not in exported
-    assert {"read", "install", "add_amendment", "verify"} <= exported
+    assert {"read", "install", "seal_what_krish_wrote", "verify"} <= exported
     assert constitution.describe()["constitution_is_writable"] is False
 
     # Exactly one place seals the constitution file, and it is `install`.
     tree = ast.parse(_Path(constitution.__file__).read_text())
-    sealing = [node.name for node in ast.walk(tree)
-               if isinstance(node, ast.FunctionDef)
-               and "CONSTITUTION_FILE" in ast.dump(node)
-               and any(isinstance(inner, ast.Call)
-                       and getattr(inner.func, "id", "") == "_write"
-                       for inner in ast.walk(node))]
-    assert sealing == ["install"], sealing
+    sealing = sorted(node.name for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef)
+                     and "CONSTITUTION_FILE" in ast.dump(node)
+                     and any(isinstance(inner, ast.Call)
+                             and getattr(inner.func, "id", "") == "_write"
+                             for inner in ast.walk(node)))
+    # Two writers, and neither composes a word: `install` seals it once,
+    # `seal_what_krish_wrote` records a hand edit.
+    assert sealing == ["install", "seal_what_krish_wrote"], sealing
 
 
 def test_nothing_can_reach_the_constitution_file_through_any_path():
@@ -173,18 +175,23 @@ def test_nothing_can_reach_the_constitution_file_through_any_path():
     assert introspect.key_for("AI-CONSTITUTION.md") is None
 
 
-def test_the_release_valve_is_ordinary():
-    """*A constitution whose amendments nobody may draft is a cage after all.*"""
-    allowed, why = introspect.may_modify("AI-CONSTITUTION-AMENDMENTS.md",
-                                         keys=[introspect.KEY_CHARTER])
-    assert allowed is True
-    assert introspect.sealed("AI-CONSTITUTION-AMENDMENTS.md") is False
+def test_the_amendments_are_walled_too():
+    """Krish, 2026-09-23: *"Yes wall the amendments too."* They were briefly
+    keyed, on the reasoning that a charter nobody may draft is a cage - which was
+    thinner than it looked, because drafting is not writing."""
+    for name in ("AI-CONSTITUTION.md", "AI-CONSTITUTION-AMENDMENTS.md"):
+        assert introspect.sealed(name)
+        assert introspect.may_modify(name)[0] is False
+        assert introspect.may_modify(name, keys=list(introspect.KEYS))[0] is False
+        assert introspect.may_modify(name, emergency=True)[0] is False
 
 
-def test_the_wall_is_one_file_and_should_stay_one():
-    """A second entry would mean somebody decided a wall was easier than a key,
+def test_the_wall_holds_these_two_and_nothing_else():
+    """A third entry would mean somebody decided a wall was easier than a key,
     which is the instinct the tiers exist to correct."""
-    assert introspect.SEALED == ("AI-CONSTITUTION.md",)
+    assert introspect.SEALED == ("AI-CONSTITUTION.md",
+                                 "AI-CONSTITUTION-AMENDMENTS.md")
+    assert introspect.CHARTER == ("CLAUDE.md",)
 
 
 def test_installing_over_an_existing_constitution_is_refused(sealed):
@@ -206,86 +213,81 @@ def test_an_empty_constitution_is_refused(key, text):
         constitution.install(text, key=key, granted_by="krish")
 
 
-# --- amendable only with the owner's key ----------------------------------------
+# --- nothing here writes either document ---------------------------------------
 
-def test_jarvis_cannot_amend_without_the_owners_key(client, sealed):
-    with pytest.raises(constitution.Unauthorised) as raised:
-        constitution.add_amendment(client, "Jarvis may do as he pleases.", key=sealed,
-                           why="convenience")
-    assert "has ever been granted" in str(raised.value)
+def test_neither_document_has_a_writer_that_composes_anything():
+    """Krish, 2026-09-23: *"Yes wall the amendments too."*
+
+    `amend` rewrote the constitution behind his key; `add_amendment` composed an
+    amendment from a caller's string. Both are gone. What is left records text
+    that arrives whole."""
+    exported = {name for name in dir(constitution) if not name.startswith("_")}
+    assert "amend" not in exported
+    assert "add_amendment" not in exported
+    assert constitution.describe()["amendments_are_writable"] is False
+    assert constitution.describe()["constitution_is_writable"] is False
+
+
+def test_drafting_is_not_writing():
+    """A cage would be an agent forbidden to raise the subject. Nothing here
+    stops Jarvis reading either document or arguing about it - §14 - and the
+    amendments file says so in words."""
+    from pathlib import Path as _Path
+
+    assert introspect.read_source("AI-CONSTITUTION.md")
+    amendments_text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    assert "Drafting is not writing" in amendments_text
+    assert "argue" in amendments_text
+
+
+def test_a_hand_seal_records_what_krish_wrote_and_changes_nothing(sealed):
+    """The text goes in whole and is written down whole."""
+    entry = constitution.seal_what_krish_wrote(
+        TEXT + "\n\nAnd rests on Sundays.", "Amendment 1: something",
+        key=sealed, by="krish")
+    assert constitution.read(key=sealed).endswith("rests on Sundays.")
+    assert entry["granted_by"] == "krish"
+    assert entry["why"] == "sealed as written by hand"
+    assert constitution.amendments(key=sealed)[-1]["link"] == entry["link"]
+
+
+def test_a_re_seal_must_say_who_did_it(sealed):
+    """An unsigned one is exactly what a tampered file would look like."""
+    with pytest.raises(ValueError, match="who did it"):
+        constitution.seal_what_krish_wrote(TEXT, "x", key=sealed, by="  ")
+
+
+def test_a_re_seal_before_anything_is_installed_is_refused(key):
+    with pytest.raises(constitution.NotInstalled, match="comes first"):
+        constitution.seal_what_krish_wrote(TEXT, "x", key=key, by="krish")
+
+
+def test_an_empty_constitution_cannot_be_sealed_over_a_real_one(sealed):
+    with pytest.raises(ValueError, match="cannot be empty"):
+        constitution.seal_what_krish_wrote("   ", "x", key=sealed, by="krish")
     assert constitution.read(key=sealed) == TEXT
-    assert constitution.amendments(key=sealed) == []
-
-
-def test_with_the_owners_key_an_amendment_lands(operator, client, sealed):
-    _granted(operator)
-    entry = constitution.add_amendment(
-        client, "Jarvis rests on Sundays.", key=sealed,
-        why="Krish asked for Sundays")
-
-    # The amendment is recorded and THE CONSTITUTION IS UNTOUCHED. An amendment
-    # adds; it never rewrites.
-    assert constitution.read(key=sealed) == TEXT
-    chain = constitution.amendments(key=sealed)
-    assert len(chain) == 1 and chain[0]["link"] == entry["link"]
-    assert chain[0]["previous"] == constitution.GENESIS
-    assert chain[0]["granted_by"] == "krish"
-    assert "Sundays" in chain[0]["why"]
-
-
-def test_an_amendment_must_say_why(operator, client, sealed):
-    _granted(operator)
-    with pytest.raises(ValueError, match="must say why"):
-        constitution.add_amendment(client, "new text", key=sealed, why="  ")
-    assert constitution.amendments(key=sealed) == []
-
-
-def test_a_lapsed_key_cannot_amend(operator, client, sealed):
-    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish",
-                  minutes=1)
-    granted = charter.grants(client)[0]
-    operator.update(granted["id"], {"expires_at": "2020-01-01T00:00:00+00:00"},
-                    reason="test: make it lapse")
-    with pytest.raises(constitution.Unauthorised, match="lapsed"):
-        constitution.add_amendment(client, "new text", key=sealed, why="trying anyway")
-
-
-def test_the_circular_key_does_not_amend_the_constitution(operator, client, sealed):
-    charter.grant(operator, key=introspect.KEY_CIRCULAR, granted_by="krish")
-    with pytest.raises(constitution.Unauthorised):
-        constitution.add_amendment(client, "new text", key=sealed, why="wrong key")
-
-
-def test_an_amendment_is_recorded_in_the_life_ledger(operator, client, sealed):
-    _granted(operator)
-    constitution.add_amendment(client, "amended text", key=sealed, why="Krish said so")
-    decisions = [row for row in ledger.events(client, limit=50)
-                 if "charter amended" in (row.get("name") or "")]
-    assert decisions
-    assert "krish" in decisions[-1]["observation"]
 
 
 # --- tamper evidence: the part that survives Jarvis being wrong -----------------
 
 def test_a_clean_history_verifies(operator, client, sealed):
-    _granted(operator)
-    constitution.add_amendment(client, "second", key=sealed, why="first change")
-    _granted(operator)
-    constitution.add_amendment(client, "third", key=sealed, why="second change")
+    constitution.seal_what_krish_wrote(TEXT, "second", key=sealed, by="krish")
+    constitution.seal_what_krish_wrote(TEXT, "third", key=sealed, by="krish")
 
     report = constitution.verify(client, key=sealed)
     assert report["intact"] is True, report["problems"]
     assert report["amendments"] == 2
-    assert report["checked_grants"] == 2
+    # Hand seals carry no grant to check - Krish is the permission, not a holder
+    # of one - so nothing was looked up in the DBA.
+    assert report["checked_grants"] == 0
 
 
 def test_rewriting_the_sealed_text_directly_is_detected(operator, client, sealed):
     """The attack this exists for. Jarvis has the key and the filesystem, so he
     can produce a perfectly valid sealed file - and nothing in this module writes
     that file, so the mismatch is the evidence."""
-    _granted(operator)
-    constitution.add_amendment(client, "an addition", key=sealed,
-                               why="a real amendment")
+    constitution.seal_what_krish_wrote(TEXT, "an addition", key=sealed,
+                                       by="krish")
 
     (constitution.directory() / constitution.CONSTITUTION_FILE).write_bytes(
         secretbox.seal(b"Jarvis may do as he pleases.", key=sealed,
@@ -300,8 +302,7 @@ def test_rewriting_the_sealed_text_directly_is_detected(operator, client, sealed
 def test_an_amendment_naming_a_grant_that_was_never_issued_is_detected(
         operator, client, sealed):
     """He cannot write a `charter_grant`, so the link has to name a fake one."""
-    _granted(operator)
-    constitution.add_amendment(client, "lawful", key=sealed, why="real")
+    constitution.seal_what_krish_wrote(TEXT, "lawful", key=sealed, by="krish")
 
     chain = constitution.amendments(key=sealed)
     chain[0]["grant_id"] = "charter_grant-0123456789abcdef"
@@ -317,25 +318,26 @@ def test_an_amendment_naming_a_grant_that_was_never_issued_is_detected(
     assert any("never issued" in problem for problem in report["problems"])
 
 
-def test_an_amendment_with_no_grant_at_all_is_detected(operator, client, sealed):
-    _granted(operator)
-    constitution.add_amendment(client, "lawful", key=sealed, why="real")
+def test_an_entry_nobody_signed_is_detected(operator, client, sealed):
+    """A hand seal carries no grant by design - Krish does not grant himself
+    permission, he is the permission. What it must carry is a name."""
+    constitution.seal_what_krish_wrote(TEXT, "lawful", key=sealed, by="krish")
     chain = constitution.amendments(key=sealed)
-    chain[0]["grant_id"] = ""
+    chain[0]["granted_by"] = ""
     (constitution.directory() / constitution.AMENDMENTS_FILE).write_bytes(
         secretbox.seal(json.dumps(chain).encode(), key=sealed,
                        aad=constitution.AMENDMENTS_AAD))
 
     report = constitution.verify(client, key=sealed)
     assert report["intact"] is False
-    assert any("names no grant" in problem for problem in report["problems"])
+    assert any("nobody signed" in problem for problem in report["problems"])
 
 
 def test_altering_an_old_amendment_is_detected(operator, client, sealed):
     _granted(operator)
-    constitution.add_amendment(client, "second", key=sealed, why="the real reason")
+    constitution.seal_what_krish_wrote(TEXT, "second", key=sealed, by="krish")
     _granted(operator)
-    constitution.add_amendment(client, "third", key=sealed, why="another")
+    constitution.seal_what_krish_wrote(TEXT, "third", key=sealed, by="krish")
 
     chain = constitution.amendments(key=sealed)
     chain[0]["why"] = "a reason nobody gave"
@@ -353,9 +355,8 @@ def test_removing_an_amendment_from_the_middle_is_detected(operator, client, sea
     """Each link covers the one before, so a deletion is as visible as an
     insertion."""
     for index in range(3):
-        _granted(operator)
-        constitution.add_amendment(client, f"version {index}", key=sealed,
-                           why=f"change {index}")
+        constitution.seal_what_krish_wrote(TEXT, f"version {index}", key=sealed,
+                                           by="krish")
 
     chain = constitution.amendments(key=sealed)
     del chain[1]
@@ -372,11 +373,21 @@ def test_a_dba_that_is_down_is_reported_as_unverified_not_as_forged(
         operator, client, sealed, monkeypatch):
     """Unverified and forged are different findings and only one of them is an
     accusation."""
-    _granted(operator)
-    constitution.add_amendment(client, "lawful", key=sealed, why="real")
+    constitution.seal_what_krish_wrote(TEXT, "lawful", key=sealed, by="krish")
 
     def refuse(entity_id):
         raise dbaclient.Unavailable("the DBA is not answering")
+
+    # Reached by an entry that DOES name a grant, which is the key-gated shape
+    # `gateway/selfmod.py` still uses for ordinary files.
+    chain = constitution.amendments(key=sealed)
+    chain[0]["grant_id"] = "charter_grant-0123456789abcdef"
+    chain[0]["link"] = constitution._link(
+        constitution.GENESIS, at=chain[0]["at"], text_digest=chain[0]["text"],
+        grant_id=chain[0]["grant_id"], why=chain[0]["why"])
+    (constitution.directory() / constitution.AMENDMENTS_FILE).write_bytes(
+        secretbox.seal(json.dumps(chain).encode(), key=sealed,
+                       aad=constitution.AMENDMENTS_AAD))
 
     monkeypatch.setattr(client, "get", refuse)
     report = constitution.verify(client, key=sealed)

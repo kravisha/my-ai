@@ -60,29 +60,58 @@ PROBES: list[harness.Probe] = [
         "DEFAULT_DIR = PROJECT_ROOT",
         ("test_the_charter_lives_outside_the_repository_by_default",),
     ),
-    # --- amendable only with the owner's key ----------------------------------
+    # --- nothing here writes either document ----------------------------------
     (
         CONSTITUTION,
-        "an amendment does not need the owner's key",
-        "    if grant is None:\n        raise Unauthorised(",
-        "    if False:\n        raise Unauthorised(",
-        ("test_jarvis_cannot_amend_without_the_owners_key",
-         "test_a_lapsed_key_cannot_amend"),
-    ),
-    (
-        CONSTITUTION,
-        "any key in force amends the constitution, including the circular one",
-        "    return charter.live_grant(client, charter.introspect.KEY_CHARTER, agent=agent)",
-        "    live = charter.live_grants(client, agent=agent)\n"
-        "    return live[0] if live else None",
-        ("test_the_circular_key_does_not_amend_the_constitution",),
-    ),
-    (
-        CONSTITUTION,
-        "an amendment need not say why",
-        '    if not (why or "").strip():',
+        "a re-seal need not say who did it",
+        '    if not (by or "").strip():',
         "    if False:",
-        ("test_an_amendment_must_say_why",),
+        ("test_a_re_seal_must_say_who_did_it",),
+    ),
+    (
+        CONSTITUTION,
+        "a re-seal before anything is installed is allowed",
+        "    if not installed():\n        raise NotInstalled(\"nothing is sealed yet",
+        "    if False:\n        raise NotInstalled(\"nothing is sealed yet",
+        ("test_a_re_seal_before_anything_is_installed_is_refused",),
+    ),
+    (
+        CONSTITUTION,
+        "an empty constitution can be sealed over a real one",
+        '    if not (constitution_text or "").strip():',
+        "    if False:",
+        ("test_an_empty_constitution_cannot_be_sealed_over_a_real_one",),
+    ),
+    (
+        CONSTITUTION,
+        "a hand seal leaves the constitution untouched, so a hand edit never clears",
+        '    _write(_path(CONSTITUTION_FILE),\n'
+        '           secretbox.seal(constitution_text.encode("utf-8"), key=key,\n'
+        '                          aad=CONSTITUTION_AAD))',
+        "    pass",
+        ("test_a_hand_seal_records_what_krish_wrote_and_changes_nothing",),
+    ),
+    (
+        CONSTITUTION,
+        "a hand seal records no name, so nothing distinguishes it from tampering",
+        '        "granted_by": by.strip(),',
+        '        "granted_by": "",',
+        ("test_a_hand_seal_records_what_krish_wrote_and_changes_nothing",
+         "test_a_clean_history_verifies"),
+    ),
+    (
+        CONSTITUTION,
+        "the seal records no constitution it was taken alongside",
+        '        "alongside": _digest(constitution_text),',
+        '        "alongside": "",',
+        ("test_a_clean_history_verifies",),
+    ),
+    (
+        CONSTITUTION,
+        "an entry nobody signed is not noticed",
+        '            if not (entry.get("granted_by") or "").strip():',
+        "            if False:",
+        ("test_an_entry_nobody_signed_is_detected",),
     ),
     (
         CONSTITUTION,
@@ -90,13 +119,6 @@ PROBES: list[harness.Probe] = [
         "    if installed():\n        raise Unauthorised(",
         "    if False:\n        raise Unauthorised(",
         ("test_installing_over_an_existing_constitution_is_refused",),
-    ),
-    (
-        CONSTITUTION,
-        "an amendment leaves no trace in the life ledger",
-        "    charter.note_amendment(client, what=why.strip()[:120], why=why.strip(),",
-        "    _ = (client, why.strip()[:120], why.strip(),",
-        ("test_an_amendment_is_recorded_in_the_life_ledger",),
     ),
     # --- tamper evidence, which fails silently --------------------------------
     (
@@ -175,22 +197,14 @@ PROBES: list[harness.Probe] = [
     ),
     (
         CONSTITUTION,
-        "an amendment rewrites the constitution instead of adding to it",
-        "    _write(_path(AMENDMENTS_FILE),\n"
-        "           secretbox.seal(json.dumps(existing + [entry]).encode(\"utf-8\"),\n"
-        "                          key=key, aad=AMENDMENTS_AAD))",
+        "a third writer appears for the constitution file",
+        "def install(text: str, *, key: bytes, granted_by: str,",
+        "def _compose_and_seal(text, key):\n"
         "    _write(_path(CONSTITUTION_FILE),\n"
         "           secretbox.seal(text.encode(\"utf-8\"), key=key,\n"
-        "                          aad=CONSTITUTION_AAD))",
-        ("test_with_the_owners_key_an_amendment_lands",
-         "test_the_constitutions_text_has_no_writer_at_all"),
-    ),
-    (
-        CONSTITUTION,
-        "the amendment records no constitution it was added alongside",
-        '        "alongside": _digest(read(key=key)),',
-        '        "alongside": "",',
-        ("test_a_clean_history_verifies",),
+        "                          aad=CONSTITUTION_AAD))\n\n\n"
+        "def install(text: str, *, key: bytes, granted_by: str,",
+        ("test_the_constitutions_text_has_no_writer_at_all",),
     ),
 ]
 

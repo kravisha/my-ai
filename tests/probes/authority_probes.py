@@ -71,10 +71,10 @@ PROBES: list[harness.Probe] = [
     # --- the charter is reachable --------------------------------------------
     (
         INTROSPECT,
-        "the amendments document is unreachable, making the wall a cage",
-        "CHARTER = (\n    \"AI-CONSTITUTION-AMENDMENTS.md\",\n    \"CLAUDE.md\",\n)",
+        "the working notes are unreachable, so the keyed tier is empty",
+        "CHARTER = (\n    \"CLAUDE.md\",\n)",
         "CHARTER = ()",
-        ("test_the_charter_is_amendable_with_a_key",
+        ("test_the_working_notes_are_amendable_with_a_key",
          "test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there"),
     ),
     (
@@ -84,7 +84,7 @@ PROBES: list[harness.Probe] = [
         '               f"forbidden one, and this refusal is a request for the key "\n'
         '               f"rather than a wall."',
         'f"Refused."',
-        ("test_the_charter_is_amendable_with_a_key",),
+        ("test_the_working_notes_are_amendable_with_a_key",),
     ),
     # --- the one wall ---------------------------------------------------------
     (
@@ -92,14 +92,14 @@ PROBES: list[harness.Probe] = [
         "the constitution is reachable again",
         "    if as_posix in SEALED:",
         "    if False:",
-        ("test_the_constitution_itself_is_refused_even_with_the_key",),
+        ("test_the_charter_documents_are_refused_even_with_the_key",),
     ),
     (
         INTROSPECT,
         "the wall is empty, so nothing is sealed",
-        'SEALED = (\n    "AI-CONSTITUTION.md",\n)',
+        'SEALED = (\n    "AI-CONSTITUTION.md",\n    "AI-CONSTITUTION-AMENDMENTS.md",\n)',
         "SEALED = ()",
-        ("test_the_constitution_itself_is_refused_even_with_the_key",
+        ("test_the_charter_documents_are_refused_even_with_the_key",
          "test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there"),
     ),
     (
@@ -107,7 +107,7 @@ PROBES: list[harness.Probe] = [
         "the seal is checked after the key, so a key opens it",
         "    if as_posix in SEALED:\n        return False, (",
         "    if as_posix in SEALED and not keys and not emergency:\n        return False, (",
-        ("test_the_constitution_itself_is_refused_even_with_the_key",),
+        ("test_the_charter_documents_are_refused_even_with_the_key",),
     ),
     (
         INTROSPECT,
@@ -123,10 +123,11 @@ PROBES: list[harness.Probe] = [
     ),
     (
         INTROSPECT,
-        "the constitution is put back behind a key instead of a wall",
-        'CHARTER = (\n    "AI-CONSTITUTION-AMENDMENTS.md",',
-        'CHARTER = (\n    "AI-CONSTITUTION.md",\n    "AI-CONSTITUTION-AMENDMENTS.md",',
-        ("test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there",),
+        "the amendments are put back behind a key instead of the wall",
+        'SEALED = (\n    "AI-CONSTITUTION.md",\n    "AI-CONSTITUTION-AMENDMENTS.md",\n)',
+        'SEALED = (\n    "AI-CONSTITUTION.md",\n)',
+        ("test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there",
+         "test_the_charter_documents_are_refused_even_with_the_key"),
     ),
     # --- the break-glass ------------------------------------------------------
     (

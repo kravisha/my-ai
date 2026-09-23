@@ -49,23 +49,26 @@ So there is no absolute list any more. There are three tiers:
 | `SEALED` | not possible. No key, no emergency, no path. |
 | refused | outside the runtime and the charter: somebody else's service. |
 
-## The one wall
+## The wall
 
-`SEALED` holds `AI-CONSTITUTION.md` and nothing else. Krish, 2026-09-23: *"don't
-allow Jarvis or yourself to ever change the constitution. Only I should be able
-to change the main document, manually, myself."*
+`SEALED` holds the constitution **and its amendments**. Krish, 2026-09-23:
+*"don't allow Jarvis or yourself to ever change the constitution. Only I should
+be able to change the main document, manually, myself"* - and, asked whether the
+amendments should be walled too: *"Yes wall the amendments too."*
 
-This is deliberately stricter than everything else here, and the reason it is the
-only wall is the reason it has to be one. Every other limit in this file is *ask
-first* or *needs a key*, because a lock the owner cannot open in a hurry is a
-lock that can hurt him - that argument is written out below and it stands. It
-does not apply here, because the document is the thing every other rule is
-derived from: an agent that can edit the source of its own limits does not have
-limits, it has a preference.
+This is deliberately stricter than everything else here. Every other limit in
+this file is *ask first* or *needs a key*, because a lock the owner cannot open
+in a hurry is a lock that can hurt him - that argument is written out below and
+it stands everywhere else. It does not apply to these two files, because they are
+what every other rule is derived from: an agent that can edit the source of its
+own limits does not have limits, it has a preference.
 
-The release valve is `AI-CONSTITUTION-AMENDMENTS.md`, which is ordinary. Nothing
-stops Jarvis proposing an amendment, arguing for one, or pointing out that the
-constitution contradicts itself. What he cannot be is the one who writes it.
+An amendment was briefly a keyed file, on the reasoning that a charter nobody may
+draft is a cage. Krish's answer settles it, and the reasoning was thinner than it
+looked: **drafting is not writing**. Nothing here stops Jarvis proposing an
+amendment, arguing for one at length, or pointing out that the constitution
+contradicts itself. He writes the argument; Krish writes the amendment. A cage
+would be an agent forbidden to raise the subject, and nothing does that.
 
 `SEPARATE_KEY` holds exactly two things, and the test for membership is narrow:
 
@@ -125,6 +128,7 @@ KEYS = (KEY_CIRCULAR, KEY_CHARTER)
 # exist to correct.
 SEALED = (
     "AI-CONSTITUTION.md",
+    "AI-CONSTITUTION-AMENDMENTS.md",
 )
 
 # The modules that decide whether a proposal is allowed. Approving a proposal
@@ -156,11 +160,11 @@ CIRCULAR = (
     "tests/test_jarvis_selfmod.py",
 )
 
-# Additions to what Jarvis is for, and the working notes. Behind a key because
-# writing them is a large act; reachable because a constitution whose amendments
-# nobody may draft is a cage after all.
+# The working notes: how to work in this repository, and what previous sessions
+# got wrong. Behind a key rather than sealed because it is a record of practice
+# rather than of authority - it says how to build, and the two files above say
+# what may be built at all.
 CHARTER = (
-    "AI-CONSTITUTION-AMENDMENTS.md",
     "CLAUDE.md",
 )
 
@@ -245,10 +249,10 @@ def may_modify(path: str | Path, *, keys=(), emergency: bool = False
         return False, (
             f"{as_posix} is not modifiable by anything here - no key opens it, "
             f"no emergency reaches it, and no proposal may name it. Krish edits "
-            f"it by hand or it is not edited. It is the document every other "
-            f"rule is derived from, and an agent that can edit the source of "
-            f"its own limits does not have limits. Additions go in "
-            f"AI-CONSTITUTION-AMENDMENTS.md, which is ordinary.")
+            f"it by hand or it is not edited. These are the documents every "
+            f"other rule is derived from, and an agent that can edit the source "
+            f"of its own limits does not have limits. Propose an amendment in "
+            f"words and argue for it; writing one is his.")
     key = key_for(as_posix)
     if key is not None:
         if emergency:
