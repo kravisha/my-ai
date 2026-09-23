@@ -46,6 +46,34 @@ DEPLOYED_COMMIT_FILE = "DEPLOYED-COMMIT.txt"
 
 VERSION_ENV = "JARVIS_CODE_VERSION"
 
+# Who a commit Jarvis makes is authored by. Stated here rather than inherited
+# from whatever `git config` happens to hold on the machine, for two reasons and
+# the second is the one that bit:
+#
+# A commit Jarvis wrote should say Jarvis wrote it. Inheriting the identity means
+# a candidate change Krish has not seen arrives in the history under his name,
+# which is Amendment 3's first item - a record that claims to come from somebody
+# else - reached by doing nothing in particular.
+#
+# And `git commit` with no identity configured does not fall back to anything. It
+# fails, with "Author identity unknown". A CI runner has none, and neither does a
+# fresh Windows account, so self-modification worked only on machines where
+# somebody had already set git up by hand. It failed on the one place it most
+# needs to work.
+GIT_AUTHOR_NAME = AGENT_ID
+GIT_AUTHOR_EMAIL = f"{AGENT_ID}@localhost"
+
+
+def git_identity() -> tuple[str, ...]:
+    """The `-c` flags that make a `git` invocation carry Jarvis's identity.
+
+    Passed per-invocation rather than written into any config file: this must
+    not change what the rest of the machine's git does, and a repository whose
+    config Jarvis edits is one he can later commit through as somebody else."""
+    return ("-c", f"user.name={GIT_AUTHOR_NAME}",
+            "-c", f"user.email={GIT_AUTHOR_EMAIL}")
+
+
 # What a durable state record is shaped like. Bumped when a restore of an older
 # record would need converting; `rehydrate` refuses a state it does not
 # understand rather than reading it optimistically.

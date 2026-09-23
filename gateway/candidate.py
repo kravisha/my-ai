@@ -60,7 +60,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gateway import introspect
+from gateway import identity, introspect
 
 logger = logging.getLogger("gateway.candidate")
 
@@ -85,8 +85,14 @@ class WorkspaceUnavailable(RuntimeError):
 
 
 def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """Run git, as Jarvis.
+
+    `identity.git_identity()` goes on every invocation rather than only on the
+    one that commits, because the next thing here that writes history should not
+    have to remember."""
     return subprocess.run(
-        ["git", "-C", str(cwd or introspect.PROJECT_ROOT), *args],
+        ["git", *identity.git_identity(),
+         "-C", str(cwd or introspect.PROJECT_ROOT), *args],
         capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
 
 

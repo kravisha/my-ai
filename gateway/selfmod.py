@@ -650,7 +650,8 @@ def commit_candidate(client: dbaclient.DBAClient, proposal: dict, *,
                     ["git", "add", "--"] + approved_files,
                     ["git", "commit", "-m", message]):
         result = subprocess.run(
-            ["git", "-C", str(introspect.PROJECT_ROOT)] + command[1:],
+            ["git", *identity.git_identity(),
+             "-C", str(introspect.PROJECT_ROOT)] + command[1:],
             capture_output=True, text=True, timeout=120, check=False)
         if result.returncode != 0 and "nothing to commit" not in (result.stdout or ""):
             raise RuntimeError(

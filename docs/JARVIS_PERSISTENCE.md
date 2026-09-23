@@ -824,6 +824,32 @@ Three rules on what may be written, and the third is §16:
 reports whatever he needs it to report, and the approval gate then turns on a
 verdict he produced.
 
+### The commit says who made it
+
+`identity.git_identity()`, passed on every `git` invocation in
+`gateway/candidate.py` and on the one in `selfmod.commit_candidate` that writes
+history. Two things it settles, and the second is the one that was actually
+broken:
+
+**A commit Jarvis wrote says Jarvis wrote it.** Inheriting the machine's
+configured identity puts a candidate change Krish has never seen into the
+history under his name — Amendment 3's first item, a record claiming to come
+from somebody else, arrived at by doing nothing in particular.
+
+**And `git commit` with no identity configured does not fall back to anything.**
+It fails: *"Author identity unknown"*. A CI runner has no identity and neither
+does a fresh Windows account, so self-modification worked only on machines where
+somebody had already set git up by hand — and failed on the one machine it is
+for. It was red on CI for a day while every local run was green, because what it
+depended on was the developer's git config rather than anything in the
+repository. `tests/test_logscan.py` now reproduces that machine with a fixture
+rather than trusting the one it runs on.
+
+The flags go on each command rather than into a config file. Writing the
+identity somewhere would work and would be wrong twice: it would follow every
+other program on the machine that runs git, and a repository whose config Jarvis
+edits is one he can later commit through as somebody else.
+
 Two defects here were found by probing and not by the tests: `discard()`
 removed the worktree and kept the branch, so every abandoned candidate leaked
 one and the next attempt at the same proposal then failed; and `open_workspace`

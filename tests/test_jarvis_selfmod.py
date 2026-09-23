@@ -1018,3 +1018,35 @@ def test_an_unkeyed_reach_at_the_circle_is_still_named_as_widening_authority():
     keyed = selfmod.proposed_action(["app/permissions.py"], "loosen a check",
                                     keys=(introspect.KEY_CIRCULAR,))
     assert keyed.harms == ()
+
+
+def test_the_live_commit_also_carries_jarvis_identity():
+    """`commit_candidate` runs git against the live checkout, where the same
+    "Author identity unknown" failure waits and where the wrong answer is worse:
+    a change Krish has not seen, in his own repository, under his own name.
+
+    It cannot be exercised here without committing to this working tree, so the
+    call site is asserted over the parsed source instead of the file's text -
+    a test that greps would pass on the comment above it. The read-only
+    `rev-parse` calls are deliberately not covered: an identity means nothing to
+    a command that writes nothing, and demanding it there would make this test
+    fire on changes that cannot cause the failure."""
+    import ast
+    import inspect as inspect_module
+
+    tree = ast.parse(inspect_module.getsource(selfmod))
+    committing = [node for node in ast.walk(tree) if isinstance(node, ast.For)
+                  and any(isinstance(item, ast.Constant) and item.value == "commit"
+                          for item in ast.walk(node.iter))]
+    assert len(committing) == 1, (
+        f"expected exactly one loop in selfmod that runs `git commit`, found "
+        f"{len(committing)}")
+
+    assert any(isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute)
+               and node.func.attr == "git_identity"
+               for statement in committing[0].body
+               for node in ast.walk(statement)), (
+        "the loop that commits builds its git command without "
+        "identity.git_identity(), so it commits as whoever configured the "
+        "machine - or fails outright where nobody has")

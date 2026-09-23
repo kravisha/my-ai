@@ -65,7 +65,7 @@ def test_a_model_cannot_carry_a_value():
     Every behavioural test here would still pass if `Field` grew a `value`, up
     until the morning a figure travelled through it. So this reads the class,
     not a run of it."""
-    source = Path(inspect.getfile(taskrun)).read_text()
+    source = Path(inspect.getfile(taskrun)).read_text(encoding="utf-8")
     tree = ast.parse(source)
     classes = {node.name: node for node in ast.walk(tree)
                if isinstance(node, ast.ClassDef)}
