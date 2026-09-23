@@ -374,6 +374,58 @@ is labelled as one at every site that sets it.
 
 ---
 
+## 3c-quater. The constitution: encrypted, owner-amendable, tamper-evident
+
+`app/secretbox.py`, `gateway/charter.py`, `gateway/constitution.py`.
+
+Krish, 2026-09-23: *"Things such as the constitution need the explicit permission
+of the human to be changed. They are read only principles to act by... keep the
+constitution and the amendments encrypted and hidden and only visible to
+superuser and Jarvis and other agents."*
+
+Three defences against three different failures. Running them together would
+have produced something that felt secure and was not:
+
+| | against |
+|---|---|
+| **encrypted at rest** | a copy leaving the machine - a backup, a sync folder, a support bundle |
+| **the owner's key** | Jarvis amending it because he decided he should |
+| **the chained amendment log** | Jarvis amending it *anyway*, by writing the file directly |
+
+**The third is the one that matters and the easiest to leave out.** Jarvis runs
+as a process with the filesystem and the decryption key, so nothing stops him
+rewriting the sealed file. What he cannot do is produce a `charter_grant` - that
+record needs `administer`, which only the operator console holds, and it lives in
+another service. So an unsanctioned amendment leaves one of two holes and
+`verify` names both: the sealed text matches no link, or a link names a grant
+that was never issued. A lock Jarvis holds the key to is not a lock; a record he
+cannot forge without leaving a hole is a deterrent that survives him being wrong.
+
+`install` refuses to overwrite, there is no `write`, and `amend` writes the chain
+link **before** the new text. A crash between them leaves a link with no matching
+text, which `verify` reports as damage; the other order leaves changed text with
+no link, which is indistinguishable from the attack.
+
+### The limit, stated rather than footnoted
+
+Encryption at rest does not protect against code running as Jarvis, because the
+key must be reachable from his process for him to read his own constitution.
+`secretbox.describe()` says so in the data, and a test asserts that it does.
+
+### Open: where the key lives
+
+`seal`/`unseal` take a key and never look for one, so the source is an adapter
+and the decision does not change this code. The two candidates are Windows DPAPI
+tied to Krish's account (Jarvis inherits it while running as Krish; survives a
+reboot unattended) and a passphrase entered at shell startup (stronger; Jarvis
+cannot read the constitution after an unattended restart). Unanswered, so
+unbuilt.
+
+Also open: the plaintext `AI-CONSTITUTION.md` is in git history. Sealing it from
+here on does not remove it from past commits.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own

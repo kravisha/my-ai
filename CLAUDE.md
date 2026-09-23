@@ -112,6 +112,12 @@ including the one that breaks the behaviour. A fifth changed a maintenance
 interval from a week to six hours and no test noticed, because every test asked
 "is it due?" twice in the same second.
 
+**The rule, because the description alone has not been enough** — this class has
+been found by a probe three separate times on 2026-09-23, each time after the
+lesson was already written down here: *when a test mentions a module constant,
+stop and ask whether it should be a literal.* If the constant encodes a decision
+rather than an implementation detail, write the number.
+
 Where a number **is** the policy — the difference between keeping a fact and
 deleting it, or how often Jarvis disturbs his own record — assert it as a literal
 with the reason it has that value, and assert the *consequence* at whole numbers

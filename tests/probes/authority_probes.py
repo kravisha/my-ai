@@ -145,8 +145,10 @@ PROBES: list[harness.Probe] = [
     (
         CHARTER,
         "a grant for one key is read as a grant for every key",
-        '        if row.get("key") in introspect.KEYS:\n            held.add(row["key"])',
-        "        held.update(introspect.KEYS)",
+        '    return tuple(sorted({row["key"] for row in\n'
+        '                         live_grants(client, agent=agent, now=now)}))',
+        "    return introspect.KEYS if live_grants(\n"
+        "        client, agent=agent, now=now) else ()",
         ("test_one_granted_key_does_not_open_the_other_tier",),
     ),
     (

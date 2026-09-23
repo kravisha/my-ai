@@ -104,6 +104,28 @@ def grants(client: dbaclient.DBAClient, *,
     return client.find(ENTITY_TYPE, {"agent": agent}, limit=50)
 
 
+def live_grants(client: dbaclient.DBAClient, *, agent: str = identity.AGENT_ID,
+                now: datetime | None = None) -> list[dict]:
+    """The grants that are active, unexpired and for a key this system knows.
+
+    One implementation, because two had already drifted: `keys_in_force` checked
+    expiry and a caller elsewhere checked only status, so a lapsed grant was
+    refused by one and accepted by the other. A probe found it by making the
+    first check useless and watching nothing fail - the second was quietly
+    carrying it."""
+    when = now or _now()
+    live = []
+    for row in grants(client, agent=agent):
+        if (row.get("status") or ACTIVE) != ACTIVE:
+            continue
+        expires = _parse(row.get("expires_at"))
+        if expires is None or expires <= when:
+            continue
+        if row.get("key") in introspect.KEYS:
+            live.append(row)
+    return live
+
+
 def keys_in_force(client: dbaclient.DBAClient, *,
                   agent: str = identity.AGENT_ID,
                   now: datetime | None = None) -> tuple[str, ...]:
@@ -112,17 +134,18 @@ def keys_in_force(client: dbaclient.DBAClient, *,
     Read from the store on every call rather than cached. A cached answer would
     be one Jarvis's own process holds, and the point of the record is that the
     answer lives somewhere he cannot write."""
-    when = now or _now()
-    held = set()
-    for row in grants(client, agent=agent):
-        if (row.get("status") or ACTIVE) != ACTIVE:
-            continue
-        expires = _parse(row.get("expires_at"))
-        if expires is None or expires <= when:
-            continue
-        if row.get("key") in introspect.KEYS:
-            held.add(row["key"])
-    return tuple(sorted(held))
+    return tuple(sorted({row["key"] for row in
+                         live_grants(client, agent=agent, now=now)}))
+
+
+def live_grant(client: dbaclient.DBAClient, key: str, *,
+               agent: str = identity.AGENT_ID,
+               now: datetime | None = None) -> dict | None:
+    """The newest live grant for one key, or None."""
+    matching = [row for row in live_grants(client, agent=agent, now=now)
+                if row.get("key") == key]
+    return max(matching, key=lambda row: str(row.get("granted_at"))) \
+        if matching else None
 
 
 def explain(client: dbaclient.DBAClient, key: str, *,
