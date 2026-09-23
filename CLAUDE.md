@@ -137,6 +137,45 @@ because the same change also cleared a different objection and *that* moved the
 number. To isolate a term, build a case where every other term is already
 saturated.
 
+### A probe that names a missing test reports success for ever
+
+2026-09-23, and it is this file's own rule turned on the thing that enforces it.
+`pytest -k` matching nothing exits **5**, which is not zero, which the harness
+read as *"the mutation was caught"*. Three probes were in that state — two
+naming tests that had been renamed away, one naming a real test that lives in a
+different suite than the one that probe runs. All three reported caught on every
+run, including runs where the mutation was applied to code no test goes near.
+
+The harness now collects each named test first and reports a probe that names
+nothing as a failure, beside a stale snippet. The first run after that check
+existed found two more.
+
+And the finding underneath: **a probe is only as good as the test it names.** One
+of them pointed at a behavioural test that walks five paths, to catch a member
+being deleted from a list of thirteen. It passed. The membership belongs to
+`test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there`, which writes
+the thirteen out as literals — which is the constant rule above, again: a test
+that loops over the list cannot notice the list got shorter.
+
+### It is green here and red on his machine
+
+2026-09-23. Nineteen Windows CI failures, none of them visible on Linux, all in
+code that had been merged:
+
+- `f"{due:%-d %B}"` — `%-d` is a glibc extension, not C. Windows raises
+  `ValueError: Invalid format string`, and it took out every noticing there is.
+  `%#d` is the Windows spelling and is just as unportable the other way, so
+  build the number: `f"{when.day} {when:%B}"`.
+- `Path.read_text()` with no `encoding`. Python falls back to the locale's —
+  cp1252 there — and a UTF-8 file comes back mangled. The constitution's
+  amendment headings lost their em-dashes. A test happened to compare them; had
+  nothing compared them, Krish would have read the mangled text.
+
+**He runs Windows and this is written on Linux, so "the suite is green" means
+green on the wrong machine.** Both classes are now scanned over the parsed AST
+of every file in `tests/test_portability.py`, because neither looks wrong when
+you read it.
+
 ### Be brief
 
 Owner instruction, 2026-09-23: *"please be less verbose and more concise and

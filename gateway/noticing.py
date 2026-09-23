@@ -75,6 +75,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _day(when: datetime) -> str:
+    """A date as Krish would say it: "3 October", no leading zero.
+
+    Built rather than formatted. `%-d` is a glibc extension - it is not in the C
+    standard and Windows raises `ValueError: Invalid format string` on it, which
+    took out every noticing on the only machine this is for while passing on
+    every machine it was written on. `%#d` is the Windows spelling and is just as
+    unportable in the other direction, so neither is used."""
+    return f"{when.day} {when:%B}"
+
+
 def _parse(stamp) -> datetime | None:
     if not stamp:
         return None
@@ -127,14 +138,14 @@ def from_commitments(commitments, *, now: datetime | None = None
         if days < 0:
             found.append(Prompting(
                 domain="commitments", what=promise,
-                because=(f"you were promised this by {due:%-d %B} and it has "
+                because=(f"you were promised this by {_day(due)} and it has "
                          f"not been settled"),
                 source=COMMITMENT_OVERDUE, by_when=due,
                 urgency=100 + min(30, int(-days))))
         elif days <= DUE_WITHIN_DAYS:
             found.append(Prompting(
                 domain="commitments", what=promise,
-                because=f"this is due on {due:%-d %B}",
+                because=f"this is due on {_day(due)}",
                 source=COMMITMENT_DUE, by_when=due,
                 urgency=50 + int(DUE_WITHIN_DAYS - days)))
     return found
@@ -160,7 +171,7 @@ def from_repeated_requests(entries, *, now: datetime | None = None
             domain=row.get("gap_type") or "requests",
             what=wanted,
             because=(f"you have asked for this {count} times"
-                     + (f", most recently on {last:%-d %B}" if last else "")),
+                     + (f", most recently on {_day(last)}" if last else "")),
             source=REPEATED_REQUEST,
             by_when=(when + timedelta(days=DUE_WITHIN_DAYS)),
             urgency=min(40, count)))

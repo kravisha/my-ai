@@ -391,8 +391,8 @@ PROBES: list[harness.Probe] = [
     (
         READBACK,
         "a read-back that confirms nothing can still be offered",
-        "        understanding.check(level=level)\n        self._sweep()",
-        "        self._sweep()",
+        "        understanding.check(level=level)\n        if not prompted:",
+        "        if not prompted:",
         ("test_a_read_back_that_confirms_nothing_is_never_offered",),
     ),
     (

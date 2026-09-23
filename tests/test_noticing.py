@@ -117,7 +117,7 @@ def test_noticing_observes_nothing_itself():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path(noticing.__file__).read_text())
+    tree = ast.parse(Path(noticing.__file__).read_text(encoding="utf-8"))
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

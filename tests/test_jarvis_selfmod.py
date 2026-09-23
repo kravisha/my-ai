@@ -556,7 +556,7 @@ def test_requesting_a_build_writes_a_request_and_does_not_relaunch(client, tmp_p
                                    "commit_id": "d" * 40})
     request = selfmod.request_build(client, client.get(approved["id"]))
 
-    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text())
+    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text(encoding="utf-8"))
     assert written["commit"] == "d" * 40
     assert written["change_id"] == approved["id"]
     assert request["branch"].startswith(selfmod.BRANCH_PREFIX)
@@ -654,7 +654,7 @@ def _deployed(client, tmp_path, *, tests_passed=True, status="ok"):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / selfmod.RESULT_FILE).write_text(json.dumps(
         {"status": status, "commit": "c" * 40,
-         "tests": {"passed": tests_passed, "summary": "3881 passed"}}))
+         "tests": {"passed": tests_passed, "summary": "3881 passed"}}), encoding="utf-8")
     return client.get(approved["id"]), record
 
 
@@ -713,7 +713,7 @@ def test_a_rollback_is_requested_never_performed(client, tmp_path):
     proposal, _ = _deployed(client, tmp_path, tests_passed=False, status="failed")
     request = selfmod.request_rollback(client, proposal, why="post-change tests failed")
 
-    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text())
+    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text(encoding="utf-8"))
     assert written["action"] == "rollback"
     assert written["to_version"] == proposal["baseline_version"]
     assert client.get(proposal["id"])["status"] == selfmod.ROLLED_BACK

@@ -387,7 +387,7 @@ def test_both_settling_call_sites_exist_in_the_engine():
     from pathlib import Path
 
     from app.learning import engine
-    tree = ast.parse(Path(engine.__file__).read_text())
+    tree = ast.parse(Path(engine.__file__).read_text(encoding="utf-8"))
     functions = {node.name: node for node in ast.walk(tree)
                  if isinstance(node, ast.FunctionDef)}
 

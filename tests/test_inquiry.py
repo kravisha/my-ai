@@ -334,7 +334,7 @@ def test_there_is_no_single_flag_that_overrides_everything():
     assert "force" not in parameters
     assert not [name for name, parameter in parameters.items()
                 if isinstance(parameter.default, bool)]
-    source = Path(inquiry.__file__).read_text()
+    source = Path(inquiry.__file__).read_text(encoding="utf-8")
     assert "force=True" not in source.replace(
         "There is deliberately no `force=True`", "").replace(
         "is no\n        `force=True`", "")

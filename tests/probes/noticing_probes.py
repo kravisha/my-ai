@@ -234,9 +234,13 @@ PROBES: list[harness.Probe] = [
         UPKEEP,
         "only what is said gets recorded, so the ladder can never move",
         "            for one in found:\n"
-        "                trustbook.record(client, one.as_guess(), agent=agent)",
+        "                trustbook.record(client, one.as_guess(),\n"
+        "                                 to_say=(one.domain, one.what) in spoken,\n"
+        "                                 agent=agent)",
         "            for one in say:\n"
-        "                trustbook.record(client, one.as_guess(), agent=agent)",
+        "                trustbook.record(client, one.as_guess(),\n"
+        "                                 to_say=(one.domain, one.what) in spoken,\n"
+        "                                 agent=agent)",
         ("test_a_new_domain_records_and_says_nothing",
          "test_the_sweep_notices_a_promise_coming_due"),
     ),

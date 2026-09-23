@@ -629,11 +629,11 @@ def test_the_constitution_forbids_answering_for_the_user():
     # 2026-09-23: *"add only as amendment which means additional to the
     # constitution."* A first version wrote it straight into the constitution,
     # which is the one document nothing may edit.
-    charter_text = Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    charter_text = Path("AI-CONSTITUTION-AMENDMENTS.md").read_text(encoding="utf-8")
     assert "Never answer for the person you are asking" in charter_text
     assert "must never supply the permission it is asking for" in charter_text
     assert "Never answer for the person you are asking" not in \
-        Path("AI-CONSTITUTION.md").read_text()
+        Path("AI-CONSTITUTION.md").read_text(encoding="utf-8")
     # And the mechanisms it names still exist and still refuse.
     assert "gateway/readback.py" in charter_text
     assert "dba/permissions.py" in charter_text

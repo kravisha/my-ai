@@ -13,6 +13,9 @@ Two rules it enforces, both learned the hard way in this repository:
 - **A probe whose snippet no longer appears exactly once is a failure, not a
   skip.** A probe that silently stopped applying reports success, which is worse
   than not having it.
+- **A probe naming a test that does not exist is a failure too.** `pytest -k`
+  matching nothing exits non-zero, which this harness would otherwise read as
+  "caught" - so a probe left pointing at a renamed test reports success for ever.
 - **A mutation no test noticed is a failure**, and it is named in the output
   along with the tests that should have caught it. That is the whole output that
   matters; the per-probe lines are progress, not the finding.
@@ -41,12 +44,43 @@ ROOT = Path(__file__).resolve().parents[2]
 Probe = tuple[str, str, str, str, "tuple[str, ...]"]
 
 
-def _run(suite: Path, tests: tuple[str, ...]) -> int:
+def _suites(where) -> tuple[Path, ...]:
+    """A module's suite, or its suites.
+
+    One module's behaviour is not always covered from one file - `introspect`'s
+    wall is asserted in `test_constitution.py` and its tiers in
+    `test_jarvis_selfmod.py` - and a probe pointed at only one of them names a
+    test that is really there and gets reported as missing."""
+    return (where,) if isinstance(where, Path) else tuple(where)
+
+
+def _run(where, tests: tuple[str, ...]) -> int:
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", str(suite), "-q",
-         "-p", "no:cacheprovider", "-k", " or ".join(tests)],
+        [sys.executable, "-m", "pytest", *[str(one) for one in _suites(where)],
+         "-q", "-p", "no:cacheprovider", "-k", " or ".join(tests)],
         capture_output=True, text=True, cwd=ROOT)
     return result.returncode
+
+
+def _missing(where, tests: tuple[str, ...]) -> list[str]:
+    """The named tests that `suite` does not contain.
+
+    Found on 2026-09-23, and it is the same failure this file exists to prevent
+    wearing a different hat. `pytest -k` matching nothing exits 5, which is not
+    zero, which this harness read as *"the mutation was caught"*. Two probes
+    naming tests that had been renamed away therefore reported success on every
+    run - including runs where the mutation was applied to code with no test
+    near it at all. A probe that cannot fail is worse than no probe."""
+    absent = []
+    for name in tests:
+        found = subprocess.run(
+            [sys.executable, "-m", "pytest",
+             *[str(one) for one in _suites(where)], "-q",
+             "-p", "no:cacheprovider", "--collect-only", "-k", name],
+            capture_output=True, text=True, cwd=ROOT)
+        if found.returncode != 0:
+            absent.append(name)
+    return absent
 
 
 def run_probes(probes: list[Probe], suites: dict[str, Path]) -> int:
@@ -56,7 +90,7 @@ def run_probes(probes: list[Probe], suites: dict[str, Path]) -> int:
         print(f"probe files name modules with no suite: {sorted(unknown)}")
         return 1
 
-    sources = {name: (ROOT / name).read_text() for name in suites}
+    sources = {name: (ROOT / name).read_text(encoding="utf-8") for name in suites}
     before = {name: hashlib.sha256(text.encode()).hexdigest()
               for name, text in sources.items()}
     checked = 0
@@ -72,27 +106,33 @@ def run_probes(probes: list[Probe], suites: dict[str, Path]) -> int:
                 continue
             if not tests:
                 continue
+            absent = _missing(suites[module], tests)
+            if absent:
+                stale.append(f"{module} / {label}: names no test that exists: "
+                             f"{', '.join(absent)}")
+                continue
             checked += 1
-            (ROOT / module).write_text(original.replace(snippet, replacement))
+            (ROOT / module).write_text(original.replace(snippet, replacement), encoding="utf-8")
             try:
                 code = _run(suites[module], tests)
             finally:
-                (ROOT / module).write_text(original)
+                (ROOT / module).write_text(original, encoding="utf-8")
             if code == 0:
                 survived.append(f"{label}\n    tests that should have caught it: "
                                 f"{', '.join(tests)}")
             print(f"{'caught  ' if code else 'MISSED  '} {label}")
     finally:
         for name, text in sources.items():
-            (ROOT / name).write_text(text)
+            (ROOT / name).write_text(text, encoding="utf-8")
 
-    after = {name: hashlib.sha256((ROOT / name).read_text().encode()).hexdigest()
+    after = {name: hashlib.sha256((ROOT / name).read_text(encoding="utf-8").encode()).hexdigest()
              for name in suites}
     print()
     print(f"{checked} mutation(s) applied; {len(survived)} went unnoticed")
     print(f"restored: {'clean' if before == after else 'DIRTY - git checkout them'}")
     if stale:
-        print("\nSTALE PROBES (the code moved and these no longer apply):")
+        print("\nSTALE PROBES (the code moved and these no longer apply, or "
+              "they name a test that is gone):")
         for line in stale:
             print(f"  - {line}")
     if survived:

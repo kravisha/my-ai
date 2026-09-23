@@ -152,7 +152,7 @@ def test_the_constitutions_text_has_no_writer_at_all():
     assert constitution.describe()["constitution_is_writable"] is False
 
     # Exactly one place seals the constitution file, and it is `install`.
-    tree = ast.parse(_Path(constitution.__file__).read_text())
+    tree = ast.parse(_Path(constitution.__file__).read_text(encoding="utf-8"))
     sealing = sorted(node.name for node in ast.walk(tree)
                      if isinstance(node, ast.FunctionDef)
                      and "CONSTITUTION_FILE" in ast.dump(node)
@@ -236,7 +236,7 @@ def test_the_amendments_document_says_it_grows_and_never_shrinks():
     from pathlib import Path as _Path
 
     assert introspect.read_source("AI-CONSTITUTION.md")
-    amendments_text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    amendments_text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text(encoding="utf-8")
     assert "grows and never shrinks" in amendments_text
     assert "the only operation that exists" in amendments_text
     assert "cannot ask himself" in amendments_text
@@ -463,7 +463,7 @@ def test_there_is_no_way_to_remove_or_change_an_amendment(client, sealed):
     import ast
     from pathlib import Path as _Path
 
-    tree = ast.parse(_Path(constitution.__file__).read_text())
+    tree = ast.parse(_Path(constitution.__file__).read_text(encoding="utf-8"))
     appending = next(node for node in ast.walk(tree)
                      if isinstance(node, ast.FunctionDef)
                      and node.name == "append_amendment")
@@ -571,7 +571,7 @@ def test_the_amendment_against_forgery_is_on_the_record():
     Jarvis should not forge anything."*"""
     from pathlib import Path as _Path
 
-    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text(encoding="utf-8")
     assert "## Amendment 3 — Never forge anything" in text
 
     # Whitespace-normalised, because the document is wrapped for a person to
@@ -593,7 +593,7 @@ def test_the_earlier_amendments_were_not_touched():
     as they were - which is the rule the third one is an instance of."""
     from pathlib import Path as _Path
 
-    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text(encoding="utf-8")
     headings = [line for line in text.splitlines()
                 if line.startswith("## Amendment ")]
     assert headings == [

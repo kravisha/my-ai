@@ -214,7 +214,7 @@ def test_a_dba_that_cannot_be_reached_is_a_refusal_not_a_deploy():
 def test_the_controller_authenticates_as_the_operator_not_as_jarvis():
     """The agent whose code is being replaced is not the agent whose
     credentials authorise replacing it."""
-    source = (deploy.PROJECT_ROOT / "scripts" / "deploy_jarvis.py").read_text()
+    source = (deploy.PROJECT_ROOT / "scripts" / "deploy_jarvis.py").read_text(encoding="utf-8")
     assert deploy.OPERATOR_TOKEN_ENV == "DBA_TOKEN_OPERATOR_CONSOLE"
     assert "DBA_TOKEN_JARVIS" not in source
 
@@ -269,7 +269,7 @@ def test_a_green_suite_is_stamped_and_reported_ok(tmp_path, monkeypatch):
 
     assert result["status"] == deploy.OK
     assert stamped == ["new" + "0" * 37]
-    written = json.loads((tmp_path / "deploy" / deploy.RESULT_FILE).read_text())
+    written = json.loads((tmp_path / "deploy" / deploy.RESULT_FILE).read_text(encoding="utf-8"))
     assert written["status"] == "ok"
 
 
@@ -304,7 +304,7 @@ def test_every_outcome_writes_a_result_jarvis_can_read(tmp_path, monkeypatch):
         deploy.handle({"change_id": "c", "commit": "new" + "0" * 37},
                       directory=directory, verify=verify,
                       tester=tester or (lambda: {"passed": True, "ran": True}))
-        written = json.loads((directory / deploy.RESULT_FILE).read_text())
+        written = json.loads((directory / deploy.RESULT_FILE).read_text(encoding="utf-8"))
         assert written["status"] == expected
         assert written["handled_at"]
 
@@ -316,7 +316,7 @@ def test_a_handled_request_is_removed_so_it_is_not_replayed(tmp_path, monkeypatc
     directory = tmp_path / "deploy"
     directory.mkdir(parents=True)
     (directory / deploy.REQUEST_FILE).write_text(
-        json.dumps({"change_id": "c", "commit": "new" + "0" * 37}))
+        json.dumps({"change_id": "c", "commit": "new" + "0" * 37}), encoding="utf-8")
 
     monkeypatch.setattr(deploy, "current_commit", lambda: "old" + "0" * 37)
     monkeypatch.setattr(deploy, "checkout", lambda commit: (True, ""))

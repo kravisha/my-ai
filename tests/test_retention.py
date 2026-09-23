@@ -336,7 +336,7 @@ def test_retention_cannot_touch_a_store_a_clock_or_a_network():
     saying so is what this repository has been caught believing before. A clock
     is on the list for a reason - a policy that read `now()` itself could not be
     tested at a chosen date, and every rule here is about elapsed time."""
-    tree = ast.parse(Path(retention.__file__).read_text())
+    tree = ast.parse(Path(retention.__file__).read_text(encoding="utf-8"))
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -443,7 +443,7 @@ def test_the_policy_reports_its_own_failure_and_never_retunes_itself():
 
     Asserted over the parsed module: nothing assigns to a module-level constant
     anywhere, so `ratification` cannot be the exception."""
-    tree = ast.parse(Path(retention.__file__).read_text())
+    tree = ast.parse(Path(retention.__file__).read_text(encoding="utf-8"))
     policy = {"GRACE_DAYS", "CYCLES_BEFORE_COLD", "DEFAULT_INTERVAL_DAYS",
               "EARNED_MULTIPLE", "MIN_OFFERS_TO_JUDGE", "PROBATION_MULTIPLE",
               "MIN_SAMPLE_FOR_KIND", "REPRIEVE_EVERY", "REGRET_RATE_TOO_HIGH"}
@@ -453,4 +453,4 @@ def test_the_policy_reports_its_own_failure_and_never_retunes_itself():
         for statement in ast.walk(node) if isinstance(statement, ast.Assign)
         for target in statement.targets if isinstance(target, ast.Name)}
     assert not (assigned_inside & policy)
-    assert "global" not in Path(retention.__file__).read_text()
+    assert "global" not in Path(retention.__file__).read_text(encoding="utf-8")

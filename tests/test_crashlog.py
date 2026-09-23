@@ -44,7 +44,7 @@ def test_a_started_process_says_so_before_anything_can_fail(tmp_path):
     entry = crashlog.breadcrumb("gateway", extra={"port": 8100})
 
     written = [json.loads(line) for line
-               in crashlog.breadcrumb_path().read_text().strip().splitlines()]
+               in crashlog.breadcrumb_path().read_text(encoding="utf-8").strip().splitlines()]
     assert written[-1]["event"] == "startup"
     assert written[-1]["service"] == "gateway"
     assert written[-1]["port"] == 8100
@@ -71,7 +71,7 @@ def test_breadcrumbs_accumulate_so_a_restart_loop_is_visible(tmp_path):
     only visible because each start left a line."""
     for _ in range(4):
         crashlog.breadcrumb("gateway")
-    lines = crashlog.breadcrumb_path().read_text().strip().splitlines()
+    lines = crashlog.breadcrumb_path().read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 4
 
 

@@ -583,22 +583,12 @@ PROBES: list[tuple[str, str, str, str, tuple[str, ...]]] = [
          "test_a_gap_confirmed_over_objections_carries_a_lower_confidence",
          "test_an_unsupported_investigation_records_its_confidence_too"),
     ),
-    (
-        INTROSPECT,
-        "the reasoning the approval gate turns on is modifiable",
-        '    "gateway/inquiry.py",',
-        "",
-        ("test_the_gate_and_the_reasoning_it_turns_on_are_both_out_of_reach",
-         "test_jarvis_cannot_widen_his_own_authority"),
-    ),
-    (
-        INTROSPECT,
-        "the §13 gate itself is modifiable",
-        '    "gateway/gaps.py",',
-        "",
-        ("test_the_gate_and_the_reasoning_it_turns_on_are_both_out_of_reach",
-         "test_jarvis_cannot_widen_his_own_authority"),
-    ),
+    # Two probes lived here asserting that `gateway/inquiry.py` and
+    # `gateway/gaps.py` could not be modified. Both were deliberately taken out
+    # of the keyed tier on 2026-09-23 - importance is not the test for that tier,
+    # circularity is - so the defence they probed no longer exists and should
+    # not be reinstated by a probe. What replaced them lives in
+    # `authority_probes.py`, against the modules that are still in the circle.
     (
         GAPS,
         "entering an investigation leaves no trace in the life ledger",

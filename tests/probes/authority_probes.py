@@ -30,7 +30,8 @@ INTROSPECT = "gateway/introspect.py"
 SELFMOD = "gateway/selfmod.py"
 CHARTER = "gateway/charter.py"
 DBA_PERMISSIONS = "dba/permissions.py"
-SUITES = {INTROSPECT: TESTS / "test_jarvis_selfmod.py",
+SUITES = {INTROSPECT: (TESTS / "test_jarvis_selfmod.py",
+                       TESTS / "test_constitution.py"),
           SELFMOD: TESTS / "test_jarvis_selfmod.py",
           CHARTER: TESTS / "test_jarvis_selfmod.py",
           DBA_PERMISSIONS: TESTS / "test_jarvis_selfmod.py"}
@@ -43,7 +44,7 @@ PROBES: list[harness.Probe] = [
         "    key = key_for(as_posix)\n    if key is not None:",
         "    key = key_for(as_posix)\n    if False:",
         ("test_jarvis_cannot_widen_his_own_authority_by_proposing_it",
-         "test_the_charter_is_amendable_with_a_key"),
+         "test_the_working_notes_are_amendable_with_a_key"),
     ),
     (
         INTROSPECT,
@@ -118,8 +119,7 @@ PROBES: list[harness.Probe] = [
         "def sealed(path: str | Path) -> bool:\n"
         '    """Whether nothing may change this, ever."""\n'
         "    return False",
-        ("test_nothing_can_reach_the_constitution_file_through_any_path",
-         "test_the_wall_is_one_file_and_should_stay_one"),
+        ("test_nothing_can_reach_the_constitution_file_through_any_path",),
     ),
     (
         INTROSPECT,
@@ -165,9 +165,28 @@ PROBES: list[harness.Probe] = [
         ("test_a_lapsed_key_stops_working_and_says_so",),
     ),
     (
+        INTROSPECT,
+        "the machinery that decides who may approve is ordinary again",
+        '    "app/permissions.py",',
+        "",
+        # Named for the membership test rather than the behavioural one: the
+        # behavioural test walks five paths and this is not among them, so it
+        # passed with the entry deleted. A tier whose membership is only
+        # spot-checked is a tier anything can quietly leave.
+        ("test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there",),
+    ),
+    (
+        INTROSPECT,
+        "the self-modification path itself drops out of the circle",
+        '    "gateway/selfmod.py",',
+        "",
+        ("test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there",
+         "test_jarvis_cannot_widen_his_own_authority_by_proposing_it"),
+    ),
+    (
         DBA_PERMISSIONS,
         "no record type is the owner's to write",
-        'OWNER_WRITTEN_TYPES = ("charter_grant",)',
+        'OWNER_WRITTEN_TYPES = ("charter_grant", "guess_verdict")',
         "OWNER_WRITTEN_TYPES = ()",
         ("test_jarvis_cannot_write_himself_a_key",),
     ),
