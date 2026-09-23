@@ -44,8 +44,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from app.learning import memory
 from gateway import checkpoint as checkpoint_module
 from gateway import dbaclient, gaps, identity, logscan, persistence
 
@@ -73,9 +75,21 @@ PROMOTE_GAPS_EVERY_HOURS = 24
 # scan is cheap: it reads a bounded window of one file.
 SCAN_LOGS_EVERY_HOURS = 6
 
+# How often deadweight memory is collected. Weekly, because every rule in
+# `app/learning/retention.py` is measured in months: a sweep four times a day
+# would read every lesson three hundred times a week to reach the same answer,
+# and the answer cannot change faster than the grace period.
+COLLECT_MEMORY_EVERY_HOURS = 24 * 7
+
+# Set to 1 to have the sweep report what it would collect and collect nothing.
+# Not a debug flag - it is how a collector earns trust on a real machine before
+# it is allowed to delete anything.
+COLLECTION_DRY_RUN_ENV = "JARVIS_MEMORY_COLLECTION_DRY_RUN"
+
 _LAST_CHECKPOINT = "upkeep:last_checkpoint"
 _LAST_PROMOTION = "upkeep:last_gap_promotion"
 _LAST_LOG_SCAN = "upkeep:last_log_scan"
+_LAST_COLLECTION = "upkeep:last_memory_collection"
 
 
 def enabled() -> bool:
@@ -153,6 +167,21 @@ def log_scan_due(client: dbaclient.DBAClient, *,
     return last is None or (now - last) >= timedelta(hours=SCAN_LOGS_EVERY_HOURS)
 
 
+def collection_is_dry() -> bool:
+    return (os.environ.get(COLLECTION_DRY_RUN_ENV, "") or "").strip() in (
+        "1", "true", "yes")
+
+
+def collection_due(client: dbaclient.DBAClient, *,
+                   agent: str = identity.AGENT_ID,
+                   now: datetime | None = None) -> bool:
+    now = now or _now()
+    last = _parse(persistence.get(client, persistence.SELF_ASSESSMENT,
+                                  _LAST_COLLECTION, agent=agent))
+    return last is None or (now - last) >= timedelta(
+        hours=COLLECT_MEMORY_EVERY_HOURS)
+
+
 def promotion_due(client: dbaclient.DBAClient, *,
                   agent: str = identity.AGENT_ID,
                   now: datetime | None = None) -> bool:
@@ -173,7 +202,7 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
     exception is a maintenance job that stops running and tells nobody."""
     result: dict = {"at": _now().isoformat(timespec="seconds"),
                     "checkpoint": None, "promoted": None, "log_scan": None,
-                    "problems": []}
+                    "collection": None, "problems": []}
 
     if not dbaclient.is_configured():
         result["problems"].append("no DBA token is configured; nothing to do")
@@ -220,6 +249,34 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
                 logger.info("log scan raised %d suspected gap(s)", len(raised))
     except (dbaclient.Unavailable, dbaclient.Refused, OSError, ValueError) as exc:
         result["problems"].append(f"log scan: {exc}")
+
+    # Krish, 2026-09-23: *"all deadweight unreferenced information should be
+    # eventually garbage collected as well"*. Weekly, not six-hourly: every rule
+    # in `retention` is measured in months, so a sweep that ran four times a day
+    # would be three hundred reads a week to reach the same answer. `dry_run` is
+    # read from the environment because the first honest thing to do with a
+    # collector on a real machine is watch what it *would* have thrown away.
+    try:
+        if collection_due(client, agent=agent):
+            collected = memory.collect_garbage(dry_run=collection_is_dry())
+            result["collection"] = {
+                "kept": collected["kept"],
+                "demoted": [item["pattern"] for item in collected["demoted"]],
+                "discarded": [item["pattern"] for item in collected["discarded"]],
+                "restored": [item["pattern"] for item in collected["restored"]],
+                "dry_run": collected["dry_run"],
+            }
+            persistence.put(client, persistence.SELF_ASSESSMENT, _LAST_COLLECTION,
+                            _now().isoformat(timespec="seconds"), agent=agent,
+                            reason="memory collection sweep")
+            for item in collected["discarded"]:
+                # One line per collection, because a deletion nobody can find a
+                # record of is indistinguishable from a bug that lost the row.
+                logger.info("collected a %s lesson (%s): %s", item["kind"],
+                            item["pattern"], item["because"])
+    except (dbaclient.Unavailable, dbaclient.Refused, OSError, ValueError,
+            sqlite3.Error) as exc:
+        result["problems"].append(f"memory collection: {exc}")
 
     try:
         if promotion_due(client, agent=agent):
@@ -346,6 +403,8 @@ def describe() -> dict:
         "checkpoint_every_hours": CHECKPOINT_EVERY_HOURS,
         "promote_gaps_every_hours": PROMOTE_GAPS_EVERY_HOURS,
         "scan_logs_every_hours": SCAN_LOGS_EVERY_HOURS,
+        "collect_memory_every_hours": COLLECT_MEMORY_EVERY_HOURS,
+        "collection_is_dry": collection_is_dry(),
         "accepted_log_noise": len(logscan.baseline()),
         "closing_steps": [PAUSE_TASKS, CHECKPOINT, RECORD_EVENT],
         "forces_a_checkpoint": sorted(

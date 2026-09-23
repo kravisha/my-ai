@@ -258,6 +258,87 @@ user does not get built here.
 
 ---
 
+## 3c-ter. What is worth remembering, and what gets collected
+
+`app/learning/retention.py` decides; `app/learning/memory.py` and
+`app/learning/store.py` act; `gateway/upkeep.py` is the only thing that calls it.
+
+Krish, 2026-09-23, asked whether *"the March invoice from Acme always arrives
+late"* is a lesson or a context, and answered it himself: *"it's a fact that
+Claude may choose to remember and this cost may or may not be rewarded by a cost
+saving use in the future - that's how Jarvis learns how to guess correctly what
+to remember and what to discard - all deadweight unreferenced information should
+be eventually garbage collected as well."*
+
+### A fact is a bet, and both halves are now kept
+
+`lessons` counted one number, `times_seen`: how often the world produced the
+pattern. That is the acquisition side of a bet with nothing recorded about the
+return. Three numbers now:
+
+| | what it means |
+|---|---|
+| `times_seen` | how often the world produced this pattern. Acquisition. |
+| `times_offered` | how often the fact was a candidate, chosen or not. |
+| `times_referenced` | how often it was actually handed to a decision. Use. |
+| `times_paid_off` | how often the thing it was handed to then went well. Return. |
+
+`memory.advice_for` is the only thing that moves the middle two and
+`engine.accept` the only thing that moves the last. Those are single call sites
+carrying the whole scheme, which is why each has a test: delete one and the
+system still runs, still reports, and quietly collects the lessons that were
+working.
+
+### Acme is the case that kills a naive collector, twice
+
+A collector that discards anything unreferenced for ninety days deletes the March
+Acme fact every June and re-learns it every March at full cost. So a fact carries
+`expected_interval_days` and is cold only after several of **its own** cycles.
+
+That alone was not enough, and the first version of the module was wrong about it
+in a way only a mutation found: Acme survived, and so did a fact that cost twelve
+model calls and had never been referenced once in five hundred days, because an
+unstated cycle defaults to a year and a year bought it eight hundred days of
+protection. The distinction is not time - it is whether anything ever **asked a
+question the fact could have answered**. A fact offered two hundred times and
+never chosen is dead. A fact offered two hundred times and chosen each March is
+Acme. A fact never offered is not judged at all, because its silence is evidence
+about the thing that never asked.
+
+### Collecting leaves the lesson about the lesson
+
+The row goes, which is what was asked for. What stays is one increment on
+`lesson_kinds`: how many of this kind were recorded, referenced, paid off and
+collected unused, and what they cost in total. One row per kind, so the record of
+what was thrown away is bounded by the number of kinds and can never become the
+deadweight it exists to prevent. `retention.worth_recording` reads it and stops
+recording a kind that has never once helped - keeping a door ajar by recording
+every tenth one anyway, because a policy that closed a kind for ever could never
+find out it had become useful.
+
+### The guardrails
+
+- **Probation before collection.** A fact used and never once useful stops being
+  offered first; a wrong call there costs a missed hint rather than the fact. And
+  probation is a window, not a state to live in: it ends in collection, or in
+  restoration when the verdict comes back.
+- **A clock problem must never become a deletion.** An unparseable timestamp
+  makes a fact look brand new, not ancient.
+- **A dry run.** `JARVIS_MEMORY_COLLECTION_DRY_RUN=1` reports what would go and
+  collects nothing. Not a debug flag - it is how a collector earns trust on a
+  real machine before it is allowed to delete anything.
+- **Weekly, not six-hourly.** Every rule here is measured in months.
+
+### Not yet done
+
+`cost` is a proxy - the attempts a lesson was derived from, not model calls
+measured - and it is labelled as one at every site that sets it.
+`expected_interval_days` is never inferred: nothing today knows that an invoice
+fact is yearly, so almost every fact takes the conservative default. Both are
+honest placeholders rather than finished work.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own

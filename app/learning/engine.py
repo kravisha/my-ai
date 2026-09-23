@@ -294,7 +294,12 @@ class LearningEngine:
             "rollback": ("every recipe version is kept in the learning store; "
                          "reverting is selecting an earlier version"),
             "user_feedback_required": True,
-            "advice_from_past_episodes": memory.advice_for(objective),
+            # `slug` is passed so the advice can later be *credited*. Without
+            # it the lessons handed over here count as used and can never count
+            # as having helped, which makes every one of them look like a bet
+            # that never paid - see app/learning/retention.py.
+            "advice_from_past_episodes": memory.advice_for(
+                objective, episode_slug=slug),
         }
 
         condition = commitment_condition or (
@@ -496,6 +501,12 @@ class LearningEngine:
                                 f"the others. Still missing: "
                                 f"{'; '.join(state.missing)}")}
         store.accept_episode(episode["id"])
+        # Krish accepted the skill, so every lesson this episode was given at
+        # planning time has now been followed by a good outcome. This is the only
+        # place a payoff is ever credited: acceptance is the one signal in the
+        # system that a thing actually worked, and crediting on anything weaker
+        # would make the payoff rate a measure of activity.
+        store.credit_episode(slug)
         # Once, here, and nowhere else. A second caller incrementing the same
         # lessons would corrupt the only numbers meta-learning has; the
         # already-accepted branch above is what makes a repeat call harmless.

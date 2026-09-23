@@ -3829,3 +3829,40 @@ The producers that already exist and could feed it:
 Until one of them is wired to `observe()`, `investigating` is a state something *can* investigate
 rather than one something *does*. That is a real improvement on where it was, and it is not the
 finished thing.
+
+---
+
+## TQ-126 · Park the question, take the next independent unit
+
+**NEED (ORANGE) · owner forwarded an external plan for consideration, 2026-09-23**
+
+The owner passed on a suggested work plan from another assistant, asking only that anything useful in it
+be taken and taught to Jarvis. Most of it is scaffolding for a session, not a capability. One line is a
+real capability Jarvis does not have:
+
+> *"Record unresolved owner decisions and move to the next independent work unit."*
+
+Today a blocked unit of work has two outcomes, and both are bad: stall until the owner answers, or guess.
+There is no third path, because nothing models **which units depend on the blocked one**. `gateway/failures.py`
+has `NEEDS_ANSWER` and `dbaclient` raises `NeedsAnswer`, so the *state* exists; what is missing is the
+register of parked questions and the dependency graph that says what is still workable without them.
+
+What it needs:
+
+1. **A parked-question register** — the question, what it blocks, what was assumed in the meantime if
+   anything, and when it was asked. A `commitment`-shaped record, because a question owed an answer is
+   the mirror image of a promise owed delivery and §4.1 already argues why that deserves its own record.
+2. **Declared dependencies between units of work**, so "independent" is computed rather than guessed.
+   Without this, moving on is how two half-finished things get built on the same unanswered question.
+3. **A rule about which questions may be parked at all.** Not all of them: a question whose wrong
+   assumption is unsafe or would make the work useless if wrong must block. That is the same distinction
+   `app/initiative.py` already makes (HARM → IRREVERSIBILITY → boldness), so it should reuse it rather
+   than inventing a second judgement.
+4. **Re-asking on the next contact**, because a parked question that is never raised again is a decision
+   taken by silence.
+
+**One part is deliberately not adopted.** The same plan says *"continue without asking me routine
+questions"*, and that is the opposite of this repository's prime directive — *"ask more questions"*, and
+then ask whether the question was a good one. The owner's own directive wins. What is worth taking is
+*don't stall while waiting*; what is not worth taking is *ask less*. Parking a question and moving on is
+only legitimate if the question is still asked.

@@ -37,12 +37,12 @@ reports DIRTY, `git checkout` the modules listed above.
 
 from __future__ import annotations
 
-import hashlib
-import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness  # noqa: E402  - the shared runner; see its docstring
+
 TESTS = Path(__file__).resolve().parents[1]
 
 # Which module a probe edits, and the suite that must notice. Two modules are
@@ -622,61 +622,6 @@ PROBES: list[tuple[str, str, str, str, tuple[str, ...]]] = [
 #   caps in place.
 
 
-def run(module: str, tests: tuple[str, ...]) -> int:
-    """Run exactly the named tests of the suite that covers `module`."""
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", str(SUITES[module]), "-q",
-         "-p", "no:cacheprovider", "-k", " or ".join(tests)],
-        capture_output=True, text=True, cwd=ROOT)
-    return result.returncode
-
-
-def main() -> int:
-    sources = {name: (ROOT / name).read_text() for name in SUITES}
-    before = {name: hashlib.sha256(text.encode()).hexdigest()
-              for name, text in sources.items()}
-    checked = 0
-    stale: list[str] = []
-    survived: list[str] = []
-
-    try:
-        for module, label, snippet, replacement, tests in PROBES:
-            original = sources[module]
-            if original.count(snippet) != 1:
-                stale.append(f"{module} / {label}: snippet appears "
-                             f"{original.count(snippet)} times, expected 1")
-                continue
-            if not tests:
-                continue
-            checked += 1
-            (ROOT / module).write_text(original.replace(snippet, replacement))
-            try:
-                code = run(module, tests)
-            finally:
-                (ROOT / module).write_text(original)
-            if code == 0:
-                survived.append(f"{label}\n    tests that should have caught it: "
-                                f"{', '.join(tests)}")
-            print(f"{'caught  ' if code else 'MISSED  '} {label}")
-    finally:
-        for name, text in sources.items():
-            (ROOT / name).write_text(text)
-
-    after = {name: hashlib.sha256((ROOT / name).read_text().encode()).hexdigest()
-             for name in SUITES}
-    print()
-    print(f"{checked} mutation(s) applied; {len(survived)} went unnoticed")
-    print(f"restored: {'clean' if before == after else 'DIRTY - git checkout them'}")
-    if stale:
-        print("\nSTALE PROBES (the code moved and these no longer apply):")
-        for line in stale:
-            print(f"  - {line}")
-    if survived:
-        print("\nMUTATIONS NO TEST CAUGHT:")
-        for line in survived:
-            print(f"  - {line}")
-    return 1 if (stale or survived or before != after) else 0
-
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(harness.run_probes(PROBES, SUITES))

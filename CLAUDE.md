@@ -100,6 +100,30 @@ dumps with `sort_keys=True`, so dict order was discarded and the warning came
 first only because `W` sorts before lowercase letters. **If a line has to be
 first, build the string.**
 
+There are three probe files now, sharing `tests/probes/harness.py`. Add one for
+any module whose job is to refuse things or to delete things.
+
+### A test written in terms of a constant cannot detect a wrong constant
+
+2026-09-23, from `tests/probes/retention_probes.py`. Four mutations changed a
+policy number and no test noticed, because the tests were written as
+`MIN_OFFERS_TO_JUDGE - 1` and `MIN_OFFERS_TO_JUDGE`, which hold at *every* value
+including the one that breaks the behaviour. A fifth changed a maintenance
+interval from a week to six hours and no test noticed, because every test asked
+"is it due?" twice in the same second.
+
+Where a number **is** the policy — the difference between keeping a fact and
+deleting it, or how often Jarvis disturbs his own record — assert it as a literal
+with the reason it has that value, and assert the *consequence* at whole numbers
+too. `test_the_policy_numbers_are_what_they_are` and
+`test_the_maintenance_cadences_are_what_they_are` are the two examples.
+
+A related one from the same run: a test can pass on the wrong term. A test named
+for the eliminated-alternatives term of a score passed with that term deleted,
+because the same change also cleared a different objection and *that* moved the
+number. To isolate a term, build a case where every other term is already
+saturated.
+
 ---
 
 ## Two rules about what gets built
@@ -109,6 +133,13 @@ first, build the string.**
 ledger nothing wrote to, a log scanner with no log, a capability-gap detector
 nothing read. After building a mechanism, find its producer and its consumer and
 name them. If either is missing, that is the next task, not a later one.
+
+Its corollary, learned on 2026-09-23: **a single call site that carries a whole
+scheme needs a test naming it.** `memory.advice_for` is the only thing that marks
+a lesson as used, and `engine.accept` the only thing that credits a payoff.
+Delete either and the system still runs, still reports, and quietly deletes the
+lessons that were working. A comment saying the call matters does not survive a
+refactor; `test_both_settling_call_sites_exist_in_the_engine` does.
 
 **If it can be decided, decide it in tested code.** Anything needing Windows, a
 screen, a microphone or the network goes behind a thin adapter with one function
