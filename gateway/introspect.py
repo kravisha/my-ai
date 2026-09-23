@@ -63,12 +63,20 @@ it stands everywhere else. It does not apply to these two files, because they ar
 what every other rule is derived from: an agent that can edit the source of its
 own limits does not have limits, it has a preference.
 
-An amendment was briefly a keyed file, on the reasoning that a charter nobody may
-draft is a cage. Krish's answer settles it, and the reasoning was thinner than it
-looked: **drafting is not writing**. Nothing here stops Jarvis proposing an
-amendment, arguing for one at length, or pointing out that the constitution
-contradicts itself. He writes the argument; Krish writes the amendment. A cage
-would be an agent forbidden to raise the subject, and nothing does that.
+`AI-CONSTITUTION-AMENDMENTS.md` is `APPEND_ONLY`, which is a third thing and not
+a softer wall. Krish, on second thoughts the same day: *"I would like to give
+Jarvis the ability to add amendments to the constitution but not deleting any
+from the constitution. He should be able to add new directives on my request."*
+
+So Jarvis may **add** an amendment and may never remove or alter one. That is not
+a promise he keeps - it is the only operation that exists. `may_modify` still
+refuses the file to every proposal, because a proposal rewrites a file wholesale
+and *rewrite* is the thing being forbidden. The one path that touches it is
+`gateway/constitution.append_amendment`, which reads what is there, puts the new
+text after it, and has no branch that does anything else.
+
+The constitution itself stays `SEALED`: added to, never; edited, never. Its
+amendments are where additions go, which is what makes the wall liveable.
 
 `SEPARATE_KEY` holds exactly two things, and the test for membership is narrow:
 
@@ -128,6 +136,12 @@ KEYS = (KEY_CIRCULAR, KEY_CHARTER)
 # exist to correct.
 SEALED = (
     "AI-CONSTITUTION.md",
+)
+
+# Added to, never rewritten. Not modifiable by a proposal either - a proposal
+# replaces a file, and replacement is exactly what "no deleting" forbids. The
+# only writer is `gateway/constitution.append_amendment`.
+APPEND_ONLY = (
     "AI-CONSTITUTION-AMENDMENTS.md",
 )
 
@@ -214,6 +228,11 @@ def sealed(path: str | Path) -> bool:
     return _relative(path).as_posix() in SEALED
 
 
+def append_only(path: str | Path) -> bool:
+    """Whether this may be added to but never rewritten."""
+    return _relative(path).as_posix() in APPEND_ONLY
+
+
 def key_for(path: str | Path) -> str | None:
     """Which separate key this file needs, or None for the ordinary path.
 
@@ -245,14 +264,22 @@ def may_modify(path: str | Path, *, keys=(), emergency: bool = False
     relative = _relative(path)
     as_posix = relative.as_posix()
 
+    if as_posix in APPEND_ONLY:
+        return False, (
+            f"{as_posix} may be added to but never rewritten, and a proposal "
+            f"replaces a file wholesale. Krish: *add amendments, but not "
+            f"deleting any.* Use `gateway/constitution.append_amendment`, which "
+            f"puts new text after what is already there and has no branch that "
+            f"does anything else.")
     if as_posix in SEALED:
         return False, (
             f"{as_posix} is not modifiable by anything here - no key opens it, "
             f"no emergency reaches it, and no proposal may name it. Krish edits "
             f"it by hand or it is not edited. These are the documents every "
             f"other rule is derived from, and an agent that can edit the source "
-            f"of its own limits does not have limits. Propose an amendment in "
-            f"words and argue for it; writing one is his.")
+            f"of its own limits does not have limits. Additions go to "
+            f"AI-CONSTITUTION-AMENDMENTS.md, which Jarvis may add to on Krish's "
+            f"request and may never remove from.")
     key = key_for(as_posix)
     if key is not None:
         if emergency:
@@ -416,6 +443,7 @@ def describe() -> dict:
     return {
         "modifiable_roots": list(MODIFIABLE_ROOTS),
         "sealed": list(SEALED),
+        "append_only": list(APPEND_ONLY),
         "needs_circular_key": list(CIRCULAR),
         "needs_charter_key": list(CHARTER),
         "keys": list(KEYS),

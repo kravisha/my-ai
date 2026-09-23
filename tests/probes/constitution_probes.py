@@ -71,8 +71,12 @@ PROBES: list[harness.Probe] = [
     (
         CONSTITUTION,
         "a re-seal before anything is installed is allowed",
-        "    if not installed():\n        raise NotInstalled(\"nothing is sealed yet",
-        "    if False:\n        raise NotInstalled(\"nothing is sealed yet",
+        "    if not installed():\n"
+        "        raise NotInstalled(\"nothing is sealed yet; `install` comes first\")\n"
+        "\n    existing = amendments(key=key)",
+        "    if False:\n"
+        "        raise NotInstalled(\"nothing is sealed yet; `install` comes first\")\n"
+        "\n    existing = amendments(key=key)",
         ("test_a_re_seal_before_anything_is_installed_is_refused",),
     ),
     (
@@ -105,6 +109,94 @@ PROBES: list[harness.Probe] = [
         '        "alongside": _digest(constitution_text),',
         '        "alongside": "",',
         ("test_a_clean_history_verifies",),
+    ),
+    # --- adding an amendment, and never removing one --------------------------
+    (
+        CONSTITUTION,
+        "an append can be handed a document, which is a deletion in disguise",
+        "    existing = amendments_document(key=key)",
+        "    existing = \"\"",
+        ("test_an_amendment_goes_after_everything_already_there",),
+    ),
+    (
+        CONSTITUTION,
+        "the new text goes before what is already there",
+        '    document = f"{existing.rstrip()}\\n\\n---\\n\\n{addition}" if existing.strip() \\',
+        '    document = f"{addition}\\n\\n---\\n\\n{existing.rstrip()}" if existing.strip() \\',
+        ("test_an_amendment_goes_after_everything_already_there",),
+    ),
+    (
+        CONSTITUTION,
+        "Jarvis can request an amendment of his own charter",
+        '    if requested_by.strip().lower() == (agent or "").strip().lower():',
+        "    if False:",
+        ("test_jarvis_cannot_request_an_amendment_of_his_own_charter",),
+    ),
+    (
+        CONSTITUTION,
+        "an amendment need not say who asked for it",
+        '    if not (requested_by or "").strip():',
+        "    if False:",
+        ("test_an_amendment_must_say_who_asked_for_it",),
+    ),
+    (
+        CONSTITUTION,
+        "an empty amendment is accepted",
+        '    if not (text or "").strip():\n        raise ValueError("an amendment cannot be empty")',
+        "    if False:\n        raise ValueError(\"an amendment cannot be empty\")",
+        ("test_an_empty_amendment_is_refused",),
+    ),
+    (
+        CONSTITUTION,
+        "adding an amendment re-seals the constitution as well",
+        "    _write(_path(AMENDMENTS_DOC_FILE),\n"
+        "           secretbox.seal(document.encode(\"utf-8\"), key=key,\n"
+        "                          aad=AMENDMENTS_DOC_AAD))",
+        "    _write(_path(CONSTITUTION_FILE),\n"
+        "           secretbox.seal(document.encode(\"utf-8\"), key=key,\n"
+        "                          aad=CONSTITUTION_AAD))",
+        ("test_adding_an_amendment_never_touches_the_constitution",
+         "test_jarvis_can_add_an_amendment_on_krishs_request"),
+    ),
+    (
+        CONSTITUTION,
+        "every amendment is numbered 1",
+        "    number = sum(1 for line in existing.splitlines()\n"
+        "                 if line.startswith(\"## Amendment \")) + 1",
+        "    number = existing.count(\"\\n## Amendment \") + 1",
+        ("test_an_amendment_goes_after_everything_already_there",),
+    ),
+    (
+        CONSTITUTION,
+        "an amendment leaves no trace in the life ledger",
+        "    charter.note_amendment(client, what=heading, why=text.strip()[:400],",
+        "    _ = (client, heading, text.strip()[:400],",
+        ("test_an_amendment_is_recorded_in_the_life_ledger_too",),
+    ),
+    (
+        CONSTITUTION,
+        "a deleted amendment is not noticed",
+        '    elif chain and _digest(live) != chain[-1]["text"] and chain[-1].get("added"):',
+        "    elif False:",
+        ("test_deleting_an_amendment_by_hand_is_detected",),
+    ),
+    (
+        CONSTITUTION,
+        "emptying the amendments entirely is not noticed",
+        '    if chain and chain[-1].get("added") and not live:',
+        "    if False:",
+        ("test_emptying_the_amendments_entirely_is_detected",),
+    ),
+    (
+        CONSTITUTION,
+        "appending before anything is installed is allowed",
+        "    if not installed():\n"
+        "        raise NotInstalled(\"nothing is sealed yet; `install` comes first\")\n"
+        "\n    existing = amendments_document(key=key)",
+        "    if False:\n"
+        "        raise NotInstalled(\"nothing is sealed yet; `install` comes first\")\n"
+        "\n    existing = amendments_document(key=key)",
+        ("test_appending_before_anything_is_installed_is_refused",),
     ),
     (
         CONSTITUTION,

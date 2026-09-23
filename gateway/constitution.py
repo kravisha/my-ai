@@ -34,19 +34,27 @@ Krish, 2026-09-23: *"don't allow Jarvis or yourself to ever change the
 constitution. Only I should be able to change the main document, manually,
 myself."* And, on the amendments: *"Yes wall the amendments too."*
 
-So neither document has a writer here. `read` and `amendments` decrypt and
-return; `seal_what_krish_wrote` takes both files exactly as he left them and
-records them, and it is the only function in this module that writes anything.
-It does not compose, edit, merge or generate a word of either.
+The **constitution** has no writer here. `read` decrypts and returns it;
+`seal_what_krish_wrote` records it exactly as he left it. `amend` was removed the
+hour after it was written: it rewrote the text behind his key, and a key can be
+in force at a moment nobody intended - this is the document where that costs
+everything.
 
-Two things were removed to get here, both of which had looked reasonable an hour
-earlier. `amend` rewrote the constitution's text behind his key - wrong shape,
-because a key can be in force at a moment nobody intended and this is the
-document where that costs everything. `add_amendment` composed an amendment from
-a caller's string - wrong for the same reason once the amendments were walled,
-and the argument for keeping it ("a charter nobody may draft is a cage") was
-thinner than it looked: **drafting is not writing**. Jarvis may argue for an
-amendment at any length. Krish writes it.
+The **amendments** may be added to. Krish, on second thoughts: *"I would like to
+give Jarvis the ability to add amendments to the constitution but not deleting
+any from the constitution. He should be able to add new directives on my
+request."*
+
+`append_amendment` is that, and the shape is the guarantee rather than the
+intention. It reads what is already there, puts the new text after it, and there
+is no branch in it that writes anything else - no replace, no edit, no path that
+takes a whole document. Deleting an amendment is not forbidden here so much as
+unavailable: nothing in this module can express it.
+
+**On his request**, which is the other half. `requested_by` may not be the agent,
+the same refusal `gateway/readback.py` makes for confirmations: an assistant that
+can decide the charter needs a new directive and then add it has been given the
+charter, not the ability to help with it.
 
 ## What is left is evidence, not control
 
@@ -79,11 +87,16 @@ DEFAULT_DIR = PROJECT_ROOT / "data" / "charter"
 
 CONSTITUTION_FILE = "constitution.sealed"
 AMENDMENTS_FILE = "amendments.sealed"
+# The amendments document itself, sealed as it stood after the last append. What
+# `verify` compares the live file against, so that a deletion made with a text
+# editor is as visible as one made in code.
+AMENDMENTS_DOC_FILE = "amendments_document.sealed"
 
 # What each blob says it is. A sealed file that does not name itself can be
 # swapped for another - see `app/secretbox.py`.
 CONSTITUTION_AAD = b"jarvis:charter:constitution:v1"
 AMENDMENTS_AAD = b"jarvis:charter:amendments:v1"
+AMENDMENTS_DOC_AAD = b"jarvis:charter:amendments-document:v1"
 
 GENESIS = "genesis"
 
@@ -207,6 +220,81 @@ def install(text: str, *, key: bytes, granted_by: str,
     return sealed
 
 
+def amendments_document(*, key: bytes) -> str:
+    """The amendments document as it stood when it was last sealed."""
+    path = _path(AMENDMENTS_DOC_FILE)
+    if not path.exists():
+        return ""
+    return secretbox.unseal(path.read_bytes(), key=key,
+                            aad=AMENDMENTS_DOC_AAD).decode("utf-8")
+
+
+def append_amendment(client: dbaclient.DBAClient, text: str, *, key: bytes,
+                     requested_by: str, title: str = "",
+                     agent: str = identity.AGENT_ID) -> dict:
+    """Add an amendment. There is no code path here that removes one.
+
+    The new text goes after everything already sealed, and `existing` is read
+    rather than passed in - a caller that could supply the document could supply
+    a shorter one, which is a deletion wearing an append's name."""
+    if not (text or "").strip():
+        raise ValueError("an amendment cannot be empty")
+    if not (requested_by or "").strip():
+        raise ValueError(
+            "an amendment must say who asked for it. Krish: *he should be able "
+            "to add new directives on my request* - so a request nobody made is "
+            "not one of them.")
+    if requested_by.strip().lower() == (agent or "").strip().lower():
+        raise Unauthorised(
+            f"{agent!r} cannot request an amendment of his own charter. An "
+            f"assistant that can decide the charter needs a new directive and "
+            f"then add it has been given the charter, not the ability to help "
+            f"with it.")
+    if not installed():
+        raise NotInstalled("nothing is sealed yet; `install` comes first")
+
+    existing = amendments_document(key=key)
+    # Counted over line starts, not over "\n## Amendment ". The first heading in
+    # the document has no newline before it, so the substring form numbered the
+    # second amendment 1 as well.
+    number = sum(1 for line in existing.splitlines()
+                 if line.startswith("## Amendment ")) + 1
+    heading = f"## Amendment {number}" + (f" - {title.strip()}" if title else "")
+    addition = f"{heading}\n\n*Added {_now()}, at {requested_by.strip()}'s " \
+               f"request.*\n\n{text.strip()}\n"
+    # The one composition in this module, and it is concatenation. `existing`
+    # goes first and is never sliced, replaced or filtered.
+    document = f"{existing.rstrip()}\n\n---\n\n{addition}" if existing.strip() \
+        else addition
+
+    chain = amendments(key=key)
+    previous = chain[-1]["link"] if chain else GENESIS
+    at = _now()
+    entry = {
+        "at": at,
+        "previous": previous,
+        "text": _digest(document),
+        "alongside": _digest(read(key=key)),
+        "grant_id": "",
+        "granted_by": requested_by.strip(),
+        "why": f"amendment {number} added at {requested_by.strip()}'s request",
+        "added": _digest(addition),
+    }
+    entry["link"] = _link(previous, at=at, text_digest=entry["text"],
+                          grant_id=entry["grant_id"], why=entry["why"])
+
+    _write(_path(AMENDMENTS_FILE),
+           secretbox.seal(json.dumps(chain + [entry]).encode("utf-8"),
+                          key=key, aad=AMENDMENTS_AAD))
+    _write(_path(AMENDMENTS_DOC_FILE),
+           secretbox.seal(document.encode("utf-8"), key=key,
+                          aad=AMENDMENTS_DOC_AAD))
+
+    charter.note_amendment(client, what=heading, why=text.strip()[:400],
+                           granted_by=requested_by.strip(), agent=agent)
+    return {**entry, "number": number, "document": document}
+
+
 def seal_what_krish_wrote(constitution_text: str, amendments_text: str, *,
                           key: bytes, by: str) -> dict:
     """Record the two documents exactly as Krish left them.
@@ -245,6 +333,9 @@ def seal_what_krish_wrote(constitution_text: str, amendments_text: str, *,
     _write(_path(AMENDMENTS_FILE),
            secretbox.seal(json.dumps(existing + [entry]).encode("utf-8"),
                           key=key, aad=AMENDMENTS_AAD))
+    _write(_path(AMENDMENTS_DOC_FILE),
+           secretbox.seal(amendments_text.encode("utf-8"), key=key,
+                          aad=AMENDMENTS_DOC_AAD))
     _write(_path(CONSTITUTION_FILE),
            secretbox.seal(constitution_text.encode("utf-8"), key=key,
                           aad=CONSTITUTION_AAD))
@@ -337,6 +428,22 @@ def verify(client: dbaclient.DBAClient, *, key: bytes,
                 f"naming one that was never issued is an amendment made outside "
                 f"the sanctioned path.")
 
+    # Nothing may have been removed from the amendments document. Checked as a
+    # prefix rather than as equality: everything sealed before must still be
+    # there, in order, and an append leaves it so. A deletion made with a text
+    # editor fails this exactly as one made in code would, which is the point -
+    # the guarantee is about the document, not about who touched it.
+    live = amendments_document(key=key)
+    if chain and chain[-1].get("added") and not live:
+        report["problems"].append(
+            "the amendments document is empty and the chain says it should not "
+            "be. Every amendment ever added has been removed.")
+    elif chain and _digest(live) != chain[-1]["text"] and chain[-1].get("added"):
+        report["problems"].append(
+            "the amendments document is not what was last sealed. Amendments "
+            "are added and never removed, so this is either an edit made "
+            "outside `append_amendment` or a deletion.")
+
     # The constitution is checked against what the newest amendment was added
     # ALONGSIDE, not against the amendment's own text. Amendments add; they never
     # replace, so a mismatch here means the sealed constitution changed after an
@@ -358,7 +465,8 @@ def describe() -> dict:
         "installed": installed(),
         "encryption": secretbox.describe(),
         "constitution_is_writable": False,
-        "amendments_are_writable": False,
+        "amendments_are_append_only": True,
+        "amendments_added_by": "Jarvis, on Krish's request; never removed",
         "written_by": "Krish, by hand; this module only records what he wrote",
         "detects": ["an amendment with no grant",
                     "an amendment whose grant was never issued",

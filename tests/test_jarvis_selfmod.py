@@ -272,10 +272,10 @@ def test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there(client):
         "gateway/candidate.py", "tests/test_boundaries.py",
         "tests/test_initiative.py", "tests/test_jarvis_selfmod.py"}
     assert set(introspect.CHARTER) == {"CLAUDE.md"}
-    # And the wall, which is not a key at all: the constitution and the
-    # amendments, both of them, by Krish's instruction on 2026-09-23.
-    assert introspect.SEALED == ("AI-CONSTITUTION.md",
-                                 "AI-CONSTITUTION-AMENDMENTS.md")
+    # The wall, which is not a key at all - and beside it the append-only tier,
+    # which is a third thing: added to on Krish's request, never rewritten.
+    assert introspect.SEALED == ("AI-CONSTITUTION.md",)
+    assert introspect.APPEND_ONLY == ("AI-CONSTITUTION-AMENDMENTS.md",)
     # Everything keyed is still readable - §14 lets him read his own
     # architecture, which is how he would notice the checks exist at all.
     assert "ONE_HYPOTHESIS" in introspect.read_source("gateway/inquiry.py")
@@ -968,15 +968,26 @@ def test_the_charter_documents_are_refused_even_with_the_key(operator, client):
     manually, myself."* Not a key, not an emergency - a wall."""
     charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
     gap = _confirmed_gap(client)
-    for name in ("AI-CONSTITUTION.md", "AI-CONSTITUTION-AMENDMENTS.md"):
-        with pytest.raises(introspect.NotModifiable) as raised:
-            _proposal(client, files=[name], gap=gap)
-        assert "no key opens it" in str(raised.value)
 
+    # The constitution: a wall, and the message says so.
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap)
+    assert "no key opens it" in str(raised.value)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap,
+                  emergency="Krish is in trouble and I need this changed")
+    assert "no emergency reaches it" in str(raised.value)
+
+    # The amendments: not a wall, but not reachable this way either. A proposal
+    # replaces a file wholesale, and replacement is what "no deleting" forbids -
+    # so the refusal points at the one path that can only add.
+    for kwargs in ({}, {"emergency": "Krish is in trouble"}):
         with pytest.raises(introspect.NotModifiable) as raised:
-            _proposal(client, files=[name], gap=gap,
-                      emergency="Krish is in trouble and I need this changed")
-        assert "no emergency reaches it" in str(raised.value)
+            _proposal(client, files=["AI-CONSTITUTION-AMENDMENTS.md"], gap=gap,
+                      **kwargs)
+        assert "never rewritten" in str(raised.value)
+        assert "append_amendment" in str(raised.value)
+
     assert client.count("change_proposal", {"agent": "jarvis"}) == 0
 
 

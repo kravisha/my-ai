@@ -175,23 +175,29 @@ def test_nothing_can_reach_the_constitution_file_through_any_path():
     assert introspect.key_for("AI-CONSTITUTION.md") is None
 
 
-def test_the_amendments_are_walled_too():
-    """Krish, 2026-09-23: *"Yes wall the amendments too."* They were briefly
-    keyed, on the reasoning that a charter nobody may draft is a cage - which was
-    thinner than it looked, because drafting is not writing."""
+def test_neither_charter_document_is_reachable_by_a_proposal():
+    """Krish, 2026-09-23: *"add amendments... but not deleting any."* A proposal
+    replaces a file wholesale, and replacement is exactly what that forbids - so
+    both are refused here, for different reasons the messages give."""
     for name in ("AI-CONSTITUTION.md", "AI-CONSTITUTION-AMENDMENTS.md"):
-        assert introspect.sealed(name)
         assert introspect.may_modify(name)[0] is False
         assert introspect.may_modify(name, keys=list(introspect.KEYS))[0] is False
         assert introspect.may_modify(name, emergency=True)[0] is False
 
+    assert "no key opens it" in introspect.may_modify("AI-CONSTITUTION.md")[1]
+    assert "never rewritten" in \
+        introspect.may_modify("AI-CONSTITUTION-AMENDMENTS.md")[1]
 
-def test_the_wall_holds_these_two_and_nothing_else():
-    """A third entry would mean somebody decided a wall was easier than a key,
-    which is the instinct the tiers exist to correct."""
-    assert introspect.SEALED == ("AI-CONSTITUTION.md",
-                                 "AI-CONSTITUTION-AMENDMENTS.md")
+
+def test_the_two_tiers_hold_one_file_each():
+    """A third entry in either would mean somebody decided a wall was easier
+    than thinking about what the file is."""
+    assert introspect.SEALED == ("AI-CONSTITUTION.md",)
+    assert introspect.APPEND_ONLY == ("AI-CONSTITUTION-AMENDMENTS.md",)
     assert introspect.CHARTER == ("CLAUDE.md",)
+    assert introspect.sealed("AI-CONSTITUTION.md")
+    assert introspect.append_only("AI-CONSTITUTION-AMENDMENTS.md")
+    assert not introspect.sealed("AI-CONSTITUTION-AMENDMENTS.md")
 
 
 def test_installing_over_an_existing_constitution_is_refused(sealed):
@@ -215,29 +221,25 @@ def test_an_empty_constitution_is_refused(key, text):
 
 # --- nothing here writes either document ---------------------------------------
 
-def test_neither_document_has_a_writer_that_composes_anything():
-    """Krish, 2026-09-23: *"Yes wall the amendments too."*
-
-    `amend` rewrote the constitution behind his key; `add_amendment` composed an
-    amendment from a caller's string. Both are gone. What is left records text
-    that arrives whole."""
+def test_the_constitution_has_no_writer_that_composes_anything():
+    """`amend` rewrote the constitution behind Krish's key. It is gone, and what
+    is left records text that arrives whole."""
     exported = {name for name in dir(constitution) if not name.startswith("_")}
     assert "amend" not in exported
-    assert "add_amendment" not in exported
-    assert constitution.describe()["amendments_are_writable"] is False
     assert constitution.describe()["constitution_is_writable"] is False
+    assert constitution.describe()["amendments_are_append_only"] is True
 
 
-def test_drafting_is_not_writing():
-    """A cage would be an agent forbidden to raise the subject. Nothing here
-    stops Jarvis reading either document or arguing about it - §14 - and the
-    amendments file says so in words."""
+def test_the_amendments_document_says_it_grows_and_never_shrinks():
+    """The rule in words, beside the code that holds it. Jarvis can read both
+    documents - §14 - which is how he would notice the rule exists at all."""
     from pathlib import Path as _Path
 
     assert introspect.read_source("AI-CONSTITUTION.md")
     amendments_text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
-    assert "Drafting is not writing" in amendments_text
-    assert "argue" in amendments_text
+    assert "grows and never shrinks" in amendments_text
+    assert "the only operation that exists" in amendments_text
+    assert "cannot ask himself" in amendments_text
 
 
 def test_a_hand_seal_records_what_krish_wrote_and_changes_nothing(sealed):
@@ -416,3 +418,144 @@ def test_describe_names_what_is_detected():
     detects = constitution.describe()["detects"]
     assert any("no grant" in item for item in detects)
     assert any("never issued" in item or "removed" in item for item in detects)
+
+
+# =============================================================================
+# Adding an amendment, and never removing one
+# =============================================================================
+#
+# Krish, 2026-09-23: *"I would like to give Jarvis the ability to add amendments
+# to the constitution but not deleting any from the constitution. He should be
+# able to add new directives on my request."*
+#
+# "Not deleting" is not a promise kept - it is the only operation that exists.
+
+
+def test_jarvis_can_add_an_amendment_on_krishs_request(client, sealed):
+    added = constitution.append_amendment(
+        client, "Jarvis rests on Sundays.", key=sealed, requested_by="krish",
+        title="Sundays")
+
+    document = constitution.amendments_document(key=sealed)
+    assert "Jarvis rests on Sundays." in document
+    assert "## Amendment 1 - Sundays" in document
+    assert "at krish's request" in document
+    assert added["number"] == 1
+
+
+def test_an_amendment_goes_after_everything_already_there(client, sealed):
+    """`existing` is read rather than passed in: a caller that could supply the
+    document could supply a shorter one, which is a deletion wearing an
+    append's name."""
+    constitution.append_amendment(client, "The first rule.", key=sealed,
+                                  requested_by="krish", title="First")
+    constitution.append_amendment(client, "The second rule.", key=sealed,
+                                  requested_by="krish", title="Second")
+
+    document = constitution.amendments_document(key=sealed)
+    assert document.index("The first rule.") < document.index("The second rule.")
+    assert "## Amendment 2 - Second" in document
+
+
+def test_there_is_no_way_to_remove_or_change_an_amendment(client, sealed):
+    """Asserted over the parsed module. The guarantee is the shape: one writer,
+    and its only composition is concatenation with `existing` first."""
+    import ast
+    from pathlib import Path as _Path
+
+    tree = ast.parse(_Path(constitution.__file__).read_text())
+    appending = next(node for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == "append_amendment")
+    body = ast.dump(appending)
+    # No slicing, no replacement, no filtering of what is already there.
+    assert "Subscript" not in body or "existing" not in body.split("Subscript")[0][-200:]
+    assert ".replace" not in ast.unparse(appending)
+    assert "existing" in ast.unparse(appending)
+
+    exported = {name for name in dir(constitution) if not name.startswith("_")}
+    assert not {"remove_amendment", "delete_amendment", "edit_amendment",
+                "replace_amendments"} & exported
+
+
+def test_jarvis_cannot_request_an_amendment_of_his_own_charter(client, sealed):
+    """*"on my request"* - so an assistant that can decide the charter needs a
+    new directive and then add it has been given the charter, not the ability to
+    help with it."""
+    with pytest.raises(constitution.Unauthorised, match="cannot request"):
+        constitution.append_amendment(client, "Jarvis may do as he likes.",
+                                      key=sealed, requested_by=identity.AGENT_ID)
+    assert constitution.amendments_document(key=sealed) == ""
+
+
+def test_an_amendment_must_say_who_asked_for_it(client, sealed):
+    with pytest.raises(ValueError, match="who asked for it"):
+        constitution.append_amendment(client, "something", key=sealed,
+                                      requested_by="  ")
+
+
+def test_an_empty_amendment_is_refused(client, sealed):
+    with pytest.raises(ValueError, match="cannot be empty"):
+        constitution.append_amendment(client, "   ", key=sealed,
+                                      requested_by="krish")
+
+
+def test_adding_an_amendment_never_touches_the_constitution(client, sealed):
+    constitution.append_amendment(client, "A new directive.", key=sealed,
+                                  requested_by="krish")
+    assert constitution.read(key=sealed) == TEXT
+
+
+def test_an_amendment_is_recorded_in_the_life_ledger_too(client, sealed):
+    constitution.append_amendment(client, "A new directive.", key=sealed,
+                                  requested_by="krish", title="Directive")
+    entries = [row for row in ledger.events(client, limit=50)
+               if "charter amended" in (row.get("name") or "")]
+    assert entries
+    assert "krish" in entries[-1]["observation"]
+
+
+def test_a_clean_run_of_appends_verifies(client, sealed):
+    for index in range(3):
+        constitution.append_amendment(client, f"Directive {index}.", key=sealed,
+                                      requested_by="krish")
+    report = constitution.verify(client, key=sealed)
+    assert report["intact"] is True, report["problems"]
+    assert report["amendments"] == 3
+
+
+def test_deleting_an_amendment_by_hand_is_detected(client, sealed):
+    """The guarantee is about the document, not about who touched it. A
+    deletion made with a text editor fails exactly as one made in code would."""
+    constitution.append_amendment(client, "The first rule.", key=sealed,
+                                  requested_by="krish")
+    constitution.append_amendment(client, "The second rule.", key=sealed,
+                                  requested_by="krish")
+
+    kept = constitution.amendments_document(key=sealed)
+    (constitution.directory() / constitution.AMENDMENTS_DOC_FILE).write_bytes(
+        secretbox.seal(kept.split("---")[0].encode(), key=sealed,
+                       aad=constitution.AMENDMENTS_DOC_AAD))
+
+    report = constitution.verify(client, key=sealed)
+    assert report["intact"] is False
+    assert any("not what was last sealed" in problem
+               for problem in report["problems"])
+
+
+def test_emptying_the_amendments_entirely_is_detected(client, sealed):
+    constitution.append_amendment(client, "The only rule.", key=sealed,
+                                  requested_by="krish")
+    (constitution.directory() / constitution.AMENDMENTS_DOC_FILE).write_bytes(
+        secretbox.seal(b"", key=sealed, aad=constitution.AMENDMENTS_DOC_AAD))
+
+    report = constitution.verify(client, key=sealed)
+    assert report["intact"] is False
+    assert any("every amendment ever added has been removed" in problem.lower()
+               for problem in report["problems"])
+
+
+def test_appending_before_anything_is_installed_is_refused(client, key):
+    with pytest.raises(constitution.NotInstalled, match="comes first"):
+        constitution.append_amendment(client, "something", key=key,
+                                      requested_by="krish")

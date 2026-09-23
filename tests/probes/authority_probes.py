@@ -96,8 +96,8 @@ PROBES: list[harness.Probe] = [
     ),
     (
         INTROSPECT,
-        "the wall is empty, so nothing is sealed",
-        'SEALED = (\n    "AI-CONSTITUTION.md",\n    "AI-CONSTITUTION-AMENDMENTS.md",\n)',
+        "the wall is empty, so the constitution is reachable",
+        'SEALED = (\n    "AI-CONSTITUTION.md",\n)',
         "SEALED = ()",
         ("test_the_charter_documents_are_refused_even_with_the_key",
          "test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there"),
@@ -123,9 +123,9 @@ PROBES: list[harness.Probe] = [
     ),
     (
         INTROSPECT,
-        "the amendments are put back behind a key instead of the wall",
-        'SEALED = (\n    "AI-CONSTITUTION.md",\n    "AI-CONSTITUTION-AMENDMENTS.md",\n)',
-        'SEALED = (\n    "AI-CONSTITUTION.md",\n)',
+        "the amendments become rewritable by a proposal",
+        'APPEND_ONLY = (\n    "AI-CONSTITUTION-AMENDMENTS.md",\n)',
+        "APPEND_ONLY = ()",
         ("test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there",
          "test_the_charter_documents_are_refused_even_with_the_key"),
     ),
