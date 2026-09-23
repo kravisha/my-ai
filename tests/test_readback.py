@@ -609,3 +609,46 @@ def test_a_read_back_that_confirms_nothing_is_never_offered():
 def test_describe_says_the_model_handles_no_token():
     assert readback.describe()["the_model_handles_no_token"] is True
     assert "once" in readback.describe()["a_confirmation_licenses"]
+
+
+# =============================================================================
+# The constitution says it, and something enforces it
+# =============================================================================
+
+
+def test_the_constitution_forbids_answering_for_the_user():
+    """Krish, 2026-09-23: *"Please explicitly forbid this in the constitution."*
+
+    Asserted here rather than left as prose, because this repository's whole
+    doctrine is that a rule stated only in words is a rule that holds until the
+    moment it matters. The section names the mechanisms; this test is the thing
+    that notices if the section and the mechanisms stop agreeing."""
+    from pathlib import Path
+
+    charter_text = Path("AI-CONSTITUTION.md").read_text()
+    assert "Never answer for the person you are asking" in charter_text
+    assert "must never supply the permission it is asking for" in charter_text
+    # And the mechanisms it names still exist and still refuse.
+    assert "gateway/readback.py" in charter_text
+    assert "dba/permissions.py" in charter_text
+
+    with pytest.raises(NotConfirmed):
+        confirm(understood(), confirmed_by=AGENT, agent=AGENT)
+
+    from dba import permissions
+    assert permissions.OWNER_WRITTEN_TYPES
+    assert permissions.ADMINISTER not in permissions.permissions_of(
+        permissions.JARVIS)
+
+
+def test_certainty_is_not_a_reason_to_skip_it():
+    """*"An agent certain the user would say yes must still wait."* There is no
+    argument, flag or confidence level that reaches past this."""
+    import inspect as inspect_module
+
+    parameters = inspect_module.signature(confirm).parameters
+    assert "force" not in parameters
+    assert "assume" not in parameters
+    assert "confidence" not in parameters
+    assert not [name for name, parameter in parameters.items()
+                if isinstance(parameter.default, bool)]
