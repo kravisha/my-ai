@@ -61,6 +61,10 @@ GOVERNANCE = (
     "gateway/auth.py",
     "gateway/roles.py",
     "gateway/selfmod.py",
+    # The sandbox a candidate is tested in. A sandbox Jarvis could rewrite is a
+    # sandbox that reports whatever he needs it to report, and the approval gate
+    # then turns on a verdict he produced.
+    "gateway/candidate.py",
     "gateway/introspect.py",
     "gateway/failures.py",
     "config/initiative.yaml",

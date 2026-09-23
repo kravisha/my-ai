@@ -47,7 +47,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from gateway import checkpoint as checkpoint_module
-from gateway import dbaclient, gaps, identity, persistence
+from gateway import dbaclient, gaps, identity, logscan, persistence
 
 logger = logging.getLogger("gateway.upkeep")
 
@@ -68,8 +68,14 @@ CHECKPOINT_EVERY_HOURS = 6
 # thing recurs produces no new information.
 PROMOTE_GAPS_EVERY_HOURS = 24
 
+# How often Jarvis reads his own log. More often than gap promotion, because a
+# fault recurring right now is the thing most worth noticing early - and the
+# scan is cheap: it reads a bounded window of one file.
+SCAN_LOGS_EVERY_HOURS = 6
+
 _LAST_CHECKPOINT = "upkeep:last_checkpoint"
 _LAST_PROMOTION = "upkeep:last_gap_promotion"
+_LAST_LOG_SCAN = "upkeep:last_log_scan"
 
 
 def enabled() -> bool:
@@ -138,6 +144,15 @@ def checkpoint_due(client: dbaclient.DBAClient, *,
     return False, "nothing important has changed since the last checkpoint"
 
 
+def log_scan_due(client: dbaclient.DBAClient, *,
+                 agent: str = identity.AGENT_ID,
+                 now: datetime | None = None) -> bool:
+    now = now or _now()
+    last = _parse(persistence.get(client, persistence.SELF_ASSESSMENT,
+                                  _LAST_LOG_SCAN, agent=agent))
+    return last is None or (now - last) >= timedelta(hours=SCAN_LOGS_EVERY_HOURS)
+
+
 def promotion_due(client: dbaclient.DBAClient, *,
                   agent: str = identity.AGENT_ID,
                   now: datetime | None = None) -> bool:
@@ -157,7 +172,8 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
     Never raises. The caller is a background loop, and a loop that ends on an
     exception is a maintenance job that stops running and tells nobody."""
     result: dict = {"at": _now().isoformat(timespec="seconds"),
-                    "checkpoint": None, "promoted": None, "problems": []}
+                    "checkpoint": None, "promoted": None, "log_scan": None,
+                    "problems": []}
 
     if not dbaclient.is_configured():
         result["problems"].append("no DBA token is configured; nothing to do")
@@ -181,6 +197,29 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
     except (dbaclient.Unavailable, dbaclient.Refused,
             checkpoint_module.CheckpointInvalid) as exc:
         result["problems"].append(f"checkpoint: {exc}")
+
+    # THE HABIT (Krish, 2026-09-23): read your own log, and turn what recurs
+    # into something the lifecycle can investigate. Suspected only - §11's rule
+    # that a perceived lack is not a confirmed lack applies to a log line more
+    # than to anything else, because a log line is the cheapest evidence there
+    # is to produce and the easiest to over-read.
+    try:
+        if log_scan_due(client, agent=agent):
+            findings = logscan.scan()
+            raised = logscan.raise_suspicions(client, findings, agent=agent)
+            result["log_scan"] = {
+                "faults": len(findings),
+                "unaccepted": len(logscan.unaccepted(findings)),
+                "raised": [row.get("name") for row in raised],
+                "patterns": [row.get("kind") for row in logscan.patterns()],
+            }
+            persistence.put(client, persistence.SELF_ASSESSMENT, _LAST_LOG_SCAN,
+                            _now().isoformat(timespec="seconds"), agent=agent,
+                            reason="log scan sweep")
+            if raised:
+                logger.info("log scan raised %d suspected gap(s)", len(raised))
+    except (dbaclient.Unavailable, dbaclient.Refused, OSError, ValueError) as exc:
+        result["problems"].append(f"log scan: {exc}")
 
     try:
         if promotion_due(client, agent=agent):
@@ -223,6 +262,8 @@ def describe() -> dict:
         "interval_seconds": interval_seconds(),
         "checkpoint_every_hours": CHECKPOINT_EVERY_HOURS,
         "promote_gaps_every_hours": PROMOTE_GAPS_EVERY_HOURS,
+        "scan_logs_every_hours": SCAN_LOGS_EVERY_HOURS,
+        "accepted_log_noise": len(logscan.baseline()),
         "forces_a_checkpoint": sorted(
             kind for kind in persistence.KINDS
             if persistence.tier(kind) == persistence.IMMEDIATE),

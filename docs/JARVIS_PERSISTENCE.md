@@ -144,6 +144,98 @@ a change still needs you.
 
 ---
 
+## 3c. Kaizen: reading his own logs
+
+Krish, 2026-09-23: *"Have Jarvis have an extensive verbose logging system and
+the habit of frequently scanning them and seeking faults and behavior patterns
+... What changes he needs to make - that he will know when he inspects his own
+logs."*
+
+**Before this there was nothing to scan.** Nothing in the codebase configured a
+logging handler — no `basicConfig`, no `FileHandler`, no `dictConfig` — so all
+nineteen `warning`/`error`/`exception` call sites wrote to stderr and died with
+the process. `app/eventlog.py` installs one structured handler on the root
+logger, which makes every existing call site durable and machine-readable at
+once, and every future one for free. No call site was edited and there is
+deliberately no `log_this()` to adopt.
+
+`app/jsonlog.py` is the rotation, extracted from `app/model_calls.py` rather
+than copied — including its deliberate tolerance of two processes racing to
+rename, where the loser keeps appending. A gap in this file is a gap in what
+Jarvis can know about himself.
+
+**No user content reaches it.** Messages are capped and redacted for the shapes
+a secret takes. A log Jarvis scans is a log the model reads.
+
+### Grouping is the whole problem
+
+`gateway/logscan.py` groups on a **signature** — (level, logger, module, line,
+exception, normalised message) — because two occurrences of one fault never
+have the same text. Group on raw text and every fault ranks at one occurrence,
+and the scan reports, truthfully and uselessly, that nothing ever happens twice.
+Normalisation is coarse on purpose: over-splitting breaks the ranking,
+over-merging is something a reader can see and correct.
+
+Severity first, then frequency. An ERROR that happened once outranks a WARNING
+that happened forty times; within a level, what recurs wins.
+
+It also reports three patterns that are not exceptions: the same fault repeated
+inside one request (a retry that is not working, invisible because the turn
+finished), a fault in one service only, and a service that logged nothing at all
+(a component that has stopped logging cannot be observed).
+
+### The ratchet
+
+`config/log_noise_baseline.yaml` lists accepted signatures, each with a reason
+and a date. Anything not on it is **unaccepted noise** and becomes a *suspected*
+gap. The list only grows by somebody editing it and saying why — so a warning is
+either fixed or justified in writing, never merely tolerated. A missing or
+unreadable baseline accepts **nothing**: a guard against noise that went quiet
+when its config disappeared would fail in the wrong direction.
+
+The sweep runs this every six hours. Findings stop at `suspected` — §11's rule
+applies to a log line more than to anything else, because a log line is the
+cheapest evidence there is to produce and the easiest to over-read.
+
+---
+
+## 3d. The sandbox a candidate is tested in
+
+`gateway/candidate.py`. A **git worktree**: a separate directory on its own
+branch, sharing the object store and touching nothing in the live checkout.
+
+**Why not `app/learning/sandbox.py`.** That one is read-only with no
+interpreter, on its own stated grounds: *"a recipe able to run `python` would be
+a recipe able to do anything."* Testing a code change means running pytest.
+Widening that allow-list would destroy the property it exists to hold, so this
+is a second mechanism with a different shape — not an allow-list of safe
+commands, but an isolated copy of the repository.
+
+It also fixes something shipped earlier: `selfmod.commit_candidate` checked out
+its branch **in the live tree**, the one the running Gateway imports from. That
+is the opposite of a sandbox.
+
+Three rules on what may be written, and the third is §16:
+
+1. Only the paths the proposal named. Approving a change to one file is not
+   approving a change to whatever else turns out to be convenient.
+2. Only under `gateway/` and `app/`, never a governance file.
+3. **An existing test may never be modified.** A new test file may be created,
+   because §17 wants a test plan. Editing a test that exists is how *"redefine
+   success criteria simply to make himself pass"* happens. Adding a test cannot
+   weaken another test; editing one can.
+
+`gateway/candidate.py` is itself in `GOVERNANCE`. A sandbox Jarvis could rewrite
+reports whatever he needs it to report, and the approval gate then turns on a
+verdict he produced.
+
+Two defects here were found by probing and not by the tests: `discard()`
+removed the worktree and kept the branch, so every abandoned candidate leaked
+one and the next attempt at the same proposal then failed; and `open_workspace`
+passed `-b` unconditionally, turning "try again" into a permanent failure.
+
+---
+
 ## 4. Checkpoints are markers, not copies
 
 A checkpoint records the moment, the ledger tip, per-kind counts and a hash of

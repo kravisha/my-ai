@@ -1,0 +1,37 @@
+# Accepted log noise: the warnings and errors that are allowed to appear.
+#
+# Krish, 2026-09-23: *"His beauty lies in the beauty of these log files with no
+# error messages or unnecessary warnings."*
+#
+# This file is how that becomes a standard rather than a hope. `gateway/logscan.py`
+# ranks every recurring fault in the log; anything whose signature is not listed
+# here is **unaccepted noise** and is raised as a suspected capability gap for
+# investigation.
+#
+# THE RATCHET. This list only grows by somebody editing it and writing down why.
+# So a warning is either fixed or justified in this file, and never merely
+# tolerated because it has always been there. Deleting an entry is how you say
+# "that is no longer acceptable" and put it back on the list of things to fix.
+#
+# An absent or unreadable file means NOTHING is accepted, not everything - see
+# `logscan.baseline`. A guard against noise that went quiet when its
+# configuration disappeared would be failing in the wrong direction.
+#
+# Signatures are computed by `logscan.signature` over (level, logger, module,
+# line, exception type, normalised message). They change when the code moves,
+# which is deliberate: a warning that has moved is a warning somebody touched,
+# and it is worth re-reading rather than being carried forward silently.
+#
+# Each entry:
+#   signature:  from `python -m gateway.logscan` or logscan.report()
+#   what:       the message, in the words the log uses
+#   reason:     why this is acceptable and not a defect
+#   accepted:   the date, and by whom
+#
+# Deliberately EMPTY at the start. Nothing has been observed in production yet,
+# and pre-populating it with guesses would accept noise nobody has seen - which
+# is exactly the habit this file exists to break.
+
+version: 1
+
+accepted: []
