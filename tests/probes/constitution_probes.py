@@ -101,8 +101,8 @@ PROBES: list[harness.Probe] = [
     # --- tamper evidence, which fails silently --------------------------------
     (
         CONSTITUTION,
-        "sealed text that no amendment accounts for is not noticed",
-        "    if chain and _digest(current) != expected_text:",
+        "a constitution that changed after an amendment is not noticed",
+        '    if chain and _digest(current) != chain[-1].get("alongside"):',
         "    if False:",
         ("test_rewriting_the_sealed_text_directly_is_detected",),
     ),
@@ -175,14 +175,22 @@ PROBES: list[harness.Probe] = [
     ),
     (
         CONSTITUTION,
-        "the text is written before the link, so a crash hides the change",
+        "an amendment rewrites the constitution instead of adding to it",
         "    _write(_path(AMENDMENTS_FILE),\n"
         "           secretbox.seal(json.dumps(existing + [entry]).encode(\"utf-8\"),\n"
-        "                          key=key, aad=AMENDMENTS_AAD))\n"
-        "    _write(_path(CONSTITUTION_FILE),",
-        "    _write(_path(CONSTITUTION_FILE),",
+        "                          key=key, aad=AMENDMENTS_AAD))",
+        "    _write(_path(CONSTITUTION_FILE),\n"
+        "           secretbox.seal(text.encode(\"utf-8\"), key=key,\n"
+        "                          aad=CONSTITUTION_AAD))",
         ("test_with_the_owners_key_an_amendment_lands",
-         "test_a_clean_history_verifies"),
+         "test_the_constitutions_text_has_no_writer_at_all"),
+    ),
+    (
+        CONSTITUTION,
+        "the amendment records no constitution it was added alongside",
+        '        "alongside": _digest(read(key=key)),',
+        '        "alongside": "",',
+        ("test_a_clean_history_verifies",),
     ),
 ]
 

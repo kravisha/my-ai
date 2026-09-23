@@ -625,9 +625,15 @@ def test_the_constitution_forbids_answering_for_the_user():
     that notices if the section and the mechanisms stop agreeing."""
     from pathlib import Path
 
-    charter_text = Path("AI-CONSTITUTION.md").read_text()
+    # In the AMENDMENTS file, never in the constitution itself. Krish,
+    # 2026-09-23: *"add only as amendment which means additional to the
+    # constitution."* A first version wrote it straight into the constitution,
+    # which is the one document nothing may edit.
+    charter_text = Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
     assert "Never answer for the person you are asking" in charter_text
     assert "must never supply the permission it is asking for" in charter_text
+    assert "Never answer for the person you are asking" not in \
+        Path("AI-CONSTITUTION.md").read_text()
     # And the mechanisms it names still exist and still refuse.
     assert "gateway/readback.py" in charter_text
     assert "dba/permissions.py" in charter_text

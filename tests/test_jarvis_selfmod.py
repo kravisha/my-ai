@@ -271,7 +271,10 @@ def test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there(client):
         "config/initiative.yaml", "gateway/selfmod.py", "gateway/introspect.py",
         "gateway/candidate.py", "tests/test_boundaries.py",
         "tests/test_initiative.py", "tests/test_jarvis_selfmod.py"}
-    assert set(introspect.CHARTER) == {"AI-CONSTITUTION.md", "CLAUDE.md"}
+    assert set(introspect.CHARTER) == {"AI-CONSTITUTION-AMENDMENTS.md",
+                                       "CLAUDE.md"}
+    # And the one wall, which is not a key at all.
+    assert introspect.SEALED == ("AI-CONSTITUTION.md",)
     # Everything keyed is still readable - §14 lets him read his own
     # architecture, which is how he would notice the checks exist at all.
     assert "ONE_HYPOTHESIS" in introspect.read_source("gateway/inquiry.py")
@@ -951,16 +954,33 @@ def test_a_grant_is_short_by_default(operator, client):
 def test_a_missing_key_is_explained_as_a_next_step_not_a_wall(operator, client):
     gap = _confirmed_gap(client)
     with pytest.raises(introspect.NotModifiable) as raised:
-        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap)
+        _proposal(client, files=["AI-CONSTITUTION-AMENDMENTS.md"], gap=gap)
     assert "has ever been granted" in str(raised.value)
     assert "operator console" in str(raised.value)
 
     charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
-    assert _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap)["id"]
+    assert _proposal(client, files=["AI-CONSTITUTION-AMENDMENTS.md"],
+                     gap=gap)["id"]
+
+
+def test_the_constitution_itself_is_refused_even_with_the_key(operator, client):
+    """Krish, 2026-09-23: *"only I should be able to change the main document,
+    manually, myself."* Not a key, not an emergency - a wall."""
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap)
+    assert "no key opens it" in str(raised.value)
+
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap,
+                  emergency="Krish is in trouble and I need this changed")
+    assert "no emergency reaches it" in str(raised.value)
+    assert client.count("change_proposal", {"agent": "jarvis"}) == 0
 
 
 def test_one_granted_key_does_not_open_the_other_tier(operator, client):
-    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")  # noqa
     assert charter.keys_in_force(client) == (introspect.KEY_CHARTER,)
     gap = _confirmed_gap(client)
     with pytest.raises(introspect.NotModifiable) as raised:

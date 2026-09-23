@@ -28,14 +28,26 @@ That is the honest shape of this. A lock Jarvis holds the key to is not a lock;
 a record he cannot forge without leaving a hole is a deterrent that survives him
 being wrong.
 
-## Read-only means read-only through this module
+## Read-only means there is no writer
 
-`read` decrypts and returns text. There is no `write`. The only way text changes
-is `amend`, which needs a `charter_grant` in force, writes the chain link before
-the new text, and records the amendment in the life ledger. The ordering is
-deliberate: a crash between the two leaves a link with no matching text, which
-`verify` reports as damage. The other order leaves changed text with no link,
-which is indistinguishable from the attack.
+Krish, 2026-09-23: *"don't allow Jarvis or yourself to ever change the
+constitution. Only I should be able to change the main document, manually,
+myself."*
+
+So the constitution's text has no writer in this module at all. `read` decrypts
+and returns it; `install` seals what Krish already wrote, once, and refuses to
+overwrite. There is no `amend` for the text. An earlier version had one, gated on
+his key - which was the wrong shape, because a key is a thing that can be in
+force when nobody meant it to be, and this document is the one where that costs
+everything.
+
+Additions go to `AI-CONSTITUTION-AMENDMENTS.md`, which is an ordinary file, and
+`add_amendment` records them here as links in a chain. An amendment **adds**; it
+never rewrites the constitution, and nothing here can.
+
+The chain link is written before anything else, deliberately: a crash leaves a
+link with no matching amendment, which `verify` reports as damage. The other
+order leaves a change with no link, which is indistinguishable from the attack.
 """
 
 from __future__ import annotations
@@ -184,9 +196,13 @@ def install(text: str, *, key: bytes, granted_by: str) -> dict:
             "digest": _digest(text)}
 
 
-def amend(client: dbaclient.DBAClient, text: str, *, key: bytes, why: str,
-          agent: str = identity.AGENT_ID) -> dict:
-    """Change the constitution, with the owner's key and a link in the chain.
+def add_amendment(client: dbaclient.DBAClient, text: str, *, key: bytes,
+                  why: str, agent: str = identity.AGENT_ID) -> dict:
+    """Record an addition to the charter. **Never touches the constitution.**
+
+    `text` is the amendment, not a replacement constitution. The sealed
+    constitution is not read, not re-sealed and not referred to by this function
+    beyond noting which text the amendment was added alongside.
 
     The grant is read from the DBA, not taken as an argument - see
     `gateway/charter.py` for why a key a caller can name is not a key."""
@@ -214,7 +230,10 @@ def amend(client: dbaclient.DBAClient, text: str, *, key: bytes, why: str,
         "at": at,
         "previous": previous,
         "text": _digest(text),
-        "replaces": _digest(read(key=key)),
+        # Which constitution this was added alongside. Recorded so a reader can
+        # tell whether an amendment predates a hand edit Krish made - NOT as
+        # something this module keeps in step, because it never writes that file.
+        "alongside": _digest(read(key=key)),
         "grant_id": grant["id"],
         "granted_by": grant.get("granted_by"),
         "why": why.strip(),
@@ -222,14 +241,11 @@ def amend(client: dbaclient.DBAClient, text: str, *, key: bytes, why: str,
     entry["link"] = _link(previous, at=at, text_digest=entry["text"],
                           grant_id=entry["grant_id"], why=entry["why"])
 
-    # The link first. A crash between the two leaves a link with no matching
-    # text, which `verify` reports as damage; the other order leaves changed text
-    # with no link, which is indistinguishable from the attack.
+    # The amendments file, and nothing else. The constitution is not re-sealed
+    # here and there is no branch in this module that re-seals it.
     _write(_path(AMENDMENTS_FILE),
            secretbox.seal(json.dumps(existing + [entry]).encode("utf-8"),
                           key=key, aad=AMENDMENTS_AAD))
-    _write(_path(CONSTITUTION_FILE),
-           secretbox.seal(text.encode("utf-8"), key=key, aad=CONSTITUTION_AAD))
 
     charter.note_amendment(client, what=why.strip()[:120], why=why.strip(),
                            granted_by=grant.get("granted_by") or "unknown",
@@ -330,12 +346,16 @@ def verify(client: dbaclient.DBAClient, *, key: bytes,
                 f"naming one that was never issued is an amendment made outside "
                 f"the sanctioned path.")
 
-    expected_text = chain[-1]["text"] if chain else None
-    if chain and _digest(current) != expected_text:
+    # The constitution is checked against what the newest amendment was added
+    # ALONGSIDE, not against the amendment's own text. Amendments add; they never
+    # replace, so a mismatch here means the sealed constitution changed after an
+    # amendment was recorded - and nothing in this module can do that.
+    if chain and _digest(current) != chain[-1].get("alongside"):
         report["problems"].append(
-            "the sealed constitution does not match the newest amendment. "
-            "Either it was changed without a link, or the last amendment did "
-            "not finish writing.")
+            "the sealed constitution is not the one the newest amendment was "
+            "added alongside. Nothing here rewrites it, so either Krish edited "
+            "it by hand - in which case re-seal it and this clears - or "
+            "something changed it that should not have been able to.")
 
     report["intact"] = not report["problems"]
     return report
@@ -346,9 +366,11 @@ def describe() -> dict:
         "directory": str(directory()),
         "installed": installed(),
         "encryption": secretbox.describe(),
-        "amendable_by": "the owner's charter key, granted from the operator console",
+        "constitution_is_writable": False,
+        "amendments_added_by": ("the owner's charter key, granted from the "
+                                "operator console"),
         "detects": ["an amendment with no grant",
                     "an amendment whose grant was never issued",
                     "a chain link removed, reordered or altered",
-                    "sealed text that no amendment accounts for"],
+                    "a constitution that changed after an amendment was added"],
     }

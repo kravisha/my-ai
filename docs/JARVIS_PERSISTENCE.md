@@ -406,6 +406,36 @@ link **before** the new text. A crash between them leaves a link with no matchin
 text, which `verify` reports as damage; the other order leaves changed text with
 no link, which is indistinguishable from the attack.
 
+### The constitution is a wall; the amendments are a door
+
+Krish, 2026-09-23: *"Please don't add anything to the constitution directly - add
+only as amendment which means additional to the constitution. And don't allow
+Jarvis or yourself to ever change the constitution. Only I should be able to
+change the main document, manually, myself."*
+
+So `AI-CONSTITUTION.md` is in `introspect.SEALED`: no key opens it, no emergency
+reaches it, no proposal may name it, and `gateway/constitution.py` has no
+function that writes its text. The earlier design gated it on his charter key,
+which was the wrong shape - a key can be in force at a moment nobody intended,
+and this is the document where that costs everything.
+
+This is the only wall in the system, and the reason it is the only one is the
+reason it has to be one. Every other limit here is *ask first* or *needs a key*,
+because a lock the owner cannot open in a hurry is a lock that can hurt him. That
+argument does not apply to the document every other rule is derived from: an
+agent that can edit the source of its own limits does not have limits, it has a
+preference.
+
+`AI-CONSTITUTION-AMENDMENTS.md` is the release valve and is ordinary. Amendments
+add and are numbered; they never rewrite. Nothing stops Jarvis proposing one,
+arguing for one, or pointing out that the constitution contradicts itself - what
+he cannot be is the one who writes it.
+
+`verify` now compares the sealed constitution against what the newest amendment
+was added **alongside**. A mismatch is no longer "an amendment did not finish
+writing" - nothing writes it - so it means either Krish edited it by hand, which
+clears on a re-seal, or something changed it that should not have been able to.
+
 ### The limit, stated rather than footnoted
 
 Encryption at rest does not protect against code running as Jarvis, because the

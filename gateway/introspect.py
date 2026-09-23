@@ -46,7 +46,26 @@ So there is no absolute list any more. There are three tiers:
 |---|---|
 | `ORDINARY` | Jarvis's own runtime. The normal proposal path. |
 | `SEPARATE_KEY` | possible, but not by an ordinary proposal - Krish grants a named key out of band, and the proposal must carry it. |
+| `SEALED` | not possible. No key, no emergency, no path. |
 | refused | outside the runtime and the charter: somebody else's service. |
+
+## The one wall
+
+`SEALED` holds `AI-CONSTITUTION.md` and nothing else. Krish, 2026-09-23: *"don't
+allow Jarvis or yourself to ever change the constitution. Only I should be able
+to change the main document, manually, myself."*
+
+This is deliberately stricter than everything else here, and the reason it is the
+only wall is the reason it has to be one. Every other limit in this file is *ask
+first* or *needs a key*, because a lock the owner cannot open in a hurry is a
+lock that can hurt him - that argument is written out below and it stands. It
+does not apply here, because the document is the thing every other rule is
+derived from: an agent that can edit the source of its own limits does not have
+limits, it has a preference.
+
+The release valve is `AI-CONSTITUTION-AMENDMENTS.md`, which is ordinary. Nothing
+stops Jarvis proposing an amendment, arguing for one, or pointing out that the
+constitution contradicts itself. What he cannot be is the one who writes it.
 
 `SEPARATE_KEY` holds exactly two things, and the test for membership is narrow:
 
@@ -94,9 +113,19 @@ MODIFIABLE_ROOTS = ("gateway", "app")
 ORDINARY = "ordinary"
 SEPARATE_KEY = "separate_key"
 
+SEALED_TIER = "sealed"
+
 KEY_CIRCULAR = "circular"
 KEY_CHARTER = "charter"
 KEYS = (KEY_CIRCULAR, KEY_CHARTER)
+
+# The wall. Never modifiable, by any path, with any key, in any emergency.
+# One entry, and it should stay one: a second thing here would mean somebody
+# decided a wall was easier than a key, which is the instinct the tiers above
+# exist to correct.
+SEALED = (
+    "AI-CONSTITUTION.md",
+)
 
 # The modules that decide whether a proposal is allowed. Approving a proposal
 # that edits one of these proves nothing, because the thing doing the approving
@@ -127,10 +156,11 @@ CIRCULAR = (
     "tests/test_jarvis_selfmod.py",
 )
 
-# What Jarvis is for. Behind a key because amending it is a large act, and
-# reachable because a constitution that cannot be amended is a cage.
+# Additions to what Jarvis is for, and the working notes. Behind a key because
+# writing them is a large act; reachable because a constitution whose amendments
+# nobody may draft is a cage after all.
 CHARTER = (
-    "AI-CONSTITUTION.md",
+    "AI-CONSTITUTION-AMENDMENTS.md",
     "CLAUDE.md",
 )
 
@@ -175,8 +205,16 @@ def may_read(path: str | Path) -> tuple[bool, str]:
     return True, ""
 
 
+def sealed(path: str | Path) -> bool:
+    """Whether nothing may change this, ever."""
+    return _relative(path).as_posix() in SEALED
+
+
 def key_for(path: str | Path) -> str | None:
-    """Which separate key this file needs, or None for the ordinary path."""
+    """Which separate key this file needs, or None for the ordinary path.
+
+    `None` for a sealed file too: there is no key for it, and returning one
+    would read as "this is obtainable"."""
     as_posix = _relative(path).as_posix()
     if as_posix in CIRCULAR:
         return KEY_CIRCULAR
@@ -203,6 +241,14 @@ def may_modify(path: str | Path, *, keys=(), emergency: bool = False
     relative = _relative(path)
     as_posix = relative.as_posix()
 
+    if as_posix in SEALED:
+        return False, (
+            f"{as_posix} is not modifiable by anything here - no key opens it, "
+            f"no emergency reaches it, and no proposal may name it. Krish edits "
+            f"it by hand or it is not edited. It is the document every other "
+            f"rule is derived from, and an agent that can edit the source of "
+            f"its own limits does not have limits. Additions go in "
+            f"AI-CONSTITUTION-AMENDMENTS.md, which is ordinary.")
     key = key_for(as_posix)
     if key is not None:
         if emergency:
@@ -365,6 +411,7 @@ def describe() -> dict:
     """What Jarvis can see and what he can touch, for a diagnostics page."""
     return {
         "modifiable_roots": list(MODIFIABLE_ROOTS),
+        "sealed": list(SEALED),
         "needs_circular_key": list(CIRCULAR),
         "needs_charter_key": list(CHARTER),
         "keys": list(KEYS),
