@@ -73,6 +73,170 @@ What that discipline has actually caught in this repository:
 
 Every one of those was found by probing, not by review.
 
+### Probing by hand works once. Write the mutations down.
+
+2026-09-23. `tests/test_inquiry.py` went green on its first run — 56 tests, no
+failures, and it had proved almost nothing. `tests/probes/inquiry_probes.py` then
+applied 49 mutations to `gateway/inquiry.py`, and **three went unnoticed**:
+
+- A test named for the eliminated-alternatives term passed with that term
+  deleted. Eliminating an alternative also cleared a *different* objection, so a
+  different term moved the number. The test was measuring the wrong thing and
+  said the right thing in its name.
+- A test asserting confidence stayed bounded only exercised a clamp that turned
+  out to be **unreachable** — the terms it clamps sum to exactly the limit.
+- A branch no test reached at all: the one the suite was written to cover did not
+  need it. It was deleted and replaced by a requirement that is reachable.
+
+None of those would have been found by reading the tests, and probing by hand
+finds them once and then loses the evidence. A file of mutations finds them again
+every time the code moves. Prefer it for any module whose job is to refuse
+things. The harness reports **stale probes** — a snippet that no longer appears —
+as a failure, because a probe that silently stopped applying reports success.
+
+A fourth, from the wiring in the same session: a warning meant to be the first
+line of what Krish reads was built as `{"WARNING": ..., **rest}`. The serialiser
+dumps with `sort_keys=True`, so dict order was discarded and the warning came
+first only because `W` sorts before lowercase letters. **If a line has to be
+first, build the string.**
+
+There are three probe files now, sharing `tests/probes/harness.py`. Add one for
+any module whose job is to refuse things or to delete things.
+
+### A test written in terms of a constant cannot detect a wrong constant
+
+2026-09-23, from `tests/probes/retention_probes.py`. Four mutations changed a
+policy number and no test noticed, because the tests were written as
+`MIN_OFFERS_TO_JUDGE - 1` and `MIN_OFFERS_TO_JUDGE`, which hold at *every* value
+including the one that breaks the behaviour. A fifth changed a maintenance
+interval from a week to six hours and no test noticed, because every test asked
+"is it due?" twice in the same second.
+
+**The rule, because the description alone has not been enough** — this class has
+been found by a probe three separate times on 2026-09-23, each time after the
+lesson was already written down here: *when a test mentions a module constant,
+stop and ask whether it should be a literal.* If the constant encodes a decision
+rather than an implementation detail, write the number.
+
+Where a number **is** the policy — the difference between keeping a fact and
+deleting it, or how often Jarvis disturbs his own record — assert it as a literal
+with the reason it has that value, and assert the *consequence* at whole numbers
+too. `test_the_policy_numbers_are_what_they_are` and
+`test_the_maintenance_cadences_are_what_they_are` are the two examples.
+
+**A probe that cannot fail is worse than no probe.** Two written on 2026-09-23
+were no-ops and reported "caught" against tests that were never at risk: one
+replaced a list with `[] or [...]`, which evaluates to the second list, and one
+set a fact's cycle to 10,000 days *before* the step that was supposed to collect
+it, so nothing was collected and the assertion held for no reason. Read a probe's
+replacement as code, not as intent.
+
+A related one from the same run: a test can pass on the wrong term. A test named
+for the eliminated-alternatives term of a score passed with that term deleted,
+because the same change also cleared a different objection and *that* moved the
+number. To isolate a term, build a case where every other term is already
+saturated.
+
+### A probe that names a missing test reports success for ever
+
+2026-09-23, and it is this file's own rule turned on the thing that enforces it.
+`pytest -k` matching nothing exits **5**, which is not zero, which the harness
+read as *"the mutation was caught"*. Three probes were in that state — two
+naming tests that had been renamed away, one naming a real test that lives in a
+different suite than the one that probe runs. All three reported caught on every
+run, including runs where the mutation was applied to code no test goes near.
+
+The harness now collects each named test first and reports a probe that names
+nothing as a failure, beside a stale snippet. The first run after that check
+existed found two more.
+
+And the finding underneath: **a probe is only as good as the test it names.** One
+of them pointed at a behavioural test that walks five paths, to catch a member
+being deleted from a list of thirteen. It passed. The membership belongs to
+`test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there`, which writes
+the thirteen out as literals — which is the constant rule above, again: a test
+that loops over the list cannot notice the list got shorter.
+
+### Never run two probe harnesses at once
+
+2026-09-23. Two mutations reported as **unnoticed** that were nothing of the
+kind: a second harness was still running and restored the source mid-run, so the
+test was checked against the original code. It lies the other way just as
+easily. Neither shows up as an error, and both are silent wrong answers from the
+thing whose whole job is to notice silent wrong answers.
+
+There is a lock file now, so this is enforced rather than remembered. The wider
+habit it belongs to: **do not start a background run and then start another one
+over it.** The same mistake has been made here with eight concurrent pytest
+processes, and it was blamed on the container.
+
+And the operational one underneath it: a shell that waits with
+`until ! pgrep -f "probes.py"` matches *its own command line* and waits for
+itself for ever. Wait on the output file, not on the process list.
+
+### It is green here and red on his machine
+
+2026-09-23. Nineteen Windows CI failures, none of them visible on Linux, all in
+code that had been merged:
+
+- `f"{due:%-d %B}"` — `%-d` is a glibc extension, not C. Windows raises
+  `ValueError: Invalid format string`, and it took out every noticing there is.
+  `%#d` is the Windows spelling and is just as unportable the other way, so
+  build the number: `f"{when.day} {when:%B}"`.
+- `Path.read_text()` with no `encoding`. Python falls back to the locale's —
+  cp1252 there — and a UTF-8 file comes back mangled. The constitution's
+  amendment headings lost their em-dashes. A test happened to compare them; had
+  nothing compared them, Krish would have read the mangled text.
+
+**He runs Windows and this is written on Linux, so "the suite is green" means
+green on the wrong machine.** Both classes are now scanned over the parsed AST
+of every file in `tests/test_portability.py`, because neither looks wrong when
+you read it.
+
+### Be brief
+
+Owner instruction, 2026-09-23: *"please be less verbose and more concise and
+precise. You can get to the problem directly and lesser context is fine and I'll
+ask you if I need more context."*
+
+Lead with the finding or the change. Do not restate the request, do not narrate
+the route taken, and do not pre-empt questions he has not asked. Reasoning belongs
+in the code comments and the docs, where it survives; a reply is not the place to
+prove the thinking happened. He will ask for more.
+
+### Run the full suite before replying, not alongside it
+
+Owner instruction, 2026-09-23. Three commits in a row went out with the suite
+still running, each carrying an honest caveat that it had not been checked. The
+caveat is not the fix — a stop hook fires every turn, so "I'll report the number
+later" means shipping unverified every time.
+
+So: when a turn changes code, `pytest -q` finishes **before** the reply is
+written. It takes about three and a half minutes. Waiting is the work, not a gap
+in the work to be filled with activity — which is the same failure as the
+caffeinated-rabbit turn, wearing a different hat.
+
+### Report in red / yellow / green
+
+Owner instruction, 2026-09-23: *"A lot of your status updates are not required at
+all — example, about some failed test and how you fixed it... my limited time
+makes my choices such that I have to give less priority to status updates of what
+happened. Red - yellow - green - simple status replies like this is best."*
+
+A reply is a **status**, not an account:
+
+- **GREEN** — done, working, nothing needed from him.
+- **YELLOW** — done but something is worth his eye, or a choice is waiting.
+- **RED** — blocked or broken, and what would unblock it.
+
+One line each, and no more than a handful. What was hard, what broke on the way,
+which test caught what, how it was fixed: all of that belongs in the commit
+message and the code comments, where it is useful to whoever reads the diff. It
+is not a deliverable. He is paying for the outcome, not the journey.
+
+Exceptions, kept short: a question he must answer, a decision that changes what
+gets built, or something he asked to be told.
+
 ---
 
 ## Two rules about what gets built
@@ -82,6 +246,13 @@ Every one of those was found by probing, not by review.
 ledger nothing wrote to, a log scanner with no log, a capability-gap detector
 nothing read. After building a mechanism, find its producer and its consumer and
 name them. If either is missing, that is the next task, not a later one.
+
+Its corollary, learned on 2026-09-23: **a single call site that carries a whole
+scheme needs a test naming it.** `memory.advice_for` is the only thing that marks
+a lesson as used, and `engine.accept` the only thing that credits a payoff.
+Delete either and the system still runs, still reports, and quietly deletes the
+lessons that were working. A comment saying the call matters does not survive a
+refactor; `test_both_settling_call_sites_exist_in_the_engine` does.
 
 **If it can be decided, decide it in tested code.** Anything needing Windows, a
 screen, a microphone or the network goes behind a thin adapter with one function
@@ -103,4 +274,7 @@ split, because the adapter is the part that cannot be tested here. See
 
 Tests that need the real PC are marked `real_machine` and excluded from the
 default run: `pytest -m real_machine`. The ones needing a person are
-`python -m desktop.verify`.
+`python -m desktop.verify`. The mutation harness is
+`python tests/probes/inquiry_probes.py` — not collected by pytest, because it
+edits source files and runs pytest inside itself; it restores them in a `finally`
+and verifies the restoration by hash.

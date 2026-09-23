@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from app import capability_gaps as detector
 from app import model_calls
 from dba import agent as agent_module, main as dba_main, registry, store
-from gateway import dbaclient, gaps, identity, ledger
+from gateway import dbaclient, gaps, identity, inquiry, ledger
 
 TOKEN = "test-token-for-jarvis"
 
@@ -259,3 +259,254 @@ def test_every_state_in_the_specification_is_declared():
                 "remediating", "resolved", "unresolved"}
     assert required == set(gaps.STATES)
     assert required == set(gaps.TRANSITIONS)
+
+
+# =============================================================================
+# §12: `investigating` is a state that investigates
+# =============================================================================
+#
+# Before `gateway/inquiry.py` existed, a gap left `investigating` for
+# `confirmed` because somebody called `confirm`. These tests are about the only
+# thing that changed: the exit from that state now needs a concluded inquiry,
+# and an inquiry refuses to conclude when the shape of its reasoning is bad.
+#
+# Probed by `tests/probes/inquiry_probes.py` for the reasoning half; the wiring
+# half was probed by hand, by deleting `settle`'s refusal and each of its three
+# destinations in turn.
+
+
+def _investigated(client, asking):
+    """Fill an inquiry in so that it will conclude - two explanations, one of
+    them killed, the survivor looked at for the thing that would kill it."""
+    asking.hypothesise("no_gap", "the capability is there and was misused",
+                       refuted_by="a run that fails with the capability used "
+                                  "correctly")
+    asking.hypothesise("no_reader", "there is no PDF reader wired up at all",
+                       refuted_by="a PDF read end to end")
+    asking.observe("ran it correctly and it still failed", source="transcript",
+                   finding=inquiry.REFUTES, about="no_gap")
+    asking.observe("no pdf dependency in requirements", source="requirements.txt",
+                   finding=inquiry.SUPPORTS, about="no_reader")
+    asking.observe("searched for any pdf entry point; found none",
+                   source="grep", finding=inquiry.NOTHING, about="no_reader")
+    return asking
+
+
+def test_investigating_opens_an_inquiry_about_the_gap(client):
+    gap = _suspicion(client)
+    moved, asking = gaps.investigate(client, gap)
+    assert moved["status"] == gaps.INVESTIGATING
+    assert "read a PDF" in asking.question
+    assert asking.hypotheses == []
+    assert asking.conclusion is None
+
+
+def test_a_caller_may_ask_its_own_question(client):
+    _, asking = gaps.investigate(client, _suspicion(client),
+                                 question="  which library is missing?  ")
+    assert asking.question == "which library is missing?"
+
+
+def test_the_investigation_seeds_no_hypotheses_of_its_own(client):
+    """A framework that writes the first hypothesis has chosen the anchor, and
+    `inquiry.ANCHORED` could then never fire against a real explanation."""
+    _, asking = gaps.investigate(client, _suspicion(client))
+    assert asking.hypotheses == []
+    assert inquiry.ONE_HYPOTHESIS in asking.blocking()
+
+
+def test_a_gap_cannot_leave_investigating_without_a_concluded_inquiry(client):
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    with pytest.raises(ValueError, match="has not concluded"):
+        gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL)
+    assert client.get(gap["id"])["status"] == gaps.INVESTIGATING
+
+
+def test_a_confirmed_inquiry_confirms_the_gap_with_its_whole_record(client):
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader",
+                    reasoning="nothing in the tree reads PDFs")
+    settled = gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL,
+                          impact="Krish cannot read statements")
+
+    assert settled["status"] == gaps.CONFIRMED
+    gaps.ready_for_review(client, settled)
+    evidence = client.get(gap["id"])["evidence"]
+    # The losing explanation and the absence are both in what Krish will read.
+    assert "the capability is there and was misused" in evidence
+    assert "found_nothing" in evidence
+    assert "no_reader" in evidence
+
+
+def test_confirming_a_gap_from_an_inquiry_still_needs_a_remedy(client):
+    """§23. The mapping is total, but it does not get to pick the remedy."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader")
+    with pytest.raises(ValueError, match="which of"):
+        gaps.settle(client, gap, asking)
+    assert client.get(gap["id"])["status"] == gaps.INVESTIGATING
+
+
+def test_an_inquiry_that_found_nothing_leaves_the_gap_unsupported(client):
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    asking.hypothesise("no_gap", "the capability is there",
+                       refuted_by="a run that fails when used correctly")
+    asking.hypothesise("no_reader", "nothing reads PDFs",
+                       refuted_by="a PDF read end to end")
+    asking.observe("read three PDFs end to end", source="run",
+                   finding=inquiry.REFUTES, about="no_reader")
+    asking.conclude(outcome=inquiry.UNSUPPORTED, reasoning="it reads PDFs fine")
+    settled = gaps.settle(client, gap, asking)
+
+    assert settled["status"] == gaps.UNSUPPORTED
+    assert "unsupported" in client.get(gap["id"])["resolution"]
+    with pytest.raises(gaps.NotConfirmed):
+        gaps.ready_for_review(client, client.get(gap["id"]))
+
+
+def test_an_inconclusive_inquiry_defers_the_gap_rather_than_closing_it(client):
+    """Not answered, so not closed either - and `deferred` can go back to
+    `investigating`, which is the point of sending it there."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.INCONCLUSIVE,
+                    reasoning="the transcript is missing the relevant turn")
+    settled = gaps.settle(client, gap, asking)
+
+    assert settled["status"] == gaps.DEFERRED
+    assert "inconclusive" in client.get(gap["id"])["resolution"]
+    assert gaps.INVESTIGATING in gaps.TRANSITIONS[gaps.DEFERRED]
+
+
+def test_an_overridden_objection_is_the_first_thing_on_the_evidence(client):
+    """§13 takes a confirmed gap to Krish. That its reasoning was overridden is
+    the single most important thing on that page, so it is not left nested in a
+    dictionary under `conclusion`."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    asking.hypothesise("no_reader", "nothing reads PDFs", refuted_by="a PDF read")
+    asking.observe("no pdf dependency", source="requirements.txt",
+                   finding=inquiry.SUPPORTS, about="no_reader")
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader",
+                    accepting=[inquiry.ONE_HYPOTHESIS,
+                               inquiry.NO_REFUTATION_ATTEMPTED])
+    gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL)
+
+    evidence = client.get(gap["id"])["evidence"]
+    assert gaps.OVERRIDDEN_WARNING in evidence
+    assert evidence.index(gaps.OVERRIDDEN_WARNING) < evidence.index("hypotheses")
+    for name in (inquiry.ONE_HYPOTHESIS, inquiry.NO_REFUTATION_ATTEMPTED):
+        assert name in evidence
+
+
+def test_a_clean_investigation_carries_no_warning(client):
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader")
+    gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL)
+    assert gaps.OVERRIDDEN_WARNING not in client.get(gap["id"])["evidence"]
+
+
+def test_every_inquiry_outcome_has_exactly_one_destination(client):
+    """A mapping with a hole in it would default, and every default available
+    here is a lie about what was established."""
+    reached = {}
+    for outcome in inquiry.OUTCOMES:
+        gap, asking = gaps.investigate(client, _suspicion(
+            client, title=f"missing_tool: {outcome}"))
+        _investigated(client, asking)
+        asking.conclude(outcome=outcome,
+                        answer="no_reader" if outcome != inquiry.UNSUPPORTED
+                        else None)
+        settled = gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL)
+        reached[outcome] = settled["status"]
+
+    assert reached == {inquiry.CONFIRMED: gaps.CONFIRMED,
+                       inquiry.UNSUPPORTED: gaps.UNSUPPORTED,
+                       inquiry.INCONCLUSIVE: gaps.DEFERRED}
+    assert set(reached) == set(inquiry.OUTCOMES)
+
+
+def test_the_investigation_is_in_the_life_ledger(client):
+    gap = _suspicion(client)
+    gaps.investigate(client, gap)
+    moves = [row for row in ledger.events(client, limit=50)
+             if row["event_type"] == ledger.STATE_TRANSITION]
+    assert moves, "entering investigation left no trace in the ledger"
+    # The summary is stored as the record's `name`; see ledger.append.
+    assert any("read a PDF" in row["name"] for row in moves)
+    assert any(asked in row["observation"] for row in moves
+               for asked in ["real capability gap"])
+    assert ledger.replay(client)["intact"] is True
+
+
+def test_the_gaps_confidence_is_the_one_the_inquiry_derived(client):
+    """§28 declared `confidence` and nothing had ever written it.
+
+    The number is `Inquiry.confidence()`, which is computed from independent
+    sources, surviving a refutation and eliminated alternatives. Nothing can
+    set it, here or anywhere."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader")
+    gaps.settle(client, gap, asking, remedy=gaps.REMEDY_TOOL)
+
+    derived = asking.confidence("no_reader")
+    assert derived > 0
+    assert client.get(gap["id"])["confidence"] == derived
+
+
+def test_a_gap_confirmed_over_objections_carries_a_lower_confidence(client):
+    """The two records that reach Krish differ in the number as well as in the
+    warning, and neither of them was chosen by anybody."""
+    clean, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader")
+    gaps.settle(client, clean, asking, remedy=gaps.REMEDY_TOOL)
+
+    thin, forced = gaps.investigate(
+        client, _suspicion(client, title="missing_tool: forced"))
+    forced.hypothesise("no_reader", "nothing reads PDFs", refuted_by="a PDF read")
+    forced.observe("no pdf dependency", source="requirements.txt",
+                   finding=inquiry.SUPPORTS, about="no_reader")
+    forced.conclude(outcome=inquiry.CONFIRMED, answer="no_reader",
+                    accepting=[inquiry.ONE_HYPOTHESIS,
+                               inquiry.NO_REFUTATION_ATTEMPTED])
+    gaps.settle(client, thin, forced, remedy=gaps.REMEDY_TOOL)
+
+    assert (client.get(thin["id"])["confidence"]
+            < client.get(clean["id"])["confidence"])
+
+
+def test_an_unsupported_investigation_records_its_confidence_too(client):
+    """Not only the confirmations. A gap closed as unsupported on a weak look is
+    a gap that will be suspected again, and the number is how a reader tells."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    asking.hypothesise("no_gap", "the capability is there", refuted_by="a fail")
+    asking.hypothesise("no_reader", "nothing reads PDFs", refuted_by="a read")
+    asking.observe("read three PDFs end to end", source="run",
+                   finding=inquiry.REFUTES, about="no_reader")
+    asking.conclude(outcome=inquiry.UNSUPPORTED, reasoning="it reads PDFs fine")
+    gaps.settle(client, gap, asking)
+    assert client.get(gap["id"])["confidence"] == asking.confidence(None)
+
+
+def test_a_settle_that_is_refused_writes_nothing_at_all(client):
+    """Every check before every write. A caller who forgot the remedy used to
+    leave a derived confidence on a gap that never moved."""
+    gap, asking = gaps.investigate(client, _suspicion(client))
+    _investigated(client, asking)
+    asking.conclude(outcome=inquiry.CONFIRMED, answer="no_reader")
+    before = client.get(gap["id"])
+
+    with pytest.raises(ValueError):
+        gaps.settle(client, gap, asking)
+    with pytest.raises(ValueError, match="is not one of"):
+        gaps.settle(client, gap, asking, remedy="rewrite everything")
+
+    after = client.get(gap["id"])
+    assert after["status"] == gaps.INVESTIGATING
+    assert after.get("confidence") == before.get("confidence")
+    assert after["evidence"] == before["evidence"]

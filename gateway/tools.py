@@ -57,7 +57,7 @@ from app import boundaries, initiative
 from app import learning as learning_package  # noqa: F401 - package docstring is the contract
 from backend.db import Database
 from gateway import devchannel, interface, machine, remote, roles
-from gateway import dbaclient, failures, persistence, selfmod
+from gateway import dbaclient, failures, identity, persistence, readback, selfmod
 from gateway import jarvis, repositories, scoreboard, technology
 
 logger = logging.getLogger("gateway.tools")
@@ -1309,6 +1309,85 @@ def _risk_for(name: str, arguments: dict) -> initiative.Action:
     return action, (gate is not None and bool(arguments.get(gate)))
 
 
+# Which of a tool's arguments came from Krish verbatim rather than from the
+# model's own reading of what he wanted. EVERYTHING ELSE IS TREATED AS INFERRED,
+# which is the safe direction: the model chose those values, and a read-back that
+# calls Jarvis's own choice "you said" confirms nothing. A tool earns an entry
+# here only where the argument cannot be anything but a quotation.
+TOLD_ARGUMENTS: dict[str, tuple[str, ...]] = {
+    # The destination is the operator's word for it, and the whole point of the
+    # public/private split is that Krish chose the destination.
+    "publish_document": ("repository",),
+}
+
+# Arguments that are machinery rather than particulars: they say something about
+# the call and nothing about what will happen in the world, so reading them back
+# would bury the three lines that matter under six that do not.
+_NOT_A_PARTICULAR = frozenset({"confirm_public", "krish_accepted"})
+
+
+# The read-backs this process has offered and the answers not yet used. One per
+# process, like `gateway/devchannel.py`'s budget: a confirmation is session
+# state, and one that survived a restart would be a yes given to a Jarvis that no
+# longer exists.
+REGISTER = readback.Register()
+
+
+def confirm_pending(*, confirmed_by: str, action_name: str | None = None,
+                    accepting_unknowns: list[str] | None = None):
+    """Krish's answer to a read-back, from the session and never from the model.
+
+    This is the seam the conversation layer calls when he says yes. It is a
+    module-level function rather than a tool, deliberately: a tool is something
+    the model can call, and the whole point is that it cannot."""
+    return REGISTER.answer(confirmed_by=confirmed_by, agent=identity.AGENT_ID,
+                           action_name=action_name,
+                           accepting_unknowns=accepting_unknowns)
+
+
+def rate_work(domain: str, *, quality: str, confirmed_by: str) -> bool:
+    """Krish's verdict on a piece of work, from the session.
+
+    The counterpart of `confirm_pending`, and a module function for the same
+    reason: a tool is something the model can call, and an assistant that can
+    rate its own work has the one number that means nothing."""
+    return REGISTER.rate_work(domain, quality=quality, by=confirmed_by,
+                              agent=identity.AGENT_ID)
+
+
+def awaiting_a_verdict() -> list:
+    """What Krish has seen and not yet judged, so he can be asked about
+    something specific rather than in general."""
+    return REGISTER.awaiting_a_verdict()
+
+
+def particulars_for(name: str, arguments: dict) -> tuple:
+    """The details of this call that could be misunderstood, for the read-back.
+
+    Built from the arguments themselves rather than from a per-tool template, so
+    a new tool is covered the day it is added rather than the day somebody
+    remembers it."""
+    told = set(TOLD_ARGUMENTS.get(name, ()))
+    made = []
+    for label in sorted(arguments or {}):
+        if label in _NOT_A_PARTICULAR:
+            continue
+        value = arguments[label]
+        if value is None or value == "":
+            continue
+        rendered = value if isinstance(value, str) else _text(value)
+        made.append(readback.Particular(
+            label=label, value=rendered[:400],
+            source=readback.TOLD if label in told else readback.INFERRED))
+    return tuple(made)
+
+
+def understanding_for(name: str, arguments: dict) -> readback.Understanding:
+    action, _ = _risk_for(name, arguments or {})
+    return readback.Understanding(
+        action=action, particulars=particulars_for(name, arguments or {}))
+
+
 def initiative_verdict(name: str, arguments: dict) -> tuple:
     """`(verdict, confirmed)` for one tool call. Exposed for the tests and for
     the prompt paragraph, which is generated from exactly this."""
@@ -1911,7 +1990,7 @@ def permitted(role: str, name: str) -> bool:
 
 
 def execute(conn: Database, name: str, arguments: dict, *, role: str,
-            subject: str | None = None) -> dict:
+            subject: str | None = None, confirmed_by: str | None = None) -> dict:
     """Runs one tool call. Returns `{"error": ...}` rather than raising, for every
     failure the model could plausibly cause.
 
@@ -1957,21 +2036,64 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
     if verdict.disposition == initiative.REFUSE:
         return {"error": f"Refused: {verdict.reason}", "refused_by": "initiative"}
 
-    if verdict.disposition == initiative.PROPOSE and not confirmed:
-        # NOT an error, deliberately. An error invites the model to try again
-        # with different arguments, which for an irreversible action is the
-        # worst possible response to being stopped. A proposal is something it
-        # relays to Krish, and the answer comes back as him saying so - which
-        # for publish_document is exactly what sets confirm_public.
-        return {
-            "needs_confirmation": {
-                "action": name,
-                "what_it_would_do": verdict.action.summary or name,
-                "why_it_needs_confirming": verdict.reason,
-                "reversibility": verdict.action.reversibility,
-                "reach": verdict.action.reach,
+    if verdict.disposition == initiative.PROPOSE:
+        # Krish, 2026-09-23: Jarvis reiterates his understanding, the user
+        # confirms, and only then does he act.
+        #
+        # `confirmed_by` comes from the session, never from an argument the
+        # model supplied - the same property `subject` has above, and for a
+        # sharper reason. Before this, `confirm_public` was a boolean the model
+        # set after relaying a proposal, so the thing being asked was answering
+        # on behalf of the person being asked. A tool argument cannot carry a
+        # person's consent, because the model writes the arguments.
+        understanding = understanding_for(name, arguments)
+        scope = {item.label: item.value for item in understanding.particulars}
+
+        # An answer Krish already gave, to this exact call. Looked up by what the
+        # call IS - there is no token for the model to carry back, so a call
+        # whose arguments drifted between the proposal and the attempt finds
+        # nothing and is proposed again.
+        held = REGISTER.mandate_for(verdict.action, scope)
+        if held is not None:
+            REGISTER.spend(held)
+        else:
+            answered = (confirmed_by or "").strip()
+            if answered and answered.lower() != identity.AGENT_ID.lower():
+                try:
+                    held = readback.confirm(understanding, confirmed_by=answered,
+                                            agent=identity.AGENT_ID)
+                    readback.proceed(held, verdict.action, scope)
+                except (readback.NotConfirmed, readback.NotStated,
+                        readback.OutOfScope) as refused:
+                    return {"error": f"Refused: {refused}",
+                            "refused_by": "readback"}
+
+        if held is None:
+            # NOT an error, deliberately. An error invites the model to try
+            # again with different arguments, which for an irreversible action
+            # is the worst possible response to being stopped. A proposal is
+            # something it relays to Krish, and the answer comes back through
+            # the session as him saying so.
+            return {
+                "needs_confirmation": {
+                    "action": name,
+                    "what_it_would_do": verdict.action.summary or name,
+                    "why_it_needs_confirming": verdict.reason,
+                    "reversibility": verdict.action.reversibility,
+                    "reach": verdict.action.reach,
+                    # The part that catches a misunderstanding: what Jarvis
+                    # believes each particular is, and which of them are his own
+                    # reading rather than Krish's words.
+                    "read_back": REGISTER.offer(understanding).spoken(),
+                }
             }
-        }
+        # There is deliberately no second check on the tool's own
+        # `confirmation_argument` here. It looked like belt and braces and it was
+        # unreachable: for `publish_document` the flag is what MAKES the call
+        # public and irreversible, so a call without it is never `propose` in the
+        # first place, and `register_learned_skill` without its flag is refused
+        # rather than proposed. A branch no call can reach is a claim about the
+        # code that nothing holds to.
 
     try:
         if name == "machine_status":

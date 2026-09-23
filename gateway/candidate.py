@@ -45,7 +45,7 @@ Three rules, and the third is §16:
 
 ## This module is itself out of reach
 
-It is listed in `introspect.GOVERNANCE`. A sandbox Jarvis could rewrite is a
+It needs `introspect.KEY_CIRCULAR`. A sandbox Jarvis could rewrite is a
 sandbox that reports whatever he needs it to report, and the approval gate then
 turns on a verdict he produced.
 """
@@ -60,7 +60,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gateway import introspect
+from gateway import identity, introspect
 
 logger = logging.getLogger("gateway.candidate")
 
@@ -85,8 +85,14 @@ class WorkspaceUnavailable(RuntimeError):
 
 
 def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """Run git, as Jarvis.
+
+    `identity.git_identity()` goes on every invocation rather than only on the
+    one that commits, because the next thing here that writes history should not
+    have to remember."""
     return subprocess.run(
-        ["git", "-C", str(cwd or introspect.PROJECT_ROOT), *args],
+        ["git", *identity.git_identity(),
+         "-C", str(cwd or introspect.PROJECT_ROOT), *args],
         capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS, check=False)
 
 
@@ -306,7 +312,7 @@ def describe() -> dict:
     return {
         "isolation": "git worktree",
         "may_write": list(introspect.MODIFIABLE_ROOTS) + ["tests/ (new files only)"],
-        "never_writes": list(introspect.GOVERNANCE),
+        "needs_a_separate_key": list(introspect.CIRCULAR),
         "test_timeout_seconds": TEST_TIMEOUT_SECONDS,
         "max_file_bytes": MAX_FILE_BYTES,
         "why_not_the_learning_sandbox":

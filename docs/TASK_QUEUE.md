@@ -3630,10 +3630,54 @@ sentence authorising a merge to master is itself transcribed by a third party.
 
 ---
 
+### TQ-127 — Bring-up: whether any of it runs on the machine it is for
+
+**NEED (GREEN) · PART BUILT 2026-09-23 · owner instruction 2026-09-23: *"Now make
+it run on my PC"***
+
+Everything built on 2026-09-23 was tested in a Linux container and none of it had
+started on Krish's Windows PC. The Windows runner found two failures that no
+local run could show, and both were in merged code.
+
+**Built:** `python -m desktop.bringup` — every precondition in dependency order,
+worst first, each red carrying the line that fixes it. A check whose dependency
+failed is reported as blocked and never as green. `app/keystore.py` answers where
+the charter key lives (Windows DPAPI, with a mandatory escrow copy), and
+`app/dpapi.py` is the adapter. Nine more `real_machine` tests cover the
+subsystems that had none. Documented in `docs/JARVIS_PERSISTENCE.md` §3c-octies
+and §3c-quater.
+
+**Left, and none of it can be done from here:**
+
+1. **Nobody has run it.** The whole thing is inference until the command is typed
+   on the PC. The first run is expected to be red in several places, which is
+   what it is for.
+2. **The key has never been made**, so the constitution is not installed there
+   and nothing Jarvis does on that machine is governed by it yet.
+3. **The supervisor does not know about the new subsystems.** It starts the DBA
+   and the Gateway; nothing checks bring-up on a schedule, so a subsystem that
+   stops would be noticed by a person or not at all.
+4. **`gateway/console.py` needs `DBA_TOKEN_OPERATOR_CONSOLE` in Krish's own
+   shell**, not in the one Jarvis runs in. Until then no guess can be settled and
+   the trust ladder cannot move at all.
+
+---
+
 ### TQ-119 — The interactive task: ask while working, and stop rather than guess
 
-**NEED (GREEN) · QUEUED · owner directive 2026-09-23, quoted in full below · DBA specification §45 ·
-Persistence specification §9, §11**
+**NEED (GREEN) · PART BUILT 2026-09-23 · owner directive 2026-09-23, quoted in full below · DBA
+specification §45 · Persistence specification §9, §11**
+
+**What is built:** `gateway/taskrun.py` — requirements 2, 3 and 4. The model carries headings and
+never values, a need is filled from a named source or not at all, only the person a question was put
+to may answer it, a blocked line parks its question while the rest of the work carries on, and
+`finish` refuses while any line is neither filled nor asked about. Documented in
+`docs/JARVIS_PERSISTENCE.md` §3c-septies, probed by `tests/probes/taskrun_probes.py`.
+
+**What is left:** requirement 1 — a run does not survive a restart. It is a decision module with no
+store, so persisting one is a matter of writing `Run` through `persistence.TASK` and reading it back.
+And it has no producer or consumer yet: nothing reads the business account, and nothing puts the open
+questions in front of Krish. The console already does the second for `noticing`.
 
 The owner's own example, which is the clearest statement of what Jarvis is for that this queue holds:
 
@@ -3783,3 +3827,86 @@ between the owner and this, and none of them was in Python:
    deliberately on a spare machine, hand somebody only the bundle, and see whether they can name the
    cause. A bundle nobody has ever diagnosed from is a bundle that is probably missing the one field
    that matters.
+
+---
+
+## TQ-124 · Persist an investigation in flight
+
+**NEED (YELLOW) · raised by the work that built `gateway/inquiry.py`, 2026-09-23**
+
+`gaps.investigate` hands back an `Inquiry` that lives only in memory. If the runtime dies between
+`investigate` and `settle`, the gap sits in `investigating` with its reasoning gone, and the only way
+out is a hand transition to `deferred` — which loses every observation that had been made.
+
+What it needs:
+
+1. `inquiry.restore(bundle)` rebuilding an `Inquiry` from `Inquiry.evidence()`, round-trip tested
+   including eliminated hypotheses, withdrawn conclusions and the `superseded` trail.
+2. Somewhere on the gap to keep an in-flight bundle. `evidence` is append-only and already holds
+   several `---`-joined blobs, so parsing the last one back out is the wrong shape; this probably
+   wants a field on `capability_gap` in `dba/entities.py`.
+3. `gaps.resume(client, gap)` for a gap found in `investigating` on startup, and a line in
+   `rehydrate` that looks for them — a gap stuck in `investigating` is exactly the kind of thing §34
+   says Jarvis must be able to *say*, rather than quietly leave.
+
+Deliberately not built with the rest: nothing writes a partial bundle yet, and `restore` without a
+producer would be machinery with no user.
+
+---
+
+## TQ-125 · Nothing calls the investigation yet
+
+**NEED (ORANGE) · raised by the same work, 2026-09-23**
+
+`gaps.investigate` and `gaps.settle` exist and are tested, and the log sweep promotes noise to
+`suspected`. Nothing walks a suspected gap through an investigation on its own — the observations
+have to be made by something that can run a held-out test, read the source, or count repeated
+failures, and §12 names all three.
+
+The producers that already exist and could feed it:
+
+- `gateway/logscan.py` — a recurring signature is a repeated failure, which is one of §12's methods.
+- `app/learning/practice.py` — a held-out case that fails is the strongest single observation
+  available, and `learn_from_episode` already classifies why.
+- `gateway/introspect.py` — code inspection, read-only, already allowed under §14.
+
+Until one of them is wired to `observe()`, `investigating` is a state something *can* investigate
+rather than one something *does*. That is a real improvement on where it was, and it is not the
+finished thing.
+
+---
+
+## TQ-126 · Park the question, take the next independent unit
+
+**NEED (ORANGE) · owner forwarded an external plan for consideration, 2026-09-23**
+
+The owner passed on a suggested work plan from another assistant, asking only that anything useful in it
+be taken and taught to Jarvis. Most of it is scaffolding for a session, not a capability. One line is a
+real capability Jarvis does not have:
+
+> *"Record unresolved owner decisions and move to the next independent work unit."*
+
+Today a blocked unit of work has two outcomes, and both are bad: stall until the owner answers, or guess.
+There is no third path, because nothing models **which units depend on the blocked one**. `gateway/failures.py`
+has `NEEDS_ANSWER` and `dbaclient` raises `NeedsAnswer`, so the *state* exists; what is missing is the
+register of parked questions and the dependency graph that says what is still workable without them.
+
+What it needs:
+
+1. **A parked-question register** — the question, what it blocks, what was assumed in the meantime if
+   anything, and when it was asked. A `commitment`-shaped record, because a question owed an answer is
+   the mirror image of a promise owed delivery and §4.1 already argues why that deserves its own record.
+2. **Declared dependencies between units of work**, so "independent" is computed rather than guessed.
+   Without this, moving on is how two half-finished things get built on the same unanswered question.
+3. **A rule about which questions may be parked at all.** Not all of them: a question whose wrong
+   assumption is unsafe or would make the work useless if wrong must block. That is the same distinction
+   `app/initiative.py` already makes (HARM → IRREVERSIBILITY → boldness), so it should reuse it rather
+   than inventing a second judgement.
+4. **Re-asking on the next contact**, because a parked question that is never raised again is a decision
+   taken by silence.
+
+**One part is deliberately not adopted.** The same plan says *"continue without asking me routine
+questions"*, and that is the opposite of this repository's prime directive — *"ask more questions"*, and
+then ask whether the question was a good one. The owner's own directive wins. What is worth taking is
+*don't stall while waiting*; what is not worth taking is *ask less*. Parking a question and moving on is
+only legitimate if the question is still asked.

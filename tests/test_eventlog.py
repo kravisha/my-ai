@@ -58,7 +58,7 @@ def test_a_write_on_a_new_day_rotates_yesterday_into_its_own_file(tmp_path):
 
     assert (tmp_path / "events-2026-09-21.jsonl").exists()
     assert path.exists()
-    assert len(path.read_text().strip().splitlines()) == 1
+    assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 1
 
 
 def test_a_rotation_target_that_already_exists_is_not_overwritten(tmp_path):
@@ -83,9 +83,9 @@ def test_a_rotation_target_that_already_exists_is_not_overwritten(tmp_path):
 
     assert jsonlog.append(path, _entry("2026-09-22T10:00:00+00:00"),
                           retention_days=30) is True
-    assert "winner" in (tmp_path / "events-2026-09-21.jsonl").read_text()
+    assert "winner" in (tmp_path / "events-2026-09-21.jsonl").read_text(encoding="utf-8")
     # and the line that would have been lost is in the live file
-    assert len(path.read_text().strip().splitlines()) == 2
+    assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 2
 
 
 def test_rotated_files_older_than_the_retention_are_removed(tmp_path):
@@ -125,11 +125,11 @@ def test_reading_skips_a_corrupt_line_rather_than_stopping_at_it(tmp_path):
 def test_reading_walks_the_rotated_files_oldest_first(tmp_path):
     path = tmp_path / "events.jsonl"
     (tmp_path / "events-2026-09-20.jsonl").write_text(
-        json.dumps(_entry("2026-09-20T10:00:00+00:00", message="older")) + "\n")
+        json.dumps(_entry("2026-09-20T10:00:00+00:00", message="older")) + "\n", encoding="utf-8")
     (tmp_path / "events-2026-09-21.jsonl").write_text(
-        json.dumps(_entry("2026-09-21T10:00:00+00:00", message="middle")) + "\n")
+        json.dumps(_entry("2026-09-21T10:00:00+00:00", message="middle")) + "\n", encoding="utf-8")
     path.write_text(
-        json.dumps(_entry("2026-09-22T10:00:00+00:00", message="live")) + "\n")
+        json.dumps(_entry("2026-09-22T10:00:00+00:00", message="live")) + "\n", encoding="utf-8")
 
     assert [row["message"] for row in jsonlog.read(path)] == [
         "older", "middle", "live"]

@@ -460,6 +460,74 @@ def test_discarding_a_candidate_leaves_no_branch_behind(workspace):
     assert not _branch_exists("jarvis/test-discard-me")
 
 
+@pytest.fixture
+def no_git_identity(monkeypatch, tmp_path):
+    """A machine where nobody has run `git config user.name`.
+
+    This is not a hypothetical: it is a GitHub runner, and it is a fresh Windows
+    account. `git commit` does not fall back to anything there - it fails with
+    "Author identity unknown" - so every test below that commits passed only
+    because the developer's own machine happened to be configured."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "nothing-here"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for leftover in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                     "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(leftover, raising=False)
+    return tmp_path
+
+
+def _author(path):
+    import subprocess
+    shown = subprocess.run(
+        ["git", "-C", str(path), "log", "-1", "--format=%an <%ae>"],
+        capture_output=True, text=True, check=False)
+    return shown.stdout.strip()
+
+
+def test_a_candidate_commits_on_a_machine_with_no_git_identity(
+        workspace, no_git_identity):
+    """The failure this reproduces was red on CI for a day while every local run
+    was green, because the thing it depended on was the developer's git config
+    rather than anything in the repository."""
+    space = workspace(["gateway/tools.py"], branch="jarvis/test-no-identity")
+    space.write("gateway/tools.py", "# candidate\n")
+    assert space.commit("candidate")
+
+
+def test_a_candidate_commit_says_jarvis_made_it(workspace):
+    """Amendment 3's first item, reached by doing nothing in particular:
+    inheriting the machine's identity puts a change Krish has never seen into
+    the history under his name."""
+    space = workspace(["gateway/tools.py"], branch="jarvis/test-authorship")
+    space.write("gateway/tools.py", "# candidate\n")
+    space.commit("candidate")
+    assert _author(space.path) == "jarvis <jarvis@localhost>"
+
+
+def test_the_git_identity_is_passed_per_invocation_not_written_to_config():
+    """A repository whose config Jarvis edits is one he can later commit through
+    as somebody else. The flags go on the command instead."""
+    flags = identity.git_identity()
+    assert flags == ("-c", "user.name=jarvis",
+                     "-c", "user.email=jarvis@localhost")
+    assert "config" not in flags
+
+
+def test_a_candidate_does_not_change_the_machines_git_configuration(
+        workspace, no_git_identity):
+    """Setting the identity by writing it somewhere would work and would be
+    wrong: it would follow every other program on the machine that runs git."""
+    import subprocess
+
+    space = workspace(["gateway/tools.py"], branch="jarvis/test-no-spill")
+    space.write("gateway/tools.py", "# candidate\n")
+    space.commit("candidate")
+    asked = subprocess.run(["git", "config", "--global", "--get", "user.name"],
+                           capture_output=True, text=True, check=False)
+    assert asked.stdout.strip() == ""
+
+
 def test_a_successful_candidate_keeps_its_branch(workspace):
     """The commit is going to be deployed from it; only the working copy has
     done its job."""

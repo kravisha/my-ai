@@ -378,3 +378,179 @@ def test_the_log_has_no_unexplained_noise_in_it():
             f"Each one is either a defect to fix or an entry to add to "
             f"config/log_noise_baseline.yaml with a reason. Signatures: "
             f"{[item.signature for item in noise]}")
+
+
+# =============================================================================
+# The half built on 2026-09-23, which has never started on this machine
+# =============================================================================
+#
+# Seven subsystems were written and merged in one day against a Linux container.
+# Two of them broke the first time Windows saw them, in ways no local run could
+# show. Everything below asks the only question that settles it: is this thing
+# actually working *here*.
+#
+# Each failure says what it means and what to do, because whoever runs these is
+# alone with the output - possibly on a phone, possibly on holiday.
+
+
+def _charter_key() -> bytes:
+    """The key, or a sentence saying why not.
+
+    Every test below needs it, and `FileNotFoundError` on a path is not a
+    finding - it is a stack trace standing where an instruction should be."""
+    from app import dpapi, keystore
+    from desktop import machine
+
+    where = keystore.key_path(machine.state_directory())
+    if not where.exists():
+        pytest.fail(f"no charter key at {where}. "
+                    f"python -m desktop.bringup --make-key")
+    try:
+        return dpapi.unprotect(where.read_bytes())
+    except Exception as refused:  # noqa: BLE001
+        pytest.fail(f"the charter key is there and this Windows account "
+                    f"cannot open it ({refused}). "
+                    f"python -m desktop.bringup --restore-key")
+
+
+def test_the_bring_up_report_is_not_red():
+    """The whole of `desktop/readiness.py`, run for real. If this is red the
+    rest of this section will be too, and this one says which thing to fix."""
+    from desktop import machine, readiness
+
+    report = readiness.look(machine.read())
+    assert report.status != readiness.RED, (
+        "bring-up reports RED:\n  "
+        + "\n  ".join(readiness.summary(report)))
+
+
+def test_the_charter_key_is_where_it_should_be_and_has_a_backup():
+    """DPAPI ties the key to this Windows account. Without an escrow copy, a
+    reinstall makes every amendment unreadable for ever, by anybody."""
+    from app import keystore
+    from desktop import machine
+
+    said = machine.read_keystore()
+    assert said.state != keystore.UNREADABLE, (
+        f"{said.because}. {said.next_step}")
+    assert said.state != keystore.ABSENT, (
+        f"{said.because}. {said.next_step}")
+    assert said.state == keystore.READY, (
+        f"{said.because}. {said.next_step}")
+
+
+def test_the_constitution_is_installed_and_opens_with_that_key():
+    """A sealed constitution nobody can open is not a constitution, and the only
+    way to know is to open it."""
+    from gateway import constitution
+
+    assert constitution.installed(), (
+        "no sealed constitution on this machine, so nothing Jarvis does is "
+        "governed by the document he was given. "
+        "python -m desktop.bringup --install-constitution")
+    key = _charter_key()
+    text = constitution.read(key=key)
+    assert text.strip(), "the constitution opened and was empty"
+
+
+def test_no_amendment_has_been_altered_or_removed():
+    """The one in this file that should never fail. If it does, keep everything
+    and read the report before touching anything."""
+    from gateway import constitution, dbaclient
+
+    key = _charter_key()
+    try:
+        found = constitution.verify(dbaclient.DBAClient(), key=key)
+    except Exception as unreachable:  # noqa: BLE001
+        pytest.fail(f"could not check the amendments: {unreachable}")
+    assert found.get("intact"), f"the amendment chain does not verify: {found}"
+
+
+def test_the_trust_record_survives_a_restart():
+    """`gateway/trustbook.py` keeps the ladder in the DBA precisely so that it
+    is not lost with the conversation. Nothing proves that but reading it back
+    from a process that did not write it."""
+    from gateway import dbaclient, trustbook
+
+    try:
+        guesses, problems = trustbook.load(dbaclient.DBAClient())
+    except Exception as unreachable:  # noqa: BLE001
+        pytest.fail(f"could not read the trust record: {unreachable}")
+    assert not problems, (
+        "the trust record reports problems, which means a verdict names a "
+        f"guess that is not there: {problems}")
+    assert isinstance(guesses, list)
+
+
+def test_krishs_console_can_authenticate_as_itself():
+    """It refuses to run on Jarvis's token on purpose - a verdict written in the
+    name of the agent being judged is not a verdict."""
+    from gateway import console
+
+    try:
+        client = console.operator_client()
+    except console.NoToken as refused:
+        pytest.fail(f"{refused}")
+    assert client.requested_by.lower() == "operator_console", (
+        f"the console authenticated as {client.requested_by!r}, not as the "
+        f"operator. Jarvis must not be able to settle his own guesses.")
+
+
+def test_the_upkeep_loop_is_actually_sweeping():
+    """The noticing and the memory collection both hang off it. A thread that
+    died takes both with it and says nothing - which is the failure
+    `app/crashlog.py` exists for, seen from the other side.
+
+    Read from the DBA rather than from a file: the sweep records when it last
+    ran through `persistence`, and the first version of this test asserted
+    against a directory nothing has ever written to. That would have failed on
+    Krish's machine for ever, about nothing."""
+    from datetime import datetime, timezone
+
+    from gateway import dbaclient, persistence, upkeep
+
+    try:
+        client = dbaclient.DBAClient()
+        stamp = persistence.get(client, persistence.SELF_ASSESSMENT,
+                                upkeep._LAST_NOTICING)
+    except Exception as unreachable:  # noqa: BLE001
+        pytest.fail(f"could not read the upkeep record: {unreachable}")
+
+    assert stamp, (
+        "the upkeep loop has never recorded a noticing sweep on this machine, "
+        "so nothing is noticing anything. Either he has not been up for four "
+        "hours yet, or the thread raised and died - check the log.")
+    when = datetime.fromisoformat(str(stamp))
+    when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    hours = (datetime.now(timezone.utc) - when).total_seconds() / 3600.0
+    assert hours < 24.0, (
+        f"the last noticing sweep was {hours:.0f} hours old, against a cadence "
+        f"of {upkeep.NOTICE_EVERY_HOURS} hours. Check the log for a thread "
+        f"that raised and died.")
+
+
+def test_dates_render_on_this_machine():
+    """`%-d` is a glibc extension and Windows raises on it. It took out every
+    noticing there is, and it looked fine everywhere it was written."""
+    from datetime import datetime, timezone
+
+    from gateway import noticing
+
+    said = noticing._day(datetime(2026, 10, 3, tzinfo=timezone.utc))
+    assert said == "3 October", f"dates render as {said!r} on this machine"
+
+
+def test_the_sealed_documents_read_back_as_utf8_here():
+    """cp1252 is the locale on this machine. A file written as UTF-8 and read
+    without saying so comes back mangled, and the amendment headings are where
+    that showed."""
+    amendments = PROJECT_ROOT / "AI-CONSTITUTION-AMENDMENTS.md"
+    if not amendments.exists():
+        pytest.skip("no amendments file in this checkout")
+    text = amendments.read_text(encoding="utf-8")
+    assert "�" not in text, "the amendments file has replacement characters in it"
+    headings = [line for line in text.splitlines()
+                if line.startswith("## Amendment ")]
+    assert headings, "no amendment headings found at all"
+    for line in headings:
+        assert "�" not in line, f"this heading came back mangled: {line}"

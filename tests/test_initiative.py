@@ -280,15 +280,22 @@ def test_a_public_publish_without_the_confirmation_stops_at_the_gate(gateway_con
     """`needs_confirmation`, not `error`. An error invites the model to retry
     with different arguments, which for an irreversible action is the worst
     available response to being stopped."""
-    result = tools.execute(gateway_conn, "publish_document",
-                           {"path": "docs/x.md", "content": "hello",
-                            "confirm_public": True},
-                           role=roles.ROLE_OPERATOR)
-    # The gate is satisfied by confirm_public itself, so this one proceeds -
-    # what matters is that it was classified public and irreversible on the way.
-    verdict, confirmed = tools.initiative_verdict(
-        "publish_document", {"confirm_public": True})
+    arguments = {"path": "docs/x.md", "content": "hello", "confirm_public": True}
+    verdict, confirmed = tools.initiative_verdict("publish_document", arguments)
     assert (verdict.disposition, confirmed) == (PROPOSE, True)
+
+    # `confirm_public` alone no longer gets past the gate. Krish, 2026-09-23:
+    # the user decides what help he needs, and a boolean the model sets after
+    # relaying a proposal is the thing being asked answering for the person
+    # being asked. A tool argument cannot carry a person's consent.
+    stopped = tools.execute(gateway_conn, "publish_document", arguments,
+                            role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" in stopped
+    assert stopped["needs_confirmation"]["read_back"]
+
+    # With a human answer from the session it proceeds.
+    result = tools.execute(gateway_conn, "publish_document", arguments,
+                           role=roles.ROLE_OPERATOR, confirmed_by="krish")
     assert "needs_confirmation" not in result
 
 

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from app import capability_gaps as detector
 from app import initiative, model_calls
+from app.learning import retention, store as learning_store
 from dba import agent as agent_module, main as dba_main, registry, store
 from gateway import (checkpoint as checkpoint_module, conversation, dbaclient,
                      gaps, identity, ledger, persistence, recording, rehydrate,
@@ -433,3 +434,171 @@ def test_a_turn_is_remembered_across_a_restart(client):
     assert ledger.USER_CORRECTION in kinds
     assert ledger.DECISION in kinds
     assert ledger.replay(client)["intact"] is True
+
+
+# =============================================================================
+# Collecting deadweight memory
+# =============================================================================
+#
+# Krish, 2026-09-23: *"all deadweight unreferenced information should be
+# eventually garbage collected as well"*. `app/learning/retention.py` decides and
+# `app/learning/memory.collect_garbage` acts, and this is the only thing in the
+# system that ever calls it. A sweep nothing calls is this repository's
+# commonest failure, so it gets a test rather than a comment.
+
+
+def _deadweight(monkeypatch, tmp_path):
+    """Four lessons of one kind, offered together often, three always preferred.
+
+    The fourth is ranked below the cut every single time, which is what makes it
+    deadweight rather than a fact nothing ever asked about."""
+    monkeypatch.setenv(learning_store.PATH_ENV, str(tmp_path / "learning.db"))
+    from app.learning import memory
+    doomed = learning_store.record_lesson(kind=memory.SOURCE_VALUE,
+                                          pattern="never_chosen", lesson="x",
+                                          cost=12.0)
+    for index in range(3):
+        learning_store.record_lesson(kind=memory.SOURCE_VALUE,
+                                     pattern=f"better-{index}", lesson="y",
+                                     cost=1.0)
+    for _ in range(retention.MIN_OFFERS_TO_JUDGE + 2):
+        memory.advice_for(None)
+    # Age it past a full cycle, which is the other half of the licence to collect.
+    with learning_store.connect() as db:
+        db.execute("UPDATE lessons SET at = '2019-01-01T00:00:00+00:00'")
+    return doomed
+
+
+def test_the_maintenance_loop_collects_deadweight_memory(client, monkeypatch,
+                                                         tmp_path):
+    doomed = _deadweight(monkeypatch, tmp_path)
+    assert upkeep.collection_due(client) is True
+
+    result = upkeep.run_once(client)
+    assert result["collection"] is not None
+    assert "never_chosen" in result["collection"]["discarded"]
+    assert doomed not in [row["id"] for row in learning_store.lessons()]
+
+
+def test_collecting_is_not_repeated_every_sweep(client, monkeypatch, tmp_path):
+    """Every rule in `retention` is measured in months. A sweep four times a day
+    would read every lesson three hundred times a week to reach the same
+    answer."""
+    _deadweight(monkeypatch, tmp_path)
+    upkeep.run_once(client)
+    assert upkeep.collection_due(client) is False
+    assert upkeep.run_once(client)["collection"] is None
+
+
+def test_the_sweep_can_report_without_deleting(client, monkeypatch, tmp_path):
+    doomed = _deadweight(monkeypatch, tmp_path)
+    monkeypatch.setenv(upkeep.COLLECTION_DRY_RUN_ENV, "1")
+
+    result = upkeep.run_once(client)
+    assert result["collection"]["dry_run"] is True
+    assert result["collection"]["discarded"] == ["never_chosen"]
+    assert doomed in [row["id"] for row in learning_store.lessons()]
+
+
+def test_a_broken_learning_store_does_not_stop_the_rest_of_the_sweep(
+        client, monkeypatch, tmp_path):
+    """The loop never raises. A maintenance job that ends on an exception is one
+    that stops running and tells nobody."""
+    from app.learning import memory
+    monkeypatch.setattr(memory, "collect_garbage",
+                        lambda **kwargs: (_ for _ in ()).throw(OSError("disk")))
+    result = upkeep.run_once(client)
+    assert any("memory collection" in problem for problem in result["problems"])
+    assert result["checkpoint"] is not None
+
+
+def test_the_maintenance_cadences_are_what_they_are():
+    """Asserted as literals, with the reason each one has its value.
+
+    A test written in terms of a constant cannot detect a wrong constant, which
+    `tests/probes/` found the hard way: setting the collection interval from a
+    week to six hours broke nothing, because every test asked "is it due?" twice
+    in the same second. These four numbers are policy about how often Jarvis
+    disturbs his own record, and changing one should mean changing this test."""
+    # How much of a day's work may have no validated recovery point.
+    assert upkeep.CHECKPOINT_EVERY_HOURS == 6
+    # A fault recurring right now is the thing most worth noticing early, and the
+    # scan reads a bounded window of one file.
+    assert upkeep.SCAN_LOGS_EVERY_HOURS == 6
+    # The detector's threshold is about recurrence; asking more often than the
+    # thing recurs produces no new information.
+    assert upkeep.PROMOTE_GAPS_EVERY_HOURS == 24
+    # Every rule in app/learning/retention.py is measured in months, and the
+    # answer cannot change faster than its thirty-day grace period.
+    assert upkeep.COLLECT_MEMORY_EVERY_HOURS == 24 * 7
+
+
+# =============================================================================
+# Noticing something before Krish asks
+# =============================================================================
+#
+# Krish, 2026-09-23: *"being preemptive in being helpful like humans holding the
+# door."* The trust ladder had nothing on it until the sweep started producing
+# guesses, and a ladder with nothing on it is the same failure as one nothing
+# can climb.
+
+
+def _a_promise(client, days=1, promise="send Krish the Q3 statement"):
+    from datetime import datetime, timedelta, timezone
+    due = datetime.now(timezone.utc) + timedelta(days=days)
+    return client.create("commitment", {
+        "name": promise[:200], "agent": "jarvis", "promise": promise,
+        "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "due_on": due.date().isoformat(), "status": "open"},
+        reason="test promise")
+
+
+def test_the_sweep_notices_a_promise_coming_due(client):
+    from gateway import trustbook
+
+    _a_promise(client)
+    assert upkeep.noticing_due(client) is True
+
+    result = upkeep.run_once(client)
+    assert result["noticed"] is not None
+
+    # Recorded as a guess whatever the rung allows saying.
+    made, problems = trustbook.load(client)
+    assert problems == []
+    assert [one.domain for one in made] == ["commitments"]
+    assert "due on" in made[0].because
+
+
+def test_a_new_domain_records_and_says_nothing(client):
+    """The bottom rung, doing what it says. Nothing has been earned yet, so the
+    noticing is written down and not spoken."""
+    _a_promise(client)
+    result = upkeep.run_once(client)
+    assert result["noticed"]["say"] == []
+    assert result["noticed"]["recorded_only"] == 1
+
+
+def test_noticing_is_not_repeated_every_sweep(client):
+    _a_promise(client)
+    upkeep.run_once(client)
+    assert upkeep.noticing_due(client) is False
+    assert upkeep.run_once(client)["noticed"] is None
+
+
+def test_a_broken_trust_record_does_not_stop_the_rest_of_the_sweep(
+        client, monkeypatch):
+    from gateway import trustbook
+
+    monkeypatch.setattr(trustbook, "load",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            ValueError("the record will not load")))
+    result = upkeep.run_once(client)
+    assert any("noticing" in problem for problem in result["problems"])
+    assert result["checkpoint"] is not None
+
+
+def test_the_noticing_cadence_is_what_it_is():
+    """Four hours: a promise due tomorrow is worth raising today and not worth
+    raising six times today."""
+    assert upkeep.NOTICE_EVERY_HOURS == 4
+    assert "notice_every_hours" in upkeep.describe()

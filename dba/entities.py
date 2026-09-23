@@ -451,6 +451,57 @@ CHANGE_PROPOSAL = register(EntityType(
     note="§18/§29. The record the approval gate turns on, and the record a "
          "relaunched runtime reads to learn what was done to it."))
 
+GUESS = register(EntityType(
+    name="guess",
+    # What Jarvis thought Krish would want, written down before the outcome was
+    # known. His to write: the prediction is the thing he is being judged on,
+    # and an assistant who cannot record a prediction cannot be judged at all.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "domain": TEXT,
+            "what": TEXT, "because": TEXT, "made_at": TIMESTAMP,
+            "by_when": TIMESTAMP,
+            # Whether the trust ladder allowed this to be said out loud, and
+            # when it was. A guess recorded but never said is the bottom rung
+            # working, not a guess that failed.
+            "to_say": BOOLEAN, "said_at": TIMESTAMP},
+    required=(NAME, "agent", "domain", "what", "because", "made_at"),
+    statuses=("open", "settled"),
+    classification=CONFIDENTIAL,
+    note="The anticipation record behind `gateway/anticipation.py`'s trust "
+         "ladder. Written before the outcome is known; recorded afterwards it "
+         "is hindsight, and hindsight scores perfectly."))
+
+GUESS_VERDICT = register(EntityType(
+    name="guess_verdict",
+    # How the guess turned out, and how the work was then done. NOT Jarvis's to
+    # write - `dba/permissions.OWNER_WRITTEN_TYPES` holds it, because this is
+    # the record that decides how much latitude he gets, and a mark an agent can
+    # award itself is not a mark.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "guess_id": TEXT,
+            "outcome": TEXT, "quality": TEXT, "settled_by": TEXT,
+            "settled_at": TIMESTAMP, "rated_by": TEXT, "rated_at": TIMESTAMP},
+    required=(NAME, "guess_id", "outcome", "settled_by", "settled_at"),
+    statuses=("recorded",),
+    classification=CONFIDENTIAL,
+    note="Krish's word on a guess, kept apart from the guess so that the agent "
+         "being judged cannot write the judgement."))
+
+CHARTER_GRANT = register(EntityType(
+    name="charter_grant",
+    # Krish's explicit permission to change something that is otherwise
+    # read-only: the constitution, or the machinery that decides what Jarvis may
+    # do. `dba/permissions.OWNER_WRITTEN_TYPES` makes every write here need
+    # `administer`, which only the operator console holds - so Jarvis can read
+    # his grants and cannot write one.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "key": TEXT,
+            "granted_by": TEXT, "granted_at": TIMESTAMP, "expires_at": TIMESTAMP,
+            "scope": TEXT, "note": TEXT, "interface": TEXT},
+    required=(NAME, "key", "granted_by", "granted_at", "expires_at"),
+    statuses=("active", "revoked"),
+    classification=CONFIDENTIAL,
+    note="§16. The owner's explicit permission, as a record rather than an "
+         "argument. `expires_at` is set at grant time and cannot be moved by "
+         "the agent it is for, because moving it is a write."))
+
 APPROVAL_DECISION = register(EntityType(
     name="approval_decision",
     fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "proposal_id": TEXT,

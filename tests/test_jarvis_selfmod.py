@@ -15,17 +15,21 @@ from fastapi.testclient import TestClient
 
 from app import initiative
 from dba import agent as agent_module, main as dba_main, registry, store
-from gateway import (checkpoint as checkpoint_module, dbaclient, failures,
+from datetime import datetime, timedelta, timezone
+
+from gateway import (charter, checkpoint as checkpoint_module, dbaclient, failures,
                      gaps, identity, introspect, ledger, persistence, rehydrate,
                      selfmod)
 
 TOKEN = "test-token-for-jarvis"
+OPERATOR_TOKEN = "test-token-for-the-operator-console"
 
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv(store.PATH_ENV, str(tmp_path / "dba.db"))
     monkeypatch.setenv(dba_main.token_env_var("JARVIS"), TOKEN)
+    monkeypatch.setenv(dba_main.token_env_var("operator_console"), OPERATOR_TOKEN)
     monkeypatch.setenv(dbaclient.TOKEN_ENV, TOKEN)
     monkeypatch.setenv(identity.VERSION_ENV, "c" * 40)
     monkeypatch.setenv(selfmod.DEPLOY_DIR_ENV, str(tmp_path / "deploy"))
@@ -37,18 +41,39 @@ def _isolated(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def client():
-    with TestClient(dba_main.app) as service:
-        def transport(method, path, payload):
-            response = service.request(
-                method, path, json=payload if method != "GET" else None,
-                headers={"X-DBA-Agent": "JARVIS", "X-DBA-Token": TOKEN})
-            try:
-                return response.status_code, response.json()
-            except ValueError:
-                return response.status_code, {}
+def service():
+    with TestClient(dba_main.app) as made:
+        yield made
 
-        yield dbaclient.DBAClient(transport=transport)
+
+def _as(service, agent: str, token: str) -> dbaclient.DBAClient:
+    def transport(method, path, payload):
+        response = service.request(
+            method, path, json=payload if method != "GET" else None,
+            headers={"X-DBA-Agent": agent, "X-DBA-Token": token})
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {}
+
+    return dbaclient.DBAClient(transport=transport, requested_by=agent,
+                               actor=agent.lower())
+
+
+@pytest.fixture()
+def client(service):
+    """Jarvis. Everything except `delete` and `administer`."""
+    return _as(service, "JARVIS", TOKEN)
+
+
+@pytest.fixture()
+def operator(service):
+    """Krish, through the operator console - the only holder of `administer`.
+
+    A separate DBA identity with its own token, not a flag on Jarvis's client.
+    That is the whole safeguard: the grant is written by a caller Jarvis cannot
+    impersonate, over HTTP, against a permission table in another service."""
+    return _as(service, "operator_console", OPERATOR_TOKEN)
 
 
 _GAP_COUNTER = iter(range(1, 10_000))
@@ -104,9 +129,9 @@ def _confirmed_gap(client, remedy=None):
                         remedy=remedy or gaps.REMEDY_CODE)
 
 
-def _proposal(client, files=("gateway/tools.py",), gap=None):
+def _proposal(client, files=("gateway/tools.py",), gap=None, **extra):
     return selfmod.propose(
-        client, gap=gap or _confirmed_gap(client),
+        client, gap=gap or _confirmed_gap(client), **extra,
         reason="Krish asked for PDF reading twice and got an apology",
         scope="add a pdf_text tool and declare it for the owner role",
         affected_files=list(files),
@@ -121,16 +146,111 @@ def _proposal(client, files=("gateway/tools.py",), gap=None):
 # =============================================================================
 
 
-def test_jarvis_cannot_widen_his_own_authority(client):
-    """TEST K. A proposal that would edit the approval mechanism is refused
-    before it is written, at every boldness setting."""
+def test_jarvis_cannot_widen_his_own_authority_by_proposing_it(client):
+    """TEST K, restated after Krish called the original *"too conservative"*.
+
+    The refusal is not "never". It is "not by this route": approving a change to
+    the machinery that does the approving proves nothing, because the thing
+    deciding is what the change alters. So the ordinary proposal path refuses,
+    and the refusal asks for a key rather than announcing a wall."""
     gap = _confirmed_gap(client)
     for path in ("app/initiative.py", "gateway/selfmod.py", "gateway/roles.py",
                  "tests/test_boundaries.py", "config/initiative.yaml"):
         with pytest.raises(introspect.NotModifiable) as raised:
             _proposal(client, files=[path], gap=gap)
-        assert "authority" in str(raised.value).lower()
+        assert introspect.KEY_CIRCULAR in str(raised.value)
+        assert "granted separately" in str(raised.value)
     assert client.count("change_proposal", {"agent": "jarvis"}) == 0
+
+
+def test_the_lifecycle_and_the_reasoning_are_his_to_improve(client):
+    """Both were put behind a hard never on 2026-09-23 and taken back out the
+    same day. Importance is not the test for the keyed tier - circularity is, and
+    locking a whole module to protect one precondition check is the instinct the
+    tier exists to correct. These are exactly the things Jarvis should be
+    improving."""
+    gap = _confirmed_gap(client)
+    for path in ("gateway/gaps.py", "gateway/inquiry.py"):
+        assert introspect.key_for(path) is None
+        assert introspect.may_modify(path)[0] is True
+    assert _proposal(client, files=["gateway/inquiry.py"], gap=gap)
+
+
+def test_the_working_notes_are_amendable_with_a_key(client):
+    """Krish, 2026-09-23: *"don't put anything in there that Jarvis may need to
+    change like his prime directive which is the constitution and the amendments
+    to the constitution."* Before this, they were not even reachable - not locked
+    deliberately, just outside `MODIFIABLE_ROOTS`, which is the same outcome
+    arrived at by accident."""
+    gap = _confirmed_gap(client)
+    for path in introspect.CHARTER:
+        assert introspect.key_for(path) == introspect.KEY_CHARTER
+        with pytest.raises(introspect.NotModifiable) as raised:
+            _proposal(client, files=[path], gap=gap)
+        assert "not a forbidden one" in str(raised.value)
+        assert introspect.may_modify(path, keys=[introspect.KEY_CHARTER])[0]
+
+
+def test_one_key_does_not_open_the_other_tier(client):
+    assert introspect.may_modify("gateway/selfmod.py",
+                                 keys=[introspect.KEY_CHARTER])[0] is False
+    assert introspect.may_modify("AI-CONSTITUTION.md",
+                                 keys=[introspect.KEY_CIRCULAR])[0] is False
+
+
+def test_the_break_glass_reaches_a_keyed_file_and_is_recorded(client):
+    """It cannot be verified - no function can check whether Krish is in
+    trouble - so it is not gated, it is accounted. A lock that stays shut while
+    its owner needs it open is not a safety feature."""
+    gap = _confirmed_gap(client)
+    drafted = _proposal(client, files=["gateway/selfmod.py"], gap=gap,
+                        emergency="Krish is locked out and the auth check is "
+                                  "refusing his own token")
+    assert drafted["emergency"]
+    assert selfmod.EMERGENCY_MARKER in client.get(drafted["id"])["reason"]
+    assert selfmod.EMERGENCY_MARKER in client.get(drafted["id"])["risk"]
+    assert "gateway/selfmod.py" in client.get(drafted["id"])["reason"]
+
+    overrides = [row for row in ledger.events(client, limit=50)
+                 if row["event_type"] == ledger.EMERGENCY_OVERRIDE]
+    assert len(overrides) == 1
+    assert "locked out" in overrides[0]["observation"]
+
+
+def test_an_emergency_still_does_not_reach_another_system(client):
+    """It would not help him. It would break a second thing while he needed the
+    first."""
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["dba/agent.py"], gap=gap,
+                  emergency="anything at all")
+    # The emergency-specific wording, not the generic out-of-runtime refusal -
+    # a probe showed the generic one also contains "somebody else's service", so
+    # the first version of this assertion held whether the branch existed or not.
+    assert "would not help" in str(raised.value)
+    assert "break a second thing" in str(raised.value)
+
+
+def test_an_emergency_must_say_what_the_emergency_is(client):
+    """The stated reason is the whole of the accounting, so a blank one is a
+    caller error rather than an emergency with nothing written down."""
+    gap = _confirmed_gap(client)
+    with pytest.raises(ValueError, match="what the emergency is"):
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap, emergency="   ")
+    # And an empty string is simply not an emergency: the ordinary refusal
+    # stands, asking for the key.
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap, emergency="")
+    assert introspect.KEY_CIRCULAR in str(raised.value)
+    assert client.count("change_proposal", {"agent": "jarvis"}) == 0
+
+
+def test_an_ordinary_proposal_records_no_override(client):
+    drafted = _proposal(client, gap=_confirmed_gap(client))
+    assert "emergency" not in drafted
+    assert selfmod.EMERGENCY_MARKER not in client.get(drafted["id"])["reason"]
+    assert not [row for row in ledger.events(client, limit=50)
+                if row["event_type"] == ledger.EMERGENCY_OVERRIDE]
 
 
 def test_the_refusal_comes_from_the_policy_that_already_owns_it(client):
@@ -140,6 +260,26 @@ def test_the_refusal_comes_from_the_policy_that_already_owns_it(client):
     assert initiative.HARM_WIDENS_ITS_OWN_AUTHORITY in action.harms
     for level in ("cautious", "bold"):
         assert initiative.decide(action, level=level).disposition == initiative.REFUSE
+
+
+def test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there(client):
+    """Membership is not "this file is important". It is: could editing it make
+    the gate fail to fire, or a refusal not refuse?"""
+    assert set(introspect.CIRCULAR) == {
+        "app/permissions.py", "app/admin_auth.py", "gateway/auth.py",
+        "gateway/roles.py", "app/initiative.py", "app/initiative_config.py",
+        "config/initiative.yaml", "gateway/selfmod.py", "gateway/introspect.py",
+        "gateway/candidate.py", "tests/test_boundaries.py",
+        "tests/test_initiative.py", "tests/test_jarvis_selfmod.py"}
+    assert set(introspect.CHARTER) == {"CLAUDE.md"}
+    # The wall, which is not a key at all - and beside it the append-only tier,
+    # which is a third thing: added to on Krish's request, never rewritten.
+    assert introspect.SEALED == ("AI-CONSTITUTION.md",)
+    assert introspect.APPEND_ONLY == ("AI-CONSTITUTION-AMENDMENTS.md",)
+    # Everything keyed is still readable - §14 lets him read his own
+    # architecture, which is how he would notice the checks exist at all.
+    assert "ONE_HYPOTHESIS" in introspect.read_source("gateway/inquiry.py")
+    assert "CIRCULAR" in introspect.read_source("gateway/introspect.py")
 
 
 def test_a_change_outside_jarvis_own_runtime_is_refused(client):
@@ -416,7 +556,7 @@ def test_requesting_a_build_writes_a_request_and_does_not_relaunch(client, tmp_p
                                    "commit_id": "d" * 40})
     request = selfmod.request_build(client, client.get(approved["id"]))
 
-    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text())
+    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text(encoding="utf-8"))
     assert written["commit"] == "d" * 40
     assert written["change_id"] == approved["id"]
     assert request["branch"].startswith(selfmod.BRANCH_PREFIX)
@@ -514,7 +654,7 @@ def _deployed(client, tmp_path, *, tests_passed=True, status="ok"):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / selfmod.RESULT_FILE).write_text(json.dumps(
         {"status": status, "commit": "c" * 40,
-         "tests": {"passed": tests_passed, "summary": "3881 passed"}}))
+         "tests": {"passed": tests_passed, "summary": "3881 passed"}}), encoding="utf-8")
     return client.get(approved["id"]), record
 
 
@@ -573,7 +713,7 @@ def test_a_rollback_is_requested_never_performed(client, tmp_path):
     proposal, _ = _deployed(client, tmp_path, tests_passed=False, status="failed")
     request = selfmod.request_rollback(client, proposal, why="post-change tests failed")
 
-    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text())
+    written = json.loads((tmp_path / "deploy" / selfmod.REQUEST_FILE).read_text(encoding="utf-8"))
     assert written["action"] == "rollback"
     assert written["to_version"] == proposal["baseline_version"]
     assert client.get(proposal["id"])["status"] == selfmod.ROLLED_BACK
@@ -737,3 +877,176 @@ def test_deciding_a_change_that_does_not_exist_says_so(client, conversation):
         {"change_id": "change_proposal-0123456789abcdef", "decision": "approve",
          "krish_said": "yes"}, role="operator", subject="krish")
     assert "error" in result and "no proposed change" in result["error"]
+
+
+def test_a_granted_key_actually_drafts_the_proposal(operator, client):
+    """The key has to work end to end. A first version refused here anyway:
+    `require_modifiable` let the keyed file through, and then `initiative.decide`
+    read the same file as Jarvis widening his own authority and refused it. A key
+    that gets you past one gate and into an identical one is not a key."""
+    charter.grant(operator, key=introspect.KEY_CIRCULAR, granted_by="krish")
+    gap = _confirmed_gap(client)
+    drafted = _proposal(client, files=["gateway/selfmod.py"], gap=gap)
+    assert drafted["id"]
+    assert "emergency" not in drafted
+    assert selfmod.EMERGENCY_MARKER not in client.get(drafted["id"])["reason"]
+
+
+def test_jarvis_cannot_write_himself_a_key(client):
+    """Krish, 2026-09-23: *"we do need to put the necessary safeguards from
+    rogue or hallucinating AI."*
+
+    The first version of the keyed tiers took the keys as an argument to
+    `propose`. Jarvis is the caller, so Jarvis could hand himself the charter
+    key - fine for an agent working correctly, worthless against the two cases
+    the safeguard is for. The refusal now comes from the DBA's permission table,
+    in a different service, and not from code in Jarvis's own runtime."""
+    with pytest.raises(dbaclient.Refused) as raised:
+        charter.grant(client, key=introspect.KEY_CHARTER, granted_by="jarvis")
+    assert "administer" in str(raised.value)
+    assert charter.keys_in_force(client) == ()
+
+
+def test_the_key_is_read_from_the_store_and_not_taken_from_the_caller(client):
+    """There is no argument to pass. Asserted on the signature, because the hole
+    that existed was a parameter and its absence is the fix."""
+    import inspect as inspect_module
+    assert "keys" not in inspect_module.signature(selfmod.propose).parameters
+
+
+def test_a_lapsed_key_stops_working_and_says_so(operator, client):
+    """Grants are short on purpose: a standing permission to amend the
+    constitution is most of the way to no permission at all. And Jarvis cannot
+    move the expiry, because moving it is a write."""
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish",
+                  minutes=1)
+    granted = charter.grants(client)[0]
+    with pytest.raises(dbaclient.Refused):
+        client.update(granted["id"], {"expires_at": "2099-01-01T00:00:00+00:00"},
+                      reason="extend my own permission")
+
+    later = datetime.now(timezone.utc) + timedelta(minutes=2)
+    assert charter.keys_in_force(client, now=later) == ()
+    # Before it lapses the explanation says so, rather than defaulting to a
+    # reason that happens to be false.
+    assert "in force until" in charter.explain(client, introspect.KEY_CHARTER)
+    assert "lapsed" in charter.explain(client, introspect.KEY_CHARTER, now=later)
+
+
+def test_a_grant_is_short_by_default(operator, client):
+    """Asserted as a literal, like the retention policy numbers.
+
+    A probe stretched `DEFAULT_MINUTES` to a century and nothing failed, because
+    every other test passes `minutes=` explicitly. A standing permission to amend
+    the constitution is most of the way to no permission at all, and Krish is
+    present when he grants one - so an hour, and a test that notices if that
+    changes."""
+    assert charter.DEFAULT_MINUTES == 60
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
+    granted = charter.grants(client)[0]
+    lasts = (datetime.fromisoformat(granted["expires_at"])
+             - datetime.fromisoformat(granted["granted_at"]))
+    assert lasts == timedelta(minutes=60)
+
+    assert charter.keys_in_force(
+        client, now=datetime.now(timezone.utc) + timedelta(minutes=61)) == ()
+
+
+def test_a_missing_key_is_explained_as_a_next_step_not_a_wall(operator, client):
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["CLAUDE.md"], gap=gap)
+    assert "has ever been granted" in str(raised.value)
+    assert "operator console" in str(raised.value)
+
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
+    assert _proposal(client, files=["CLAUDE.md"], gap=gap)["id"]
+
+
+def test_the_charter_documents_are_refused_even_with_the_key(operator, client):
+    """Krish, 2026-09-23: *"only I should be able to change the main document,
+    manually, myself."* Not a key, not an emergency - a wall."""
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")
+    gap = _confirmed_gap(client)
+
+    # The constitution: a wall, and the message says so.
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap)
+    assert "no key opens it" in str(raised.value)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["AI-CONSTITUTION.md"], gap=gap,
+                  emergency="Krish is in trouble and I need this changed")
+    assert "no emergency reaches it" in str(raised.value)
+
+    # The amendments: not a wall, but not reachable this way either. A proposal
+    # replaces a file wholesale, and replacement is what "no deleting" forbids -
+    # so the refusal points at the one path that can only add.
+    for kwargs in ({}, {"emergency": "Krish is in trouble"}):
+        with pytest.raises(introspect.NotModifiable) as raised:
+            _proposal(client, files=["AI-CONSTITUTION-AMENDMENTS.md"], gap=gap,
+                      **kwargs)
+        assert "never rewritten" in str(raised.value)
+        assert "append_amendment" in str(raised.value)
+
+    assert client.count("change_proposal", {"agent": "jarvis"}) == 0
+
+
+def test_one_granted_key_does_not_open_the_other_tier(operator, client):
+    charter.grant(operator, key=introspect.KEY_CHARTER, granted_by="krish")  # noqa
+    assert charter.keys_in_force(client) == (introspect.KEY_CHARTER,)
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap)
+    assert introspect.KEY_CIRCULAR in str(raised.value)
+
+
+def test_a_revoked_key_is_not_in_force(operator, client):
+    granted = charter.grant(operator, key=introspect.KEY_CHARTER,
+                            granted_by="krish")
+    operator.update(granted["id"], {"status": charter.REVOKED},
+                    reason="krish changed his mind")
+    assert charter.keys_in_force(client) == ()
+    assert "revoked" in charter.explain(client, introspect.KEY_CHARTER)
+
+
+def test_an_unkeyed_reach_at_the_circle_is_still_named_as_widening_authority():
+    """The `initiative` policy keeps owning this question, and keeps answering it
+    the same way when no key is in hand."""
+    unkeyed = selfmod.proposed_action(["app/permissions.py"], "loosen a check")
+    assert initiative.HARM_WIDENS_ITS_OWN_AUTHORITY in unkeyed.harms
+
+    keyed = selfmod.proposed_action(["app/permissions.py"], "loosen a check",
+                                    keys=(introspect.KEY_CIRCULAR,))
+    assert keyed.harms == ()
+
+
+def test_the_live_commit_also_carries_jarvis_identity():
+    """`commit_candidate` runs git against the live checkout, where the same
+    "Author identity unknown" failure waits and where the wrong answer is worse:
+    a change Krish has not seen, in his own repository, under his own name.
+
+    It cannot be exercised here without committing to this working tree, so the
+    call site is asserted over the parsed source instead of the file's text -
+    a test that greps would pass on the comment above it. The read-only
+    `rev-parse` calls are deliberately not covered: an identity means nothing to
+    a command that writes nothing, and demanding it there would make this test
+    fire on changes that cannot cause the failure."""
+    import ast
+    import inspect as inspect_module
+
+    tree = ast.parse(inspect_module.getsource(selfmod))
+    committing = [node for node in ast.walk(tree) if isinstance(node, ast.For)
+                  and any(isinstance(item, ast.Constant) and item.value == "commit"
+                          for item in ast.walk(node.iter))]
+    assert len(committing) == 1, (
+        f"expected exactly one loop in selfmod that runs `git commit`, found "
+        f"{len(committing)}")
+
+    assert any(isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute)
+               and node.func.attr == "git_identity"
+               for statement in committing[0].body
+               for node in ast.walk(statement)), (
+        "the loop that commits builds its git command without "
+        "identity.git_identity(), so it commits as whoever configured the "
+        "machine - or fails outright where nobody has")

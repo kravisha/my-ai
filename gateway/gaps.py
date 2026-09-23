@@ -22,6 +22,21 @@ turn that has already failed and must never raise; the governor runs
 deliberately, can talk to the DBA, and *should* raise when something is wrong.
 Putting them in one module would have meant one of those two properties losing.
 
+## `investigating` is a state that investigates
+
+It was not. A gap entered `investigating` and left it for `confirmed` because
+somebody called `confirm`, and §12's list of confirmation methods was a list in
+a document. `investigate` now opens a `gateway.inquiry.Inquiry` and `settle`
+demands it back concluded - and an inquiry refuses to conclude when the shape of
+its own reasoning is bad. That is the whole of what the two functions add: the
+lifecycle can no longer be walked without something having been reasoned about.
+
+`investigate` seeds no hypotheses. Pre-loading *"maybe there is no gap"* was
+tempting and would even be useful, but a framework that writes the first
+hypothesis has chosen the anchor, and `inquiry.ANCHORED` - the check for exactly
+that - could then never fire against a real explanation. The investigator says
+what the candidates are.
+
 ## Evidence is kept, including the evidence against
 
 §12 asks that the evidence which caused a classification be preserved, and a
@@ -37,7 +52,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app import capability_gaps as detector
-from gateway import dbaclient, failures, identity, ledger
+from gateway import dbaclient, failures, identity, inquiry, ledger
 
 ENTITY_TYPE = "capability_gap"
 
@@ -256,6 +271,113 @@ def _merge_evidence(existing: Any, addition: Any) -> str:
     confirmed on grounds nobody can reconstruct."""
     parts = [part for part in (existing, _text(addition)) if part]
     return "\n---\n".join(str(part) for part in parts)
+
+
+def investigate(client: dbaclient.DBAClient, gap: dict, *, question: str = "",
+                agent: str = identity.AGENT_ID
+                ) -> tuple[dict, inquiry.Inquiry]:
+    """Move a gap into `investigating`, and open the inquiry that will do it.
+
+    Returns the moved gap and an empty `Inquiry`. `settle` wants that inquiry
+    back with a conclusion on it, and `Inquiry.conclude` refuses when the
+    reasoning's shape does not support one - so the only way out of this state
+    is through something that was actually reasoned about."""
+    asked = question.strip() or (
+        f"is {gap.get('name') or 'this'} a real capability gap, and if so what "
+        f"is missing?")
+    moved = transition(client, gap, INVESTIGATING,
+                       note=f"investigating: {asked}", agent=agent)
+    _note(client, ledger.STATE_TRANSITION,
+          f"investigating gap: {gap.get('name')}", asked, agent=agent,
+          verification=ledger.UNVERIFIED, gap_id=gap["id"])
+    return moved, inquiry.Inquiry(asked, opened_by=agent)
+
+
+# Prefixed onto the evidence when a conclusion was reached over a standing
+# objection, so that the fact reaches the top of what Krish reads rather than
+# sitting in a nested dictionary under `conclusion`.
+OVERRIDDEN_WARNING = "REASONING OBJECTIONS OVERRIDDEN"
+
+
+def settle(client: dbaclient.DBAClient, gap: dict, asking: inquiry.Inquiry, *,
+           impact: str = "", remedy: str | None = None,
+           agent: str = identity.AGENT_ID) -> dict:
+    """Carry a concluded inquiry's outcome into the gap's lifecycle.
+
+    The mapping is deliberately total and deliberately boring - there is one
+    destination per outcome and no discretion in it, because discretion here is
+    where a `inconclusive` quietly becomes a `confirmed`:
+
+    | inquiry outcome | gap state |
+    |---|---|
+    | `confirmed` | `confirmed`, with the whole evidence bundle and a remedy |
+    | `unsupported` | `unsupported` - looked properly, found nothing |
+    | `inconclusive` | `deferred` - not answered, so not closed either |
+
+    The gap's `confidence` is written from `Inquiry.confidence()`, which is
+    derived from the record and cannot be set by anybody. §28 declared that
+    field and nothing had ever written to it, so until now a gap's confidence
+    was whatever a reader assumed - and the only number available to assume
+    from would have been a model's estimate of its own certainty, which is the
+    least reliable one in the system.
+
+    An unconcluded inquiry is refused rather than defaulted, because every
+    default available here is a lie about what was established."""
+    if asking.conclusion is None:
+        raise ValueError(
+            "this inquiry has not concluded, so there is nothing to carry into "
+            "the gap. If its shape will not support a conclusion, that is the "
+            "finding: observe more, or conclude(accepting=[...]) naming what you "
+            "are overriding.")
+
+    said = asking.conclusion
+    # Every check before every write. The remedy is only required for one of the
+    # three outcomes, so it cannot be checked until the conclusion has been
+    # read - but it is still checked before anything is written, or a caller who
+    # forgot it would leave a confidence on a gap that never moved.
+    if said.outcome == inquiry.CONFIRMED:
+        if remedy is None:
+            raise ValueError(
+                "a confirmed inquiry closes the gap as confirmed, and §23 asks "
+                f"which of {REMEDIES} applies before that. Passing no remedy "
+                f"would let 'change the code' be the default by omission.")
+        _check_remedy(remedy)
+
+    # Serialised here rather than handed on as a dictionary, because the warning
+    # below has to be the first line of what Krish reads and a dictionary cannot
+    # promise that: `_text` dumps with `sort_keys=True`, so key order is thrown
+    # away and a `WARNING` key would sort first only by the accident of being
+    # capitalised. §13 takes a confirmed gap to Krish, and that its reasoning
+    # was overridden is the most important thing on that page.
+    bundle = _text(asking.evidence())
+    if said.objections_overridden:
+        bundle = (f"{OVERRIDDEN_WARNING}: "
+                  f"{', '.join(said.objections_overridden)}. This conclusion "
+                  f"was reached over standing objections to the shape of the "
+                  f"reasoning behind it.\n\n{bundle}")
+
+    # Written before the transition, so that a `confirm` which then fails still
+    # leaves the number that was derived rather than a blank field beside a
+    # half-moved gap.
+    client.update(gap["id"], {"confidence": said.confidence},
+                  reason="confidence derived from the investigation")
+    gap = {**gap, "confidence": said.confidence}
+
+    if said.outcome == inquiry.CONFIRMED:
+        return confirm(client, gap, evidence=bundle,
+                       impact=impact or said.reasoning or said.answer or "",
+                       remedy=remedy, agent=agent)
+
+    if said.outcome == inquiry.UNSUPPORTED:
+        return transition(client, gap, UNSUPPORTED, evidence=bundle,
+                          note=("investigated and found unsupported: "
+                                + (said.reasoning or "nothing was found")),
+                          agent=agent)
+
+    return transition(client, gap, DEFERRED, evidence=bundle,
+                      note=("investigation was inconclusive: "
+                            + (said.reasoning or "no answer was established")),
+                      agent=agent)
 
 
 def confirm(client: dbaclient.DBAClient, gap: dict, *,

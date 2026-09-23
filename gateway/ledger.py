@@ -87,13 +87,18 @@ LESSON = "lesson"
 STATE_TRANSITION = "state_transition"
 REINTERPRETATION = "reinterpretation"
 RESTORE_REPORT = "restore_report"
+# The break-glass: a change made to a file behind a separate key, without the
+# key, because Krish needed it now. Its own type rather than a flavour of
+# `change_proposed`, because "show me every time you overrode your own limits"
+# has to be one query and not a text search.
+EMERGENCY_OVERRIDE = "emergency_override"
 
 EVENT_TYPES = (
     USER_REQUEST, USER_CORRECTION, OBSERVATION, DECISION, CONFLICT_DISCOVERED,
     ACTION_FAILED, ACTION_SUCCEEDED, EVALUATION_RESULT, GAP_SUSPECTED,
     GAP_REJECTED, GAP_CONFIRMED, APPROVAL_GRANTED, APPROVAL_DENIED,
     CHANGE_PROPOSED, TEST_RESULT, ROLLBACK, LESSON, STATE_TRANSITION,
-    REINTERPRETATION, RESTORE_REPORT,
+    REINTERPRETATION, RESTORE_REPORT, EMERGENCY_OVERRIDE,
 )
 
 # §7's structured metadata. Stored because §6 asks Jarvis to be able to say what
