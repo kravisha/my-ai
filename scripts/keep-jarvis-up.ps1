@@ -39,8 +39,34 @@ $dbaPort     = 8200
 $urlFile     = Join-Path $root 'CURRENT-URL.txt'
 $cfLog       = Join-Path $env:TEMP 'jarvis-tunnel.log'
 $runLog      = Join-Path $env:TEMP 'jarvis-keepup.log'
+# THE CHILDREN'S OWN OUTPUT, WHICH USED TO GO NOWHERE. Every Start-Process below
+# was -WindowStyle Hidden with no redirection, so a Python traceback - a missing
+# dependency, a bad environment variable, a syntax error in anything imported at
+# startup - was written to a hidden window's stderr and destroyed. The loop then
+# saw /health fail and restarted the process, for ever, and this log recorded
+# "gateway not answering" with no cause.
+#
+# That is the exact failure the owner asked to be able to diagnose on a machine
+# nobody can reach, so it is captured beside the rest of the logs rather than in
+# TEMP: app/crashlog.py and app/eventlog.py write into the same directory, and a
+# support bundle wants them together.
+$logDir      = Join-Path $root 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $channel     = 'C:\Users\Krish\Documents\Aria-Claude-Communications\Arya-Claude - Ongoing Conversation.md'
 $deployReq   = Join-Path $root 'deploy-request.json'
+
+# Start-Process cannot append, so each start would overwrite the evidence of the
+# crash that caused it. The previous file is kept as .prev first - one restart of
+# history, which is the one that matters, because the interesting file is always
+# the one written just before the restart you are looking at.
+function Redirected($name) {
+  $out = Join-Path $logDir "$name.out.log"
+  $err = Join-Path $logDir "$name.err.log"
+  foreach ($f in @($out, $err)) {
+    if (Test-Path $f) { Move-Item -LiteralPath $f -Destination "$f.prev" -Force -ErrorAction SilentlyContinue }
+  }
+  return @{ Out = $out; Err = $err }
+}
 
 function Say($m) {
   $line = "{0}  {1}" -f (Get-Date -Format 'HH:mm:ss'), $m
@@ -64,9 +90,11 @@ function DBA-Alive {
 
 function Start-DBA {
   Say 'starting DBA agent'
+  $log = Redirected 'dba'
   Start-Process -FilePath $python `
     -ArgumentList '-m','uvicorn','dba.main:app','--port',"$dbaPort" `
-    -WorkingDirectory $root -WindowStyle Hidden -PassThru
+    -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $log.Out -RedirectStandardError $log.Err
 }
 
 # SS19. Returns $true when a new build was deployed and the Gateway should be
@@ -88,8 +116,10 @@ function Deploy-IfRequested {
 
 function Start-Gateway {
   Say 'starting gateway'
+  $log = Redirected 'gateway'
   Start-Process -FilePath $python -ArgumentList '-m','gateway.run' `
-    -WorkingDirectory $root -WindowStyle Hidden -PassThru
+    -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $log.Out -RedirectStandardError $log.Err
 }
 
 function Start-Tunnel {
@@ -156,6 +186,14 @@ while ($true) {
 
   if (-not (Gateway-Alive)) {
     Say 'gateway not answering /health'
+    # Say WHY, not just that. The last lines of the child's stderr are the
+    # traceback if there was one, and a restart loop with no cause recorded is
+    # the thing this whole redirect exists to end.
+    $gwErr = Join-Path $logDir 'gateway.err.log'
+    if (Test-Path $gwErr) {
+      $tail = Get-Content -LiteralPath $gwErr -Tail 12 -ErrorAction SilentlyContinue
+      if ($tail) { Say ('last words from gateway: ' + ($tail -join ' | ')) }
+    }
     if ($gw -and -not $gw.HasExited) { Stop-Process -Id $gw.Id -Force -ErrorAction SilentlyContinue }
     $gw = Start-Gateway
     Start-Sleep -Seconds 8

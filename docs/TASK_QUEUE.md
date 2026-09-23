@@ -3693,3 +3693,93 @@ Excel.
 **A boundary worth naming now:** reading the owner's business account is reading his money. Whatever
 reaches it should be read-only until there is a specific reason for it not to be, and the write path
 should be its own queue entry with its own approval, not an implied consequence of the read path.
+
+---
+
+### TQ-121 — Work the machine in front of him, like a student with a teacher watching
+
+**NEED (YELLOW) · QUEUED · owner directive 2026-09-23: *"search for all installed programs on my PC
+and bring them up on the screen and work on them right before me under my supervision while clearing
+any doubts he may have while doing the assigned task interactively like a student doing a task for
+the teacher"*** · extends TQ-119 and TQ-120
+
+Three separable pieces, and the third is the one that is not obvious.
+
+**1. An inventory of what is installed.** No single source lists it. The registry's uninstall keys
+cover most desktop software, the Start Menu's shortcuts cover what the owner actually launches,
+`winget list` covers what winget knows, and `Get-AppxPackage` covers Store and UWP applications. The
+union with duplicates reconciled is the inventory; anything claiming to be complete from one source
+will be wrong and confident. Searchable by name, and the search has to tolerate the owner calling
+Excel "the spreadsheet".
+
+**2. Bringing one up.** Launch, then find its window and put it in front. The launch is easy; finding
+the window that belongs to the process is not always - a launcher process that exits and hands off to
+another is the common case, and waiting on the wrong pid looks exactly like a program that did not
+start.
+
+**3. Working on it in front of him, which is a different execution model.** Not headless automation
+that reports afterwards. The owner's phrase is *"like a student doing a task for the teacher"*, and
+that names four properties:
+
+- **Visible.** The application is on screen and the actions happen where he can see them. An agent
+  driving an app invisibly is one whose mistakes are only discovered in the result.
+- **Narrated.** Jarvis says what he is about to do before doing it, at a pace a person can follow. A
+  correct action nobody could follow is indistinguishable from a lucky one.
+- **Interruptible.** The owner can stop it mid-task, and stopping must leave a state he can take
+  over from rather than half a transaction.
+- **Doubt-first.** *"clearing any doubts he may have"* - the question comes **before** the action it
+  blocks, not in a summary afterwards. TQ-119 builds the question queue; this is where it is used at
+  the point of acting.
+
+**The speed limit is the feature.** An agent that drives a GUI as fast as it can is one no supervisor
+can supervise. Deliberate pacing, one visible step at a time, is what makes the word "supervision"
+mean anything.
+
+**A boundary carried from TQ-120:** read-only until there is a specific reason otherwise, and the
+write path is its own entry with its own approval. Driving a GUI is *the* place where an agent that
+guesses clicks the wrong button in somebody's bank.
+
+---
+
+### TQ-122 — Diagnosing a failure on a machine nobody can reach
+
+**NEED (ORANGE) · PARTLY DONE 2026-09-23 · owner directive 2026-09-23: *"I want extensive logs so
+that we should be able to find out what went wrong from the logs if anything fails to work in the
+target PC"***
+
+**What was already fixed on the day, because it made the rest unachievable.** Three things stood
+between the owner and this, and none of them was in Python:
+
+- Every child process was started `-WindowStyle Hidden` **with no output redirection**, so a Python
+  traceback - a missing dependency, a bad environment variable, a syntax error in anything imported
+  at startup - went to a destroyed stderr. The supervisor then saw `/health` fail and restarted for
+  ever, logging *"gateway not answering"* with no cause. Now redirected into `logs/`, with the
+  previous file kept as `.prev` because `Start-Process` cannot append and would otherwise overwrite
+  the evidence of the crash that caused the restart. A restart now logs the child's last words.
+- **Nothing installed a `faulthandler` or an `excepthook`**, so a hard abort or an exception outside a
+  request left nothing at all, and a thread dying silently took a feature with it without a word.
+  `app/crashlog.py` arms both, in both services, before anything that can fail.
+- **Nothing recorded that a process had started**, so an empty log could not be distinguished from a
+  service that was never asked to run. Those have different causes and different fixes, and the
+  difference was unrecoverable. A startup breadcrumb now carries pid, Python, platform, commit and
+  cwd.
+
+**What remains queued.**
+
+1. **A support bundle.** One command that collects the event log, the crash records, the faulthandler
+   streams, the breadcrumbs, the supervisor log, the tunnel log, versions, the environment with
+   secrets removed, and the health of each service - into a single file the owner can send. Today
+   that is eight paths somebody has to know about, and on a bad day he will not.
+2. **Redaction on the way out**, not on the way in. `app/eventlog.redact` covers what is logged;
+   a bundle also carries environment and configuration, and those hold tokens.
+3. **A failure the owner can see without reading a file.** The shell should be able to say "the DBA
+   has not been up since 02:14 and here is why" out loud, because a log that is only useful to
+   somebody who thinks to look at it is not much use on a machine that is failing while he is away.
+4. **Log the successful path too, not only faults.** *"Extensive"* is the owner's word. A failure is
+   usually only diagnosable against what the working case looked like, and today INFO is captured but
+   thin - the interesting transitions in the conversation, the tool loop and the DBA are not
+   instrumented.
+5. **A test that the diagnosis actually works.** The honest version is an exercise: break something
+   deliberately on a spare machine, hand somebody only the bundle, and see whether they can name the
+   cause. A bundle nobody has ever diagnosed from is a bundle that is probably missing the one field
+   that matters.

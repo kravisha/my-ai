@@ -87,8 +87,14 @@ async def lifespan(app: FastAPI):
 
     Nothing else is constructed here - the database is opened per request, the
     lesson `tests/test_db_isolation.py` exists to keep."""
-    from app import eventlog
+    from app import crashlog, eventlog
     from dba import scheduler
+
+    # The same pair the Gateway arms, for the same reason: this service runs
+    # hidden and unattended, and a thread that dies silently in it is a backup
+    # that has stopped happening.
+    crashlog.install("dba")
+    crashlog.breadcrumb("dba")
 
     # The same event log the Gateway writes to, tagged with this service. One
     # file for the whole system: a fault Jarvis is investigating usually spans

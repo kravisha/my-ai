@@ -32,6 +32,8 @@ import os
 
 import uvicorn
 
+from app import crashlog
+
 PORT_ENV = "GATEWAY_PORT"
 DEFAULT_PORT = 8100
 
@@ -72,6 +74,18 @@ def config(**overrides) -> uvicorn.Config:
 
 
 def main() -> None:
+    # ARMED BEFORE THE SERVER STARTS, and deliberately before anything that can
+    # fail. Everything `crashlog` catches happens at moments when it is too late
+    # to start catching - a hard abort leaves nothing running to record it, and a
+    # crash inside `gateway.main`'s import reaches no handler that lifespan would
+    # have installed.
+    #
+    # The breadcrumb is the other half: one line saying this process got as far
+    # as being able to write a line. Without it, an empty log cannot distinguish
+    # "never started" from "started and died", and on a machine nobody can reach
+    # those have different causes and different fixes.
+    crashlog.install("gateway")
+    crashlog.breadcrumb("gateway", extra={"port": port(), "host": HOST})
     uvicorn.Server(config()).run()
 
 
