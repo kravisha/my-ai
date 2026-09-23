@@ -3,5 +3,6 @@ testpaths = ["tests"]
 markers = [
     "real_llm: makes a real network call to the Anthropic API - excluded from the default run, use `pytest -m real_llm` to include",
     "simulation: launches a real backend and a real agent population - takes tens of seconds, excluded from the default run, use `pytest -m simulation` to include",
+    "real_machine: needs the target PC - Windows, a screen, the services running, real installed programs. Cannot pass in CI or in a container and is not meant to. Run it ON the machine: `pytest -m real_machine`. See tests/test_real_machine.py for what each one proves and what a failure means.",
 ]
-addopts = "-m \"not real_llm and not simulation\""
+addopts = "-m \"not real_llm and not simulation and not real_machine\""

@@ -244,3 +244,64 @@ faked in CI and verified by him.
 - **UI Automation** (TQ-120 layer 4). The inventory and launch come first; driving arbitrary
   applications is a larger increment and the place where a guess does the most damage.
 - **Write access to his business account.** Read-only, deliberately.
+
+
+---
+
+## 8. Tomorrow, on the real machine
+
+Two halves, because they answer different kinds of question.
+
+### The machine can decide these alone
+
+```
+pip install -r requirements-desktop.txt
+pytest -m real_machine -q            # 17 checks, none of which can pass in CI
+```
+
+Every failure names what it means and what to do about it. Marked `real_machine`
+and excluded from the default run, the same way `real_llm` and `simulation` are —
+so they do not pretend to pass here and do not fail the build.
+
+They cover: that this is Windows, pywebview is installed, Explorer is running,
+both services answer, every token is configured, the event log has entries, both
+services left a startup breadcrumb, the supervisor is redirecting its children's
+output, **a deliberately crashed child's traceback actually reaches a file**, the
+ledger verifies, a valid checkpoint exists, a restart would restore real state,
+and the log has no unexplained noise in it.
+
+Two of those were vacuous when first written and are worth knowing about: the
+noise check passed on a machine with no log at all — an absent log is not a clean
+log — and the crash-directory check creates the directory it then asserts exists.
+Both are fixed; the second is renamed to what it actually proves.
+
+### These need your eyes, and a test asserting them would be lying
+
+```
+python -m desktop.verify
+```
+
+Eight questions, asked one at a time, about things no machine can observe: did the
+window cover the whole screen, did the escape menu appear, was Escape-twice
+harmless, did minimising leave Jarvis running, did exiting say it had saved, did
+exiting leave a usable desktop.
+
+**The first question is whether you can get out**, and a no stops the run. If
+Escape does not work you are looking at a fullscreen window you were told you
+could leave, and being asked to assess its legibility next would be absurd.
+
+Each answer is recorded as **attested**, never *passed* — it is your word, not a
+measurement, and in six months that difference is the difference between evidence
+and a memory. It writes `logs/verify-report.txt`; send that back with the pytest
+output and between them they say what works.
+
+### If it goes wrong
+
+`logs/gateway.err.log` holds the Gateway's last words. `logs/startup.jsonl` says
+whether it ever started. `logs/crashes/` holds anything that raised.
+`logs/events.jsonl` is everything the running services said. Escape → 5 shows all
+four paths without you having to remember them.
+
+The supervisor stands down after five consecutive failures rather than looping,
+says where the cause is, and makes sure Explorer is up. Create a file called
+`RESTART-REQUESTED` in the project root to make it try again.
