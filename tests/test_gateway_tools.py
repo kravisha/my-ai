@@ -9,7 +9,8 @@ tool that returns `{"error": ...}` lets the assistant try again.
 from gateway import repositories, roles, scoreboard, tools
 
 
-def execute(conn, name, arguments, role=roles.ROLE_OPERATOR):
+def execute(conn, name, arguments, role=roles.ROLE_OPERATOR,
+            confirmed_by="krish"):
     """These tests all exercise operator-level tools, so they default to that
     role rather than repeating it twenty-three times.
 
@@ -18,7 +19,12 @@ def execute(conn, name, arguments, role=roles.ROLE_OPERATOR):
     failure mode an authorization check least survives. The default lives here,
     in the tests, where being permissive is the point - and what a *client* can
     reach is asserted separately, in tests/test_gateway_roles.py."""
-    return tools.execute(conn, name, arguments, role=role)
+    # `confirmed_by` defaults to Krish here for the same reason `role` does:
+    # these tests exercise what a tool DOES, and a consequential one now
+    # stops at the read-back without a human answer. The tests that care
+    # about that gate pass `confirmed_by=None` explicitly.
+    return tools.execute(conn, name, arguments, role=role,
+                         confirmed_by=confirmed_by)
 
 
 def test_filing_through_a_tool_returns_the_item_it_created(gateway_conn):

@@ -209,17 +209,25 @@ class Mandate:
 
     def covers(self, action: initiative.Action,
                particulars: dict[str, str] | None = None) -> tuple[bool, str]:
-        """Whether this is the thing that was confirmed.
+        """Whether this is **the exact action** that was confirmed.
 
-        Checked by name *and* particulars. Confirmed to send one email and
-        sending three is the failure this exists for, and the action's name is
-        identical in both."""
+        Krish, 2026-09-23: *"Confirmation licenses the exact action for which the
+        permission was granted in the first place."*
+
+        So the comparison is set equality, not a subset check. A first version
+        only looked at the particulars a caller happened to pass, which meant
+        passing none matched on the name alone - and the name is identical
+        between sending one email and sending three. Every confirmed particular
+        must be presented and must match; anything missing is as much "not that
+        action" as anything different."""
         if action.name != self.understanding.action.name:
             return False, (
                 f"{action.name!r} is not what was confirmed "
                 f"({self.understanding.action.name!r}).")
         agreed = self.scope()
-        for label, value in (particulars or {}).items():
+        presented = dict(particulars or {})
+
+        for label, value in presented.items():
             if label not in agreed:
                 return False, (
                     f"{label!r} was never part of what was confirmed. Adding a "
@@ -229,6 +237,14 @@ class Mandate:
                 return False, (
                     f"{label} was confirmed as {agreed[label]!r} and this is "
                     f"{value!r}.")
+        missing = sorted(set(agreed) - set(presented))
+        if missing:
+            return False, (
+                f"this call does not state {', '.join(missing)}, which "
+                f"{'was' if len(missing) == 1 else 'were'} part of what was "
+                f"confirmed. A confirmation licenses the exact action it was "
+                f"given for, and an unstated particular is one nobody agreed a "
+                f"value for.")
         return True, "confirmed"
 
 
@@ -293,5 +309,6 @@ def describe() -> dict:
         "decided_by": "app/initiative.py",
         "self_confirmation": "refused",
         "trivial_actions_need_confirmation": False,
-        "a_confirmation_licenses": "the confirmed particulars, and nothing else",
+        "a_confirmation_licenses": ("the exact action, with every confirmed "
+                                   "particular stated and matching"),
     }

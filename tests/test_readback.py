@@ -249,7 +249,23 @@ def test_a_confirmed_action_proceeds_without_asking_again():
     granting anything."""
     mandate = confirm(understood(), confirmed_by="krish", agent=AGENT)
     for _ in range(5):
+        proceed(mandate, email(), mandate.scope())
+
+
+def test_a_call_that_omits_a_confirmed_particular_is_out_of_scope():
+    """Krish, 2026-09-23: *"Confirmation licenses the exact action for which the
+    permission was granted in the first place."*
+
+    Set equality, not a subset check. The first version only compared the
+    particulars a caller happened to pass, so passing none matched on the name
+    alone - and the name is identical between sending one email and sending
+    three."""
+    mandate = confirm(understood(), confirmed_by="krish", agent=AGENT)
+    with pytest.raises(OutOfScope, match="does not state"):
         proceed(mandate, email(), {"to": "accounts@acme.example"})
+    with pytest.raises(OutOfScope, match="does not state"):
+        proceed(mandate, email())
+    proceed(mandate, email(), mandate.scope())
 
 
 def test_confirming_one_thing_is_not_confirming_the_next():
@@ -263,13 +279,15 @@ def test_the_same_action_with_a_different_particular_is_out_of_scope():
     for, and the action's name is identical in both."""
     mandate = confirm(understood(), confirmed_by="krish", agent=AGENT)
     with pytest.raises(OutOfScope, match="was confirmed as"):
-        proceed(mandate, email(), {"to": "everyone@acme.example"})
+        proceed(mandate, email(), {**mandate.scope(),
+                                   "to": "everyone@acme.example"})
 
 
 def test_a_particular_added_after_the_fact_is_out_of_scope():
     mandate = confirm(understood(), confirmed_by="krish", agent=AGENT)
     with pytest.raises(OutOfScope, match="never part of what was confirmed"):
-        proceed(mandate, email(), {"bcc": "someone.else@example.com"})
+        proceed(mandate, email(), {**mandate.scope(),
+                                   "bcc": "someone.else@example.com"})
 
 
 def test_the_mandate_records_what_was_agreed():
@@ -292,3 +310,108 @@ def test_describe_says_what_a_confirmation_licenses():
     assert described["self_confirmation"] == "refused"
     assert described["decided_by"] == "app/initiative.py"
     assert described["trivial_actions_need_confirmation"] is False
+
+
+# =============================================================================
+# Wired into the tool loop
+# =============================================================================
+#
+# Krish, 2026-09-23: *"Give him all the capabilities... the user will decide what
+# help he needs."* A module with no caller is this repository's commonest
+# failure, so these are the tests for the call site rather than the policy.
+
+
+def test_a_consequential_tool_call_stops_and_reads_back(gateway_conn):
+    from gateway import roles, tools
+    result = tools.execute(
+        gateway_conn, "publish_document",
+        {"path": "docs/x.md", "content": "hello", "confirm_public": True},
+        role=roles.ROLE_OPERATOR)
+    read_back = result["needs_confirmation"]["read_back"]
+    assert read_back[-1] == "Have I got that right?"
+    assert any("content" in line for line in read_back)
+
+
+def test_a_tool_argument_cannot_carry_a_persons_consent(gateway_conn):
+    """The hole this closed. `confirm_public` is a boolean the *model* sets after
+    relaying a proposal, so the thing being asked was answering on behalf of the
+    person being asked. `confirmed_by` comes from the session instead - the same
+    property `subject` already had, for a sharper reason."""
+    from gateway import roles, tools
+    arguments = {"path": "docs/x.md", "content": "hello", "confirm_public": True}
+    assert "needs_confirmation" in tools.execute(
+        gateway_conn, "publish_document", arguments, role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" not in tools.execute(
+        gateway_conn, "publish_document", arguments, role=roles.ROLE_OPERATOR,
+        confirmed_by="krish")
+
+
+def test_jarvis_naming_himself_as_the_confirmer_does_not_count(gateway_conn):
+    from gateway import identity, roles, tools
+    result = tools.execute(
+        gateway_conn, "publish_document",
+        {"path": "docs/x.md", "content": "hello", "confirm_public": True},
+        role=roles.ROLE_OPERATOR, confirmed_by=identity.AGENT_ID)
+    assert "needs_confirmation" in result
+
+
+def test_the_gate_argument_is_what_makes_this_call_consequential(gateway_conn):
+    """Not a second check to satisfy - the thing that changes the classification.
+
+    Without `confirm_public`, `publish_document` writes to a local branch and
+    pushes nothing, so it is recoverable and never reaches the read-back. With
+    it, the destination is public and irreversible and it does. A first version
+    of the wiring had a separate branch for "confirmed by a human but missing
+    the tool's own flag", which no call can reach."""
+    from gateway import tools
+    private, _ = tools._risk_for("publish_document", {"path": "docs/x.md"})
+    public, _ = tools._risk_for("publish_document", {"path": "docs/x.md",
+                                                     "confirm_public": True})
+    assert needs_readback(private)[0] is False
+    assert needs_readback(public)[0] is True
+
+
+def test_a_trivial_tool_call_never_asks(gateway_conn):
+    from gateway import roles, tools
+    result = tools.execute(gateway_conn, "machine_status", {},
+                           role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" not in result
+
+
+def test_the_model_s_own_arguments_are_marked_as_its_own():
+    """The default is `inferred`, because the model chose those values. A
+    read-back that calls Jarvis's own choice "you said" confirms nothing."""
+    from gateway import tools
+    understanding = tools.understanding_for(
+        "publish_document",
+        {"repository": "public-notes", "title": "Q3", "body": "..."})
+    by_label = {item.label: item.source for item in understanding.particulars}
+    assert by_label["title"] == INFERRED
+    assert by_label["body"] == INFERRED
+    # The destination is the one thing Krish must have named himself.
+    assert by_label["repository"] == TOLD
+
+
+def test_a_new_tool_is_covered_without_anybody_listing_its_arguments():
+    """Particulars are built from the arguments themselves, so a tool added
+    tomorrow reads back tomorrow rather than when somebody remembers it."""
+    from gateway import tools
+    made = tools.particulars_for("a_tool_nobody_has_written",
+                                 {"amount": "5000", "to": "someone"})
+    assert {item.label for item in made} == {"amount", "to"}
+    assert all(item.source == INFERRED for item in made)
+
+
+def test_the_confirmation_flag_is_not_read_back_as_a_particular():
+    """It says something about the call, not about what happens in the world,
+    and six lines of machinery bury the three that matter."""
+    from gateway import tools
+    made = tools.particulars_for("publish_document",
+                                 {"title": "Q3", "confirm_public": True})
+    assert {item.label for item in made} == {"title"}
+
+
+def test_empty_arguments_are_not_read_back():
+    from gateway import tools
+    made = tools.particulars_for("anything", {"title": "Q3", "cc": "", "bcc": None})
+    assert {item.label for item in made} == {"title"}

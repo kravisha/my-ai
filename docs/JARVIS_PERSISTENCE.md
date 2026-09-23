@@ -480,12 +480,31 @@ exists for, and the action's name is identical in both.
 An unresolved unknown blocks confirmation unless each one is named, the same way
 `gateway/inquiry.py` handles a standing objection.
 
-### Not yet done
+### Wired into the tool loop, and the hole that closed
 
-Nothing calls this. The consequential actions Jarvis can actually take today go
-through `gateway/tools.py`, and wiring each one to produce an `Understanding` is
-the next step - a module with no caller is the failure this repository keeps
-finding in itself.
+`gateway/tools.execute` builds an `Understanding` for any call the policy rates
+`propose` and returns its lines under `needs_confirmation.read_back`.
+
+Particulars are derived from the call's own arguments, so a tool added tomorrow
+reads back tomorrow rather than when somebody remembers it - and **every argument
+is marked `inferred` unless the tool declares otherwise**, because the model
+chose those values. A read-back that calls Jarvis's own choice *"you said"*
+confirms nothing. `TOLD_ARGUMENTS` is the short list of arguments that cannot be
+anything but a quotation; `publish_document.repository` is the only entry.
+
+The hole: `confirm_public` was a boolean the **model** set after relaying a
+proposal, so the thing being asked was answering on behalf of the person being
+asked. `execute` now takes `confirmed_by` from the session - the same property
+`subject` already had, for a sharper reason - and a call naming Jarvis himself
+gets the read-back instead. A tool argument cannot carry a person's consent,
+because the model writes the arguments.
+
+### Still to do
+
+The mandate is built and spent inside one call. Carrying one across turns - so
+that *"yes, go ahead"* licenses the exact action proposed a moment earlier, and
+nothing else - is the next piece, and it is where `Mandate.covers` stops being
+a check that can only pass.
 
 ---
 

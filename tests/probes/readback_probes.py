@@ -26,8 +26,16 @@ import harness  # noqa: E402
 TESTS = Path(__file__).resolve().parents[1]
 
 READBACK = "gateway/readback.py"
-SUITES = {READBACK: TESTS / "test_readback.py"}
+TOOLS = "gateway/tools.py"
+SUITES = {READBACK: TESTS / "test_readback.py",
+          TOOLS: TESTS / "test_readback.py"}
 
+# One probe is recorded rather than asserted. `readback.proceed` at the tool
+# call site is checked against a mandate built from the same `Understanding` in
+# the same breath, so it always covers itself and no test through `execute` can
+# reach a mismatch. It is there for the call site that comes next - a mandate
+# carried from an earlier turn, where the arguments can and will differ - and
+# `tests/test_readback.py` covers the mismatch directly on `proceed`.
 PROBES: list[harness.Probe] = [
     # --- where the line is drawn ----------------------------------------------
     (
@@ -237,6 +245,82 @@ PROBES: list[harness.Probe] = [
         "@dataclass(frozen=True)\nclass Mandate:",
         "@dataclass\nclass Mandate:",
         ("test_a_mandate_cannot_be_edited_into_a_wider_one",),
+    ),
+    # --- the call site, where a gate that stops gating is silent -------------
+    (
+        TOOLS,
+        "a tool argument carries a person's consent again",
+        '        if not answered or answered.lower() == identity.AGENT_ID.lower():',
+        "        if False:",
+        ("test_a_tool_argument_cannot_carry_a_persons_consent",
+         "test_a_consequential_tool_call_stops_and_reads_back"),
+    ),
+    (
+        TOOLS,
+        "Jarvis may name himself as the confirmer",
+        "        if not answered or answered.lower() == identity.AGENT_ID.lower():",
+        "        if not answered:",
+        ("test_jarvis_naming_himself_as_the_confirmer_does_not_count",),
+    ),
+    (
+        TOOLS,
+        "the proposal carries a summary instead of the particulars",
+        '                    "read_back": understanding.spoken(),',
+        '                    "read_back": [],',
+        ("test_a_consequential_tool_call_stops_and_reads_back",),
+    ),
+    (
+        TOOLS,
+        "the confirmed call is never checked against what was confirmed",
+        "            readback.proceed(mandate, verdict.action, mandate.scope())",
+        "            pass",
+        (),  # documented as unreachable by this suite: `mandate` is built from
+             # the same understanding, so it always covers itself. See below.
+    ),
+    (
+        TOOLS,
+        "every argument the model chose is read back as Krish's own words",
+        "            source=readback.TOLD if label in told else readback.INFERRED))",
+        "            source=readback.TOLD))",
+        ("test_the_model_s_own_arguments_are_marked_as_its_own",),
+    ),
+    (
+        TOOLS,
+        "nothing is ever marked as Krish's own words",
+        "            source=readback.TOLD if label in told else readback.INFERRED))",
+        "            source=readback.INFERRED))",
+        ("test_the_model_s_own_arguments_are_marked_as_its_own",),
+    ),
+    (
+        TOOLS,
+        "particulars come from a per-tool template, so a new tool is uncovered",
+        "    for label in sorted(arguments or {}):",
+        "    for label in sorted(TOLD_ARGUMENTS.get(name, ())):",
+        ("test_a_new_tool_is_covered_without_anybody_listing_its_arguments",
+         "test_the_model_s_own_arguments_are_marked_as_its_own"),
+    ),
+    (
+        TOOLS,
+        "the confirmation flag is read back as if it were a particular",
+        "        if label in _NOT_A_PARTICULAR:",
+        "        if False:",
+        ("test_the_confirmation_flag_is_not_read_back_as_a_particular",),
+    ),
+    (
+        TOOLS,
+        "empty arguments are read back as particulars",
+        '        if value is None or value == "":',
+        "        if False:",
+        ("test_empty_arguments_are_not_read_back",),
+    ),
+    (
+        TOOLS,
+        "a trivial tool call is stopped for confirmation too",
+        "    if verdict.disposition == initiative.PROPOSE:\n"
+        "        # Krish, 2026-09-23: Jarvis reiterates his understanding",
+        "    if True:\n"
+        "        # Krish, 2026-09-23: Jarvis reiterates his understanding",
+        ("test_a_trivial_tool_call_never_asks",),
     ),
     (
         READBACK,
