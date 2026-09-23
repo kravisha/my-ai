@@ -58,7 +58,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-    timeout-minutes: 20
+    # Raised from 20 on 2026-09-23. The Windows suite took 18m05s on run 124
+    # against a 20-minute limit - under two minutes of margin, and the
+    # persistence work added 27 more tests in the same session. A limit the
+    # suite is about to grow past turns every future red into "did it fail, or
+    # did it run out of clock?", which is the least useful failure there is.
+    #
+    # Still bounded, and deliberately not generous: the limit exists so a hang
+    # fails in half an hour instead of burning a runner for six, and 30 keeps
+    # that while leaving room for a suite that is still growing. Ubuntu runs
+    # the same suite in under three minutes; this number is Windows's.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
