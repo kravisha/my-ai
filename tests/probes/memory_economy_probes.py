@@ -66,8 +66,8 @@ PROBES: list[harness.Probe] = [
     (
         STORE,
         "a new lesson is not counted against its kind at all",
-        "        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost))",
-        "        _bump_kind(db, kind)",
+        "        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost),",
+        "        _bump_kind(db, kind, recorded=0, cost_sunk=0.0,",
         ("test_recording_a_lesson_counts_it_against_its_kind",
          "test_a_kind_that_never_pays_off_stops_being_recorded_by_the_producer"),
     ),
@@ -227,8 +227,10 @@ PROBES: list[harness.Probe] = [
     (
         MEMORY,
         "a dry run deletes anyway",
-        "            if not dry_run:\n                store.discard_lesson(row[\"id\"])",
-        "            if True:\n                store.discard_lesson(row[\"id\"])",
+        "            if not dry_run:\n"
+        "                # The quiet period goes onto the tombstone, because it is half of",
+        "            if True:\n"
+        "                # The quiet period goes onto the tombstone, because it is half of",
         ("test_a_dry_run_reports_and_deletes_nothing",),
     ),
     (
@@ -261,6 +263,106 @@ PROBES: list[harness.Probe] = [
         "    all_lessons = store.lessons(include_demoted=True)",
         "    all_lessons = store.lessons()",
         ("test_a_demoted_lesson_is_still_in_the_report",),
+    ),
+    # --- ratification: the only observable that says a discard was wrong ------
+    (
+        STORE,
+        "a collected fact leaves no tombstone, so a regret is unobservable",
+        '        db.execute(\n'
+        '            "INSERT OR REPLACE INTO collected_patterns "',
+        '        _ = (\n'
+        '            "INSERT OR REPLACE INTO collected_patterns "',
+        ("test_collecting_a_fact_leaves_a_tombstone_of_what_it_was",
+         "test_learning_a_collected_fact_again_is_counted_as_a_regret"),
+    ),
+    (
+        STORE,
+        "re-learning a collected fact is not counted as a regret",
+        '        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost),\n'
+        '                   **({"regretted": 1} if regret is not None else {}))',
+        "        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost))",
+        ("test_learning_a_collected_fact_again_is_counted_as_a_regret",
+         "test_the_policy_is_judged_by_its_regrets_not_by_its_reasoning"),
+    ),
+    (
+        STORE,
+        "nothing is learned from the mistake, so it can be repeated",
+        "            expected_interval_days = max(expected_interval_days or 0.0, learned)",
+        "            pass",
+        ("test_learning_it_again_teaches_the_fact_its_real_cycle",
+         "test_a_fact_wrongly_collected_once_is_not_collected_wrongly_twice"),
+    ),
+    (
+        STORE,
+        "what was learned overwrites a longer stated cycle",
+        "            expected_interval_days = max(expected_interval_days or 0.0, learned)",
+        "            expected_interval_days = learned",
+        ("test_a_stated_cycle_is_never_lowered_by_what_was_learned",),
+    ),
+    (
+        STORE,
+        "the learned cycle ignores how long the fact stayed collected",
+        '    return float(tombstone["quiet_days_at_discard"] or 0.0) + away',
+        '    return away',
+        ("test_learning_it_again_teaches_the_fact_its_real_cycle",),
+    ),
+    (
+        STORE,
+        "a spent tombstone is kept, so one regret is counted for ever",
+        '            db.execute("DELETE FROM collected_patterns WHERE kind = ? AND pattern = ?",\n'
+        '                       (kind, pattern))',
+        "            pass",
+        ("test_learning_a_collected_fact_again_is_counted_as_a_regret",),
+    ),
+    (
+        STORE,
+        "tombstones are never pruned",
+        '        cursor = db.execute("DELETE FROM collected_patterns WHERE discarded_at < ?",\n'
+        '                            (cutoff,))',
+        '        cursor = db.execute("SELECT 1 WHERE ? IS NULL", (cutoff,))',
+        ("test_a_tombstone_past_the_horizon_is_pruned_and_stops_being_a_regret",),
+    ),
+    (
+        MEMORY,
+        "the tombstone records no quiet period, so nothing can be learned from it",
+        "                store.discard_lesson(row[\"id\"], quiet_days=bet.quiet_days(),",
+        "                store.discard_lesson(row[\"id\"], quiet_days=0.0,",
+        ("test_collecting_a_fact_leaves_a_tombstone_of_what_it_was",
+         "test_a_fact_wrongly_collected_once_is_not_collected_wrongly_twice"),
+    ),
+    (
+        MEMORY,
+        "the sweep never prunes, so the tombstone table grows for ever",
+        "        report[\"pruned\"] = store.prune_tombstones(",
+        "        _ = (store.prune_tombstones, ",
+        ("test_the_sweep_prunes_as_it_goes",),
+    ),
+    (
+        MEMORY,
+        "a dry run leaves a tombstone for something it did not collect",
+        "            if not dry_run:\n"
+        "                # The quiet period goes onto the tombstone, because it is half of\n"
+        "                # the cycle this fact will be told about if it ever comes back.\n"
+        "                store.discard_lesson(row[\"id\"], quiet_days=bet.quiet_days(),",
+        "            if True:\n"
+        "                store.discard_lesson(row[\"id\"], quiet_days=bet.quiet_days(),",
+        ("test_a_dry_run_leaves_no_tombstone_either",
+         "test_a_dry_run_reports_and_deletes_nothing"),
+    ),
+    (
+        MEMORY,
+        "the report does not say whether the forgetting was right",
+        '            "ratification": ratification(),\n'
+        '            "note": (f"{len(episodes)} episode(s) recorded.',
+        '            "note": (f"{len(episodes)} episode(s) recorded.',
+        ("test_the_report_says_whether_the_forgetting_was_right",),
+    ),
+    (
+        MEMORY,
+        "the verdict hides what was thrown away, leaving only a number",
+        '            "still_collected": [',
+        '            "still_collected": [] if True else [',
+        ("test_what_is_still_collected_is_readable_so_a_person_can_judge",),
     ),
     # --- the engine's two call sites -----------------------------------------
     (

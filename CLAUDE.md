@@ -118,11 +118,29 @@ with the reason it has that value, and assert the *consequence* at whole numbers
 too. `test_the_policy_numbers_are_what_they_are` and
 `test_the_maintenance_cadences_are_what_they_are` are the two examples.
 
+**A probe that cannot fail is worse than no probe.** Two written on 2026-09-23
+were no-ops and reported "caught" against tests that were never at risk: one
+replaced a list with `[] or [...]`, which evaluates to the second list, and one
+set a fact's cycle to 10,000 days *before* the step that was supposed to collect
+it, so nothing was collected and the assertion held for no reason. Read a probe's
+replacement as code, not as intent.
+
 A related one from the same run: a test can pass on the wrong term. A test named
 for the eliminated-alternatives term of a score passed with that term deleted,
 because the same change also cleared a different objection and *that* moved the
 number. To isolate a term, build a case where every other term is already
 saturated.
+
+### Be brief
+
+Owner instruction, 2026-09-23: *"please be less verbose and more concise and
+precise. You can get to the problem directly and lesser context is fine and I'll
+ask you if I need more context."*
+
+Lead with the finding or the change. Do not restate the request, do not narrate
+the route taken, and do not pre-empt questions he has not asked. Reasoning belongs
+in the code comments and the docs, where it survives; a reply is not the place to
+prove the thinking happened. He will ask for more.
 
 ---
 

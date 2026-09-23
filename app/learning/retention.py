@@ -69,6 +69,35 @@ increments a per-kind tally and the row is deleted. One row per kind means the
 record of what was thrown away is bounded by the number of kinds and can never
 itself become the deadweight it exists to prevent.
 
+## The numbers are thought, and then ratified
+
+Krish, 2026-09-23: *"Deciding what to retain and what to forget shouldn't be a
+guessing game. It should be based on deep thought and then ratified by real life
+experiences."*
+
+Every constant below is the first half - reasoned, with the reasoning written
+beside it - and reasoning is where a number like `CYCLES_BEFORE_COLD = 2.25`
+comes from and also where it stops. The second half needs an observable that says
+a decision was **wrong**, and there is exactly one: a fact that was collected and
+then had to be learned again. Re-acquisition is the cost of a bad discard, it is
+measurable, and nothing else here is.
+
+So `discard_lesson` leaves a tombstone of `(kind, pattern)`, and `record_lesson`
+checks for one. A match means the collector was wrong, and two things follow:
+
+- the kind's `regretted` tally rises, and `ratification` turns that into a verdict
+  on the policy itself: above `REGRET_RATE_TOO_HIGH`, the numbers are too
+  aggressive and it says so rather than waiting to be asked;
+- the re-learned fact is given an `expected_interval_days` of at least how long
+  it had been quiet *plus* how long it stayed collected - the real cycle, learned
+  from the mistake. That is the loop closing. A yearly fact collected wrongly once
+  is never collected wrongly again, because experience has told it what its year
+  is, and nothing had to guess.
+
+Tombstones are pruned past `TOMBSTONE_HORIZON_DAYS`: beyond three of the default
+cycle, re-learning a fact is not evidence the discard was wrong, and a tombstone
+table that grew for ever would be the deadweight this module exists to prevent.
+
 ## A kind judged worthless keeps a door ajar
 
 `worth_recording` stops recording a kind that has produced enough facts and
@@ -129,6 +158,17 @@ MIN_SAMPLE_FOR_KIND = 8
 # One in this many facts of a discredited kind is recorded anyway, so the kind
 # can be found out to have become useful.
 REPRIEVE_EVERY = 10
+
+# The share of collections that may turn out to have been wrong before the policy
+# itself is judged too aggressive. One in ten: a collector that never regrets
+# anything is keeping everything, and one that regrets a third of its decisions is
+# paying re-acquisition costs to save space nobody needed.
+REGRET_RATE_TOO_HIGH = 0.1
+
+# How long a collected fact is remembered as having been collected. Beyond three
+# default cycles, learning it again is a new fact rather than evidence that
+# throwing the old one away was a mistake.
+TOMBSTONE_HORIZON_DAYS = 3 * DEFAULT_INTERVAL_DAYS
 
 
 @dataclass(frozen=True)
@@ -269,6 +309,9 @@ class KindHistory:
     paid_off: int = 0
     discarded_unreferenced: int = 0
     cost_sunk: float = 0.0
+    # Collected, and then had to be learned again. The only observable in the
+    # system that says a retention decision was wrong.
+    regretted: int = 0
 
     def payoff_rate(self) -> float | None:
         """Fraction of this kind's facts that were ever followed by a good
@@ -281,6 +324,50 @@ class KindHistory:
         if self.recorded < MIN_SAMPLE_FOR_KIND:
             return None
         return self.referenced / self.recorded
+
+
+@dataclass(frozen=True)
+class Ratification:
+    """What experience says about the policy, rather than about one fact."""
+
+    holding: bool
+    because: str
+    collections: int = 0
+    regrets: int = 0
+    regret_rate: float | None = None
+
+
+def ratification(histories) -> Ratification:
+    """Whether the policy's numbers have survived contact with real outcomes.
+
+    Reported rather than acted on. A collector that retuned its own thresholds
+    from its own regrets would be the one thing nobody could audit: the numbers
+    would drift, every drift would be justified by the drift before it, and the
+    reasoning written beside each constant would quietly stop being true. So this
+    says *the numbers are too aggressive and here is the evidence*, and a person
+    changes them - which is also what makes `test_the_policy_numbers_are_what_they_are`
+    a meaningful test rather than an obstacle."""
+    collections = sum(item.discarded_unreferenced for item in histories)
+    regrets = sum(item.regretted for item in histories)
+    if not collections:
+        return Ratification(
+            True, "nothing has been collected yet, so the policy has not been "
+                  "tested. Its numbers are reasoning, not evidence, and this "
+                  "says so rather than reporting a clean record")
+    rate = regrets / collections
+    if rate > REGRET_RATE_TOO_HIGH:
+        return Ratification(
+            False, f"{regrets} of {collections} collected fact(s) had to be "
+                   f"learned again - {rate:.0%}, above the "
+                   f"{REGRET_RATE_TOO_HIGH:.0%} this policy allows. The numbers "
+                   f"are too aggressive: raise CYCLES_BEFORE_COLD or "
+                   f"MIN_OFFERS_TO_JUDGE, and note here what the evidence was",
+            collections, regrets, rate)
+    return Ratification(
+        True, f"{regrets} of {collections} collected fact(s) had to be learned "
+              f"again ({rate:.0%}), inside the {REGRET_RATE_TOO_HIGH:.0%} this "
+              f"policy allows",
+        collections, regrets, rate)
 
 
 def worth_recording(history: KindHistory) -> tuple[bool, str]:
@@ -323,6 +410,9 @@ def describe() -> dict:
         "min_offers_to_judge": MIN_OFFERS_TO_JUDGE,
         "probation_multiple": PROBATION_MULTIPLE,
         "min_sample_for_kind": MIN_SAMPLE_FOR_KIND,
+        "regret_rate_too_high": REGRET_RATE_TOO_HIGH,
+        "tombstone_horizon_days": TOMBSTONE_HORIZON_DAYS,
+        "numbers_are_ratified_not_tuned": True,
         "reprieve_every": REPRIEVE_EVERY,
         "a_fact_is_a_bet": True,
         "discards_leave_an_aggregate": True,

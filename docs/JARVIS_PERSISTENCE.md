@@ -329,13 +329,48 @@ find out it had become useful.
   real machine before it is allowed to delete anything.
 - **Weekly, not six-hourly.** Every rule here is measured in months.
 
-### Not yet done
+### The numbers are thought, then ratified by outcomes
 
-`cost` is a proxy - the attempts a lesson was derived from, not model calls
-measured - and it is labelled as one at every site that sets it.
-`expected_interval_days` is never inferred: nothing today knows that an invoice
-fact is yearly, so almost every fact takes the conservative default. Both are
-honest placeholders rather than finished work.
+Krish, 2026-09-23: *"Deciding what to retain and what to forget shouldn't be a
+guessing game. It should be based on deep thought and then ratified by real life
+experiences."*
+
+Every constant in `retention.py` is the first half - reasoned, with the reasoning
+written beside it - and reasoning is both where a number like
+`CYCLES_BEFORE_COLD = 2.25` comes from and where it stops. The second half needs
+an observable that says a decision was **wrong**, and there is exactly one: a
+fact that was collected and then had to be learned again. Re-acquisition is the
+cost of a bad discard, it is measurable, and nothing else here is.
+
+So `discard_lesson` leaves a tombstone of `(kind, pattern)` with how long the fact
+had been quiet, and `record_lesson` checks for one. A match means the collector
+was wrong, and two things follow:
+
+- the kind's `regretted` tally rises, and `retention.ratification` turns that into
+  a verdict on the policy itself. Above `REGRET_RATE_TOO_HIGH` (one in ten) it
+  reports *the numbers are too aggressive*, names which to raise, and shows what
+  was thrown away so a person can judge. A collector that never regrets anything
+  is keeping everything.
+- the re-learned fact is given an `expected_interval_days` of at least how long it
+  had been quiet **plus** how long it stayed collected - the real cycle, learned
+  from the mistake. **A yearly fact collected wrongly once cannot be collected
+  wrongly twice.** That is the loop closing, and it is what replaced the honest
+  placeholder this section used to admit to.
+
+`ratification` reports and never retunes. A collector that adjusted its own
+thresholds from its own regrets would be the one thing nobody could audit: the
+numbers would drift, each drift justified by the one before, and the reasoning
+written beside each constant would quietly stop being true. Asserted over the
+parsed module - nothing assigns to a policy constant anywhere.
+
+Tombstones are pruned past three default cycles, because beyond that a re-learn is
+a new fact rather than evidence, and a tombstone table that grew for ever would be
+the deadweight the collector exists to prevent.
+
+### Still a proxy
+
+`cost` is the attempts a lesson was derived from, not model calls measured, and it
+is labelled as one at every site that sets it.
 
 ---
 

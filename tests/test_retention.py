@@ -376,6 +376,13 @@ def test_the_policy_numbers_are_what_they_are():
     # §26's own floor: fewer is one anecdote with a percentage sign on it.
     assert MIN_SAMPLE_FOR_KIND == 8
     assert REPRIEVE_EVERY == 10
+    # One in ten: a collector that never regrets anything is keeping everything,
+    # and one regretting a third of its decisions pays re-acquisition costs to
+    # save space nobody needed.
+    assert retention.REGRET_RATE_TOO_HIGH == 0.1
+    # Past three default cycles, learning a fact again is a new fact rather than
+    # evidence that throwing the old one away was a mistake.
+    assert retention.TOMBSTONE_HORIZON_DAYS == 3 * 365.0
 
 
 def test_describe_reports_the_constants_the_code_uses():
@@ -385,3 +392,65 @@ def test_describe_reports_the_constants_the_code_uses():
     assert described["probation_multiple"] == PROBATION_MULTIPLE
     assert described["reprieve_every"] == REPRIEVE_EVERY
     assert described["verdicts"] == list(VERDICTS)
+    assert described["regret_rate_too_high"] == retention.REGRET_RATE_TOO_HIGH
+    assert described["numbers_are_ratified_not_tuned"] is True
+
+
+# --- the numbers are thought, and then ratified --------------------------------
+
+def test_an_untested_policy_says_so_rather_than_reporting_a_clean_record():
+    """Krish, 2026-09-23: *"Deciding what to retain and what to forget shouldn't
+    be a guessing game. It should be based on deep thought and then ratified by
+    real life experiences."* Nothing collected yet means nothing ratified, and a
+    100%-correct record from zero decisions is the guessing game wearing a
+    number."""
+    verdict = retention.ratification([])
+    assert verdict.holding is True
+    assert "not been tested" in verdict.because
+    assert "reasoning, not evidence" in verdict.because
+    assert verdict.regret_rate is None
+
+
+def test_too_many_regrets_fails_the_policy_and_names_the_remedy():
+    verdict = retention.ratification(
+        [KindHistory(kind="k", discarded_unreferenced=10, regretted=3)])
+    assert verdict.holding is False
+    assert verdict.regret_rate == 0.3
+    assert "too aggressive" in verdict.because
+    assert "CYCLES_BEFORE_COLD" in verdict.because
+
+
+def test_a_few_regrets_are_the_price_of_collecting_anything():
+    """A collector that never regrets anything is keeping everything."""
+    verdict = retention.ratification(
+        [KindHistory(kind="k", discarded_unreferenced=100, regretted=5)])
+    assert verdict.holding is True
+    assert verdict.regret_rate == 0.05
+
+
+def test_regrets_are_counted_across_every_kind():
+    verdict = retention.ratification([
+        KindHistory(kind="a", discarded_unreferenced=10, regretted=1),
+        KindHistory(kind="b", discarded_unreferenced=10, regretted=1)])
+    assert verdict.collections == 20 and verdict.regrets == 2
+
+
+def test_the_policy_reports_its_own_failure_and_never_retunes_itself():
+    """A collector that changed its own thresholds from its own regrets would be
+    the one thing nobody could audit: the numbers would drift, each drift
+    justified by the one before, and the reasoning written beside each constant
+    would quietly stop being true.
+
+    Asserted over the parsed module: nothing assigns to a module-level constant
+    anywhere, so `ratification` cannot be the exception."""
+    tree = ast.parse(Path(retention.__file__).read_text())
+    policy = {"GRACE_DAYS", "CYCLES_BEFORE_COLD", "DEFAULT_INTERVAL_DAYS",
+              "EARNED_MULTIPLE", "MIN_OFFERS_TO_JUDGE", "PROBATION_MULTIPLE",
+              "MIN_SAMPLE_FOR_KIND", "REPRIEVE_EVERY", "REGRET_RATE_TOO_HIGH"}
+    assigned_inside = {
+        target.id
+        for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        for statement in ast.walk(node) if isinstance(statement, ast.Assign)
+        for target in statement.targets if isinstance(target, ast.Name)}
+    assert not (assigned_inside & policy)
+    assert "global" not in Path(retention.__file__).read_text()

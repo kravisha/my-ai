@@ -61,7 +61,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -153,7 +153,17 @@ CREATE TABLE IF NOT EXISTS lesson_kinds (
     referenced             INTEGER NOT NULL DEFAULT 0,
     paid_off               INTEGER NOT NULL DEFAULT 0,
     discarded_unreferenced INTEGER NOT NULL DEFAULT 0,
-    cost_sunk              REAL NOT NULL DEFAULT 0
+    cost_sunk              REAL NOT NULL DEFAULT 0,
+    regretted              INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS collected_patterns (
+    kind                  TEXT NOT NULL,
+    pattern               TEXT NOT NULL,
+    discarded_at          TEXT NOT NULL,
+    quiet_days_at_discard REAL NOT NULL DEFAULT 0,
+    cost_at_discard       REAL NOT NULL DEFAULT 0,
+    because               TEXT,
+    PRIMARY KEY (kind, pattern)
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_episode ON attempts(episode_id, at);
 CREATE INDEX IF NOT EXISTS idx_knowledge_episode ON knowledge(episode_id);
@@ -174,6 +184,10 @@ LESSON_COLUMNS = (
     ("expected_interval_days", "REAL"),
     # Set when retention puts a lesson on probation: kept, and no longer offered.
     ("demoted_at", "TEXT"),
+)
+
+KIND_COLUMNS = (
+    ("regretted", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 # Attempt kinds. The distinction between `development` and `heldout` is the one
@@ -213,10 +227,12 @@ def _migrate(db: sqlite3.Connection) -> None:
     exists. A developer with a learning.db from last week would otherwise get
     `no such column: times_offered` at the first read, which is the failure this
     loop exists to prevent."""
-    have = {row["name"] for row in db.execute("PRAGMA table_info(lessons)")}
-    for column, declaration in LESSON_COLUMNS:
-        if column not in have:
-            db.execute(f"ALTER TABLE lessons ADD COLUMN {column} {declaration}")
+    for table, columns in (("lessons", LESSON_COLUMNS),
+                           ("lesson_kinds", KIND_COLUMNS)):
+        have = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+        for column, declaration in columns:
+            if column not in have:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def _now() -> str:
@@ -493,14 +509,70 @@ def record_lesson(*, kind: str, pattern: str, lesson: str,
                         expected_interval_days, existing["id"]))
             _bump_kind(db, kind, cost_sunk=float(cost))
             return int(existing["id"])
+        # Ratification. A pattern we collected and are now learning again is the
+        # one observable that says a retention decision was wrong, so it is
+        # counted - and the fact is told what its real cycle is, which is the
+        # whole of "ratified by real life experiences". A yearly fact collected
+        # wrongly once cannot be collected wrongly twice.
+        regret = db.execute(
+            "SELECT * FROM collected_patterns WHERE kind = ? AND pattern = ?",
+            (kind, pattern)).fetchone()
+        if regret is not None:
+            learned = _relearned_interval(regret)
+            expected_interval_days = max(expected_interval_days or 0.0, learned)
+            db.execute("DELETE FROM collected_patterns WHERE kind = ? AND pattern = ?",
+                       (kind, pattern))
         cursor = db.execute(
             "INSERT INTO lessons (at, kind, pattern, lesson, episodes, cost, "
             "expected_interval_days) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (_now(), kind, pattern, lesson,
              json.dumps([episode_slug] if episode_slug else []),
              float(cost), expected_interval_days))
-        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost))
+        _bump_kind(db, kind, recorded=1, cost_sunk=float(cost),
+                   **({"regretted": 1} if regret is not None else {}))
         return int(cursor.lastrowid)
+
+
+def _relearned_interval(tombstone) -> float:
+    """The cycle a wrongly-collected fact has just demonstrated.
+
+    It was quiet for `quiet_days_at_discard` when we threw it away, then stayed
+    thrown away until now. Its true period is at least the sum: that is what the
+    world just said, rather than what the default assumed."""
+    away = 0.0
+    try:
+        gone = datetime.fromisoformat(tombstone["discarded_at"])
+        if gone.tzinfo is None:
+            gone = gone.replace(tzinfo=timezone.utc)
+        away = max(0.0, (datetime.now(timezone.utc) - gone).total_seconds() / 86400.0)
+    except (ValueError, TypeError):
+        away = 0.0
+    return float(tombstone["quiet_days_at_discard"] or 0.0) + away
+
+
+def regretted_patterns() -> list[dict]:
+    """What has been collected and not (yet) learned again.
+
+    The evidence `retention.ratification` is a verdict on. Readable so that a
+    person judging whether the policy is too aggressive can see *what* it threw
+    away, not only how much."""
+    with connect() as db:
+        return [_row(row) for row in db.execute(
+            "SELECT * FROM collected_patterns ORDER BY discarded_at DESC")]
+
+
+def prune_tombstones(*, older_than_days: float) -> int:
+    """Forget that something was collected.
+
+    Past the horizon, learning a fact again is a new fact rather than evidence
+    that throwing the old one away was wrong - and a tombstone table that grew
+    for ever would be the deadweight the collector exists to prevent."""
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=float(older_than_days))).isoformat()
+    with connect() as db:
+        cursor = db.execute("DELETE FROM collected_patterns WHERE discarded_at < ?",
+                            (cutoff,))
+        return int(cursor.rowcount or 0)
 
 
 def note_offered(lesson_ids) -> int:
@@ -610,7 +682,8 @@ def restore_lesson(lesson_id: int) -> None:
                    (lesson_id,))
 
 
-def discard_lesson(lesson_id: int) -> dict:
+def discard_lesson(lesson_id: int, *, quiet_days: float = 0.0,
+                   because: str = "") -> dict:
     """Collect a lesson, leaving its kind's tally behind.
 
     The row goes and its references go with it. What stays is one increment on
@@ -626,6 +699,15 @@ def discard_lesson(lesson_id: int) -> dict:
         never_used = int(gone.get("times_referenced") or 0) == 0
         _bump_kind(db, gone["kind"],
                    **({"discarded_unreferenced": 1} if never_used else {}))
+        # The tombstone, so that learning this again is recognisable as a regret.
+        # `REPLACE` because the same pattern may be collected more than once, and
+        # the most recent discard is the one a re-learning argues with.
+        db.execute(
+            "INSERT OR REPLACE INTO collected_patterns "
+            "(kind, pattern, discarded_at, quiet_days_at_discard, cost_at_discard, "
+            "because) VALUES (?, ?, ?, ?, ?, ?)",
+            (gone["kind"], gone["pattern"], _now(), float(quiet_days),
+             float(gone.get("cost") or 0.0), because))
         db.execute("DELETE FROM lesson_references WHERE lesson_id = ?", (lesson_id,))
         db.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
         gone["episodes"] = json.loads(gone.get("episodes") or "[]")

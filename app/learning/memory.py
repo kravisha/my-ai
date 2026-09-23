@@ -126,16 +126,20 @@ def collect_garbage(*, now: datetime | None = None, dry_run: bool = False) -> di
     when = now or datetime.now(timezone.utc)
     report: dict = {"at": when.isoformat(timespec="seconds"), "kept": 0,
                     "demoted": [], "discarded": [], "restored": [],
-                    "dry_run": dry_run}
+                    "pruned": 0, "dry_run": dry_run}
 
     for row in store.lessons(include_demoted=True):
-        decided = retention.verdict(as_bet(row, now=when))
+        bet = as_bet(row, now=when)
+        decided = retention.verdict(bet)
         entry = {"id": row["id"], "kind": row["kind"], "pattern": row["pattern"],
                  "because": decided.because}
         if decided.outcome == retention.DISCARD:
             report["discarded"].append(entry)
             if not dry_run:
-                store.discard_lesson(row["id"])
+                # The quiet period goes onto the tombstone, because it is half of
+                # the cycle this fact will be told about if it ever comes back.
+                store.discard_lesson(row["id"], quiet_days=bet.quiet_days(),
+                                     because=decided.because)
         elif decided.outcome == retention.PROBATION:
             if not row.get("demoted_at"):
                 report["demoted"].append(entry)
@@ -150,7 +154,33 @@ def collect_garbage(*, now: datetime | None = None, dry_run: bool = False) -> di
                 report["restored"].append(entry)
                 if not dry_run:
                     store.restore_lesson(row["id"])
+
+    if not dry_run:
+        report["pruned"] = store.prune_tombstones(
+            older_than_days=retention.TOMBSTONE_HORIZON_DAYS)
+    report["ratification"] = ratification()
     return report
+
+
+def ratification() -> dict:
+    """What experience says about the retention policy itself.
+
+    Krish, 2026-09-23: *"Deciding what to retain and what to forget shouldn't be
+    a guessing game. It should be based on deep thought and then ratified by real
+    life experiences."* The thought is the constants in `retention`, each with its
+    reasoning beside it. This is the ratification: how many collected facts had to
+    be learned again, which is the only observable in the system that says a
+    retention decision was wrong."""
+    verdict = retention.ratification(
+        [retention.KindHistory(**item) for item in store.kind_histories()])
+    return {"holding": verdict.holding, "because": verdict.because,
+            "collections": verdict.collections, "regrets": verdict.regrets,
+            "regret_rate": verdict.regret_rate,
+            "still_collected": [
+                {"kind": item["kind"], "pattern": item["pattern"],
+                 "discarded_at": item["discarded_at"],
+                 "cost_at_discard": item["cost_at_discard"]}
+                for item in store.regretted_patterns()[:20]]}
 
 
 def learn_from_episode(slug: str) -> list[dict]:
@@ -320,15 +350,26 @@ def meta_report() -> dict:
     all_lessons = store.lessons(include_demoted=True)
 
     if len(episodes) < MIN_EPISODES_FOR_TREND:
+        # The retention verdict is carried even here. It is a claim about the
+        # forgetting policy, not about episodes, and it is valid from the first
+        # collection - withholding it until two episodes exist would hide the one
+        # finding that does not need a trend.
         return {
             "episodes": len(episodes),
             "claims": [],
+            # Its own key, never folded into `claims`. `claims` means
+            # cross-episode claims about how this system learns, and the retention
+            # verdict is a claim about the forgetting policy - true from the first
+            # collection, and not a trend. Mixing them would make "no claims yet"
+            # unsayable, which is the refusal this branch exists for.
+            "ratification": ratification(),
             "note": (f"{len(episodes)} episode(s) recorded. A claim about how this "
                      f"system learns needs at least {MIN_EPISODES_FOR_TREND} to be "
                      f"anything more than one anecdote with a percentage sign on "
                      f"it, so none is made. The lessons below are per-episode "
                      f"facts, not trends."),
             "lessons": all_lessons,
+            "kinds": store.kind_histories(),
         }
 
     claims = []
@@ -382,6 +423,8 @@ def meta_report() -> dict:
         "claims": claims,
         "lessons": all_lessons,
         "kinds": kinds,
+        # See the early-return branch above for why this is not in `claims`.
+        "ratification": ratification(),
         "note": ("Computed from the learning store. Every claim here is "
                  "re-derivable from the rows behind it - except the one about "
                  "collected lessons, whose rows are deliberately gone and whose "

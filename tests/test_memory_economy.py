@@ -406,3 +406,173 @@ def test_both_settling_call_sites_exist_in_the_engine():
                   and isinstance(node.func, ast.Attribute)
                   and node.func.attr == "advice_for")
     assert "episode_slug" in [keyword.arg for keyword in advice.keywords]
+
+
+# --- ratified by real life experience ----------------------------------------
+#
+# Krish, 2026-09-23: *"Deciding what to retain and what to forget shouldn't be a
+# guessing game. It should be based on deep thought and then ratified by real life
+# experiences."* The thought is the constants in `retention`. The ratification is
+# here: a fact collected and then learned again is the only observable in the
+# system that says a retention decision was wrong.
+
+
+def _collectable(cost=12.0, pattern="never_chosen", interval=None):
+    """One fact that will be collected, and three that will always outrank it."""
+    doomed = store.record_lesson(kind=memory.SOURCE_VALUE, pattern=pattern,
+                                 lesson="x", cost=cost,
+                                 expected_interval_days=interval)
+    for index in range(3):
+        store.record_lesson(kind=memory.SOURCE_VALUE, pattern=f"better-{index}",
+                            lesson="y", cost=1.0)
+    for _ in range(retention.MIN_OFFERS_TO_JUDGE + 2):
+        memory.advice_for(None)
+    with store.connect() as db:
+        db.execute("UPDATE lessons SET at = '2019-01-01T00:00:00+00:00'")
+    return doomed
+
+
+def test_collecting_a_fact_leaves_a_tombstone_of_what_it_was():
+    _collectable(cost=12.0)
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+
+    tombstones = store.regretted_patterns()
+    assert [item["pattern"] for item in tombstones] == ["never_chosen"]
+    assert tombstones[0]["cost_at_discard"] == 12.0
+    assert tombstones[0]["quiet_days_at_discard"] > 365
+    assert tombstones[0]["because"]
+
+
+def test_learning_a_collected_fact_again_is_counted_as_a_regret():
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    assert store.kind_history(memory.SOURCE_VALUE)["regretted"] == 0
+
+    store.record_lesson(kind=memory.SOURCE_VALUE, pattern="never_chosen",
+                        lesson="turns out we needed it", cost=12.0)
+    assert store.kind_history(memory.SOURCE_VALUE)["regretted"] == 1
+    assert store.regretted_patterns() == [], "the tombstone is spent"
+
+
+def test_learning_it_again_teaches_the_fact_its_real_cycle():
+    """The loop closing. The world has just said how long this fact's period is,
+    and that beats whatever the default assumed."""
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    quiet = store.regretted_patterns()[0]["quiet_days_at_discard"]
+
+    back = store.record_lesson(kind=memory.SOURCE_VALUE, pattern="never_chosen",
+                               lesson="needed after all", cost=12.0)
+    row = next(item for item in store.lessons() if item["id"] == back)
+    assert row["expected_interval_days"] >= quiet
+
+
+def test_a_fact_wrongly_collected_once_is_not_collected_wrongly_twice():
+    """The whole point of ratifying rather than guessing. Before the regret this
+    fact had the default year and was collected at 380 days; after it, the cycle
+    it actually demonstrated keeps it."""
+    _collectable(pattern="acme_march")
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    assert store.lessons(memory.SOURCE_VALUE)
+
+    back = store.record_lesson(kind=memory.SOURCE_VALUE, pattern="acme_march",
+                               lesson="late again", cost=3.0)
+    learned = next(item for item in store.lessons()
+                   if item["id"] == back)["expected_interval_days"]
+    assert learned > 365, "nothing was learned from the mistake"
+
+    # Offer it repeatedly and let a year pass: the default would collect it here.
+    for _ in range(retention.MIN_OFFERS_TO_JUDGE + 2):
+        memory.advice_for(None)
+    report = memory.collect_garbage(now=datetime.now(timezone.utc)
+                                    + timedelta(days=380))
+    assert "acme_march" not in [item["pattern"] for item in report["discarded"]]
+
+
+def test_a_stated_cycle_is_never_lowered_by_what_was_learned():
+    """Experience raises the floor; it does not overwrite a longer claim.
+
+    The first version of this test gave the fact a 10,000-day cycle *before*
+    collection, so it was never collected, nothing was re-learned, and the
+    assertion held for no reason. `tests/probes/memory_economy_probes.py` found
+    that by replacing the `max` with the learned value and watching nothing
+    fail."""
+    _collectable(pattern="rare_thing")
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    learned = store.regretted_patterns()[0]["quiet_days_at_discard"]
+    assert 0 < learned < 10_000
+
+    back = store.record_lesson(kind=memory.SOURCE_VALUE, pattern="rare_thing",
+                               lesson="again", cost=1.0,
+                               expected_interval_days=10_000)
+    row = next(item for item in store.lessons() if item["id"] == back)
+    assert row["expected_interval_days"] == 10_000
+
+
+def test_a_dry_run_leaves_no_tombstone_either():
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc), dry_run=True)
+    assert store.regretted_patterns() == []
+
+
+def test_a_tombstone_past_the_horizon_is_pruned_and_stops_being_a_regret():
+    """Beyond three default cycles, learning a fact again is a new fact - and a
+    tombstone table that grew for ever would be the deadweight the collector
+    exists to prevent."""
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    assert store.regretted_patterns()
+
+    with store.connect() as db:
+        db.execute("UPDATE collected_patterns SET discarded_at = '2015-01-01T00:00:00+00:00'")
+    assert store.prune_tombstones(
+        older_than_days=retention.TOMBSTONE_HORIZON_DAYS) == 1
+
+    store.record_lesson(kind=memory.SOURCE_VALUE, pattern="never_chosen",
+                        lesson="unrelated, years later", cost=1.0)
+    assert store.kind_history(memory.SOURCE_VALUE)["regretted"] == 0
+
+
+def test_the_sweep_prunes_as_it_goes():
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    with store.connect() as db:
+        db.execute("UPDATE collected_patterns SET discarded_at = '2015-01-01T00:00:00+00:00'")
+    assert memory.collect_garbage(now=datetime.now(timezone.utc))["pruned"] == 1
+
+
+def test_the_policy_is_judged_by_its_regrets_not_by_its_reasoning():
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    assert memory.ratification()["holding"] is True
+
+    store.record_lesson(kind=memory.SOURCE_VALUE, pattern="never_chosen",
+                        lesson="needed it", cost=12.0)
+    judged = memory.ratification()
+    assert judged["holding"] is False
+    assert judged["regrets"] == 1 and judged["collections"] == 1
+    assert "too aggressive" in judged["because"]
+
+
+def test_the_report_says_whether_the_forgetting_was_right():
+    """A claim about how this system learns that said nothing about whether its
+    forgetting was right would be the guessing game."""
+    _collectable()
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    reported = memory.meta_report()
+    assert reported["ratification"]["collections"] == 1
+    # Its own key, not folded into `claims`: `claims` means cross-episode claims
+    # about how this system *learns*, and a verdict on the forgetting policy is
+    # true from the first collection rather than being a trend. Mixing them would
+    # make "no claims yet" unsayable.
+    assert reported["claims"] == []
+
+
+def test_what_is_still_collected_is_readable_so_a_person_can_judge():
+    """The evidence behind the verdict, not just the number - a person deciding
+    whether the policy is too aggressive needs to see *what* it threw away."""
+    _collectable(cost=12.0)
+    memory.collect_garbage(now=datetime.now(timezone.utc))
+    still = memory.ratification()["still_collected"]
+    assert [item["pattern"] for item in still] == ["never_chosen"]
+    assert still[0]["cost_at_discard"] == 12.0
