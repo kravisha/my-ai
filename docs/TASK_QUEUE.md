@@ -3632,8 +3632,19 @@ sentence authorising a merge to master is itself transcribed by a third party.
 
 ### TQ-119 — The interactive task: ask while working, and stop rather than guess
 
-**NEED (GREEN) · QUEUED · owner directive 2026-09-23, quoted in full below · DBA specification §45 ·
-Persistence specification §9, §11**
+**NEED (GREEN) · PART BUILT 2026-09-23 · owner directive 2026-09-23, quoted in full below · DBA
+specification §45 · Persistence specification §9, §11**
+
+**What is built:** `gateway/taskrun.py` — requirements 2, 3 and 4. The model carries headings and
+never values, a need is filled from a named source or not at all, only the person a question was put
+to may answer it, a blocked line parks its question while the rest of the work carries on, and
+`finish` refuses while any line is neither filled nor asked about. Documented in
+`docs/JARVIS_PERSISTENCE.md` §3c-septies, probed by `tests/probes/taskrun_probes.py`.
+
+**What is left:** requirement 1 — a run does not survive a restart. It is a decision module with no
+store, so persisting one is a matter of writing `Run` through `persistence.TASK` and reading it back.
+And it has no producer or consumer yet: nothing reads the business account, and nothing puts the open
+questions in front of Krish. The console already does the second for `noticing`.
 
 The owner's own example, which is the clearest statement of what Jarvis is for that this queue holds:
 

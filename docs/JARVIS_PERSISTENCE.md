@@ -700,6 +700,100 @@ the same reason.
 
 ---
 
+## 3c-septies. A long job done in front of him
+
+`gateway/taskrun.py`, probed by `tests/probes/taskrun_probes.py`.
+
+Krish, 2026-09-23, describing the thing he actually wants from all of this:
+
+> *"I should say Jarvis prepare my expense statements by looking into my
+> business account - ask me questions while you are working on the account so
+> that we don't have any confusion about what needs to be done. Also use last
+> year's statement as a model and ask me questions when you can't find the data
+> that you seek."*
+
+Three instructions in one sentence, pulling against each other. Work without
+interrupting him. Ask when genuinely stuck. Follow a model. Everything in this
+module is one of the four refusals that let all three hold at once.
+
+### The model carries shape and never values
+
+*"Use last year's statement as a model"* is the most dangerous sentence in the
+request, because the obvious implementation is the worst one: copy last year's
+figures, change what you can find, ship it. Every number in that statement is
+then a claim about this year sourced from a different year, and the ones nobody
+got round to checking are indistinguishable from the ones that were.
+
+So a `Model` is a list of `Field(name, means)` and holds no value anywhere. The
+copy-last-year implementation is not forbidden, it is **unreachable** - there is
+no attribute for a figure to travel in. That is Amendment 3 made structural
+rather than promised, and it is the one claim here that no behavioural test can
+prove: a `Field` that grew a `value` would break nothing until the morning a
+figure came through it. `test_a_model_cannot_carry_a_value` therefore asserts
+over the parsed AST of the module, which is the lesson from the ledger test that
+passed on a docstring.
+
+Each `Run` also builds its own `Need` objects from the model. A model that
+handed out shared ones would put last quarter's figures in this quarter's
+statement by a second road, and a probe closes it.
+
+### A line is filled from a source, or it is not filled
+
+`Need.found(value, source=)` - `source` is keyword-only and has no default.
+There is no `assume`, no `default`, no `estimate`, and a test asserts the full
+method list rather than trusting the docstring that says so. A need that cannot
+be filled becomes a `Question` and that is the only other exit from `unmet`.
+
+An empty statement with three honest questions attached is a better morning's
+work than a complete one with a plausible number in it, and only one of those
+two is recoverable by being told.
+
+### The one who was asked is the one who may answer
+
+`Need.ask` records **who the question was put to**, at the moment of asking, so
+that the answer has somebody to be checked against instead of naming itself.
+`answered(value, by=)` refuses anyone else - Jarvis first, because Amendment 1
+is easiest to break exactly here: he is holding the pen, he has a good guess,
+and afterwards a guess and an answer look identical. A third party is refused
+for the same reason. `waive` is Krish's decision to leave a line out and is
+recorded as his; Jarvis waiving a line is an assistant with no holes to report.
+
+Who the work is for is who its questions go to. Hard-wiring Krish would mean a
+run for anyone else quietly asked the wrong person, and a run *for* Jarvis is
+refused outright.
+
+### Parking a question does not stop the work
+
+`depends(name, on=)` makes *"carry on with the independent work"* computable
+rather than a judgement. A blocked line parks its question, `workable()` hands
+back everything else, and the blocked one is never attempted with a value
+nobody confirmed. A blocker that is merely **asked** does not release the work
+behind it; only a settled one does.
+
+A dependency loop is refused where it closes, not discovered later. A loop does
+not crash: every line in it is quietly unworkable forever, the narration says
+*waiting on* about each of them, and the run looks busy while nothing moves.
+`finish` would catch it eventually - at the end of a morning nobody got anything
+out of.
+
+### Finishing is a claim, so it is checked
+
+`finish()` refuses while any line is neither filled nor asked about, and names
+each one with what it means. If questions are open it raises `Stuck` and quotes
+them. Reporting a statement as done with a silent hole in it is the failure this
+whole arrangement exists against, and it is the one that looks most like
+success.
+
+### Not yet done
+
+Nothing calls this. It is the decision half of the split: it has no store, no
+clock beyond `now`, no account and no way to read one. The producer is the piece
+that reads Krish's business account and the consumer is the piece that puts the
+open questions in front of him - the console already knows how to do the second
+for `noticing`, and the natural next step is one path for both.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own
