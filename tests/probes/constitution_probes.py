@@ -23,7 +23,13 @@ import harness  # noqa: E402
 TESTS = Path(__file__).resolve().parents[1]
 
 CONSTITUTION = "gateway/constitution.py"
-SUITES = {CONSTITUTION: TESTS / "test_constitution.py"}
+PERMISSIONS = "dba/permissions.py"
+ANTICIPATION = "gateway/anticipation.py"
+TRUSTBOOK = "gateway/trustbook.py"
+SUITES = {CONSTITUTION: TESTS / "test_constitution.py",
+          PERMISSIONS: TESTS / "test_constitution.py",
+          ANTICIPATION: TESTS / "test_constitution.py",
+          TRUSTBOOK: TESTS / "test_constitution.py"}
 
 PROBES: list[harness.Probe] = [
     # --- encrypted at rest ----------------------------------------------------
@@ -197,6 +203,39 @@ PROBES: list[harness.Probe] = [
         "        raise NotInstalled(\"nothing is sealed yet; `install` comes first\")\n"
         "\n    existing = amendments_document(key=key)",
         ("test_appending_before_anything_is_installed_is_refused",),
+    ),
+    # --- Amendment 3: the mechanisms it names must keep refusing ---------------
+    #
+    # The amendment lists where the rule against forgery is actually held. These
+    # break each named mechanism and confirm the test notices - so the list
+    # cannot decay into prose about how things used to work.
+    (
+        PERMISSIONS,
+        "the records that judge Jarvis become his to write",
+        'OWNER_WRITTEN_TYPES = ("charter_grant", "guess_verdict")',
+        "OWNER_WRITTEN_TYPES = ()",
+        ("test_every_mechanism_the_amendment_names_still_refuses",),
+    ),
+    (
+        ANTICIPATION,
+        "the anticipation record claims it grades itself",
+        '        "grades_itself": False,',
+        '        "grades_itself": True,',
+        ("test_every_mechanism_the_amendment_names_still_refuses",),
+    ),
+    (
+        TRUSTBOOK,
+        "the trust record claims anybody may write a verdict",
+        '        "verdict_written_by": "the operator console only",',
+        '        "verdict_written_by": "anybody",',
+        ("test_every_mechanism_the_amendment_names_still_refuses",),
+    ),
+    (
+        CONSTITUTION,
+        "the constitution reports itself writable",
+        '        "constitution_is_writable": False,',
+        '        "constitution_is_writable": True,',
+        ("test_every_mechanism_the_amendment_names_still_refuses",),
     ),
     (
         CONSTITUTION,

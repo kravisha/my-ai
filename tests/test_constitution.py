@@ -559,3 +559,78 @@ def test_appending_before_anything_is_installed_is_refused(client, key):
     with pytest.raises(constitution.NotInstalled, match="comes first"):
         constitution.append_amendment(client, "something", key=key,
                                       requested_by="krish")
+
+
+# =============================================================================
+# Amendment 3 — never forge anything
+# =============================================================================
+
+
+def test_the_amendment_against_forgery_is_on_the_record():
+    """Krish, 2026-09-23: *"Add it as an amendment to the constitution that
+    Jarvis should not forge anything."*"""
+    from pathlib import Path as _Path
+
+    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    assert "## Amendment 3 — Never forge anything" in text
+
+    # Whitespace-normalised, because the document is wrapped for a person to
+    # read and a sentence that happens to straddle a line break is still the
+    # sentence. A test that forced the prose onto one line would be the document
+    # serving the test.
+    flowed = " ".join(text.split())
+    assert "claims to be something it is not" in flowed
+    # The distinction the amendment turns on: a wrong answer honestly labelled
+    # is a mistake; a right answer wearing somebody else's name is a forgery.
+    assert "provenance rather than accuracy" in flowed
+    # And no escape clause, because the honest form is always available.
+    assert "no exception clause" in flowed
+    assert "A forgery that is never discovered still costs everything" in flowed
+
+
+def test_the_earlier_amendments_were_not_touched():
+    """Amendments only grow. Adding the third must leave the first two exactly
+    as they were - which is the rule the third one is an instance of."""
+    from pathlib import Path as _Path
+
+    text = _Path("AI-CONSTITUTION-AMENDMENTS.md").read_text()
+    headings = [line for line in text.splitlines()
+                if line.startswith("## Amendment ")]
+    assert headings == [
+        "## Amendment 1 — Never answer for the person you are asking",
+        "## Amendment 2 — The constitution is permanent; its amendments only grow",
+        "## Amendment 3 — Never forge anything",
+    ]
+    assert "must never supply the permission it is asking for" in text
+    assert "grows and never shrinks" in text
+
+
+def test_every_mechanism_the_amendment_names_still_refuses():
+    """The amendment lists where the rule is held. This fails if one of them is
+    removed, renamed, or stops refusing - so the list cannot quietly become
+    prose about the past."""
+    from dba import permissions
+    from gateway import anticipation, ledger, readback, trustbook
+
+    # He cannot write the records that grant him authority or judge his work.
+    assert set(permissions.OWNER_WRITTEN_TYPES) >= {"charter_grant",
+                                                    "guess_verdict"}
+    assert permissions.ADMINISTER not in permissions.permissions_of(
+        permissions.JARVIS)
+
+    # He cannot confirm his own understanding.
+    assert "confirm" in dir(readback)
+
+    # He cannot settle or rate his own guess, and hindsight is refused.
+    assert "settle" in dir(anticipation) and "rate" in dir(anticipation)
+    assert anticipation.describe()["grades_itself"] is False
+
+    # He cannot rewrite the constitution.
+    assert constitution.describe()["constitution_is_writable"] is False
+
+    # The life ledger is hash-chained, so an edited past does not verify.
+    assert ledger.GENESIS_HASH
+
+    # A verdict naming a guess that does not exist is reported, not skipped.
+    assert trustbook.describe()["verdict_written_by"] == \
+        "the operator console only"
