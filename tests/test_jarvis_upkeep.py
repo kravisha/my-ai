@@ -531,3 +531,74 @@ def test_the_maintenance_cadences_are_what_they_are():
     # Every rule in app/learning/retention.py is measured in months, and the
     # answer cannot change faster than its thirty-day grace period.
     assert upkeep.COLLECT_MEMORY_EVERY_HOURS == 24 * 7
+
+
+# =============================================================================
+# Noticing something before Krish asks
+# =============================================================================
+#
+# Krish, 2026-09-23: *"being preemptive in being helpful like humans holding the
+# door."* The trust ladder had nothing on it until the sweep started producing
+# guesses, and a ladder with nothing on it is the same failure as one nothing
+# can climb.
+
+
+def _a_promise(client, days=1, promise="send Krish the Q3 statement"):
+    from datetime import datetime, timedelta, timezone
+    due = datetime.now(timezone.utc) + timedelta(days=days)
+    return client.create("commitment", {
+        "name": promise[:200], "agent": "jarvis", "promise": promise,
+        "made_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "due_on": due.date().isoformat(), "status": "open"},
+        reason="test promise")
+
+
+def test_the_sweep_notices_a_promise_coming_due(client):
+    from gateway import trustbook
+
+    _a_promise(client)
+    assert upkeep.noticing_due(client) is True
+
+    result = upkeep.run_once(client)
+    assert result["noticed"] is not None
+
+    # Recorded as a guess whatever the rung allows saying.
+    made, problems = trustbook.load(client)
+    assert problems == []
+    assert [one.domain for one in made] == ["commitments"]
+    assert "due on" in made[0].because
+
+
+def test_a_new_domain_records_and_says_nothing(client):
+    """The bottom rung, doing what it says. Nothing has been earned yet, so the
+    noticing is written down and not spoken."""
+    _a_promise(client)
+    result = upkeep.run_once(client)
+    assert result["noticed"]["say"] == []
+    assert result["noticed"]["recorded_only"] == 1
+
+
+def test_noticing_is_not_repeated_every_sweep(client):
+    _a_promise(client)
+    upkeep.run_once(client)
+    assert upkeep.noticing_due(client) is False
+    assert upkeep.run_once(client)["noticed"] is None
+
+
+def test_a_broken_trust_record_does_not_stop_the_rest_of_the_sweep(
+        client, monkeypatch):
+    from gateway import trustbook
+
+    monkeypatch.setattr(trustbook, "load",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            ValueError("the record will not load")))
+    result = upkeep.run_once(client)
+    assert any("noticing" in problem for problem in result["problems"])
+    assert result["checkpoint"] is not None
+
+
+def test_the_noticing_cadence_is_what_it_is():
+    """Four hours: a promise due tomorrow is worth raising today and not worth
+    raising six times today."""
+    assert upkeep.NOTICE_EVERY_HOURS == 4
+    assert "notice_every_hours" in upkeep.describe()

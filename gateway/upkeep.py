@@ -47,9 +47,11 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from app import capability_gaps as gap_detector
 from app.learning import memory
 from gateway import checkpoint as checkpoint_module
-from gateway import dbaclient, gaps, identity, logscan, persistence
+from gateway import (dbaclient, gaps, identity, logscan, noticing, persistence,
+                     trustbook)
 
 logger = logging.getLogger("gateway.upkeep")
 
@@ -81,6 +83,11 @@ SCAN_LOGS_EVERY_HOURS = 6
 # and the answer cannot change faster than the grace period.
 COLLECT_MEMORY_EVERY_HOURS = 24 * 7
 
+# How often Jarvis looks for something Krish will want before being asked. Four
+# hours: a promise due tomorrow is worth raising today and not worth raising six
+# times today, and `noticing.MOST_PER_SWEEP` caps each look besides.
+NOTICE_EVERY_HOURS = 4
+
 # Set to 1 to have the sweep report what it would collect and collect nothing.
 # Not a debug flag - it is how a collector earns trust on a real machine before
 # it is allowed to delete anything.
@@ -90,6 +97,7 @@ _LAST_CHECKPOINT = "upkeep:last_checkpoint"
 _LAST_PROMOTION = "upkeep:last_gap_promotion"
 _LAST_LOG_SCAN = "upkeep:last_log_scan"
 _LAST_COLLECTION = "upkeep:last_memory_collection"
+_LAST_NOTICING = "upkeep:last_noticing"
 
 
 def enabled() -> bool:
@@ -167,6 +175,15 @@ def log_scan_due(client: dbaclient.DBAClient, *,
     return last is None or (now - last) >= timedelta(hours=SCAN_LOGS_EVERY_HOURS)
 
 
+def noticing_due(client: dbaclient.DBAClient, *,
+                 agent: str = identity.AGENT_ID,
+                 now: datetime | None = None) -> bool:
+    now = now or _now()
+    last = _parse(persistence.get(client, persistence.SELF_ASSESSMENT,
+                                  _LAST_NOTICING, agent=agent))
+    return last is None or (now - last) >= timedelta(hours=NOTICE_EVERY_HOURS)
+
+
 def collection_is_dry() -> bool:
     return (os.environ.get(COLLECTION_DRY_RUN_ENV, "") or "").strip() in (
         "1", "true", "yes")
@@ -202,7 +219,7 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
     exception is a maintenance job that stops running and tells nobody."""
     result: dict = {"at": _now().isoformat(timespec="seconds"),
                     "checkpoint": None, "promoted": None, "log_scan": None,
-                    "collection": None, "problems": []}
+                    "collection": None, "noticed": None, "problems": []}
 
     if not dbaclient.is_configured():
         result["problems"].append("no DBA token is configured; nothing to do")
@@ -277,6 +294,34 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
     except (dbaclient.Unavailable, dbaclient.Refused, OSError, ValueError,
             sqlite3.Error) as exc:
         result["problems"].append(f"memory collection: {exc}")
+
+    # Krish, 2026-09-23: *"being preemptive in being helpful like humans holding
+    # the door."* Everything noticed is recorded as a guess, whether or not it is
+    # said - an assistant that only writes down what it is allowed to say can
+    # never show it was right, so it could never climb off the bottom rung.
+    try:
+        if noticing_due(client, agent=agent):
+            known, problems = trustbook.load(client, agent=agent)
+            result["problems"].extend(problems)
+            found = noticing.notice(
+                commitments=client.find("commitment", {"agent": agent},
+                                        limit=200),
+                requests=gap_detector.ranked(gap_detector.entries()))
+            say, quiet = noticing.worth_saying(found, known)
+            for one in found:
+                trustbook.record(client, one.as_guess(), agent=agent)
+            result["noticed"] = {
+                "say": [{"domain": one.domain, "what": one.what,
+                         "because": one.because} for one in say],
+                "recorded_only": len(quiet),
+            }
+            persistence.put(client, persistence.SELF_ASSESSMENT, _LAST_NOTICING,
+                            _now().isoformat(timespec="seconds"), agent=agent,
+                            reason="noticing sweep")
+            if say:
+                logger.info("noticed %d thing(s) worth saying", len(say))
+    except (dbaclient.Unavailable, dbaclient.Refused, OSError, ValueError) as exc:
+        result["problems"].append(f"noticing: {exc}")
 
     try:
         if promotion_due(client, agent=agent):
@@ -404,6 +449,7 @@ def describe() -> dict:
         "promote_gaps_every_hours": PROMOTE_GAPS_EVERY_HOURS,
         "scan_logs_every_hours": SCAN_LOGS_EVERY_HOURS,
         "collect_memory_every_hours": COLLECT_MEMORY_EVERY_HOURS,
+        "notice_every_hours": NOTICE_EVERY_HOURS,
         "collection_is_dry": collection_is_dry(),
         "accepted_log_noise": len(logscan.baseline()),
         "closing_steps": [PAUSE_TASKS, CHECKPOINT, RECORD_EVENT],

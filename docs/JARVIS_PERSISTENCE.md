@@ -607,6 +607,38 @@ about something specific.
 
 Neither is a tool. A tool is something the model can call.
 
+### Noticing, which is where the guesses come from
+
+`gateway/noticing.py`, run by the maintenance sweep every four hours.
+
+The ladder had nothing on it: `anticipation` scores guesses, `readback` offers
+them, and nothing made one. This makes them, and it makes them by **reading rows
+this system already keeps** rather than by observing anything - commitments with
+a due date, requests that keep coming back. That is the whole difference between
+anticipation and invention: every prompting carries the record it came from, so
+*"why did you think that?"* has an answer that is not a feeling. A test asserts
+over the imports that the module can reach nothing else.
+
+**Noticing and saying are separate decisions**, and this is the first place in
+the system where a rung changes behaviour rather than describing it. Everything
+noticed is recorded as a guess; `worth_saying` asks the ladder which of it Krish
+actually hears. At `observe` the answer is *none of it* - and recording it anyway
+is what makes the bottom rung a starting point rather than a trap, because an
+assistant that only writes down what it is allowed to say can never demonstrate
+it was right and so can never climb.
+
+Three more rules, each with a number in `describe()`:
+
+- **`MOST_PER_SWEEP = 3`.** A person who points out six things you might want is
+  helping; sixty is a cost. The cap is on what is said and never on what is
+  noticed.
+- **`QUIET_DAYS = 7`.** A prompting whose guess was recently settled `not_now` is
+  held back. He answered; asking again that afternoon is how a person learns to
+  stop reading what they are asked. Only *not now* buys quiet - being right is
+  not a reason to stop.
+- **`DUE_WITHIN_DAYS = 2` and `TIMES_BEFORE_A_PATTERN = 3`.** Long enough to act
+  on, short enough not to be noise; and twice is a coincidence.
+
 ### Where the record is kept
 
 `gateway/trustbook.py`. It lived in a Python list until 2026-09-23, so every
