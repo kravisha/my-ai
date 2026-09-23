@@ -160,6 +160,27 @@ written. It takes about three and a half minutes. Waiting is the work, not a gap
 in the work to be filled with activity — which is the same failure as the
 caffeinated-rabbit turn, wearing a different hat.
 
+### Report in red / yellow / green
+
+Owner instruction, 2026-09-23: *"A lot of your status updates are not required at
+all — example, about some failed test and how you fixed it... my limited time
+makes my choices such that I have to give less priority to status updates of what
+happened. Red - yellow - green - simple status replies like this is best."*
+
+A reply is a **status**, not an account:
+
+- **GREEN** — done, working, nothing needed from him.
+- **YELLOW** — done but something is worth his eye, or a choice is waiting.
+- **RED** — blocked or broken, and what would unblock it.
+
+One line each, and no more than a handful. What was hard, what broke on the way,
+which test caught what, how it was fixed: all of that belongs in the commit
+message and the code comments, where it is useful to whoever reads the diff. It
+is not a deliverable. He is paying for the outcome, not the journey.
+
+Exceptions, kept short: a question he must answer, a decision that changes what
+gets built, or something he asked to be told.
+
 ---
 
 ## Two rules about what gets built

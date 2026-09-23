@@ -73,6 +73,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from app import initiative
+from gateway import anticipation
 
 # Where a particular came from. Closed, because the whole value of the read-back
 # is the difference between the first and the rest.
@@ -345,18 +346,42 @@ class Register:
     restart would be a yes given to a Jarvis that no longer exists, and asking
     again after a crash costs one question."""
 
-    def __init__(self, *, now=None) -> None:
+    def __init__(self, *, now=None, guesses: list | None = None) -> None:
         # The clock is injectable so every expiry rule is testable at a chosen
         # time, the same split `app/learning/retention.py` uses.
         self._clock = now or (lambda: datetime.now(timezone.utc))
         self._held: list[_Held] = []
+        # Where unprompted offers are recorded as guesses about what Krish
+        # wants. Supplied by the caller rather than owned here, because the
+        # record outlives any one register.
+        self.guesses: list = guesses if guesses is not None else []
 
     # --- offering -------------------------------------------------------------
 
     def offer(self, understanding: Understanding, *,
-              level: str | None = None) -> Understanding:
-        """Hold a read-back open for an answer. Returns what to say."""
+              level: str | None = None, prompted: bool = True,
+              because: str = "") -> Understanding:
+        """Hold a read-back open for an answer. Returns what to say.
+
+        `prompted` says whether Krish asked for this. It defaults to True and
+        that default is the load-bearing part: a read-back for something he
+        asked for is **not** a guess about what he wants, and counting it as one
+        would fill the anticipation record with things nobody anticipated and
+        score them all correct. Only an unprompted offer is a guess, and an
+        unprompted offer must say what prompted *it*."""
         understanding.check(level=level)
+        if not prompted:
+            if not (because or "").strip():
+                raise NotStated(
+                    "an unprompted offer must say what made Jarvis think of it. "
+                    "It is a guess about what Krish wants, and a guess with no "
+                    "trigger cannot be argued with or learned from.")
+            self.guesses.append(anticipation.Guess(
+                domain=understanding.action.name,
+                what=understanding.action.summary or understanding.action.name,
+                because=because.strip(),
+                made_at=self._clock(),
+                by_when=self._clock() + timedelta(minutes=OFFER_MINUTES)))
         self._sweep()
         # One live question per action: re-proposing the same thing replaces the
         # earlier ask rather than stacking, so an answer cannot land on a
@@ -405,7 +430,41 @@ class Register:
         held.mandate = confirm(held.understanding, confirmed_by=confirmed_by,
                                agent=agent, accepting_unknowns=accepting_unknowns)
         held.at = self._clock()
+        # Krish saying yes to something nobody asked for is the grade on that
+        # guess, and it is a grade Jarvis did not author - which is the whole
+        # requirement `anticipation.settle` enforces.
+        self._settle_guess(held.understanding.action.name, outcome=anticipation.WANTED,
+                           by=confirmed_by)
         return held.mandate
+
+    def _settle_guess(self, domain: str, *, outcome: str, by: str) -> None:
+        for guess in reversed(self.guesses):
+            if guess.domain == domain and not guess.settled:
+                anticipation.settle(guess, outcome=outcome, by=by,
+                                    agent="jarvis", now=self._clock())
+                return
+
+    def lapse_guesses(self, *, agent: str) -> int:
+        """Settle the guesses whose read-backs went unanswered.
+
+        Silence is `not_now`, not `wrong`: Krish may well have needed the thing
+        and simply not wanted it done then. Recording it as wrong would teach
+        Jarvis to stop noticing, when the lesson available is to wait.
+
+        Settled by "the clock", which is an event Jarvis did not author - the
+        absence of an answer over a known period."""
+        now = self._clock()
+        settled = 0
+        for guess in self.guesses:
+            # No separate check for "already settled" or "already answered".
+            # `Guess.overdue` is False for anything settled, and an answered
+            # offer was settled by `answer`, so both were redundant guards that
+            # read like protections - a probe found neither could ever fire.
+            if guess.overdue(now=now):
+                anticipation.settle(guess, outcome=anticipation.NOT_NOW,
+                                    by="the clock", agent=agent, now=now)
+                settled += 1
+        return settled
 
     # --- using ----------------------------------------------------------------
 
