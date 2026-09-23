@@ -87,7 +87,14 @@ async def lifespan(app: FastAPI):
 
     Nothing else is constructed here - the database is opened per request, the
     lesson `tests/test_db_isolation.py` exists to keep."""
+    from app import eventlog
     from dba import scheduler
+
+    # The same event log the Gateway writes to, tagged with this service. One
+    # file for the whole system: a fault Jarvis is investigating usually spans
+    # both processes, and two files would make "what happened at 02:14" a
+    # question needing a join.
+    eventlog.install("dba")
 
     scheduler.start()
     try:

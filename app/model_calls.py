@@ -74,6 +74,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app import jsonlog
+
 SCHEMA_VERSION = 1
 
 LOG = logging.getLogger("model.calls")
@@ -363,48 +365,18 @@ def retention_days() -> int:
         return RETENTION_DAYS
 
 
-def _rotate(path: Path, today: str) -> None:
-    """Daily rotation, keeping 30 days, done at write time.
+# Rotation and pruning moved to `app/jsonlog.py` when the event log arrived
+# and was about to become a second copy of them. The behaviour is unchanged,
+# including the deliberate tolerance of two processes racing to rename - see
+# that module's docstring for why that trade is the right one.
 
-    Not `TimedRotatingFileHandler`: this system is a population of separate
-    processes (backend, Controller, every agent, the Gateway) all appending to
-    one file, and that handler assumes it owns the file. Renaming here can race
-    between two processes on the same second; the loser finds the target
-    already there and simply keeps appending to the live file, which costs at
-    worst one day's lines sharing a neighbour's file and never costs a lost
-    line. Losing a line to win tidiness would be the wrong trade for a log whose
-    whole purpose is to be complete."""
-    if not path.exists():
-        return
-    try:
-        stamped = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-    except OSError:
-        return
-    day = stamped.date().isoformat()
-    if day >= today:
-        return
-    target = path.with_name(f"{path.stem}-{day}{path.suffix}")
-    try:
-        if not target.exists():
-            path.rename(target)
-    except OSError:
-        return
-    _prune(path.parent, path.stem, path.suffix, today)
+
+def _rotate(path: Path, today: str) -> None:
+    jsonlog.rotate(path, today, retention_days=retention_days())
 
 
 def _prune(directory: Path, stem: str, suffix: str, today: str) -> None:
-    cutoff = (datetime.fromisoformat(today).date()
-              - timedelta(days=retention_days()))
-    for candidate in directory.glob(f"{stem}-*{suffix}"):
-        try:
-            day = datetime.fromisoformat(candidate.stem[len(stem) + 1:]).date()
-        except ValueError:
-            continue
-        if day < cutoff:
-            try:
-                candidate.unlink()
-            except OSError:
-                continue
+    jsonlog.prune(directory, stem, suffix, today, retention_days=retention_days())
 
 
 def write(record: dict) -> dict:

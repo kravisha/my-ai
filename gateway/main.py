@@ -46,7 +46,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket,
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from app import capability_gaps, model_budget, model_calls, user_messages
+from app import capability_gaps, eventlog, model_budget, model_calls, user_messages
 from app.model_gateway import default_provider
 from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, store, technology, uiversion, upkeep
 from gateway.streaming import iterate_in_thread
@@ -88,6 +88,14 @@ async def lifespan(app: FastAPI):
     # This process's model spend is the Gateway's (TQ-18, §66) - declared in
     # lifespan rather than at import, so importing this module still creates
     # and changes nothing.
+    # THE LOG JARVIS READS TO UNDERSTAND HIMSELF (Krish, 2026-09-23). Installed
+    # here rather than at import for the reason everything else in this function
+    # is: importing this module must create nothing on disk. One handler on the
+    # root logger makes every existing `logger.warning` in the process durable
+    # and structured, with no call site edited.
+    if eventlog.install("gateway"):
+        logger.info("event log at %s", eventlog.log_path())
+
     model_budget.set_caller("gateway")
     conn = store.get_connection()
     store.init_schema(conn)
