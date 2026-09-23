@@ -499,12 +499,29 @@ asked. `execute` now takes `confirmed_by` from the session - the same property
 gets the read-back instead. A tool argument cannot carry a person's consent,
 because the model writes the arguments.
 
-### Still to do
+### Across turns: the register
 
-The mandate is built and spent inside one call. Carrying one across turns - so
-that *"yes, go ahead"* licenses the exact action proposed a moment earlier, and
-nothing else - is the next piece, and it is where `Mandate.covers` stops being
-a check that can only pass.
+A read-back is offered on one turn and answered on the next, so
+`readback.Register` holds the question in between. Three properties carry it:
+
+- **The model never handles a token.** `execute` asks the register for a live
+  mandate covering *this exact call*, rather than being given an identifier it
+  could replay. A call whose arguments drifted between the proposal and the
+  attempt finds nothing and is proposed again - which is where `Mandate.covers`
+  stops being a check that can only pass.
+- **A mandate is spent.** Yes to sending one email is not yes to sending it four
+  times. `proceed` may be called as often as an execution needs, because it only
+  reads; spending happens once, at the call site.
+- **Both sides lapse**, at ten minutes. A question nobody answered has been
+  overtaken by the conversation, and a yes still lying around later is not
+  consent to something happening now.
+
+A yes into a room with two open questions is refused until one is named, and
+re-proposing the same action replaces the earlier ask so an answer cannot land
+on a question the user has stopped looking at.
+
+`confirm_pending` is a module function and deliberately **not** a tool: a tool is
+something the model can call.
 
 ---
 

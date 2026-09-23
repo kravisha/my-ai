@@ -1326,6 +1326,25 @@ TOLD_ARGUMENTS: dict[str, tuple[str, ...]] = {
 _NOT_A_PARTICULAR = frozenset({"confirm_public", "krish_accepted"})
 
 
+# The read-backs this process has offered and the answers not yet used. One per
+# process, like `gateway/devchannel.py`'s budget: a confirmation is session
+# state, and one that survived a restart would be a yes given to a Jarvis that no
+# longer exists.
+REGISTER = readback.Register()
+
+
+def confirm_pending(*, confirmed_by: str, action_name: str | None = None,
+                    accepting_unknowns: list[str] | None = None):
+    """Krish's answer to a read-back, from the session and never from the model.
+
+    This is the seam the conversation layer calls when he says yes. It is a
+    module-level function rather than a tool, deliberately: a tool is something
+    the model can call, and the whole point is that it cannot."""
+    return REGISTER.answer(confirmed_by=confirmed_by, agent=identity.AGENT_ID,
+                           action_name=action_name,
+                           accepting_unknowns=accepting_unknowns)
+
+
 def particulars_for(name: str, arguments: dict) -> tuple:
     """The details of this call that could be misunderstood, for the read-back.
 
@@ -2012,8 +2031,28 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
         # on behalf of the person being asked. A tool argument cannot carry a
         # person's consent, because the model writes the arguments.
         understanding = understanding_for(name, arguments)
-        answered = (confirmed_by or "").strip()
-        if not answered or answered.lower() == identity.AGENT_ID.lower():
+        scope = {item.label: item.value for item in understanding.particulars}
+
+        # An answer Krish already gave, to this exact call. Looked up by what the
+        # call IS - there is no token for the model to carry back, so a call
+        # whose arguments drifted between the proposal and the attempt finds
+        # nothing and is proposed again.
+        held = REGISTER.mandate_for(verdict.action, scope)
+        if held is not None:
+            REGISTER.spend(held)
+        else:
+            answered = (confirmed_by or "").strip()
+            if answered and answered.lower() != identity.AGENT_ID.lower():
+                try:
+                    held = readback.confirm(understanding, confirmed_by=answered,
+                                            agent=identity.AGENT_ID)
+                    readback.proceed(held, verdict.action, scope)
+                except (readback.NotConfirmed, readback.NotStated,
+                        readback.OutOfScope) as refused:
+                    return {"error": f"Refused: {refused}",
+                            "refused_by": "readback"}
+
+        if held is None:
             # NOT an error, deliberately. An error invites the model to try
             # again with different arguments, which for an irreversible action
             # is the worst possible response to being stopped. A proposal is
@@ -2029,7 +2068,7 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
                     # The part that catches a misunderstanding: what Jarvis
                     # believes each particular is, and which of them are his own
                     # reading rather than Krish's words.
-                    "read_back": understanding.spoken(),
+                    "read_back": REGISTER.offer(understanding).spoken(),
                 }
             }
         # There is deliberately no second check on the tool's own
@@ -2039,13 +2078,6 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
         # first place, and `register_learned_skill` without its flag is refused
         # rather than proposed. A branch no call can reach is a claim about the
         # code that nothing holds to.
-        try:
-            mandate = readback.confirm(understanding, confirmed_by=answered,
-                                       agent=identity.AGENT_ID)
-            readback.proceed(mandate, verdict.action, mandate.scope())
-        except (readback.NotConfirmed, readback.NotStated,
-                readback.OutOfScope) as refused:
-            return {"error": f"Refused: {refused}", "refused_by": "readback"}
 
     try:
         if name == "machine_status":

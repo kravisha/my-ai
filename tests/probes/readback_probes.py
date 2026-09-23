@@ -250,32 +250,34 @@ PROBES: list[harness.Probe] = [
     (
         TOOLS,
         "a tool argument carries a person's consent again",
-        '        if not answered or answered.lower() == identity.AGENT_ID.lower():',
-        "        if False:",
+        "            if answered and answered.lower() != identity.AGENT_ID.lower():",
+        "            if True:",
         ("test_a_tool_argument_cannot_carry_a_persons_consent",
          "test_a_consequential_tool_call_stops_and_reads_back"),
     ),
     (
         TOOLS,
         "Jarvis may name himself as the confirmer",
-        "        if not answered or answered.lower() == identity.AGENT_ID.lower():",
-        "        if not answered:",
+        "            if answered and answered.lower() != identity.AGENT_ID.lower():",
+        "            if answered:",
         ("test_jarvis_naming_himself_as_the_confirmer_does_not_count",),
     ),
     (
         TOOLS,
         "the proposal carries a summary instead of the particulars",
-        '                    "read_back": understanding.spoken(),',
-        '                    "read_back": [],',
+        '                    "read_back": REGISTER.offer(understanding).spoken(),',
+        '                    "read_back": REGISTER.offer(understanding) and [],',
         ("test_a_consequential_tool_call_stops_and_reads_back",),
     ),
     (
         TOOLS,
         "the confirmed call is never checked against what was confirmed",
-        "            readback.proceed(mandate, verdict.action, mandate.scope())",
-        "            pass",
-        (),  # documented as unreachable by this suite: `mandate` is built from
-             # the same understanding, so it always covers itself. See below.
+        "                    readback.proceed(held, verdict.action, scope)",
+        "                    pass",
+        (),  # recorded: on this path `held` is built from the same
+             # `understanding` in the same breath, so it always covers itself.
+             # The cross-turn path is where a mismatch can happen, and
+             # `test_a_call_whose_arguments_drifted_is_proposed_again` covers it.
     ),
     (
         TOOLS,
@@ -321,6 +323,125 @@ PROBES: list[harness.Probe] = [
         "    if True:\n"
         "        # Krish, 2026-09-23: Jarvis reiterates his understanding",
         ("test_a_trivial_tool_call_never_asks",),
+    ),
+    # --- across turns: the register -------------------------------------------
+    (
+        READBACK,
+        "a confirmation survives its own use",
+        "            held.spent_at = self._clock()\n            return",
+        "            return",
+        ("test_yes_to_one_email_is_not_yes_to_four",
+         "test_spending_a_confirmation_twice_says_it_was_already_used"),
+    ),
+    (
+        READBACK,
+        "a spent confirmation is found again",
+        "            if held.mandate is None or held.spent_at is not None:",
+        "            if held.mandate is None:",
+        ("test_yes_to_one_email_is_not_yes_to_four",
+         "test_spending_a_confirmation_twice_says_it_was_already_used"),
+    ),
+    (
+        READBACK,
+        "a confirmation covers a call whose arguments drifted",
+        "            if held.mandate.covers(action, particulars)[0]:",
+        "            if True:",
+        ("test_a_call_whose_arguments_drifted_is_proposed_again",),
+    ),
+    (
+        READBACK,
+        "a yes into a room with two questions answers whichever it likes",
+        "        if action_name is None and len({held.understanding.action.name\n"
+        "                                        for held in waiting}) > 1:",
+        "        if False:",
+        ("test_a_yes_into_a_room_with_two_questions_is_refused",),
+    ),
+    (
+        READBACK,
+        "an answer with nothing outstanding invents a mandate",
+        "        if not waiting:\n            raise NotConfirmed(",
+        "        if False:\n            raise NotConfirmed(",
+        ("test_answering_with_nothing_outstanding_is_refused",),
+    ),
+    (
+        READBACK,
+        "re-proposing stacks, so an answer lands on a stale question",
+        "        self._held = [held for held in self._held\n"
+        "                      if held.understanding.action.name != name\n"
+        "                      or held.mandate is not None]",
+        "        pass",
+        ("test_re_proposing_the_same_action_replaces_the_earlier_ask",),
+    ),
+    (
+        READBACK,
+        "nothing ever lapses",
+        "            if (now - held.at) > timedelta(minutes=minutes):\n                continue",
+        "            if False:\n                continue",
+        ("test_an_unanswered_read_back_lapses",
+         "test_an_unused_confirmation_lapses"),
+    ),
+    (
+        READBACK,
+        "an unused confirmation is held as long as an unanswered question",
+        "            minutes = MANDATE_MINUTES if held.mandate else OFFER_MINUTES",
+        "            minutes = OFFER_MINUTES",
+        (),  # recorded, not asserted: the two are equal today, so no test can
+             # tell them apart. They are separate because the reasons differ.
+    ),
+    (
+        READBACK,
+        "a read-back that confirms nothing can still be offered",
+        "        understanding.check(level=level)\n        self._sweep()",
+        "        self._sweep()",
+        ("test_a_read_back_that_confirms_nothing_is_never_offered",),
+    ),
+    (
+        TOOLS,
+        "an answer from an earlier turn is never looked for",
+        "        held = REGISTER.mandate_for(verdict.action, scope)",
+        "        held = None",
+        ("test_an_answer_on_the_next_turn_licenses_the_call",),
+    ),
+    (
+        TOOLS,
+        "the confirmation is not spent, so one yes licenses every repeat",
+        "        if held is not None:\n            REGISTER.spend(held)",
+        "        if held is not None:\n            pass",
+        ("test_yes_to_one_email_is_not_yes_to_four",),
+    ),
+    (
+        TOOLS,
+        "the read-back is never held open, so no answer can find it",
+        '                    "read_back": REGISTER.offer(understanding).spoken(),',
+        '                    "read_back": understanding.spoken(),',
+        ("test_an_answer_on_the_next_turn_licenses_the_call",),
+    ),
+    (
+        TOOLS,
+        "confirming is offered to the model as a tool",
+        "def confirm_pending(*, confirmed_by: str, action_name: str | None = None,",
+        "def confirm_pending(*, confirmed_by: str = \"jarvis\",\n"
+        "                    action_name: str | None = None,",
+        (),  # recorded: the defence is that it is not in TOOLS at all, which the
+             # mutation above cannot express. `readback.confirm` refuses the
+             # self-confirmation regardless, and a test covers that.
+    ),
+    (
+        READBACK,
+        "already used and never offered are reported as the same mistake",
+        '            if held.spent_at is not None:\n                raise NotConfirmed(',
+        "            if False:\n                raise NotConfirmed(",
+        ("test_spending_a_confirmation_twice_says_it_was_already_used",),
+    ),
+    (
+        READBACK,
+        "spent confirmations are deleted, making the spent check dead code",
+        "        now = self._clock()\n        kept = []\n        for held in self._held:\n"
+        "            minutes = MANDATE_MINUTES if held.mandate else OFFER_MINUTES",
+        "        now = self._clock()\n        kept = []\n        for held in self._held:\n"
+        "            if held.spent_at is not None:\n                continue\n"
+        "            minutes = MANDATE_MINUTES if held.mandate else OFFER_MINUTES",
+        ("test_spending_a_confirmation_twice_says_it_was_already_used",),
     ),
     (
         READBACK,

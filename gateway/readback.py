@@ -46,12 +46,31 @@ An `Understanding` may carry things Jarvis could not determine. `confirm` refuse
 while any remain, unless the caller names each one it is accepting - the shape
 `gateway/inquiry.py` uses for its objections, and for the same reason: a single
 flag that waves away five unknowns costs the same as waving away one.
+
+## Across turns: the register
+
+A read-back is offered on one turn and answered on the next, so something has to
+hold the question in between. `Register` does, and three of its properties are
+the point:
+
+- **The model never handles a token.** `execute` asks the register for a live
+  mandate that covers *this exact call*, rather than being handed an identifier
+  it could replay. Authority comes from who answered, recorded when they
+  answered; nothing the model writes can reach it.
+- **A mandate is spent.** *"Confirmation licenses the exact action"* - singular.
+  Yes to sending one email is not yes to sending it four times, and a mandate
+  that survived its own use would say otherwise. `proceed` may be called as often
+  as an execution needs, because it only reads; spending is a separate act at the
+  call site.
+- **Both sides lapse.** An unanswered proposal and an unused confirmation both
+  go stale, for the reason `gateway/charter.py` keeps grants short: a yes given
+  an hour ago to a question nobody remembers is not consent.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import initiative
 
@@ -303,12 +322,153 @@ def proceed(mandate: Mandate | None, action: initiative.Action,
                          f"next one.")
 
 
+# How long a read-back waits for an answer, and how long an answer stays good.
+# Short. A question nobody has answered in ten minutes has been overtaken by the
+# conversation, and a yes still lying around an hour later is not consent to
+# something happening now.
+OFFER_MINUTES = 10
+MANDATE_MINUTES = 10
+
+
+@dataclass
+class _Held:
+    understanding: Understanding
+    at: datetime
+    mandate: Mandate | None = None
+    spent_at: datetime | None = None
+
+
+class Register:
+    """The read-backs waiting for an answer, and the answers not yet used.
+
+    Deliberately in memory and per-process. A confirmation that survived a
+    restart would be a yes given to a Jarvis that no longer exists, and asking
+    again after a crash costs one question."""
+
+    def __init__(self, *, now=None) -> None:
+        # The clock is injectable so every expiry rule is testable at a chosen
+        # time, the same split `app/learning/retention.py` uses.
+        self._clock = now or (lambda: datetime.now(timezone.utc))
+        self._held: list[_Held] = []
+
+    # --- offering -------------------------------------------------------------
+
+    def offer(self, understanding: Understanding, *,
+              level: str | None = None) -> Understanding:
+        """Hold a read-back open for an answer. Returns what to say."""
+        understanding.check(level=level)
+        self._sweep()
+        # One live question per action: re-proposing the same thing replaces the
+        # earlier ask rather than stacking, so an answer cannot land on a
+        # question the user has stopped looking at.
+        name = understanding.action.name
+        self._held = [held for held in self._held
+                      if held.understanding.action.name != name
+                      or held.mandate is not None]
+        self._held.append(_Held(understanding=understanding, at=self._clock()))
+        return understanding
+
+    def outstanding(self) -> list[Understanding]:
+        self._sweep()
+        return [held.understanding for held in self._held
+                if held.mandate is None]
+
+    # --- answering ------------------------------------------------------------
+
+    def answer(self, *, confirmed_by: str, agent: str,
+               action_name: str | None = None,
+               accepting_unknowns: list[str] | None = None) -> Mandate:
+        """Krish's yes, against the question it answers.
+
+        Names the action when there is more than one question open, because
+        answering "yes" into a room with two questions in it is how the wrong
+        thing gets done."""
+        self._sweep()
+        waiting = [held for held in self._held if held.mandate is None
+                   and (action_name is None
+                        or held.understanding.action.name == action_name)]
+        if not waiting:
+            raise NotConfirmed(
+                f"there is no read-back waiting to be answered"
+                + (f" for {action_name!r}" if action_name else "")
+                + ". It may have lapsed, or already been answered - either way "
+                  "the thing to do is propose it again rather than assume.")
+        if action_name is None and len({held.understanding.action.name
+                                        for held in waiting}) > 1:
+            raise NotConfirmed(
+                "more than one read-back is waiting ("
+                + ", ".join(sorted({held.understanding.action.name
+                                    for held in waiting}))
+                + "). Name which one is being answered: a yes into a room with "
+                  "two questions in it is how the wrong thing gets done.")
+        held = waiting[-1]
+        held.mandate = confirm(held.understanding, confirmed_by=confirmed_by,
+                               agent=agent, accepting_unknowns=accepting_unknowns)
+        held.at = self._clock()
+        return held.mandate
+
+    # --- using ----------------------------------------------------------------
+
+    def mandate_for(self, action: initiative.Action,
+                    particulars: dict[str, str] | None = None) -> Mandate | None:
+        """A live, unspent confirmation that covers this exact call.
+
+        Looked up by what the call *is*, never by an identifier the caller hands
+        in. There is no token for a model to replay, and a call whose arguments
+        drifted between the proposal and the attempt simply finds nothing."""
+        self._sweep()
+        for held in self._held:
+            if held.mandate is None or held.spent_at is not None:
+                continue
+            if held.mandate.covers(action, particulars)[0]:
+                return held.mandate
+        return None
+
+    def spend(self, mandate: Mandate) -> None:
+        """Mark a confirmation used. Yes to one email is not yes to four."""
+        for held in self._held:
+            if held.mandate is not mandate:
+                continue
+            if held.spent_at is not None:
+                raise NotConfirmed(
+                    f"that confirmation was already used at {held.spent_at:%H:%M}. "
+                    f"A confirmation licenses the exact action once; doing it "
+                    f"again is a new thing to ask about.")
+            held.spent_at = self._clock()
+            return
+        raise NotConfirmed(
+            "that confirmation is not live here - it lapsed, or it was never in "
+            "this register.")
+
+    # --- housekeeping ---------------------------------------------------------
+
+    def _sweep(self) -> None:
+        """Drop what has lapsed. **Spent confirmations are kept** until they
+        lapse too.
+
+        Deleting them on use looked tidier and made two things untrue at once:
+        `mandate_for`'s check for a spent mandate became dead code carried by the
+        sweep, and `spend` could no longer tell "already used" from "never here",
+        which are different mistakes with different answers."""
+        now = self._clock()
+        kept = []
+        for held in self._held:
+            minutes = MANDATE_MINUTES if held.mandate else OFFER_MINUTES
+            if (now - held.at) > timedelta(minutes=minutes):
+                continue
+            kept.append(held)
+        self._held = kept
+
+
 def describe() -> dict:
     return {
         "sources": list(SOURCES),
         "decided_by": "app/initiative.py",
         "self_confirmation": "refused",
         "trivial_actions_need_confirmation": False,
-        "a_confirmation_licenses": ("the exact action, with every confirmed "
-                                   "particular stated and matching"),
+        "a_confirmation_licenses": ("the exact action, once, with every "
+                                   "confirmed particular stated and matching"),
+        "offer_minutes": OFFER_MINUTES,
+        "mandate_minutes": MANDATE_MINUTES,
+        "the_model_handles_no_token": True,
     }

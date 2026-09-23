@@ -13,6 +13,8 @@ confirms nothing, because the error lives in what was inferred.
 Probed by `tests/probes/readback_probes.py`.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app import initiative
@@ -415,3 +417,195 @@ def test_empty_arguments_are_not_read_back():
     from gateway import tools
     made = tools.particulars_for("anything", {"title": "Q3", "cc": "", "bcc": None})
     assert {item.label for item in made} == {"title"}
+
+
+# =============================================================================
+# Across turns: the register
+# =============================================================================
+#
+# A read-back is offered on one turn and answered on the next. Until this, the
+# mandate was built and spent inside one call, so `Mandate.covers` was a check
+# that could only pass. Here it can fail.
+
+
+@pytest.fixture(autouse=True)
+def _fresh_register():
+    from gateway import readback as module, tools
+    tools.REGISTER = module.Register()
+    yield
+    tools.REGISTER = module.Register()
+
+
+def _register(at=None):
+    from gateway import readback as module
+    clock = at or (lambda: datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc))
+    return module.Register(now=clock)
+
+
+def test_an_answer_on_the_next_turn_licenses_the_call(gateway_conn):
+    """The whole point of the register. Turn one proposes, turn two confirms,
+    turn three acts - and nothing the model wrote carried the authority."""
+    from gateway import roles, tools
+    arguments = {"path": "docs/x.md", "content": "hello", "confirm_public": True}
+
+    first = tools.execute(gateway_conn, "publish_document", arguments,
+                          role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" in first
+
+    tools.confirm_pending(confirmed_by="krish")
+
+    third = tools.execute(gateway_conn, "publish_document", arguments,
+                          role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" not in third
+
+
+def test_a_call_whose_arguments_drifted_is_proposed_again(gateway_conn):
+    """Where `covers` stops being a check that can only pass. Krish confirmed
+    one document; the model comes back with a different one under the same
+    name."""
+    from gateway import roles, tools
+    tools.execute(gateway_conn, "publish_document",
+                  {"path": "docs/x.md", "content": "hello",
+                   "confirm_public": True}, role=roles.ROLE_OPERATOR)
+    tools.confirm_pending(confirmed_by="krish")
+
+    again = tools.execute(gateway_conn, "publish_document",
+                          {"path": "docs/x.md", "content": "something else",
+                           "confirm_public": True}, role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" in again
+
+
+def test_yes_to_one_email_is_not_yes_to_four(gateway_conn):
+    """*"Confirmation licenses the exact action"* - singular. A mandate that
+    survived its own use would say otherwise."""
+    from gateway import roles, tools
+    arguments = {"path": "docs/x.md", "content": "hello", "confirm_public": True}
+    tools.execute(gateway_conn, "publish_document", arguments,
+                  role=roles.ROLE_OPERATOR)
+    tools.confirm_pending(confirmed_by="krish")
+
+    assert "needs_confirmation" not in tools.execute(
+        gateway_conn, "publish_document", arguments, role=roles.ROLE_OPERATOR)
+    assert "needs_confirmation" in tools.execute(
+        gateway_conn, "publish_document", arguments, role=roles.ROLE_OPERATOR)
+
+
+def test_the_model_never_handles_a_token(gateway_conn):
+    """There is nothing for it to replay. The mandate is found by what the call
+    *is*, and `confirm_pending` is a module function rather than a tool -
+    a tool is something the model can call, and the point is that it cannot."""
+    from gateway import tools
+    assert "confirm_pending" not in {tool["name"] for tool in tools.TOOLS}
+    assert "token" not in str(tools.execute.__doc__ or "")
+    first = tools.execute(gateway_conn, "publish_document",
+                          {"path": "docs/x.md", "content": "hello",
+                           "confirm_public": True}, role="operator")
+    assert "token" not in str(first["needs_confirmation"])
+
+
+def test_answering_with_nothing_outstanding_is_refused():
+    from gateway.readback import NotConfirmed as Refused
+    register = _register()
+    with pytest.raises(Refused, match="no read-back waiting"):
+        register.answer(confirmed_by="krish", agent=AGENT)
+
+
+def test_a_yes_into_a_room_with_two_questions_is_refused():
+    register = _register()
+    register.offer(understood(email("send_email")))
+    register.offer(understood(email("wire_money")))
+    with pytest.raises(NotConfirmed, match="more than one read-back"):
+        register.answer(confirmed_by="krish", agent=AGENT)
+
+    mandate = register.answer(confirmed_by="krish", agent=AGENT,
+                              action_name="wire_money")
+    assert mandate.understanding.action.name == "wire_money"
+
+
+def test_re_proposing_the_same_action_replaces_the_earlier_ask():
+    """So an answer cannot land on a question the user has stopped looking at."""
+    register = _register()
+    register.offer(understood())
+    register.offer(understood(particulars=(
+        Particular("to", "someone.else@acme.example", TOLD),)))
+    assert len(register.outstanding()) == 1
+
+    mandate = register.answer(confirmed_by="krish", agent=AGENT)
+    assert mandate.scope() == {"to": "someone.else@acme.example"}
+
+
+def test_an_unanswered_read_back_lapses():
+    """A question nobody has answered in ten minutes has been overtaken by the
+    conversation."""
+    from gateway import readback as module
+    now = [datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)]
+    register = module.Register(now=lambda: now[0])
+    register.offer(understood())
+    assert register.outstanding()
+
+    now[0] += timedelta(minutes=module.OFFER_MINUTES + 1)
+    assert register.outstanding() == []
+    with pytest.raises(NotConfirmed):
+        register.answer(confirmed_by="krish", agent=AGENT)
+
+
+def test_an_unused_confirmation_lapses():
+    """A yes still lying around later is not consent to something happening
+    now."""
+    from gateway import readback as module
+    now = [datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)]
+    register = module.Register(now=lambda: now[0])
+    register.offer(understood())
+    register.answer(confirmed_by="krish", agent=AGENT)
+    assert register.mandate_for(email(), {"to": "accounts@acme.example",
+                                          "attachment": "Q3-statement.pdf",
+                                          "subject": "Late invoice - Q3"})
+
+    now[0] += timedelta(minutes=module.MANDATE_MINUTES + 1)
+    assert register.mandate_for(email(), {"to": "accounts@acme.example",
+                                          "attachment": "Q3-statement.pdf",
+                                          "subject": "Late invoice - Q3"}) is None
+
+
+def test_spending_a_confirmation_twice_says_it_was_already_used():
+    """Different from "never here", and a different mistake with a different
+    answer. Deleting spent entries on use lost that distinction and made
+    `mandate_for`'s own check dead code."""
+    register = _register()
+    register.offer(understood())
+    mandate = register.answer(confirmed_by="krish", agent=AGENT)
+    register.spend(mandate)
+
+    # A lookup in between, because that is what sweeps - and a sweep that threw
+    # spent entries away would turn the second refusal below into "never in this
+    # register", which sends the reader looking for a different bug.
+    assert register.mandate_for(email(), mandate.scope()) is None
+    with pytest.raises(NotConfirmed, match="already used"):
+        register.spend(mandate)
+
+
+def test_spending_something_that_was_never_offered_is_refused():
+    from gateway.readback import Mandate as _Mandate
+    register = _register()
+    stranger = _Mandate(understanding=understood(), confirmed_by="krish")
+    with pytest.raises(NotConfirmed, match="never in"):
+        register.spend(stranger)
+
+
+def test_the_register_still_refuses_a_self_confirmation():
+    register = _register()
+    register.offer(understood())
+    with pytest.raises(NotConfirmed, match="cannot confirm its own"):
+        register.answer(confirmed_by=AGENT, agent=AGENT)
+
+
+def test_a_read_back_that_confirms_nothing_is_never_offered():
+    register = _register()
+    with pytest.raises(NotStated):
+        register.offer(Understanding(action=email(), particulars=()))
+    assert register.outstanding() == []
+
+
+def test_describe_says_the_model_handles_no_token():
+    assert readback.describe()["the_model_handles_no_token"] is True
+    assert "once" in readback.describe()["a_confirmation_licenses"]
