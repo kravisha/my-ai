@@ -104,9 +104,9 @@ def _confirmed_gap(client, remedy=None):
                         remedy=remedy or gaps.REMEDY_CODE)
 
 
-def _proposal(client, files=("gateway/tools.py",), gap=None):
+def _proposal(client, files=("gateway/tools.py",), gap=None, **extra):
     return selfmod.propose(
-        client, gap=gap or _confirmed_gap(client),
+        client, gap=gap or _confirmed_gap(client), **extra,
         reason="Krish asked for PDF reading twice and got an apology",
         scope="add a pdf_text tool and declare it for the owner role",
         affected_files=list(files),
@@ -121,17 +121,111 @@ def _proposal(client, files=("gateway/tools.py",), gap=None):
 # =============================================================================
 
 
-def test_jarvis_cannot_widen_his_own_authority(client):
-    """TEST K. A proposal that would edit the approval mechanism is refused
-    before it is written, at every boldness setting."""
+def test_jarvis_cannot_widen_his_own_authority_by_proposing_it(client):
+    """TEST K, restated after Krish called the original *"too conservative"*.
+
+    The refusal is not "never". It is "not by this route": approving a change to
+    the machinery that does the approving proves nothing, because the thing
+    deciding is what the change alters. So the ordinary proposal path refuses,
+    and the refusal asks for a key rather than announcing a wall."""
     gap = _confirmed_gap(client)
     for path in ("app/initiative.py", "gateway/selfmod.py", "gateway/roles.py",
-                 "tests/test_boundaries.py", "config/initiative.yaml",
-                 "gateway/gaps.py", "gateway/inquiry.py"):
+                 "tests/test_boundaries.py", "config/initiative.yaml"):
         with pytest.raises(introspect.NotModifiable) as raised:
             _proposal(client, files=[path], gap=gap)
-        assert "authority" in str(raised.value).lower()
+        assert introspect.KEY_CIRCULAR in str(raised.value)
+        assert "granted separately" in str(raised.value)
     assert client.count("change_proposal", {"agent": "jarvis"}) == 0
+
+
+def test_the_lifecycle_and_the_reasoning_are_his_to_improve(client):
+    """Both were put behind a hard never on 2026-09-23 and taken back out the
+    same day. Importance is not the test for the keyed tier - circularity is, and
+    locking a whole module to protect one precondition check is the instinct the
+    tier exists to correct. These are exactly the things Jarvis should be
+    improving."""
+    gap = _confirmed_gap(client)
+    for path in ("gateway/gaps.py", "gateway/inquiry.py"):
+        assert introspect.key_for(path) is None
+        assert introspect.may_modify(path)[0] is True
+    assert _proposal(client, files=["gateway/inquiry.py"], gap=gap)
+
+
+def test_the_charter_is_amendable_with_a_key(client):
+    """Krish, 2026-09-23: *"don't put anything in there that Jarvis may need to
+    change like his prime directive which is the constitution and the amendments
+    to the constitution."* Before this, they were not even reachable - not locked
+    deliberately, just outside `MODIFIABLE_ROOTS`, which is the same outcome
+    arrived at by accident."""
+    gap = _confirmed_gap(client)
+    for path in introspect.CHARTER:
+        assert introspect.key_for(path) == introspect.KEY_CHARTER
+        with pytest.raises(introspect.NotModifiable) as raised:
+            _proposal(client, files=[path], gap=gap)
+        assert "not a forbidden one" in str(raised.value)
+        assert introspect.may_modify(path, keys=[introspect.KEY_CHARTER])[0]
+
+
+def test_one_key_does_not_open_the_other_tier(client):
+    assert introspect.may_modify("gateway/selfmod.py",
+                                 keys=[introspect.KEY_CHARTER])[0] is False
+    assert introspect.may_modify("AI-CONSTITUTION.md",
+                                 keys=[introspect.KEY_CIRCULAR])[0] is False
+
+
+def test_the_break_glass_reaches_a_keyed_file_and_is_recorded(client):
+    """It cannot be verified - no function can check whether Krish is in
+    trouble - so it is not gated, it is accounted. A lock that stays shut while
+    its owner needs it open is not a safety feature."""
+    gap = _confirmed_gap(client)
+    drafted = _proposal(client, files=["gateway/selfmod.py"], gap=gap,
+                        emergency="Krish is locked out and the auth check is "
+                                  "refusing his own token")
+    assert drafted["emergency"]
+    assert selfmod.EMERGENCY_MARKER in client.get(drafted["id"])["reason"]
+    assert selfmod.EMERGENCY_MARKER in client.get(drafted["id"])["risk"]
+    assert "gateway/selfmod.py" in client.get(drafted["id"])["reason"]
+
+    overrides = [row for row in ledger.events(client, limit=50)
+                 if row["event_type"] == ledger.EMERGENCY_OVERRIDE]
+    assert len(overrides) == 1
+    assert "locked out" in overrides[0]["observation"]
+
+
+def test_an_emergency_still_does_not_reach_another_system(client):
+    """It would not help him. It would break a second thing while he needed the
+    first."""
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["dba/agent.py"], gap=gap,
+                  emergency="anything at all")
+    # The emergency-specific wording, not the generic out-of-runtime refusal -
+    # a probe showed the generic one also contains "somebody else's service", so
+    # the first version of this assertion held whether the branch existed or not.
+    assert "would not help" in str(raised.value)
+    assert "break a second thing" in str(raised.value)
+
+
+def test_an_emergency_must_say_what_the_emergency_is(client):
+    """The stated reason is the whole of the accounting, so a blank one is a
+    caller error rather than an emergency with nothing written down."""
+    gap = _confirmed_gap(client)
+    with pytest.raises(ValueError, match="what the emergency is"):
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap, emergency="   ")
+    # And an empty string is simply not an emergency: the ordinary refusal
+    # stands, asking for the key.
+    with pytest.raises(introspect.NotModifiable) as raised:
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap, emergency="")
+    assert introspect.KEY_CIRCULAR in str(raised.value)
+    assert client.count("change_proposal", {"agent": "jarvis"}) == 0
+
+
+def test_an_ordinary_proposal_records_no_override(client):
+    drafted = _proposal(client, gap=_confirmed_gap(client))
+    assert "emergency" not in drafted
+    assert selfmod.EMERGENCY_MARKER not in client.get(drafted["id"])["reason"]
+    assert not [row for row in ledger.events(client, limit=50)
+                if row["event_type"] == ledger.EMERGENCY_OVERRIDE]
 
 
 def test_the_refusal_comes_from_the_policy_that_already_owns_it(client):
@@ -143,24 +237,20 @@ def test_the_refusal_comes_from_the_policy_that_already_owns_it(client):
         assert initiative.decide(action, level=level).disposition == initiative.REFUSE
 
 
-def test_the_gate_and_the_reasoning_it_turns_on_are_both_out_of_reach(client):
-    """Added when `gateway/inquiry.py` was wired into `gaps.investigating`.
-
-    A proposal needs a *confirmed* gap - `gaps.ready_for_review` is what says
-    so, and `gateway/inquiry.py` is what a gap has to get through to become
-    confirmed. Leaving either modifiable would have meant Jarvis could
-    manufacture the confirmation that authorises changing himself: delete a bias
-    check, conclude on one hypothesis, confirm the gap, propose the change. The
-    loop closes at `introspect.GOVERNANCE` and nowhere else, because every other
-    step in it is one Jarvis is supposed to be able to take."""
-    for path in ("gateway/gaps.py", "gateway/inquiry.py"):
-        assert path in introspect.GOVERNANCE
-        allowed, why = introspect.may_modify(path)
-        assert allowed is False
-        assert "authority" in why.lower()
-    # And it is still readable - §14 lets him read his own architecture, which
-    # is how he would notice that the checks exist at all.
+def test_the_keyed_tier_is_narrow_and_says_why_each_member_is_there(client):
+    """Membership is not "this file is important". It is: could editing it make
+    the gate fail to fire, or a refusal not refuse?"""
+    assert set(introspect.CIRCULAR) == {
+        "app/permissions.py", "app/admin_auth.py", "gateway/auth.py",
+        "gateway/roles.py", "app/initiative.py", "app/initiative_config.py",
+        "config/initiative.yaml", "gateway/selfmod.py", "gateway/introspect.py",
+        "gateway/candidate.py", "tests/test_boundaries.py",
+        "tests/test_initiative.py", "tests/test_jarvis_selfmod.py"}
+    assert set(introspect.CHARTER) == {"AI-CONSTITUTION.md", "CLAUDE.md"}
+    # Everything keyed is still readable - §14 lets him read his own
+    # architecture, which is how he would notice the checks exist at all.
     assert "ONE_HYPOTHESIS" in introspect.read_source("gateway/inquiry.py")
+    assert "CIRCULAR" in introspect.read_source("gateway/introspect.py")
 
 
 def test_a_change_outside_jarvis_own_runtime_is_refused(client):
@@ -758,3 +848,37 @@ def test_deciding_a_change_that_does_not_exist_says_so(client, conversation):
         {"change_id": "change_proposal-0123456789abcdef", "decision": "approve",
          "krish_said": "yes"}, role="operator", subject="krish")
     assert "error" in result and "no proposed change" in result["error"]
+
+
+def test_a_granted_key_actually_drafts_the_proposal(client):
+    """The key has to work end to end. A first version refused here anyway:
+    `require_modifiable` let the keyed file through, and then `initiative.decide`
+    read the same file as Jarvis widening his own authority and refused it. A key
+    that gets you past one gate and into an identical one is not a key."""
+    gap = _confirmed_gap(client)
+    drafted = _proposal(client, files=["gateway/selfmod.py"], gap=gap,
+                        keys=(introspect.KEY_CIRCULAR,))
+    assert drafted["id"]
+    assert "emergency" not in drafted
+    assert selfmod.EMERGENCY_MARKER not in client.get(drafted["id"])["reason"]
+
+
+def test_the_key_is_named_by_the_caller_and_not_inferred_from_the_files(client):
+    """A key a proposal could award itself is not a key."""
+    gap = _confirmed_gap(client)
+    with pytest.raises(introspect.NotModifiable):
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap)
+    with pytest.raises(introspect.NotModifiable):
+        _proposal(client, files=["gateway/selfmod.py"], gap=gap,
+                  keys=(introspect.KEY_CHARTER,))
+
+
+def test_an_unkeyed_reach_at_the_circle_is_still_named_as_widening_authority():
+    """The `initiative` policy keeps owning this question, and keeps answering it
+    the same way when no key is in hand."""
+    unkeyed = selfmod.proposed_action(["app/permissions.py"], "loosen a check")
+    assert initiative.HARM_WIDENS_ITS_OWN_AUTHORITY in unkeyed.harms
+
+    keyed = selfmod.proposed_action(["app/permissions.py"], "loosen a check",
+                                    keys=(introspect.KEY_CIRCULAR,))
+    assert keyed.harms == ()

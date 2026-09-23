@@ -191,17 +191,27 @@ def require(permission: str, proposal: dict | None = None) -> None:
 # --- §15: designing and proposing ---------------------------------------------
 
 
-def proposed_action(paths: list[str], summary: str) -> initiative.Action:
+def proposed_action(paths: list[str], summary: str, *, keys=(),
+                    emergency: bool = False) -> initiative.Action:
     """The change, described in `app/initiative.py`'s terms.
 
-    `harms` carries `widens_its_own_authority` when the change reaches a
-    governance file, which that module refuses at every boldness setting.
+    `harms` carries `widens_its_own_authority` when the change reaches the
+    circular tier **without** the key for it, which that module refuses at every
+    boldness setting. With the key it is not widening its own authority - it is
+    exercising one Krish granted, and the whole point of the key is that it comes
+    from outside the circle. A first version skipped this check entirely for an
+    emergency, which left a keyed proposal refused by the policy immediately
+    after the key had allowed it, and left the check itself unreachable.
+
     Reversibility is `recoverable` rather than `reversible` because a deployed
     code change needs a rollback to undo, and `reach` is `owner` because it
     changes the assistant Krish relies on."""
-    touches_authority = any(not introspect.may_modify(path)[0]
-                            and Path(path).as_posix() in introspect.GOVERNANCE
-                            for path in paths)
+    granted = set(keys or ())
+    if emergency:
+        granted |= set(introspect.KEYS)
+    touches_authority = any(
+        introspect.key_for(path) == introspect.KEY_CIRCULAR
+        and introspect.KEY_CIRCULAR not in granted for path in paths)
     return initiative.Action(
         name=f"modify own code: {summary}"[:200],
         reversibility=initiative.RECOVERABLE,
@@ -212,15 +222,35 @@ def proposed_action(paths: list[str], summary: str) -> initiative.Action:
     )
 
 
+# Prefixed onto an emergency proposal's reason and risk. A marker rather than a
+# field because `change_proposal` has none spare, and a string that has to be
+# built is one that cannot be lost to a serialiser's key ordering.
+EMERGENCY_MARKER = "EMERGENCY OVERRIDE"
+
+
 def propose(client: dbaclient.DBAClient, *, gap: dict, reason: str,
             scope: str, affected_files: list[str], expected_benefit: str,
             risk: str, test_plan: str, rollback_plan: str,
+            keys: tuple[str, ...] = (), emergency: str = "",
             agent: str = identity.AGENT_ID) -> dict:
     """Draft a §18 proposal for a confirmed gap, or refuse and say why.
 
     Three refusals before anything is written: the gap must be confirmed with
     evidence, the files must be ones Jarvis may change, and the change must not
-    be one `app/initiative.py` refuses outright."""
+    be one `app/initiative.py` refuses outright.
+
+    `keys` are separately-granted permissions from Krish - see
+    `introspect.CIRCULAR` and `introspect.CHARTER`. They are named by the caller
+    rather than inferred from the file list, because a key that a proposal could
+    award itself is not a key.
+
+    `emergency` is the break-glass: a stated reason for changing something keyed
+    without the key, to help Krish now. Nothing here can check whether he is in
+    trouble, so it is not gated - it is **accounted**. An emergency proposal is
+    recorded in the life ledger as it is drafted, is marked so that it is
+    presented immediately rather than queued, and carries its stated reason for
+    ever. The alternative was a lock that stays shut while its owner needs it
+    open, which is not a safety feature."""
     require(CREATE_CHANGE_PROPOSAL)
 
     # 1. §13: the gap must have earned this.
@@ -234,10 +264,16 @@ def propose(client: dbaclient.DBAClient, *, gap: dict, reason: str,
             f"self-modification machinery used where it was not needed.")
 
     # 2. §16 and the scope decision, before the record exists.
-    introspect.require_modifiable(affected_files)
+    if emergency and not emergency.strip():
+        raise ValueError("an emergency change must say what the emergency is")
+    introspect.require_modifiable(affected_files, keys=keys,
+                                  emergency=bool(emergency))
 
     # 3. The same question again, through the policy that already owns it.
-    verdict = initiative.decide(proposed_action(affected_files, scope))
+    #    `proposed_action` is told which keys are in hand, so a granted key is not
+    #    re-read here as Jarvis widening his own authority.
+    verdict = initiative.decide(proposed_action(
+        affected_files, scope, keys=keys, emergency=bool(emergency)))
     if verdict.disposition == initiative.REFUSE:
         raise introspect.NotModifiable(verdict.reason)
 
@@ -275,6 +311,25 @@ def propose(client: dbaclient.DBAClient, *, gap: dict, reason: str,
 
     _note(client, ledger.CHANGE_PROPOSED,
           f"proposed a change for {gap.get('name')}", reason, agent=agent)
+
+    # The accounting that replaces the gate. Written after the record exists so
+    # that it can name it, and before returning so that no path reaches a caller
+    # with an emergency change drafted and nothing said about it.
+    if emergency:
+        keyed = sorted({path for path in affected_files
+                        if introspect.key_for(path)})
+        client.update(entity_id,
+                      {"reason": f"{EMERGENCY_MARKER}: {emergency.strip()}\n\n"
+                                 f"Reached without a key: {', '.join(keyed)}\n\n"
+                                 f"{reason}",
+                       "risk": f"{EMERGENCY_MARKER}. {risk}"},
+                      reason="emergency override recorded on the proposal")
+        data["reason"] = f"{EMERGENCY_MARKER}: {emergency.strip()}\n\n{reason}"
+        data["emergency"] = emergency.strip()
+        _note(client, ledger.EMERGENCY_OVERRIDE,
+              f"emergency override: {', '.join(keyed) or 'no keyed file'}",
+              f"{emergency.strip()} | proposal {entity_id} | {scope}",
+              agent=agent)
     return data
 
 
