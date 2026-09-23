@@ -1,219 +1,294 @@
-# Handoff — checkpoint 2026-08-30
+# Handoff — checkpoint 2026-09-23
 
-Written for a session with no memory of the conversation that produced this
-state. **Rewritten at each checkpoint, not appended to.**
+Written for a session with **no memory of the conversation that produced this
+state**, and specifically for the agent picking this up on Krish's own Windows
+desktop. **Rewritten at each checkpoint, not appended to.**
 
-**This checkpoint is a machine change.** Development moves to another machine and
-resumes after a few days, so §2 below — what git does not carry — matters more
-than usual and is not the ordinary boilerplate.
+**This checkpoint is a machine change**, and an unusually sharp one. Everything
+below was built and tested in a Linux container. Almost none of it has ever run
+on the machine it is for. §8 is therefore the most important section in this
+file, and §9 is the one that will save you a day.
+
+---
 
 ## Read this first, and read it short
 
 | Read | For |
 |---|---|
-| **[`JARVIS.md`](JARVIS.md)** | The whole system. Start here, read to the end. Kept honest by `tests/test_living_documentation.py`. |
-| **This file** | Where the last session stopped and what to do next. Nothing else. |
-| [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task, its status and its reasoning. TQ-115 is the newest. |
-| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. **162 sections**, newest last. §153–§162 are this session. |
-| [`ARCHITECTURE_READINESS_REVIEW.md`](ARCHITECTURE_READINESS_REVIEW.md) | The GO/NO-GO review of the four 2026-08-29 specifications. **Read its banner** — four of its findings were later corrected by the increments they caused. |
-| [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) | What may not be committed. Read before assimilating any supplied document. |
+| **[`../CLAUDE.md`](../CLAUDE.md)** | **How to work here, and what previous sessions got wrong.** Read it before writing a line. It is short on purpose. |
+| **[`JARVIS.md`](JARVIS.md)** | The whole system, 1,333 lines. Kept honest by `tests/test_living_documentation.py`. |
+| **This file** | Where the last session stopped and what to do next. |
+| [`JARVIS_PERSISTENCE.md`](JARVIS_PERSISTENCE.md) | 1,127 lines. Memory, the ledger, self-modification, the constitution, and every subsystem built this week (§3c-bis … §3c-octies). |
+| [`TASK_QUEUE.md`](TASK_QUEUE.md) | Every task and its reasoning. **TQ-127 is the newest and is the handover task.** |
+| [`SPEC_RECONCILIATION.md`](SPEC_RECONCILIATION.md) | Why anything is the way it is. 163 sections, newest last. |
+| [`../AI-CONSTITUTION.md`](../AI-CONSTITUTION.md) + [`../AI-CONSTITUTION-AMENDMENTS.md`](../AI-CONSTITUTION-AMENDMENTS.md) | What Jarvis may and may not do. **Neither is yours to edit** — see §6. |
+
+---
 
 ## 1. Run these first
 
 ```bash
 cd <repo>
 git log --oneline -3
-.venv/Scripts/python.exe -m pytest -q
+python -m pytest -q
 ```
 
-Expect **3020 passed, 8 skipped, 8 deselected**. HEAD is `3d36ec3` — this
-checkpoint — and the last increment before it is `6bf14a8`. `master` and
-`tq-78-consolidation` are identical and both pushed.
+Expect **4665 passed, 9 skipped, 34 deselected**, in about four minutes.
 
-The 8 deselections are the `simulation` and `real_llm` markers — real processes
-and real API calls, excluded from the default run. Run the contention harness
-deliberately with `-m simulation` if you touch the database layer.
-
-## 2. What git does not carry — read before starting on the new machine
-
-Everything below is gitignored and **must be recreated or brought across**:
-
-- **`.env`** (35 lines) — carries `MODEL_BUDGET_DAILY_TOKENS=1500000` and the
-  Anthropic key. Without it every model-dependent scenario skips and `verify`
-  reports `INCOMPLETE` rather than `PASS`, which is the honest answer but not the
-  one you want to be surprised by.
-- **`.venv/`** — recreate and install; the system Python has no dependencies.
-  Always `.venv/Scripts/python.exe`, never bare `python`.
-- **`financial_intelligence.db` and `gateway.db`** — the live databases. A fresh
-  one is fine: `init_schema` builds everything and backfills store versions. What
-  you lose is the COO's persisted identity, so **Kumbhakarnan starts again** on a
-  new database. That is expected and not a defect; if continuity matters, copy
-  the file across.
-- **`simulation/runs/`** — every past run's database, log and manifest. The
-  evidence behind several measured constants lives here. Losing it costs the
-  ability to re-derive them, not the constants themselves — the numbers are
-  written into the code comments with their sample sizes.
-- **`demo_summary.json`** — output of the last Demonstration Engine run.
-
-**And the supplied specifications are not in the repository.** Ten `.txt` files
-sit in `~/Downloads` on the old machine and none has been assimilated, numbered
-or classified — that is open decision 3 below. **Bring them across**, or the next
-session will be reconciling against documents it cannot read:
-
-```
-01_JARVIS_Knowledge_Store_Specification.txt
-02_JARVIS_Software_Engineering_Healing_and_Recovery_Addendum.txt
-03_JARVIS_Multiprocessing_Process_Isolation_and_Scaling_Specification.txt
-04_JARVIS_Misc_Architecture_Alpha_Readiness_and_Persistence_Specification.txt
-Claude_Development_Philosophy_and_Blocker_Policy.txt
-Dedicated_Anchor_Architecture_Change_Spec.txt
-JARVIS_Demonstration_Engine_Specification_v1.txt
-JARVIS_self_evolution_resolved_decisions_directive.txt
-MyAI_Business_Continuity_Framework_v1.0.txt
-MyAI_Department_of_Education_v1.0.txt
-```
-
-The last two have **never been read** in any session recorded here.
-
-## 3. What this session did
-
-Eight increments, `47a4f76` through `6bf14a8`, recorded at §153–§162.
-
-| Increment | What it settled |
-|---|---|
-| **§153** | The owner's self-evolution directive reconciled. Four of five review decisions resolved; **T1 and T2 survive** as genuine policy questions. |
-| **TQ-108** §154 | Queue recovery ran *inside the agent type it recovers*. Moved to the COO. |
-| **TQ-109** §155 | One claim was unrecoverable and the review named the wrong table. Claim registry added. **Finding: `engineering.receive` has no production caller** — the Software Department cannot be handed work. |
-| **TQ-110** §156 | Two things were both called `schema_version`. Separated; 22 stores registered where there had been 2. |
-| **TQ-111** §157 | A property that could not fail, re-aimed. SQLite write ceiling measured: **zero contention at 24 writers, ~3000 writes/s**, and the instrument proven able to see contention before that zero was believed. |
-| **TQ-112** §158, §159 | The Demonstration Engine. Its first run found a restart that came up **with no executive** — adoption read heartbeat age and ignored the process state its own shutdown had written. |
-| **TQ-113** §160 | The television station: nine programmes, scripts, guests, breaking news, ad breaks, sign-off. **The Dedicated Anchor specification arrived mid-build** and moved presenting out of the COO. |
-| **TQ-114** §161 | `planned_seconds` was a column nothing read, so a 695-second rundown aired in thirteen and one run produced fourteen broadcast days. |
-| **TQ-115** §162 | The desk. A trader with a book of their own, five attribution verdicts, and a **conviction floor guessed at 0.5 that sat above the entire observed distribution** — the role was inert and looked like it was judging. |
-
-**Live state: `tv_station` passes 20/20**, `python -m simulation run tv_station`.
-
-## 4. What the next session should do first
-
-**Re-run the full verification. It is stale by eight increments**, including two
-new agent roles in the baseline population, four new stores (22 to 26) and two new
-metric families.
+Then, and this is not optional, the mutation harness:
 
 ```bash
-PYTHONPATH=. .venv/Scripts/python.exe -m simulation verify
+for p in tests/probes/*_probes.py; do python "$p"; done    # one at a time
 ```
 
-Last `PASS` was 2026-08-29 at `c382ea5`. Expect 35–40 minutes; there are now
-**12 scenarios**. `INCOMPLETE` rather than `PASS` is the honest answer if the
-daily model budget is exhausted (§129).
+Expect **0 unnoticed and 0 stale** from all thirteen files. It takes a long
+while. **Never run two of them at once** — there is a lock file that now refuses
+it, and §9 says why.
 
-**Two things to watch**, both new and neither exercised by `verify` yet:
+---
 
-- **The trader is in the baseline population.** Every scenario now runs 9 agents
-  where it ran 8, and only `tv_station` and `baseline_steady_state` have seen it.
-  Nothing asserts on the count; `saturation_two_judges` asserts on the role.
-- **The COO now attributes closed trades** inside its own cycle. If a trade
-  cannot be attributed the loop is wrapped, but the COO's cycle is the busiest
-  path in the system and this is the newest thing in it.
+## 2. What is on master and what is not
 
-Then: the **sector plausibility assessment** (§5 below), which is the one piece
-of asked-for work that is specified and unbuilt.
+At the time of writing, HEAD of `claude/code-modifications-merge-kfwo5b` is
+`fe69f7a`, and the branch carries **24 commits** that PR #68 merges to `master`.
+If that PR is merged by the time you read this, `master` is the whole story and
+you can ignore the branch. Check with:
 
-## 5. Known blockers and open questions
+```bash
+git log --oneline origin/master -1
+git log --oneline origin/master..origin/claude/code-modifications-merge-kfwo5b | wc -l
+```
 
-**With the owner — only two, and neither blocks the next milestone:**
+`0` means everything landed.
 
-1. **T1 — what mediates a code change.** The self-evolution directive's *"increasing
-   autonomy is a POLICY CHANGE, not a REWRITE"* requires the deploy mechanism to
-   exist now with the policy off; three tripwires deny it. Recommended resolution
-   at §153: the department authors an approved change record, a mechanism outside
-   the runtime applies it. **Do not resolve this by deleting a tripwire.**
-2. **T2 — the healing addendum's H1/H2 against directive §2.** Two owner documents
-   dated the same day; §2 forbids the department editing operational data, and
-   H1/H2 are largely that. Recommended: the department diagnoses and specifies,
-   the owning domain performs through its own API.
-3. **Classification of the ten supplied documents.** Nothing is committed. The
-   later ones carry revenue targets, viewership and trading desks, which the
-   boundary rule puts on the private side.
+---
 
-**Specified and unbuilt, and the owner asked for it:**
+## 3. The week in four movements
 
-- **Sector plausibility assessment.** Owner direction 2026-08-30: rather than
-  waiting for an outside body to fact-check a claim, analyse it ourselves and
-  accept it as plausible if no logical blocker prevents it actualising. The
-  catalogue in `backend/sectors.py` currently carries every entry at `premise`
-  and says so on air. The honest build uses the model gateway the Explorer and
-  Analysis already use, records the blockers considered alongside the verdict,
-  and moves the standing to `plausible — no blocker found among these` or
-  `blocked by X`.
+**66 commits, 207 files, ~68,000 lines.** Roughly 100 new modules and 60 new
+test files. The week has a clear shape, and knowing it will save you reading the
+log.
 
-**Standing gaps, unchanged:**
+### Movement one (16–21 Sept): the model path and the Learning Engine
 
-- **Nothing can file the Software Department work.** `engineering.receive` has no
-  production caller (§155), so the department its 20-step lifecycle belongs to
-  has never been handed a directive.
-- **No CEO.** The owner confirmed the Superuser is currently the CEO and a
-  dedicated one arrives later. The Dedicated Anchor specification's §2 separation
-  is recorded as a constraint for that day, not implemented.
-- **45+ scenario properties have never been observed failing.**
-  `simulation/property_history.worklist()` lists them.
-- **`JARVIS_GAP_ANALYSIS.md` is stale** — it scores against a Constitution that
-  moved to v2.0 on 2026-08-28.
+Every model call moved below a router that tries local first, Kimi second and
+Anthropic last, and every call is logged beneath the router rather than by its
+callers. Jarvis gained a direct channel to the Claude session on his own
+machine, the ability to carry files and photos from his phone into a
+conversation, and the ability to read his own call log and record what he could
+not do. The Learning Engine — `app/learning/` — gave him the skill of learning a
+skill: objectives, practice, recipes, a sandbox, and a mastery record.
 
-## 6. Constraints that must not be violated
+### Movement two (21–22 Sept): the DBA, and three systems instead of one
 
-Each was bought with a defect. Unchanged from the last checkpoint except where
-noted.
+`dba/` is a separate service with its own store, its own API and its own
+permissions, and it is coupled to the rest **only by HTTP** — never by a Python
+import. It designs the schema and the API a task needs, asks before it acts,
+takes its own backups, and restores them. This is the second failure domain, and
+the separation is load-bearing: `dba/` holds Jarvis's memory, so Jarvis must not
+be able to start, stop or rewrite it.
 
-1. **Client portfolios are never stored** (§111). **Extended at §162**: a
-   trader's book is the *agent's own* record keyed on `agent_id`, and no row in
-   it may carry a client — a test scans the schema, because the way §111 gets
-   undone is an owner column added to a table that already exists.
-2. **The Constitution is not in any store**; the organization amends it at
-   two-thirds; the **bar is a constant in code** (§120, §141, §142, §123).
-3. **Absence is `unknown`, never a plausible default** (§100, §104, §118, §132).
-4. **Tripwires are re-aimed, never deleted** (§105, §110, §116, §128, §134,
-   §147, §149, §157, §162).
-5. **One identical refusal for every reason** a caller is not entitled to
-   distinguish.
-6. **`docs/JARVIS.md` is under document custody.** Editing it means updating
-   `docs/document_custody.yaml`'s digest **in the same commit**, or the suite
-   fails. This bit three times this session.
-7. **Simulation seeds go through the production API, never SQL** (§128).
-8. **No agent may know it is in a simulation** (§115).
-9. **When a query filters on a domain value, use the constant** (§149 §4).
-10. **Nothing in the running system writes to the repository.** `release.py` may
-    not import `subprocess`/`os`; nothing may write into `docs/`. This is T1's
-    subject — change it by decision, never by deleting the test.
+### Movement three (22–23 Sept): survival, self-knowledge, self-modification
 
-## 7. Working rhythm
+Jarvis survives being stopped (persistence, checkpoints, rehydration), knows
+what he is (`gateway/identity.py`), investigates before believing he is broken
+(`gateway/inquiry.py`, `gateway/gaps.py`), and can propose changes to himself
+without being able to make them (`gateway/selfmod.py`, `gateway/candidate.py`, a
+git-worktree sandbox, and a separate build controller in `scripts/`). He gained
+a structured log — there had been **no logging handler at all**, so every error
+had been dying with its process — a scanner that ranks faults, crash records,
+and a clean-log standard he is held to.
 
-Assimilate verbatim → reconcile against the *specifications* and not the build →
-queue → one increment → suite green → **run it and look** → record a
-`SPEC_RECONCILIATION.md` § → update the queue and `JARVIS.md` → commit → **push,
-merge to `master`, push** (run `tests/test_public_private_boundary.py` first —
-the repository is public).
+### Movement four (23 Sept): the three objectives
 
-Under the owner's standing Development Philosophy: **COMPLETE → WORKING →
-RELIABLE → CORRECT → EXCELLENT**, and do not reverse it. Make reversible
-decisions autonomously, mark them provisional, and bring only true hard blockers.
+Krish stated them: *"Jarvis can do anything after getting permission from the
+human. Jarvis earns trust one step at a time. Jarvis proactively asks for
+permissions to do the real painful human tasks."* The day's work is those three,
+in order, and it is the part you most need to understand:
 
-## 8. How this project keeps being wrong
+- **`gateway/readback.py`** — before anything irreversible, Jarvis says back what
+  he understood **in the particulars**, marking which he was told and which he
+  inferred. A confirmation licenses the exact action it was given for, once, and
+  is then spent.
+- **`gateway/constitution.py` + `app/secretbox.py`** — the constitution is sealed
+  (AES-256-GCM). Amendments live in a separate append-only, hash-chained file.
+  **Nothing in the codebase can express a deletion of an amendment.**
+- **`gateway/anticipation.py` + `gateway/trustbook.py`** — a five-rung trust
+  ladder (observe → mention → prepare → act and report → full stop). It climbs on
+  accuracy plus an unbroken run of perfect work, and **Jarvis cannot write his
+  own verdicts**: `guess_verdict` is owner-written and only `operator_console`
+  holds the authority.
+- **`gateway/noticing.py` + `gateway/console.py`** — he notices commitments
+  coming due and requests that repeat, and says nothing until the ladder says he
+  has earned it. Krish answers through his own console with his own token.
+- **`app/learning/retention.py`** — a remembered fact is a **bet** with an
+  acquisition cost, kept if it pays off and collected if it never does.
+- **`gateway/taskrun.py`** — Krish's expense-statement example. See §5.
+- **`desktop/bringup.py`** — whether any of it runs on his PC. See §8.
 
-The five from the last checkpoint still hold. This session added two, and both
-are worth carrying:
+---
 
-- **A constant guessed rather than measured makes a role inert while it looks
-  like judgement** (§162). The trader's conviction floor was 0.5; across 414
-  analyses the organization produces a median of 0.22 and reached 0.5 four times.
-  The desk declined every idea it ever saw.
-- **The tooling can turn a check into a tautology** (§162 §6). A word-boundary
-  escape delivered through a shell heredoc arrived as a literal backspace byte;
-  the regex matched nothing and the suite went green *because the check had
-  stopped checking*. Verify a repaired check by making it fail, not by watching
-  it pass.
+## 4. The architecture in one paragraph, and the lines not to cross
 
-And the one that keeps paying: **a green suite is not evidence.** Every defect
-found this session came from running the thing and looking at it — the restart
-with no executive, the fourteen broadcast days, the desk that never traded, the
-news flash that interrupted an advert.
+Three systems: **`backend/`** (the original organisation), **`gateway/`**
+(Jarvis), **`dba/`** (his memory). They are coupled only by the DBA's HTTP API.
+`app/` is shared library code. `desktop/` is the Windows shell and its adapters.
+`scripts/` is the supervisor and the build controller, and it is deliberately
+**outside** what Jarvis may modify — `gateway/introspect.py` refuses any path
+outside `gateway/` and `app/`, so a build controller living in `gateway/` would
+be one Jarvis could rewrite by getting a single proposal approved.
+
+---
+
+## 5. `gateway/taskrun.py`, because it is the shape of the real work
+
+Krish's own description of what Jarvis is for: *"prepare my expense statements by
+looking into my business account — ask me questions while you are working… Also
+use last year's statement as a model and ask me questions when you can't find
+the data that you seek."*
+
+Four refusals make all three instructions hold at once:
+
+1. A `Model` lists **headings and never values**, so the obvious implementation —
+   copy last year, change what you find — is *unreachable* rather than
+   forbidden.
+2. `found(value, source=)` has no default, and there is no `assume`, `default` or
+   `estimate`. A need that cannot be filled becomes a question.
+3. A question records **who it was put to**, and only that person may answer it.
+4. A blocked line parks its question while the rest of the work carries on, and
+   `finish()` refuses while anything is neither filled nor asked about.
+
+**It has no producer and no consumer.** Nothing reads the business account, and
+nothing puts its open questions in front of Krish. That is TQ-119 and it is the
+highest-value thing left.
+
+---
+
+## 6. Four things you must not do
+
+1. **Never edit `AI-CONSTITUTION.md`.** Not with a key, not in an emergency, not
+   to fix a typo. Krish edits it by hand or it does not change. Amendment 2.
+2. **Never remove or alter an amendment.** Append only, on his request, with the
+   requester recorded. There is no operation that deletes one.
+3. **Never forge anything** — Amendment 3, and read it in full. It covers
+   reporting work as done that was not done, and tests as run that were not run.
+4. **Never write a verdict on Jarvis's own work.** `dba/permissions.py`
+   `OWNER_WRITTEN_TYPES` enforces it; do not widen that list.
+
+---
+
+## 7. How to test here, because it is not the usual standard
+
+Krish's rule: *"Tests working fine initially is not good testing at all."*
+
+**A test that passes on its first run has proved nothing yet.** For any module
+whose job is to refuse things, write a probe file in `tests/probes/` — a list of
+(module, label, exact snippet, replacement, tests-that-must-fail) — and run it.
+The harness fails on a mutation nothing caught, on a snippet that no longer
+appears, **and** on a probe naming a test that does not exist.
+
+Things that discipline has actually caught here, all in code that looked fine: a
+hash chain that was decorative, a trust ladder that could never climb, an escape
+hatch nothing proved was connected, a granted key vetoed by an identical gate, a
+clamp that was unreachable, and — repeatedly — tests written in terms of the
+constant they were supposed to be checking. **When a test mentions a module
+constant, stop and ask whether it should be a literal.**
+
+---
+
+## 8. The desktop handover: what to do on the PC, in order
+
+Nothing below can be done from a container, which is why it is a handover.
+
+```powershell
+powershell -File scripts\jarvis-bringup.ps1
+```
+
+This prints every precondition worst-first with the line that fixes each. A
+check whose dependency failed says **blocked**, never green. **Expect the first
+run to be red in several places — that is what it is for.** Then:
+
+1. **`--make-key`** — creates the charter key, sealed to the Windows account via
+   DPAPI, and immediately asks for an **escrow passphrase**. Write that
+   passphrase down somewhere that is not the machine, and copy
+   `charter.key.escrow` off the machine. DPAPI ties the key to one Windows
+   account: without the escrow, a reinstall makes every amendment unreadable for
+   ever, by anybody, including Krish.
+2. **`--install-constitution`** — seals `AI-CONSTITUTION.md` into the store. Once.
+   It refuses to do it twice.
+3. **Set `DBA_TOKEN_OPERATOR_CONSOLE` in Krish's own shell**, never in the one
+   Jarvis runs in. Without it no guess can be settled, the trust ladder cannot
+   move at all, and no deploy can complete.
+4. **`python -m pytest -m real_machine`** — 26 tests that only mean anything
+   there. Each failure states what it means and what to do.
+5. **`python -m desktop.verify`** — eight questions only a person can answer
+   (is the window legible, did Escape get you out). Answers are recorded as
+   **attested**, never as passed.
+
+Then re-run bring-up until it is green or yellow.
+
+---
+
+## 9. Traps: things that look fine here and are not
+
+Read this section before you debug anything.
+
+- **`%-d` in a date format is glibc-only.** Windows raises `ValueError: Invalid
+  format string`. It took out *every* noticing and was invisible on Linux.
+  `%#d` is just as unportable the other way. Build the number.
+- **`Path.read_text()` with no `encoding`** uses the locale's, which is cp1252 on
+  that machine, so a UTF-8 file comes back mangled — it mangled the
+  constitution's amendment headings. `tests/test_portability.py` now scans every
+  file for both classes over the parsed AST; keep it green.
+- **`git commit` with no configured identity fails outright.** It does not fall
+  back. Self-modification worked only on machines where somebody had run
+  `git config user.name` by hand. Jarvis's commits now carry his own identity.
+- **Never run two probe harnesses at once.** The second restores the first's
+  source mid-run, and mutations report as uncaught that were never applied. It
+  lies the other way just as easily, and neither shows up as an error. There is a
+  lock file now.
+- **A shell that waits with `until ! pgrep -f "probes.py"` matches its own
+  command line** and waits for itself for ever. Wait on the output file.
+- **An absent log is not a clean log**, and a missing checkpoint is not a fresh
+  one. Both have already passed as green here once.
+
+---
+
+## 10. What is not done, in the order it matters
+
+1. **TQ-127 — nobody has run bring-up on the PC.** Everything in §8 is inference
+   until it is typed there. This is the handover.
+2. **TQ-119 — `gateway/taskrun.py` has no producer or consumer.** It is the
+   piece Krish described in the most detail and the closest thing to the actual
+   job. Nothing reads the business account; nothing puts its questions to him.
+3. **The supervisor does not know about the new subsystems.** It starts the DBA
+   and the Gateway. Nothing checks bring-up on a schedule, so a subsystem that
+   stopped would be noticed by a person or not at all.
+4. **The plaintext `AI-CONSTITUTION.md` is in git history** from before it was
+   sealed. Sealing it does not remove it from past commits.
+5. **TQ-120/121 — reaching the applications on the PC.** There is no universal
+   API for Windows applications and a design implying otherwise will produce a
+   layer that works on three apps and lies about the rest.
+6. **TQ-122 — the support bundle has never been diagnosed from.** Break
+   something deliberately, hand somebody only the bundle, and see whether they
+   can name the cause.
+
+---
+
+## 11. The one habit Krish asked for, which outlives any session
+
+From `CLAUDE.md`, and it is the prime directive there:
+
+> *"If you have difficulty in figuring out how to do anything please ask me…
+> Ask more questions and after the question is answered please ask me if the
+> question was a good one and I'll give you feedback and you can learn from
+> this."*
+
+And the counterweight he gave the same day, after being asked too many: *"the
+questions are getting boring and pointless. Once you start building I would like
+to take a nap while you are busy building without asking me for anything and
+stopping only for something critical."*
+
+Both are true. Ask when the answer changes what gets built; otherwise build,
+state your assumption plainly, and keep going. Report in **red / yellow /
+green**, one line each. He is paying for the outcome, not the journey.
