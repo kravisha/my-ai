@@ -73,6 +73,33 @@ What that discipline has actually caught in this repository:
 
 Every one of those was found by probing, not by review.
 
+### Probing by hand works once. Write the mutations down.
+
+2026-09-23. `tests/test_inquiry.py` went green on its first run — 56 tests, no
+failures, and it had proved almost nothing. `tests/probes/inquiry_probes.py` then
+applied 49 mutations to `gateway/inquiry.py`, and **three went unnoticed**:
+
+- A test named for the eliminated-alternatives term passed with that term
+  deleted. Eliminating an alternative also cleared a *different* objection, so a
+  different term moved the number. The test was measuring the wrong thing and
+  said the right thing in its name.
+- A test asserting confidence stayed bounded only exercised a clamp that turned
+  out to be **unreachable** — the terms it clamps sum to exactly the limit.
+- A branch no test reached at all: the one the suite was written to cover did not
+  need it. It was deleted and replaced by a requirement that is reachable.
+
+None of those would have been found by reading the tests, and probing by hand
+finds them once and then loses the evidence. A file of mutations finds them again
+every time the code moves. Prefer it for any module whose job is to refuse
+things. The harness reports **stale probes** — a snippet that no longer appears —
+as a failure, because a probe that silently stopped applying reports success.
+
+A fourth, from the wiring in the same session: a warning meant to be the first
+line of what Krish reads was built as `{"WARNING": ..., **rest}`. The serialiser
+dumps with `sort_keys=True`, so dict order was discarded and the warning came
+first only because `W` sorts before lowercase letters. **If a line has to be
+first, build the string.**
+
 ---
 
 ## Two rules about what gets built
@@ -103,4 +130,7 @@ split, because the adapter is the part that cannot be tested here. See
 
 Tests that need the real PC are marked `real_machine` and excluded from the
 default run: `pytest -m real_machine`. The ones needing a person are
-`python -m desktop.verify`.
+`python -m desktop.verify`. The mutation harness is
+`python tests/probes/inquiry_probes.py` — not collected by pytest, because it
+edits source files and runs pytest inside itself; it restores them in a `finally`
+and verifies the restoration by hash.

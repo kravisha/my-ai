@@ -126,7 +126,8 @@ def test_jarvis_cannot_widen_his_own_authority(client):
     before it is written, at every boldness setting."""
     gap = _confirmed_gap(client)
     for path in ("app/initiative.py", "gateway/selfmod.py", "gateway/roles.py",
-                 "tests/test_boundaries.py", "config/initiative.yaml"):
+                 "tests/test_boundaries.py", "config/initiative.yaml",
+                 "gateway/gaps.py", "gateway/inquiry.py"):
         with pytest.raises(introspect.NotModifiable) as raised:
             _proposal(client, files=[path], gap=gap)
         assert "authority" in str(raised.value).lower()
@@ -140,6 +141,26 @@ def test_the_refusal_comes_from_the_policy_that_already_owns_it(client):
     assert initiative.HARM_WIDENS_ITS_OWN_AUTHORITY in action.harms
     for level in ("cautious", "bold"):
         assert initiative.decide(action, level=level).disposition == initiative.REFUSE
+
+
+def test_the_gate_and_the_reasoning_it_turns_on_are_both_out_of_reach(client):
+    """Added when `gateway/inquiry.py` was wired into `gaps.investigating`.
+
+    A proposal needs a *confirmed* gap - `gaps.ready_for_review` is what says
+    so, and `gateway/inquiry.py` is what a gap has to get through to become
+    confirmed. Leaving either modifiable would have meant Jarvis could
+    manufacture the confirmation that authorises changing himself: delete a bias
+    check, conclude on one hypothesis, confirm the gap, propose the change. The
+    loop closes at `introspect.GOVERNANCE` and nowhere else, because every other
+    step in it is one Jarvis is supposed to be able to take."""
+    for path in ("gateway/gaps.py", "gateway/inquiry.py"):
+        assert path in introspect.GOVERNANCE
+        allowed, why = introspect.may_modify(path)
+        assert allowed is False
+        assert "authority" in why.lower()
+    # And it is still readable - §14 lets him read his own architecture, which
+    # is how he would notice that the checks exist at all.
+    assert "ONE_HYPOTHESIS" in introspect.read_source("gateway/inquiry.py")
 
 
 def test_a_change_outside_jarvis_own_runtime_is_refused(client):

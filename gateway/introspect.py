@@ -67,6 +67,16 @@ GOVERNANCE = (
     "gateway/candidate.py",
     "gateway/introspect.py",
     "gateway/failures.py",
+    # The §13 gate itself. `gateway/selfmod.py` will not draft a proposal until
+    # `gaps.ready_for_review` says the gap is confirmed with evidence, so a
+    # module that could edit that function could open the gate it is standing
+    # in front of.
+    "gateway/gaps.py",
+    # And the reasoning the gate turns on. `gateway/inquiry.py` is what decides
+    # whether a suspicion becomes the confirmed gap that authorises a proposal;
+    # an agent free to delete its own bias checks can manufacture the
+    # confirmation that authorises changing itself.
+    "gateway/inquiry.py",
     "config/initiative.yaml",
     "tests/test_boundaries.py",
     "tests/test_initiative.py",

@@ -3783,3 +3783,49 @@ between the owner and this, and none of them was in Python:
    deliberately on a spare machine, hand somebody only the bundle, and see whether they can name the
    cause. A bundle nobody has ever diagnosed from is a bundle that is probably missing the one field
    that matters.
+
+---
+
+## TQ-124 · Persist an investigation in flight
+
+**NEED (YELLOW) · raised by the work that built `gateway/inquiry.py`, 2026-09-23**
+
+`gaps.investigate` hands back an `Inquiry` that lives only in memory. If the runtime dies between
+`investigate` and `settle`, the gap sits in `investigating` with its reasoning gone, and the only way
+out is a hand transition to `deferred` — which loses every observation that had been made.
+
+What it needs:
+
+1. `inquiry.restore(bundle)` rebuilding an `Inquiry` from `Inquiry.evidence()`, round-trip tested
+   including eliminated hypotheses, withdrawn conclusions and the `superseded` trail.
+2. Somewhere on the gap to keep an in-flight bundle. `evidence` is append-only and already holds
+   several `---`-joined blobs, so parsing the last one back out is the wrong shape; this probably
+   wants a field on `capability_gap` in `dba/entities.py`.
+3. `gaps.resume(client, gap)` for a gap found in `investigating` on startup, and a line in
+   `rehydrate` that looks for them — a gap stuck in `investigating` is exactly the kind of thing §34
+   says Jarvis must be able to *say*, rather than quietly leave.
+
+Deliberately not built with the rest: nothing writes a partial bundle yet, and `restore` without a
+producer would be machinery with no user.
+
+---
+
+## TQ-125 · Nothing calls the investigation yet
+
+**NEED (ORANGE) · raised by the same work, 2026-09-23**
+
+`gaps.investigate` and `gaps.settle` exist and are tested, and the log sweep promotes noise to
+`suspected`. Nothing walks a suspected gap through an investigation on its own — the observations
+have to be made by something that can run a held-out test, read the source, or count repeated
+failures, and §12 names all three.
+
+The producers that already exist and could feed it:
+
+- `gateway/logscan.py` — a recurring signature is a repeated failure, which is one of §12's methods.
+- `app/learning/practice.py` — a held-out case that fails is the strongest single observation
+  available, and `learn_from_episode` already classifies why.
+- `gateway/introspect.py` — code inspection, read-only, already allowed under §14.
+
+Until one of them is wired to `observe()`, `investigating` is a state something *can* investigate
+rather than one something *does*. That is a real improvement on where it was, and it is not the
+finished thing.

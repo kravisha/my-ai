@@ -199,6 +199,65 @@ cheapest evidence there is to produce and the easiest to over-read.
 
 ---
 
+## 3c-bis. The investigation between *suspected* and *confirmed*
+
+`gateway/inquiry.py`, wired in by `gaps.investigate` and `gaps.settle`.
+
+Until 2026-09-23 `investigating` was a state nothing investigated. §12 lists how
+a suspicion should be confirmed — deterministic tests, held-out tests, repeated
+failures, code inspection, comparison against requirements — and a gap became
+`confirmed` because somebody called `confirm`. The list was a list in a document.
+
+An `Inquiry` holds a question, candidate explanations, and what was looked at. It
+does not claim to reason without bias; nothing can honestly claim that about
+itself. What it does is keep a record whose **shape** is computable, and refuse
+to conclude when the shape is bad:
+
+| objection | what is computed | effect |
+|---|---|---|
+| `no_observations` | nothing was looked at | blocks |
+| `one_hypothesis` | only one explanation was ever entertained | blocks |
+| `no_refutation_attempted` | nothing went looking for what would kill the answer | blocks |
+| `only_confirming` | everything supports; nothing refutes, nothing reports an absence | advises |
+| `single_source` | every observation came from one place | advises |
+| `anchored` | the answer is the first guess and nothing was eliminated | advises |
+
+Three things make this more than a checklist:
+
+- **`refuted_by` is required when a hypothesis is proposed**, not afterwards.
+  Asked later, the question goes to somebody who already believes the answer.
+- **There is no `force=True`.** A caller who disagrees with the audit must name
+  each objection it is overriding, and every name is recorded on the conclusion
+  for ever — and, by `gaps.settle`, on the first line of what Krish reads. A
+  single boolean that waves away five objections at once costs the same as one,
+  which is the hole this kind of machinery always fails through.
+- **Confidence is derived and cannot be set.** Independent sources, a refutation
+  attempted and survived, alternatives eliminated, a clean shape. A model's
+  estimate of its own certainty is the least reliable number available, and it is
+  not collected. §28 declared `capability_gap.confidence` and nothing had ever
+  written to it; this is what writes it.
+
+`conclude(outcome=...)` maps onto the lifecycle with no discretion: `confirmed`
+→ `confirmed` with the whole evidence bundle, `unsupported` → `unsupported`,
+`inconclusive` → `deferred`, which can go back to `investigating`. An
+unconcluded inquiry is refused rather than defaulted.
+
+`gateway/inquiry.py` and `gateway/gaps.py` are both in `introspect.GOVERNANCE`.
+The loop they close is short: delete a bias check, conclude on one hypothesis,
+confirm the gap, propose the change. Every step of it except the first is one
+Jarvis is meant to be able to take, so the first is where it has to stop.
+
+### Not yet done
+
+An inquiry lives in memory. A crash mid-investigation leaves the gap in
+`investigating` with the reasoning gone, and `deferred` is the only way back out
+by hand. `Inquiry.evidence()` is already the whole record, so a `restore()` and
+a place on the gap to keep the in-flight bundle would close it — queued rather
+than built, because nothing stores a partial bundle yet and machinery with no
+user does not get built here.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own
