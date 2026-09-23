@@ -426,6 +426,69 @@ here on does not remove it from past commits.
 
 ---
 
+## 3c-quinquies. Saying it back before doing it
+
+`gateway/readback.py`.
+
+Krish, 2026-09-23: *"Give him all the capabilities and the command that he cannot
+change is that user will decide what help he needs from Jarvis and Jarvis should
+reiterate his understanding back to the user for critical tasks that are
+important such as sending emails as opposed to raising volume on the radio - the
+later shouldn't need a confirmation. When user confirms Jarvis will act and
+complete execution. This is a relationship that has to be cultivated with time
+and trust."*
+
+Four claims, kept separate because they are separable:
+
+**All the capabilities.** Nothing in this module is a capability gate. It does
+not decide what Jarvis can do, only what he says first.
+
+**Which actions need it is not decided here.** `app/initiative.py` already ranks
+actions by reversibility and reach, and already answers that raising a volume is
+`act` and mailing another person is `propose`. `needs_readback` reads that
+verdict. A second list of "important verbs" would be a second thing to keep in
+step with the first, and a new consequential action would be safe only if
+somebody remembered to add it.
+
+**A read-back is particulars, and marks which are Jarvis's.** *"Shall I send the
+email?"* catches nothing - the misunderstanding is never in the verb. So an
+`Understanding` is a list of particulars, each carrying where it came from:
+
+> to: accounts@acme.example — you said
+> attachment: Q3-statement.pdf — you said
+> subject: Late invoice, Q3 — **I worked that out**
+> *(1 of those is mine rather than yours: subject.)*
+
+That last line is the whole point. A read-back of only what it was told confirms
+nothing, because the error lives in what was inferred. Three sources, not two:
+`defaulted` reads as *"nobody said, so I used the usual"*, which invites a
+different correction from *"I worked that out"*.
+
+**The user decides, structurally.** `confirm` refuses a confirmation whose
+`confirmed_by` is the agent itself - the same shape as the owner-written charter
+grant, and for the same reason: a permission the asker can issue is not a
+permission. A rule Jarvis is merely asked to follow is exactly what stops holding
+in the case it is for.
+
+**On confirmation, act and complete.** A confirmation produces a `Mandate` whose
+scope is the confirmed particulars. Execution runs inside it without asking
+again - re-asking halfway is not caution, it is nagging, and it is what makes a
+person stop granting anything. Stepping outside is refused by particular, not
+just by name: confirmed to send one email and sending three is the failure this
+exists for, and the action's name is identical in both.
+
+An unresolved unknown blocks confirmation unless each one is named, the same way
+`gateway/inquiry.py` handles a standing objection.
+
+### Not yet done
+
+Nothing calls this. The consequential actions Jarvis can actually take today go
+through `gateway/tools.py`, and wiring each one to produce an `Understanding` is
+the next step - a module with no caller is the failure this repository keeps
+finding in itself.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own
