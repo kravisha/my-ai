@@ -566,6 +566,49 @@ something the model can call.
 
 ---
 
+## 3c-sexies. Earning a free hand
+
+`gateway/anticipation.py`, fed by `gateway/readback.py`.
+
+Krish, 2026-09-23: *"trust means anticipating correctly what i need and correctly
+executing it to perfection... at some point I know that he would execute to
+perfection and would give him a free hand to complete things as per his
+discretion and just present me the final result which is the point called the
+full stop."*
+
+A `Guess` is written down before the outcome is known and says what triggered it.
+Three outcomes, not two: `not_now` - right about the need, wrong about the
+moment - is kept apart from `wrong`, because holding a door for somebody who
+wanted to walk past is a different mistake from holding a door that is not there.
+
+**Outcome and quality are recorded at different moments**, and the first version
+conflated them. `settle` took both together, so the quality had to be known when
+Krish said yes - before the work had been done. It never was, every guess was
+rated `None`, `perfect_run` was permanently zero, and the ladder could not climb
+past `mention` however well anything went. A ladder nothing can climb is
+decoration. So `settle` closes the anticipation when he answers, and `rate`
+records how the work turned out afterwards, once. Neither will take a verdict
+from the agent.
+
+The ladder, per domain: **observe** → **mention** → **prepare** → **act and
+report** → **full stop**. Five settled guesses before the rate means anything,
+eighty per cent wanted to start offering, then three, five and ten consecutive
+faultless executions. One botched execution drops it immediately and climbing
+back costs the same as the first climb - slow up, fast down, which is how it
+works with people. A run rather than a rate, because a rate lets an old failure
+be washed out by volume.
+
+An **unprompted** read-back is the producer: Jarvis raising something Krish did
+not ask for is a guess, and must say what prompted it. A read-back for something
+he asked for is not a guess at all. His yes is the grade; silence past the window
+is `not_now`, settled by the clock. `tools.rate_work` is how he says how the work
+went, and `tools.awaiting_a_verdict` is what lets *"how did that go?"* be asked
+about something specific.
+
+Neither is a tool. A tool is something the model can call.
+
+---
+
 ## 3d. The sandbox a candidate is tested in
 
 `gateway/candidate.py`. A **git worktree**: a separate directory on its own

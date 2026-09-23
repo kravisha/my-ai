@@ -20,8 +20,8 @@ from gateway import anticipation
 from gateway.anticipation import (ACCURACY_TO_CLIMB, ACT_AND_REPORT, FAILED,
                                   FLAWED, FULL_STOP, MENTION, MIN_SETTLED,
                                   NOT_NOW, NotYet, OBSERVE, PERFECT, PREPARE,
-                                  RUNGS, WANTED, WRONG, Guess, may, settle,
-                                  standing)
+                                  RUNGS, WANTED, WRONG, Guess, may, rate,
+                                  settle, standing)
 
 AGENT = "jarvis"
 NOW = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
@@ -35,13 +35,28 @@ def guess(domain="expenses", what="the quarterly statement",
 
 
 def run_of(count, *, outcome=WANTED, quality=PERFECT, domain="expenses"):
+    """Settled, and then rated - which is two moments, not one.
+
+    Krish says whether he wanted the thing when he answers; how well it was then
+    done is known later, once the work exists."""
     made = []
     for index in range(count):
         one = guess(domain=domain)
-        settle(one, outcome=outcome, by="krish", agent=AGENT, quality=quality,
+        settle(one, outcome=outcome, by="krish", agent=AGENT,
                now=NOW + timedelta(minutes=index))
+        if quality is not None:
+            rate(one, quality=quality, by="krish", agent=AGENT,
+                 now=NOW + timedelta(minutes=index, seconds=30))
         made.append(one)
     return made
+
+
+def rated(quality, *, at, domain="expenses", outcome=WANTED):
+    one = guess(domain=domain)
+    settle(one, outcome=outcome, by="krish", agent=AGENT, now=at)
+    rate(one, quality=quality, by="krish", agent=AGENT,
+         now=at + timedelta(seconds=30))
+    return one
 
 
 # --- a guess is only a guess if it was written down first ----------------------
@@ -155,6 +170,70 @@ def test_a_guess_with_no_deadline_never_goes_overdue():
     assert guess().overdue(now=NOW + timedelta(days=3650)) is False
 
 
+# --- outcome and quality are two moments, not one --------------------------------
+
+def test_the_ladder_could_not_climb_before_these_were_separated():
+    """The bug this split fixed, kept as a test.
+
+    `settle` used to take the outcome and the quality together, so the quality
+    had to be known when Krish said yes - before the work had been done. It never
+    was, every guess was rated `None`, and `perfect_run` was permanently zero. A
+    ladder nothing can climb is decoration."""
+    import inspect
+    assert "quality" not in inspect.signature(settle).parameters
+    assert "outcome" not in inspect.signature(rate).parameters
+    assert anticipation.describe()["outcome_and_quality_are_recorded_separately"]
+
+    unrated = run_of(12, quality=None)
+    assert standing("expenses", unrated, now=NOW).perfect_run == 0
+    assert standing("expenses", run_of(12), now=NOW).perfect_run == 12
+
+
+def test_a_guess_cannot_be_rated_before_krish_has_said_he_wanted_it():
+    """Until he has, there is nothing whose execution could be judged."""
+    with pytest.raises(NotYet, match="has not been settled"):
+        rate(guess(), quality=PERFECT, by="krish", agent=AGENT, now=NOW)
+
+
+def test_work_cannot_be_rated_twice():
+    """A second rating would let a bad Tuesday be revised on Wednesday."""
+    one = run_of(1)[0]
+    with pytest.raises(NotYet, match="already rated"):
+        rate(one, quality=FAILED, by="krish", agent=AGENT, now=NOW)
+
+
+def test_jarvis_cannot_rate_his_own_work():
+    """*"executing it to perfection"* is Krish's judgement about the result."""
+    one = run_of(1, quality=None)[0]
+    with pytest.raises(NotYet, match="cannot rate its own"):
+        rate(one, quality=PERFECT, by=AGENT, agent=AGENT, now=NOW)
+
+
+def test_a_rating_must_say_who_gave_it():
+    one = run_of(1, quality=None)[0]
+    with pytest.raises(NotYet, match="who gave it"):
+        rate(one, quality=PERFECT, by="  ", agent=AGENT, now=NOW)
+
+
+@pytest.mark.parametrize("quality", ["good", "", None, "ok"])
+def test_qualities_are_a_closed_set(quality):
+    one = run_of(1, quality=None)[0]
+    with pytest.raises(NotYet, match="quality must be one of"):
+        rate(one, quality=quality, by="krish", agent=AGENT, now=NOW)
+
+
+def test_the_run_is_ordered_by_when_the_work_was_rated():
+    """Not by when the guess was settled. Krish confirms in the order he is
+    asked and judges results in the order they arrive, and those differ."""
+    made = [rated(PERFECT, at=NOW + timedelta(hours=index)) for index in range(3)]
+    late_failure = guess()
+    settle(late_failure, outcome=WANTED, by="krish", agent=AGENT, now=NOW)
+    rate(late_failure, quality=FAILED, by="krish", agent=AGENT,
+         now=NOW + timedelta(days=1))
+    made.append(late_failure)
+    assert standing("expenses", made, now=NOW).perfect_run == 0
+
+
 # --- the ladder, slow up ---------------------------------------------------------
 
 def test_a_domain_with_no_history_watches_and_says_nothing():
@@ -194,15 +273,10 @@ def test_prepare_is_where_a_domain_sits_while_it_is_recovering():
     for `act_and_report`. A rung nothing can reach would be a lie in the
     ladder, so this is what reaching it looks like."""
     made = run_of(5)
-    stumble = guess()
-    settle(stumble, outcome=WANTED, by="krish", agent=AGENT, quality=FAILED,
-           now=NOW + timedelta(hours=1))
+    stumble = rated(FAILED, at=NOW + timedelta(hours=1))
     made.append(stumble)
     for index in range(4):
-        recovered = guess()
-        settle(recovered, outcome=WANTED, by="krish", agent=AGENT,
-               quality=PERFECT, now=NOW + timedelta(hours=2, minutes=index))
-        made.append(recovered)
+        made.append(rated(PERFECT, at=NOW + timedelta(hours=2, minutes=index)))
 
     earned = standing("expenses", made, now=NOW)
     assert earned.perfect_run == 4
@@ -224,9 +298,7 @@ def test_one_botched_execution_drops_the_rung_immediately():
     made = run_of(12)
     assert standing("expenses", made, now=NOW).rung == FULL_STOP
 
-    botched = guess()
-    settle(botched, outcome=WANTED, by="krish", agent=AGENT, quality=FAILED,
-           now=NOW + timedelta(hours=1))
+    botched = rated(FAILED, at=NOW + timedelta(hours=1))
     made.append(botched)
     assert standing("expenses", made, now=NOW).rung == MENTION
 
@@ -234,9 +306,7 @@ def test_one_botched_execution_drops_the_rung_immediately():
 def test_merely_flawed_work_also_breaks_the_run():
     """*"executing it to perfection"* - so the run counts perfect, not passable."""
     made = run_of(12)
-    flawed = guess()
-    settle(flawed, outcome=WANTED, by="krish", agent=AGENT, quality=FLAWED,
-           now=NOW + timedelta(hours=1))
+    flawed = rated(FLAWED, at=NOW + timedelta(hours=1))
     made.append(flawed)
     assert standing("expenses", made, now=NOW).perfect_run == 0
 
@@ -248,9 +318,7 @@ def test_a_long_good_history_does_not_dilute_a_recent_failure():
     settled time, and the first version of this test timestamped it in the
     middle of the run, where it correctly counted for nothing."""
     made = run_of(200)
-    botched = guess()
-    settle(botched, outcome=WANTED, by="krish", agent=AGENT, quality=FAILED,
-           now=NOW + timedelta(days=1))
+    botched = rated(FAILED, at=NOW + timedelta(days=1))
     made.append(botched)
     assert standing("expenses", made, now=NOW).perfect_run == 0
     assert standing("expenses", made, now=NOW).rung == MENTION
@@ -258,15 +326,10 @@ def test_a_long_good_history_does_not_dilute_a_recent_failure():
 
 def test_climbing_back_costs_the_same_as_climbing_the_first_time():
     made = run_of(12)
-    botched = guess()
-    settle(botched, outcome=WANTED, by="krish", agent=AGENT, quality=FAILED,
-           now=NOW + timedelta(hours=1))
+    botched = rated(FAILED, at=NOW + timedelta(hours=1))
     made.append(botched)
     for index in range(10):
-        recovered = guess()
-        settle(recovered, outcome=WANTED, by="krish", agent=AGENT,
-               quality=PERFECT, now=NOW + timedelta(hours=2, minutes=index))
-        made.append(recovered)
+        made.append(rated(PERFECT, at=NOW + timedelta(hours=2, minutes=index)))
     assert standing("expenses", made, now=NOW).rung == FULL_STOP
 
 
@@ -420,3 +483,85 @@ def test_the_record_outlives_any_one_register():
     _, understanding = _register(lambda: NOW)
     register.offer(understanding, prompted=False, because="the quarter closed")
     assert len(kept) == 1
+
+
+# --- saying how the work went ----------------------------------------------------
+
+def test_krish_rates_the_work_through_the_session_seam():
+    from gateway import readback, tools
+
+    register = readback.Register(now=lambda: NOW)
+    tools.REGISTER = register
+    try:
+        _, understanding = _register(lambda: NOW)
+        register.offer(understanding, prompted=False, because="the quarter closed")
+        register.answer(confirmed_by="krish", agent=AGENT)
+        assert [one.domain for one in tools.awaiting_a_verdict()] == \
+            ["draft_expenses"]
+
+        assert tools.rate_work("draft_expenses", quality=PERFECT,
+                               confirmed_by="krish") is True
+        assert register.guesses[0].quality == PERFECT
+        assert register.guesses[0].rated_by == "krish"
+        assert tools.awaiting_a_verdict() == []
+    finally:
+        tools.REGISTER = readback.Register()
+
+
+def test_praise_for_something_nobody_guessed_at_is_not_a_record():
+    """*"That was great"* about work Jarvis never anticipated is a kind remark,
+    not evidence for the ladder."""
+    from gateway import readback
+
+    register = readback.Register(now=lambda: NOW)
+    assert register.rate_work("expenses", quality=PERFECT, by="krish",
+                              agent=AGENT) is False
+
+
+def test_an_unsettled_guess_is_not_waiting_for_a_verdict():
+    from gateway import readback
+
+    register = readback.Register(now=lambda: NOW)
+    _, understanding = _register(lambda: NOW)
+    register.offer(understanding, prompted=False, because="the quarter closed")
+    assert register.awaiting_a_verdict() == []
+
+
+def test_jarvis_cannot_rate_work_through_the_seam_either():
+    from gateway import identity, readback, tools
+
+    register = readback.Register(now=lambda: NOW)
+    tools.REGISTER = register
+    try:
+        _, understanding = _register(lambda: NOW)
+        register.offer(understanding, prompted=False, because="the quarter closed")
+        register.answer(confirmed_by="krish", agent=AGENT)
+        with pytest.raises(NotYet, match="cannot rate its own"):
+            tools.rate_work("draft_expenses", quality=PERFECT,
+                            confirmed_by=identity.AGENT_ID)
+    finally:
+        tools.REGISTER = readback.Register()
+
+
+def test_rating_is_not_a_tool_the_model_can_call():
+    from gateway import tools
+    names = {tool["name"] for tool in tools.TOOLS}
+    assert "rate_work" not in names
+    assert "confirm_pending" not in names
+
+
+def test_a_second_verdict_finds_nothing_rather_than_raising():
+    """Krish saying "that was good" twice is not an error. The register looks
+    for work still waiting on a verdict, and finding none is an answer."""
+    from gateway import readback
+
+    register = readback.Register(now=lambda: NOW)
+    _, understanding = _register(lambda: NOW)
+    register.offer(understanding, prompted=False, because="the quarter closed")
+    register.answer(confirmed_by="krish", agent=AGENT)
+
+    assert register.rate_work("draft_expenses", quality=PERFECT, by="krish",
+                              agent=AGENT) is True
+    assert register.rate_work("draft_expenses", quality=FAILED, by="krish",
+                              agent=AGENT) is False
+    assert register.guesses[0].quality == PERFECT

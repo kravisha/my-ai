@@ -1345,6 +1345,22 @@ def confirm_pending(*, confirmed_by: str, action_name: str | None = None,
                            accepting_unknowns=accepting_unknowns)
 
 
+def rate_work(domain: str, *, quality: str, confirmed_by: str) -> bool:
+    """Krish's verdict on a piece of work, from the session.
+
+    The counterpart of `confirm_pending`, and a module function for the same
+    reason: a tool is something the model can call, and an assistant that can
+    rate its own work has the one number that means nothing."""
+    return REGISTER.rate_work(domain, quality=quality, by=confirmed_by,
+                              agent=identity.AGENT_ID)
+
+
+def awaiting_a_verdict() -> list:
+    """What Krish has seen and not yet judged, so he can be asked about
+    something specific rather than in general."""
+    return REGISTER.awaiting_a_verdict()
+
+
 def particulars_for(name: str, arguments: dict) -> tuple:
     """The details of this call that could be misunderstood, for the read-back.
 

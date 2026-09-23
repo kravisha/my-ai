@@ -30,23 +30,33 @@ PROBES: list[harness.Probe] = [
     (
         ANTICIPATION,
         "Jarvis can score his own guess",
-        '    if by.strip().lower() == (agent or "").strip().lower():',
-        "    if False:",
+        '    if by.strip().lower() == (agent or "").strip().lower():\n'
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot score its own guess. A prediction graded by the "',
+        "    if False:\n"
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot score its own guess. A prediction graded by the "',
         ("test_jarvis_cannot_score_his_own_guess",
          "test_the_check_is_not_fooled_by_case_or_spacing"),
     ),
     (
         ANTICIPATION,
         "the self-scoring check is fooled by case and spacing",
-        '    if by.strip().lower() == (agent or "").strip().lower():',
-        "    if by == agent:",
+        '    if by.strip().lower() == (agent or "").strip().lower():\n'
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot score its own guess.',
+        "    if by == agent:\n"
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot score its own guess.',
         ("test_the_check_is_not_fooled_by_case_or_spacing",),
     ),
     (
         ANTICIPATION,
         "a score need not say who gave it",
-        '    if not (by or "").strip():',
-        "    if False:",
+        '    if not (by or "").strip():\n'
+        '        raise NotYet("a settled guess must say who settled it")',
+        '    if False:\n'
+        '        raise NotYet("a settled guess must say who settled it")',
         ("test_a_settled_guess_must_say_who_settled_it",),
     ),
     # --- a guess must precede its outcome -------------------------------------
@@ -119,6 +129,84 @@ PROBES: list[harness.Probe] = [
         "        if self.settled:\n            return False",
         ("test_a_guess_with_no_deadline_never_goes_overdue",),
     ),
+    # --- outcome and quality are two moments ----------------------------------
+    (
+        ANTICIPATION,
+        "the quality is taken when Krish says yes, before the work is done",
+        "def settle(guess: Guess, *, outcome: str, by: str, agent: str,\n"
+        "           now: datetime | None = None) -> Guess:",
+        "def settle(guess: Guess, *, outcome: str, by: str, agent: str,\n"
+        "           quality: str | None = None, now: datetime | None = None) -> Guess:",
+        ("test_the_ladder_could_not_climb_before_these_were_separated",),
+    ),
+    (
+        ANTICIPATION,
+        "Jarvis can rate his own work",
+        '    if by.strip().lower() == (agent or "").strip().lower():\n'
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot rate its own work.',
+        "    if False:\n"
+        "        raise NotYet(\n"
+        '            f"{agent!r} cannot rate its own work.',
+        ("test_jarvis_cannot_rate_his_own_work",),
+    ),
+    (
+        ANTICIPATION,
+        "a rating need not say who gave it",
+        '    if not (by or "").strip():\n        raise NotYet("a rating must say who gave it")',
+        "    if False:\n        raise NotYet(\"a rating must say who gave it\")",
+        ("test_a_rating_must_say_who_gave_it",),
+    ),
+    (
+        ANTICIPATION,
+        "work can be rated before Krish has said he wanted it",
+        "    if not guess.settled:\n        raise NotYet(",
+        "    if False:\n        raise NotYet(",
+        ("test_a_guess_cannot_be_rated_before_krish_has_said_he_wanted_it",),
+    ),
+    (
+        ANTICIPATION,
+        "a bad Tuesday can be revised on Wednesday",
+        "    if guess.rated:\n        raise NotYet(",
+        "    if False:\n        raise NotYet(",
+        ("test_work_cannot_be_rated_twice",),
+    ),
+    (
+        ANTICIPATION,
+        "qualities are open",
+        "    if quality not in QUALITIES:",
+        "    if False:",
+        ("test_qualities_are_a_closed_set",),
+    ),
+    (
+        ANTICIPATION,
+        "the run is ordered by when the guess settled, not when work was judged",
+        "                        key=lambda guess: guess.rated_at, reverse=True):",
+        "                        key=lambda guess: guess.settled_at, reverse=True):",
+        ("test_the_run_is_ordered_by_when_the_work_was_rated",),
+    ),
+    (
+        READBACK,
+        "a verdict lands on work that was already judged",
+        "            if guess.domain == domain and guess.settled and not guess.rated:",
+        "            if guess.domain == domain and guess.settled:",
+        ("test_a_second_verdict_finds_nothing_rather_than_raising",),
+    ),
+    (
+        READBACK,
+        "praise for something nobody guessed at is recorded anyway",
+        "        return False\n\n    def awaiting_a_verdict(self) -> list:",
+        "        return True\n\n    def awaiting_a_verdict(self) -> list:",
+        ("test_praise_for_something_nobody_guessed_at_is_not_a_record",),
+    ),
+    (
+        READBACK,
+        "unsettled guesses are offered up for a verdict",
+        "        return [guess for guess in self.guesses\n"
+        "                if guess.settled and not guess.rated]",
+        "        return list(self.guesses)",
+        ("test_an_unsettled_guess_is_not_waiting_for_a_verdict",),
+    ),
     # --- the ladder, slow up --------------------------------------------------
     (
         ANTICIPATION,
@@ -178,8 +266,8 @@ PROBES: list[harness.Probe] = [
     (
         ANTICIPATION,
         "the run is read oldest first, so a recent failure is invisible",
-        "                        key=lambda guess: guess.settled_at, reverse=True):",
-        "                        key=lambda guess: guess.settled_at):",
+        "                        key=lambda guess: guess.rated_at, reverse=True):",
+        "                        key=lambda guess: guess.rated_at):",
         ("test_a_long_good_history_does_not_dilute_a_recent_failure",
          "test_one_botched_execution_drops_the_rung_immediately"),
     ),
@@ -187,13 +275,13 @@ PROBES: list[harness.Probe] = [
         ANTICIPATION,
         "the run is a rate, so volume washes a failure out",
         "    run = 0\n"
-        "    for guess in sorted((guess for guess in settled if guess.quality),\n"
-        "                        key=lambda guess: guess.settled_at, reverse=True):\n"
+        "    for guess in sorted((guess for guess in settled if guess.rated),\n"
+        "                        key=lambda guess: guess.rated_at, reverse=True):\n"
         "        if guess.quality == PERFECT:\n"
         "            run += 1\n"
         "        else:\n"
         "            break",
-        "    scored = [guess for guess in settled if guess.quality]\n"
+        "    scored = [guess for guess in settled if guess.rated]\n"
         "    run = sum(1 for guess in scored if guess.quality == PERFECT)",
         ("test_a_long_good_history_does_not_dilute_a_recent_failure",),
     ),

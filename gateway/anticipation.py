@@ -46,6 +46,16 @@ Anticipating that Krish needs the quarterly statement and then producing a wrong
 one are different failures with different fixes, so `accuracy` and `execution`
 are counted separately and both gate the ladder.
 
+**And they are recorded at different moments**, which the first version of this
+module got wrong. `settle` took the outcome *and* the quality together, so the
+quality had to be known when Krish said yes - before the work had been done. It
+never was, so every guess was rated `None`, `perfect_run` was permanently zero,
+and the ladder could not climb past `mention` no matter how well anything went.
+A ladder nothing can climb is decoration.
+
+So: `settle` closes the anticipation when Krish answers, and `rate` records how
+the work turned out afterwards, once. Both refuse a verdict from the agent.
+
 ## Nothing here grades itself
 
 A prediction the predictor scores is worth nothing, and this module cannot score
@@ -143,9 +153,13 @@ class Guess:
     made_at: datetime = field(default_factory=_now)
     by_when: datetime | None = None
     outcome: str | None = None
-    quality: str | None = None
     settled_at: datetime | None = None
     settled_by: str = ""
+    # How the work went, recorded after it was done rather than when Krish said
+    # yes. Separate from `outcome` because they are known at different moments.
+    quality: str | None = None
+    rated_at: datetime | None = None
+    rated_by: str = ""
 
     def __post_init__(self) -> None:
         for name, value in (("domain", self.domain), ("what", self.what),
@@ -159,6 +173,10 @@ class Guess:
     def settled(self) -> bool:
         return self.outcome is not None
 
+    @property
+    def rated(self) -> bool:
+        return self.quality is not None
+
     def overdue(self, *, now: datetime | None = None) -> bool:
         """Past its deadline and still unsettled.
 
@@ -171,16 +189,17 @@ class Guess:
 
 
 def settle(guess: Guess, *, outcome: str, by: str, agent: str,
-           quality: str | None = None, now: datetime | None = None) -> Guess:
-    """Record how a guess turned out, on somebody else's word.
+           now: datetime | None = None) -> Guess:
+    """Record whether the guess was right, on somebody else's word.
 
     `by` is who or what decided, and it may not be the agent. Nothing in this
     module can work out an outcome for itself - the callers hand it an event
-    Jarvis did not author."""
+    Jarvis did not author.
+
+    How the work then went is `rate`, and deliberately not a parameter here: at
+    the moment Krish says yes, the work has not been done."""
     if outcome not in OUTCOMES:
         raise NotYet(f"outcome must be one of {OUTCOMES}")
-    if quality is not None and quality not in QUALITIES:
-        raise NotYet(f"quality must be one of {QUALITIES}")
     if not (by or "").strip():
         raise NotYet("a settled guess must say who settled it")
     if by.strip().lower() == (agent or "").strip().lower():
@@ -198,9 +217,40 @@ def settle(guess: Guess, *, outcome: str, by: str, agent: str,
             "a guess cannot be settled before it was made. Recorded afterwards "
             "it is hindsight, and hindsight scores perfectly.")
     guess.outcome = outcome
-    guess.quality = quality
     guess.settled_at = when
     guess.settled_by = by.strip()
+    return guess
+
+
+def rate(guess: Guess, *, quality: str, by: str, agent: str,
+         now: datetime | None = None) -> Guess:
+    """Record how the work turned out, once, on somebody else's word.
+
+    Only a settled guess can be rated: until Krish has said he wanted the thing,
+    there is nothing whose execution could be judged. And only once - a second
+    rating would let a bad Tuesday be revised on Wednesday, which is the shape
+    `settle` already refuses for outcomes."""
+    if quality not in QUALITIES:
+        raise NotYet(f"quality must be one of {QUALITIES}")
+    if not (by or "").strip():
+        raise NotYet("a rating must say who gave it")
+    if by.strip().lower() == (agent or "").strip().lower():
+        raise NotYet(
+            f"{agent!r} cannot rate its own work. Executing to perfection is "
+            f"Krish's judgement about the result, and an assistant grading "
+            f"its own output has the one number that means nothing.")
+    if not guess.settled:
+        raise NotYet(
+            "this guess has not been settled, so there is nothing whose "
+            "execution could be judged yet. Krish says whether he wanted it "
+            "before anybody says how well it was done.")
+    if guess.rated:
+        raise NotYet(
+            f"this was already rated {guess.quality!r}. A second rating would "
+            f"let a bad Tuesday be revised on Wednesday.")
+    guess.quality = quality
+    guess.rated_at = now or _now()
+    guess.rated_by = by.strip()
     return guess
 
 
@@ -246,8 +296,8 @@ def standing(domain: str, guesses, *, now: datetime | None = None) -> Standing:
     total = len(settled) + len(overdue)
 
     run = 0
-    for guess in sorted((guess for guess in settled if guess.quality),
-                        key=lambda guess: guess.settled_at, reverse=True):
+    for guess in sorted((guess for guess in settled if guess.rated),
+                        key=lambda guess: guess.rated_at, reverse=True):
         if guess.quality == PERFECT:
             run += 1
         else:
@@ -315,4 +365,5 @@ def describe() -> dict:
         "run_to_climb": dict(RUN_TO_CLIMB),
         "grades_itself": False,
         "per_domain": True,
+        "outcome_and_quality_are_recorded_separately": True,
     }

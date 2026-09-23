@@ -444,6 +444,29 @@ class Register:
                                     agent="jarvis", now=self._clock())
                 return
 
+    def rate_work(self, domain: str, *, quality: str, by: str,
+                  agent: str) -> bool:
+        """Krish's verdict on how the work turned out. Returns whether it landed.
+
+        Applies to the most recent settled-but-unrated guess in that domain,
+        which is the one he has just seen the result of. Returns False rather
+        than raising when there is nothing waiting: *"that was great"* about
+        something Jarvis never guessed at is a kind remark, not a record."""
+        for guess in reversed(self.guesses):
+            if guess.domain == domain and guess.settled and not guess.rated:
+                anticipation.rate(guess, quality=quality, by=by, agent=agent,
+                                  now=self._clock())
+                return True
+        return False
+
+    def awaiting_a_verdict(self) -> list:
+        """The work Krish has seen and not yet judged.
+
+        Read by whatever asks him, so that *"how did that go?"* is asked about
+        something specific rather than in general."""
+        return [guess for guess in self.guesses
+                if guess.settled and not guess.rated]
+
     def lapse_guesses(self, *, agent: str) -> int:
         """Settle the guesses whose read-backs went unanswered.
 
