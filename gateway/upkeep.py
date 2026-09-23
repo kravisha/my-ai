@@ -308,8 +308,11 @@ def run_once(client: dbaclient.DBAClient | None = None, *,
                                         limit=200),
                 requests=gap_detector.ranked(gap_detector.entries()))
             say, quiet = noticing.worth_saying(found, known)
+            spoken = {(one.domain, one.what) for one in say}
             for one in found:
-                trustbook.record(client, one.as_guess(), agent=agent)
+                trustbook.record(client, one.as_guess(),
+                                 to_say=(one.domain, one.what) in spoken,
+                                 agent=agent)
             result["noticed"] = {
                 "say": [{"domain": one.domain, "what": one.what,
                          "because": one.because} for one in say],

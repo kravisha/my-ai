@@ -1,278 +1,241 @@
-"""The server console (backend/console/ + /console routes; addendum 38 §4,
-owner decision SPEC_RECONCILIATION §75; TQ-26).
+"""Krish's side of the loop: seeing what Jarvis noticed, and answering it.
 
-The live newspaper: narration of everything the organization is doing, with
-filters derived from the stream rather than enumerated, and a standing-status
-view answering the question a scrolling feed cannot. What this suite holds is
-the API the page renders from — the page itself is one dependency-free file,
-verified by loading it against a real backend rather than by asserting on
-markup.
+Until this, the sweep wrote guesses that nothing could ever settle, so every one
+of them would have aged quietly into a wrong answer. A record that only
+accumulates failures is worse than no record, because it looks like evidence.
+
+The thing worth reading these tests for is the separation. This module writes
+`guess_verdict`, which only `operator_console` may write - so it authenticates
+as Krish and refuses to fall back to Jarvis. The consequence, stated here rather
+than discovered later: a "yes" typed at Jarvis settles the *action* and not the
+*guess*.
+
+Probed by `tests/probes/console_probes.py`.
 """
 
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 
-from backend import fi_db, metadata_engine, status_events
+from app import model_calls
+from dba import agent as agent_module, main as dba_main, registry, store
+from gateway import (anticipation, console, dbaclient, identity, noticing,
+                     trustbook)
+from gateway.anticipation import (FULL_STOP, NOT_NOW, OBSERVE, PERFECT, WANTED,
+                                  WRONG, Guess)
 
-CONSOLE_HTML = Path(__file__).resolve().parent.parent / "backend" / "console" / "index.html"
+TOKEN = "test-token-for-jarvis"
+OPERATOR_TOKEN = "test-token-for-the-operator-console"
 
 
-@pytest.fixture
-def wired(tmp_path, monkeypatch):
-    """A file-backed database plus `app.state.db_path` pointing at it.
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv(store.PATH_ENV, str(tmp_path / "dba.db"))
+    monkeypatch.setenv(dba_main.token_env_var("JARVIS"), TOKEN)
+    monkeypatch.setenv(dba_main.token_env_var("operator_console"), OPERATOR_TOKEN)
+    monkeypatch.setenv(dbaclient.TOKEN_ENV, TOKEN)
+    monkeypatch.setenv(identity.VERSION_ENV, "a" * 40)
+    monkeypatch.setattr(model_calls, "log_dir", lambda: tmp_path)
+    agent_module._AGENT = None
+    registry.reset_sync()
+    yield tmp_path
+    agent_module._AGENT = None
+    registry.reset_sync()
 
-    File-backed rather than `:memory:` on purpose: since §78 the console
-    routes hand a *path* to a worker thread which opens its own connection
-    there, and two `:memory:` connections are two different empty databases.
-    Using a real file means these tests exercise the actual production path -
-    worker thread, own connection - rather than a shortcut around it.
 
-    Yields the connection the test writes through; the routes read the same
-    file from their own."""
-    from backend import main as backend_main
+@pytest.fixture()
+def service():
+    with TestClient(dba_main.app) as made:
+        yield made
 
-    db_path = tmp_path / "fi.db"
-    conn = fi_db.get_connection(str(db_path))
-    fi_db.init_schema(conn)
 
-    monkeypatch.setattr(backend_main.app.state, "db_path", str(db_path), raising=False)
-    monkeypatch.setattr(backend_main.app.state, "startup_report", None, raising=False)
-    try:
-        yield conn, backend_main
-    finally:
-        conn.close()
+def _transport(service, agent, token):
+    def transport(method, path, payload):
+        response = service.request(
+            method, path, json=payload if method != "GET" else None,
+            headers={"X-DBA-Agent": agent, "X-DBA-Token": token})
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {}
 
+    return transport
 
-def _feed(wired, **params):
-    """Await /console/feed on this thread; the route does its reading on a
-    worker thread with its own connection."""
-    import asyncio
 
-    _, backend_main = wired
-    defaults = {"limit": 200, "source": None, "attention_only": False, "since_id": None}
-    defaults.update(params)
-    return asyncio.run(backend_main.console_feed(**defaults))
+@pytest.fixture()
+def jarvis(service):
+    return dbaclient.DBAClient(transport=_transport(service, "JARVIS", TOKEN),
+                               requested_by="JARVIS", actor="jarvis")
 
 
-def _publish(conn, message, **overrides):
-    payload = {"engine": "metadata_engine", "severity": status_events.SEVERITY_INFO}
-    payload.update(overrides)
-    return status_events.publish(conn, "state_change", message, **payload)
+@pytest.fixture()
+def krish(service):
+    return console.operator_client(
+        transport=_transport(service, "operator_console", OPERATOR_TOKEN))
 
 
-# --- the page --------------------------------------------------------------------
+def a_guess(domain="commitments", what="send the Q3 statement"):
+    return Guess(domain=domain, what=what,
+                 because="you promised it by Friday",
+                 made_at=datetime.now(timezone.utc))
 
 
-def test_console_page_is_served():
-    """Served as a file; no database involved, so TestClient is fine here."""
-    from fastapi.testclient import TestClient
+# --- the console is Krish's, and says so -----------------------------------------
 
-    from backend import main as backend_main
+def test_a_console_with_no_operator_token_refuses_to_run(monkeypatch):
+    """Rather than falling back to Jarvis's identity. A verdict written in the
+    name of the agent being judged is not a verdict."""
+    monkeypatch.delenv(console.TOKEN_ENV, raising=False)
+    with pytest.raises(console.NoToken, match="not Krish's console"):
+        console.operator_client()
 
-    response = TestClient(backend_main.app).get("/console")
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    # Declared, not guessed - the page carries Tamil script (addendum 41's
-    # studio is the same document that holds the language picker).
-    assert "charset=utf-8" in response.headers["content-type"].lower()
-    assert "Kumbhakarnan" in response.text
 
+def test_the_console_speaks_as_the_operator():
+    assert console.describe()["speaks_as"] == "operator_console"
+    assert console.describe()["writes"] == ["guess_verdict"]
 
-def test_page_is_self_contained():
-    """No build step and no CDN: the backend is loopback-only and the whole
-    surface is two read endpoints. A bundler would be more machinery than the
-    thing it builds."""
-    html = CONSOLE_HTML.read_text(encoding="utf-8")
-    assert "<script src=" not in html          # no external JS
-    assert "cdn" not in html.lower()
-    assert "/console/feed" in html             # it reads the API this suite tests
 
+def test_a_conversational_yes_does_not_settle_a_guess():
+    """Stated in the data rather than left to be discovered. The conversation
+    settles the action - `readback`'s mandate, in-process - and that is enough
+    to get the work done. If it could also write verdicts, the Gateway would
+    hold the operator's token and there would be no separation at all."""
+    assert console.describe()["a_conversational_yes_settles_a_guess"] is False
 
-# --- the feed (§4.2/§4.4) ---------------------------------------------------------
 
+# --- what Krish is shown ----------------------------------------------------------
 
-def test_feed_returns_narration_newest_first(wired):
-    conn, _ = wired
-    for i in range(3):
-        _publish(conn, f"event {i}")
-    body = _feed(wired)
-    assert [e["message"] for e in body["events"]] == ["event 2", "event 1", "event 0"]
+def test_only_the_guesses_the_ladder_allowed_are_shown(jarvis, krish):
+    """A guess recorded and not said is not missing - it is the bottom rung
+    working."""
+    trustbook.record(jarvis, a_guess(), to_say=True)
+    trustbook.record(jarvis, a_guess(what="something quieter"), to_say=False)
 
+    shown = console.mentions(krish)
+    assert [row["what"] for row in shown] == ["send the Q3 statement"]
 
-def test_feed_filters_by_source(wired):
-    conn, _ = wired
-    _publish(conn, "from metadata")
-    _publish(conn, "from explorer", engine=None, agent="explorer-1")
-    body = _feed(wired, source="explorer-1")
-    assert [e["message"] for e in body["events"]] == ["from explorer"]
 
+def test_a_mention_already_shown_is_not_shown_again(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    assert console.mentions(krish)
+    trustbook.mark_said(jarvis, guess_id)
+    assert console.mentions(krish) == []
 
-def test_feed_filters_to_attention_only(wired):
-    conn, _ = wired
-    _publish(conn, "routine")
-    _publish(conn, "concerning", severity=status_events.SEVERITY_WARNING)
-    _publish(conn, "broken", severity=status_events.SEVERITY_ERROR)
-    body = _feed(wired, attention_only=True)
-    assert {e["message"] for e in body["events"]} == {"concerning", "broken"}
 
+def test_a_mention_already_answered_is_not_shown_again(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    console.answer(krish, guess_id, outcome=WANTED)
+    assert console.mentions(krish) == []
 
-def test_since_id_sends_only_what_is_new(wired):
-    conn, _ = wired
-    """A console left open all day sends deltas rather than re-fetching the
-    whole feed - the restraint §13 asks of publishers, applied to the reader."""
-    first = _publish(conn, "old news")
-    body = _feed(wired)
-    assert body["events"]
 
-    _publish(conn, "breaking news")
-    delta = _feed(wired, since_id=first)
-    assert [e["message"] for e in delta["events"]] == ["breaking news"]
+def test_a_mention_carries_the_record_it_came_from(jarvis, krish):
+    trustbook.record(jarvis, a_guess(), to_say=True)
+    assert console.mentions(krish)[0]["because"] == "you promised it by Friday"
 
 
-def test_feed_limit_is_capped(wired):
-    conn, _ = wired
-    """An operator cannot ask the server for an unbounded page."""
-    for i in range(5):
-        _publish(conn, f"event {i}")
-    body = _feed(wired, limit=100000)
-    assert len(body["events"]) == 5  # capped path still returns what exists
+# --- answering --------------------------------------------------------------------
 
+def test_krish_settles_a_guess_from_his_console(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    verdict = console.answer(krish, guess_id, outcome=WANTED)
 
-# --- the sidebar -----------------------------------------------------------------
+    made, problems = trustbook.load(jarvis)
+    assert problems == []
+    assert made[0].outcome == WANTED and made[0].settled_by == "krish"
+    assert verdict["id"]
 
 
-def test_filter_list_is_derived_not_enumerated(wired):
-    conn, _ = wired
-    """§4.4's real requirement: a new department appears because it
-    published, not because the page was edited."""
-    _publish(conn, "hello", engine=None, department="Department of Cheese")
-    body = _feed(wired)
-    names = {s["name"] for s in body["sources"]}
-    assert "Department of Cheese" in names
+def test_jarvis_cannot_use_the_console_to_settle_his_own_guess(jarvis):
+    """The refusal comes from the DBA, not from this module."""
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    with pytest.raises(dbaclient.Refused) as raised:
+        console.answer(jarvis, guess_id, outcome=WANTED)
+    assert "administer" in str(raised.value)
 
 
-def test_standing_answers_where_things_stand(wired):
-    conn, _ = wired
-    """The question a scrolling feed cannot answer without the reader doing
-    the work by eye (§4.5)."""
-    _publish(conn, "starting", status=status_events.STATUS_STARTING)
-    _publish(conn, "now idle", status=status_events.STATUS_IDLE)
-    _publish(conn, "waiting on data", engine="simulation_engine",
-             status=status_events.STATUS_WAITING)
+def test_the_three_answers_are_all_available(jarvis, krish):
+    """Two would hide the interesting one."""
+    for outcome in (WANTED, NOT_NOW, WRONG):
+        guess_id = trustbook.record(jarvis, a_guess(what=outcome), to_say=True)
+        console.answer(krish, guess_id, outcome=outcome)
+    made, _ = trustbook.load(jarvis)
+    assert {one.outcome for one in made} == {WANTED, NOT_NOW, WRONG}
 
-    standing = {e["source_engine"]: e for e in _feed(wired)["standing"]}
-    assert standing["metadata_engine"]["status"] == status_events.STATUS_IDLE  # latest wins
-    assert standing["simulation_engine"]["status"] == status_events.STATUS_WAITING
 
-
-def test_awaiting_login_is_reported_so_the_page_can_say_so(wired):
-    conn, _ = wired
-    """38 §12: a dormant system must look dormant rather than look broken."""
-    assert _feed(wired)["awaiting_login"] is True
-
-
-def test_feed_before_the_database_is_known_is_empty_not_an_error(monkeypatch):
-    """A console opened while the server is still coming up must render,
-    not 500."""
-    import asyncio
-
-    from backend import main as backend_main
-
-    monkeypatch.setattr(backend_main.app.state, "db_path", None, raising=False)
-    body = asyncio.run(backend_main.console_feed(limit=50, source=None,
-                                                 attention_only=False, since_id=None))
-    assert body == {"events": [], "sources": [], "standing": [], "awaiting_login": True,
-                    # Not 0: with no database, "how many agents are running" has
-                    # no answer, and 0 would be an answer (TQ-38, §87).
-                    "live_agents": None}
-
-
-# --- the whole startup, as the operator would read it ------------------------------
-
-
-def test_a_real_startup_is_readable_end_to_end(wired):
-    conn, _ = wired
-    """The console's actual job: after a startup, an operator can read what
-    happened, see where everything stands, and filter to what needs
-    attention - without having watched it live."""
-    metadata_engine.run(conn)
-    body = _feed(wired)
-
-    messages = [e["message"] for e in body["events"]]
-    assert any("Metadata Engine starting" in m for m in messages)
-    assert any("Metadata ready" in m for m in messages)
-    assert "metadata_engine" in {s["name"] for s in body["sources"]}
-    assert body["standing"][0]["status"] == status_events.STATUS_IDLE
-
-
-# --- the console cannot state a falsehood about the workforce (TQ-38, §87) --------
-
-
-def test_awaiting_login_and_live_agents_are_reported_as_separate_facts(wired):
-    """The console said "workforce dormant, awaiting operator login" while six
-    agents worked behind it, because it derived one fact from the other:
-    `awaiting_login` came from `startup_report is None`, and the page rendered
-    that as though it meant "nothing is running".
-
-    They are different questions. One is about authorisation - has an operator
-    started a workforce in this process. The other is about the world - are
-    agents running. A server can be dormant while agents survive an unclean
-    shutdown, and that is exactly the situation the operator most needs to see.
-    """
-    conn, _ = wired
-    fi_db.register_agent(conn, "speculator-1", "speculator", pid=4242)
-    fi_db.record_heartbeat(conn, "speculator-1")
-
-    body = _feed(wired)
-
-    assert body["awaiting_login"] is True, "no operator has started a workforce"
-    assert body["live_agents"] == 1, (
-        "an agent heartbeating right now must be reported as running, whatever "
-        "the startup report says"
-    )
-
-
-def test_a_genuinely_dormant_server_reports_no_live_agents(wired):
-    """The ordinary case, asserted so the previous test cannot pass by always
-    returning a number greater than zero."""
-    conn, _ = wired
-    assert _feed(wired)["live_agents"] == 0
-
-
-def test_liveness_comes_from_heartbeats_not_from_the_registry_s_belief(wired):
-    """`agent_registry.process_state` says "running" for every process the
-    machine lost in an unclean shutdown - it is what the registry was last
-    told, not what is true. A heartbeat inside the threshold cannot be stale by
-    construction, because something had to write it."""
-    conn, _ = wired
-    fi_db.register_agent(conn, "analysis-1", "analysis", pid=99)
-    # Registered, never heartbeated: claimed by the registry, silent in fact.
-    assert _feed(wired)["live_agents"] == 0
-
-    stale = "2020-01-01T00:00:00+00:00"
-    conn.execute("UPDATE agent_registry SET process_state='running', "
-                 "last_heartbeat_at=? WHERE identity='analysis-1'", (stale,))
-    assert _feed(wired)["live_agents"] == 0, (
-        "a six-year-old heartbeat is not a running process"
-    )
-
-
-def test_the_controller_is_not_counted_as_a_stray_agent(wired):
-    """The Controller heartbeats every tick *by design*, including while the
-    server is dormant, so that a healthy Controller is distinguishable from a
-    dead one. It runs inside this process rather than as a subprocess.
-
-    The first version of the liveness check counted it, and a dormant server
-    announced "1 agent(s) are heartbeating... nothing in this process started
-    them" about its own Controller. Found by starting the server and reading
-    what it printed - the fix for a console that stated a falsehood had
-    introduced a fresh one."""
-    from backend.controller import CONTROLLER_IDENTITY
-
-    conn, backend_main = wired
-    fi_db.register_agent(conn, CONTROLLER_IDENTITY, "controller", pid=1)
-    fi_db.record_heartbeat(conn, CONTROLLER_IDENTITY)
-
-    assert _feed(wired)["live_agents"] == 0
-    assert backend_main.live_agents(conn) == []
+def test_an_answer_nobody_declared_is_refused(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    with pytest.raises(ValueError, match="outcome must be one of"):
+        console.answer(krish, guess_id, outcome="maybe")
+
+
+def test_the_refusal_explains_why_not_now_is_worth_having(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    with pytest.raises(ValueError) as raised:
+        console.answer(krish, guess_id, outcome="maybe")
+    assert "stop noticing" in str(raised.value)
+
+
+def test_krish_rates_the_work_afterwards(jarvis, krish):
+    guess_id = trustbook.record(jarvis, a_guess(), to_say=True)
+    verdict = console.answer(krish, guess_id, outcome=WANTED)
+    console.rate(krish, verdict["id"], quality=PERFECT)
+
+    made, _ = trustbook.load(jarvis)
+    assert made[0].quality == PERFECT and made[0].rated_by == "krish"
+
+
+# --- silence is an answer, and it is not "wrong" ------------------------------------
+
+def test_a_mention_krish_never_answered_lapses_to_not_now(jarvis, krish):
+    """He may well have needed the thing and not wanted it raised then.
+    Recording silence as a bad guess teaches Jarvis to stop noticing, when the
+    lesson available is to wait."""
+    trustbook.record(jarvis, a_guess(), to_say=True)
+    later = datetime.now(timezone.utc) + timedelta(days=noticing.QUIET_DAYS + 1)
+
+    lapsed = console.lapse(krish, now=later)
+    assert len(lapsed) == 1
+
+    made, _ = trustbook.load(jarvis)
+    assert made[0].outcome == NOT_NOW
+    assert made[0].settled_by == "no answer"
+
+
+def test_a_mention_inside_the_window_is_left_alone(jarvis, krish):
+    trustbook.record(jarvis, a_guess(), to_say=True)
+    assert console.lapse(krish, now=datetime.now(timezone.utc)) == []
+    assert console.mentions(krish)
+
+
+def test_lapsing_is_the_operators_write_too(jarvis):
+    """"No answer" is still a judgement, and Jarvis does not write the records
+    that judge him."""
+    trustbook.record(jarvis, a_guess(), to_say=True)
+    later = datetime.now(timezone.utc) + timedelta(days=noticing.QUIET_DAYS + 1)
+    with pytest.raises(dbaclient.Refused):
+        console.lapse(jarvis, now=later)
+
+
+def test_a_guess_that_was_never_meant_to_be_said_does_not_lapse(jarvis, krish):
+    """It was recorded because the ladder says notice everything. Lapsing it
+    would punish Jarvis for a silence that was his own."""
+    trustbook.record(jarvis, a_guess(), to_say=False)
+    later = datetime.now(timezone.utc) + timedelta(days=noticing.QUIET_DAYS + 1)
+    assert console.lapse(krish, now=later) == []
+
+
+# --- the loop closes ----------------------------------------------------------------
+
+def test_a_domain_climbs_once_krish_starts_answering(jarvis, krish):
+    """The whole point. Before this the sweep wrote guesses nothing could
+    settle, so the record could only ever get worse."""
+    assert console.standing(krish, "commitments").rung == OBSERVE
+
+    for index in range(12):
+        guess_id = trustbook.record(jarvis, a_guess(what=f"thing {index}"),
+                                    to_say=True)
+        verdict = console.answer(krish, guess_id, outcome=WANTED)
+        console.rate(krish, verdict["id"], quality=PERFECT)
+
+    assert console.standing(krish, "commitments").rung == FULL_STOP

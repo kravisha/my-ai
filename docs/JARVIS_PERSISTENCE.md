@@ -665,6 +665,34 @@ the shape a forged promotion would take, and a loader that quietly dropped one
 would be the place nobody looks. Two verdicts on one guess are reported the same
 way, and the first one stands.
 
+### Krish's side, and why it is a different process
+
+`gateway/console.py`, run as `python -m gateway.console`.
+
+The sweep was writing guesses nothing could ever settle, so every one of them
+would have aged quietly into a wrong answer. A record that only accumulates
+failures is worse than no record, because it looks like evidence.
+
+The console closes that loop, and it authenticates as `operator_console` with
+Krish's own token - refusing to run at all when that token is missing, rather
+than falling back to Jarvis's identity. A verdict written in the name of the
+agent being judged is not a verdict.
+
+**The consequence, stated rather than left to be discovered: a "yes" typed into a
+conversation with Jarvis does not settle a guess.** It settles the *action* -
+`readback`'s mandate, which is in-process and needs no store - and that is enough
+to get the work done. The durable verdict that moves the ladder is slower and
+comes from here. If the conversation could write verdicts then the Gateway would
+hold the operator's token, and there would be no separation at all.
+
+`lapse` settles what Krish never answered, after a week, as **`not_now` rather
+than `wrong`** - he may well have needed the thing and not wanted it raised then,
+and recording silence as a bad guess teaches Jarvis to stop noticing when the
+lesson available is to wait. It is written from the console for the same reason
+everything else is: "no answer" is still a judgement. A guess that was never
+meant to be said does not lapse at all, because punishing Jarvis for a silence
+that was his own is arithmetic dressed as rigour.
+
 Timestamps are microseconds. At second granularity, three results judged in the
 same second sort arbitrarily and a failure can land ahead of the successes that
 followed it - which is exactly the bug `gateway/persistence.py` hit, for exactly

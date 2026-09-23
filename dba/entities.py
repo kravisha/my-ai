@@ -458,7 +458,11 @@ GUESS = register(EntityType(
     # and an assistant who cannot record a prediction cannot be judged at all.
     fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "domain": TEXT,
             "what": TEXT, "because": TEXT, "made_at": TIMESTAMP,
-            "by_when": TIMESTAMP},
+            "by_when": TIMESTAMP,
+            # Whether the trust ladder allowed this to be said out loud, and
+            # when it was. A guess recorded but never said is the bottom rung
+            # working, not a guess that failed.
+            "to_say": BOOLEAN, "said_at": TIMESTAMP},
     required=(NAME, "agent", "domain", "what", "because", "made_at"),
     statuses=("open", "settled"),
     classification=CONFIDENTIAL,

@@ -73,8 +73,13 @@ def _now_stamp() -> str:
 
 
 def record(client: dbaclient.DBAClient, guess: anticipation.Guess, *,
-           agent: str = identity.AGENT_ID) -> str:
-    """Write down a guess, before anybody knows how it turns out."""
+           to_say: bool = False, agent: str = identity.AGENT_ID) -> str:
+    """Write down a guess, before anybody knows how it turns out.
+
+    `to_say` is whether the trust ladder allowed this one to be spoken. It is
+    recorded either way - a guess written down and never said is the bottom rung
+    working rather than a guess that failed - and the flag is what lets the
+    console show Krish the ones meant for him."""
     data = {
         "name": f"{guess.domain}: {guess.what}"[:200],
         "agent": agent,
@@ -83,6 +88,7 @@ def record(client: dbaclient.DBAClient, guess: anticipation.Guess, *,
         "because": guess.because,
         "made_at": _stamp(guess.made_at),
         "status": OPEN,
+        "to_say": bool(to_say),
     }
     if guess.by_when:
         data["by_when"] = _stamp(guess.by_when)
@@ -180,6 +186,34 @@ def load(client: dbaclient.DBAClient, *, domain: str | None = None,
             guess.rated_by = verdict.get("rated_by") or ""
         made.append(guess)
     return made, problems
+
+
+def pending_mentions(client: dbaclient.DBAClient, *,
+                     agent: str = identity.AGENT_ID,
+                     limit: int = 50) -> list[dict]:
+    """The guesses meant for Krish that he has not been shown yet.
+
+    Read by the console - his side - rather than pushed by Jarvis. A guess with
+    `to_say` false is not here and is not missing: it was recorded because the
+    ladder says notice everything, and withheld because the ladder says say
+    little."""
+    rows = client.find(GUESS, {"agent": agent, "status": OPEN}, limit=limit)
+    settled = {row.get("guess_id") for row
+               in client.find(VERDICT, {"agent": agent}, limit=limit * 2)}
+    return [row for row in rows
+            if row.get("to_say") in (True, 1)
+            and not row.get("said_at")
+            and row["id"] not in settled]
+
+
+def mark_said(client: dbaclient.DBAClient, guess_id: str) -> None:
+    """Record that Krish has now been shown this one.
+
+    Written by Jarvis, deliberately: *having said something* is a fact about his
+    own behaviour, not a judgement about him, and the records he may not write
+    are the ones that judge him."""
+    client.update(guess_id, {"said_at": _now_stamp()},
+                  reason="mentioned to Krish")
 
 
 def standing(client: dbaclient.DBAClient, domain: str, *,
