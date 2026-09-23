@@ -451,6 +451,23 @@ CHANGE_PROPOSAL = register(EntityType(
     note="§18/§29. The record the approval gate turns on, and the record a "
          "relaunched runtime reads to learn what was done to it."))
 
+CHARTER_GRANT = register(EntityType(
+    name="charter_grant",
+    # Krish's explicit permission to change something that is otherwise
+    # read-only: the constitution, or the machinery that decides what Jarvis may
+    # do. `dba/permissions.OWNER_WRITTEN_TYPES` makes every write here need
+    # `administer`, which only the operator console holds - so Jarvis can read
+    # his grants and cannot write one.
+    fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "key": TEXT,
+            "granted_by": TEXT, "granted_at": TIMESTAMP, "expires_at": TIMESTAMP,
+            "scope": TEXT, "note": TEXT, "interface": TEXT},
+    required=(NAME, "key", "granted_by", "granted_at", "expires_at"),
+    statuses=("active", "revoked"),
+    classification=CONFIDENTIAL,
+    note="§16. The owner's explicit permission, as a record rather than an "
+         "argument. `expires_at` is set at grant time and cannot be moved by "
+         "the agent it is for, because moving it is a write."))
+
 APPROVAL_DECISION = register(EntityType(
     name="approval_decision",
     fields={NAME: TEXT, STATUS: TEXT, "agent": TEXT, "proposal_id": TEXT,

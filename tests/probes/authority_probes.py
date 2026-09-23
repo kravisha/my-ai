@@ -28,8 +28,12 @@ TESTS = Path(__file__).resolve().parents[1]
 
 INTROSPECT = "gateway/introspect.py"
 SELFMOD = "gateway/selfmod.py"
+CHARTER = "gateway/charter.py"
+DBA_PERMISSIONS = "dba/permissions.py"
 SUITES = {INTROSPECT: TESTS / "test_jarvis_selfmod.py",
-          SELFMOD: TESTS / "test_jarvis_selfmod.py"}
+          SELFMOD: TESTS / "test_jarvis_selfmod.py",
+          CHARTER: TESTS / "test_jarvis_selfmod.py",
+          DBA_PERMISSIONS: TESTS / "test_jarvis_selfmod.py"}
 
 PROBES: list[harness.Probe] = [
     # --- the circle stays closed on the ordinary path -------------------------
@@ -99,13 +103,98 @@ PROBES: list[harness.Probe] = [
         "        if False:",
         ("test_an_emergency_still_does_not_reach_another_system",),
     ),
+    # --- the key is the owner's to write --------------------------------------
+    (
+        DBA_PERMISSIONS,
+        "Jarvis can write himself a key",
+        "    if (entity_type in OWNER_WRITTEN_TYPES\n"
+        "            and action in WRITING_ACTIONS and ADMINISTER not in held):",
+        "    if False:",
+        ("test_jarvis_cannot_write_himself_a_key",
+         "test_a_lapsed_key_stops_working_and_says_so"),
+    ),
+    (
+        DBA_PERMISSIONS,
+        "only creating a key needs the owner, so an expiry can be moved",
+        'WRITING_ACTIONS = ("create", "update", "archive", "delete_authorized", "link",\n'
+        '                   "unlink", "reconcile")',
+        'WRITING_ACTIONS = ("create",)',
+        ("test_a_lapsed_key_stops_working_and_says_so",),
+    ),
+    (
+        DBA_PERMISSIONS,
+        "no record type is the owner's to write",
+        'OWNER_WRITTEN_TYPES = ("charter_grant",)',
+        "OWNER_WRITTEN_TYPES = ()",
+        ("test_jarvis_cannot_write_himself_a_key",),
+    ),
+    (
+        CHARTER,
+        "a lapsed grant still counts",
+        "        if expires is None or expires <= when:\n            continue",
+        "        if False:\n            continue",
+        ("test_a_lapsed_key_stops_working_and_says_so",),
+    ),
+    (
+        CHARTER,
+        "a revoked grant still counts",
+        '        if (row.get("status") or ACTIVE) != ACTIVE:\n            continue',
+        "        if False:\n            continue",
+        ("test_a_revoked_key_is_not_in_force",),
+    ),
+    (
+        CHARTER,
+        "a grant for one key is read as a grant for every key",
+        '        if row.get("key") in introspect.KEYS:\n            held.add(row["key"])',
+        "        held.update(introspect.KEYS)",
+        ("test_one_granted_key_does_not_open_the_other_tier",),
+    ),
+    (
+        CHARTER,
+        "a grant never expires",
+        "DEFAULT_MINUTES = 60",
+        "DEFAULT_MINUTES = 60 * 24 * 365 * 100",
+        ("test_a_grant_is_short_by_default",),
+    ),
+    (
+        CHARTER,
+        "a live grant is explained as a revoked one",
+        "    if live:",
+        "    if False:",
+        ("test_a_lapsed_key_stops_working_and_says_so",),
+    ),
+    (
+        CHARTER,
+        "a missing grant is not explained as something Krish can fix",
+        '        return (f"no {key!r} key has ever been granted. Krish grants one from "\n'
+        '                f"the operator console; Jarvis cannot write the record, which "\n'
+        '                f"is the safeguard rather than an inconvenience.")',
+        '        return "no."',
+        ("test_a_missing_key_is_explained_as_a_next_step_not_a_wall",),
+    ),
     (
         SELFMOD,
-        "the keys a proposal carries are ignored",
-        "    introspect.require_modifiable(affected_files, keys=keys,\n"
-        "                                  emergency=bool(emergency))",
-        "    introspect.require_modifiable(affected_files)",
-        ("test_the_break_glass_reaches_a_keyed_file_and_is_recorded",),
+        "keys are taken from the caller again instead of the store",
+        "    keys = charter.keys_in_force(client, agent=agent)",
+        "    keys = introspect.KEYS",
+        ("test_a_missing_key_is_explained_as_a_next_step_not_a_wall",
+         "test_one_granted_key_does_not_open_the_other_tier"),
+    ),
+    (
+        SELFMOD,
+        "a refusal does not say which key is missing",
+        "        if missing and not emergency:",
+        "        if False:",
+        ("test_a_missing_key_is_explained_as_a_next_step_not_a_wall",),
+    ),
+    (
+        SELFMOD,
+        "the keys in force are ignored",
+        "        introspect.require_modifiable(affected_files, keys=keys,\n"
+        "                                      emergency=bool(emergency))",
+        "        introspect.require_modifiable(affected_files)",
+        ("test_the_break_glass_reaches_a_keyed_file_and_is_recorded",
+         "test_a_granted_key_actually_drafts_the_proposal"),
     ),
     (
         SELFMOD,

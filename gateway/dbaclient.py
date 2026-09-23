@@ -156,9 +156,18 @@ class DBAClient:
 
     def __init__(self,
                  transport: Callable[[str, str, dict], tuple[int, dict]] | None = None,
-                 *, actor: str = "jarvis") -> None:
+                 *, actor: str = "jarvis",
+                 requested_by: str = AGENT) -> None:
+        """`requested_by` is the DBA identity this client speaks as.
+
+        It is not a claim that can be made falsely: the DBA checks it against
+        the agent the token authenticated, and refuses the mismatch with *"one
+        request has one asker"*. So a client declaring `operator_console` without
+        the operator's token fails at the service, which is what makes
+        `charter.grant` an owner action rather than a naming convention."""
         self._transport = transport or self._http
         self._actor = actor
+        self._requested_by = requested_by
 
     # --- transport -----------------------------------------------------------
 
@@ -191,7 +200,8 @@ class DBAClient:
 
         Every non-success is converted here, once, so that no caller has to
         remember which status code means what."""
-        payload: dict[str, Any] = {"action": action, "requested_by": AGENT,
+        payload: dict[str, Any] = {"action": action,
+                                   "requested_by": self._requested_by,
                                    "actor": self._actor}
         payload.update({name: value for name, value in fields.items()
                         if value is not None})

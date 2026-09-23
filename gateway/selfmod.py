@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from app import initiative
-from gateway import (checkpoint as checkpoint_module, dbaclient, failures,
+from gateway import (charter, checkpoint as checkpoint_module, dbaclient, failures,
                      gaps, identity, introspect, ledger, persistence)
 
 ENTITY_TYPE = "change_proposal"
@@ -231,18 +231,18 @@ EMERGENCY_MARKER = "EMERGENCY OVERRIDE"
 def propose(client: dbaclient.DBAClient, *, gap: dict, reason: str,
             scope: str, affected_files: list[str], expected_benefit: str,
             risk: str, test_plan: str, rollback_plan: str,
-            keys: tuple[str, ...] = (), emergency: str = "",
-            agent: str = identity.AGENT_ID) -> dict:
+            emergency: str = "", agent: str = identity.AGENT_ID) -> dict:
     """Draft a §18 proposal for a confirmed gap, or refuse and say why.
 
     Three refusals before anything is written: the gap must be confirmed with
     evidence, the files must be ones Jarvis may change, and the change must not
     be one `app/initiative.py` refuses outright.
 
-    `keys` are separately-granted permissions from Krish - see
-    `introspect.CIRCULAR` and `introspect.CHARTER`. They are named by the caller
-    rather than inferred from the file list, because a key that a proposal could
-    award itself is not a key.
+    Keys are **read from the store**, never passed in. A first version took them
+    as an argument, and Jarvis is the caller - so Jarvis could hand himself the
+    charter key. `gateway/charter.py` holds them as `charter_grant` records that
+    only the operator console can write, so the answer to "may I" lives somewhere
+    the asker cannot edit.
 
     `emergency` is the break-glass: a stated reason for changing something keyed
     without the key, to help Krish now. Nothing here can check whether he is in
@@ -266,8 +266,22 @@ def propose(client: dbaclient.DBAClient, *, gap: dict, reason: str,
     # 2. §16 and the scope decision, before the record exists.
     if emergency and not emergency.strip():
         raise ValueError("an emergency change must say what the emergency is")
-    introspect.require_modifiable(affected_files, keys=keys,
-                                  emergency=bool(emergency))
+    keys = charter.keys_in_force(client, agent=agent)
+    try:
+        introspect.require_modifiable(affected_files, keys=keys,
+                                      emergency=bool(emergency))
+    except introspect.NotModifiable as refused:
+        # Say which key is missing and why, rather than repeating the generic
+        # refusal. "Never" and "not yet, ask Krish" are different answers and
+        # only one of them has a next step.
+        wanted = {introspect.key_for(path) for path in affected_files}
+        missing = sorted({key for key in wanted if key} - set(keys))
+        if missing and not emergency:
+            raise introspect.NotModifiable(
+                f"{refused}\n\n"
+                + "\n".join(charter.explain(client, key, agent=agent)
+                             for key in missing)) from refused
+        raise
 
     # 3. The same question again, through the policy that already owns it.
     #    `proposed_action` is told which keys are in hand, so a granted key is not

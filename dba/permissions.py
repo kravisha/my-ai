@@ -108,6 +108,24 @@ REQUIRED: dict[str, str] = {
 # §15: which classifications need the sensitive permissions.
 SENSITIVE_CLASSIFICATIONS = (entities.SENSITIVE, entities.HIGHLY_SENSITIVE)
 
+# Record types that are the OWNER'S to write, whatever else an agent holds.
+#
+# Krish, 2026-09-23: *"we do need to put the necessary safeguards from rogue or
+# hallucinating AI - so the explicit rule as the safe safeguard that owner
+# permissions necessary to change the constitution."*
+#
+# Classification cannot express this. Jarvis holds `create`, `update` and
+# `write_sensitive`, so any classification he can read he can also write, and a
+# grant that the agent needing it can create is not a grant. What he does not
+# hold is `administer`, which only `OPERATOR_CONSOLE` has - so these types
+# require it for **every** write, not only for create. Update matters as much:
+# a one-shot grant Jarvis could mark unspent, or whose expiry he could move, is
+# a standing grant wearing a limit.
+OWNER_WRITTEN_TYPES = ("charter_grant",)
+
+WRITING_ACTIONS = ("create", "update", "archive", "delete_authorized", "link",
+                   "unlink", "reconcile")
+
 
 class Refused(PermissionError):
     """An operation the policy does not allow, carrying why."""
@@ -146,7 +164,7 @@ def sensitivity_permission(classification: str, *, writing: bool) -> str | None:
 
 
 def check(agent: str, action: str, *, classification: str | None = None,
-          writing: bool | None = None,
+          writing: bool | None = None, entity_type: str | None = None,
           capability_grants: dict | None = None) -> None:
     """Raise `Refused` unless this agent may do this. Silent on success.
 
@@ -181,6 +199,17 @@ def check(agent: str, action: str, *, classification: str | None = None,
             agent=agent, permission=required_for(action))
 
     held = permissions_of(agent)
+
+    if (entity_type in OWNER_WRITTEN_TYPES
+            and action in WRITING_ACTIONS and ADMINISTER not in held):
+        raise Refused(
+            f"{agent!r} may not {action} a {entity_type!r}: this record type is "
+            f"the owner's to write and needs {ADMINISTER!r}, which only the "
+            f"operator console holds. A grant the agent needing it could write "
+            f"is not a grant - that is the whole of the safeguard, and it is "
+            f"structural rather than a rule Jarvis is asked to follow.",
+            agent=agent, permission=ADMINISTER)
+
     needed = required_for(action)
     if needed not in held:
         raise Refused(

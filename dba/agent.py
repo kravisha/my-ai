@@ -203,6 +203,7 @@ class DBAgent:
                 request.requested_by, request.action,
                 classification=entity_type.classification if entity_type else None,
                 writing=False if request.action == contract.VALIDATE else None,
+                entity_type=request.entity_type,
                 capability_grants=registry.grants_for(request.entity_type)
                 if request.entity_type else None)
         except permissions.Refused as refused:
