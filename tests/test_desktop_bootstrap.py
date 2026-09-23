@@ -103,11 +103,30 @@ def test_the_window_is_loaded_over_loopback_not_inline_html():
     secure context, so no getUserMedia - which silently removes the microphone
     that addendum 40 §11 makes the default input path. This is why the runtime
     starts before the window."""
+    import ast
+
     source = (DESKTOP / "shell.py").read_text(encoding="utf-8")
     assert "url=url" in source, "the shell must load a URL"
-    assert "html=" not in source.replace("html= - see", ""), (
-        "the shell must not load inline HTML: it loses the secure context and with it the mic"
-    )
+
+    # Over the function that opens the MAIN window, not the whole file.
+    #
+    # This was a whole-file substring check until the escape menu arrived, and it
+    # could not tell the main window from a second one. The escape menu is
+    # rendered from an HTML string on purpose - it must work when the page has
+    # hung, so it cannot be served by the thing it is escaping from - and it
+    # needs no microphone. What §82 actually measured is that *the window hosting
+    # the console* has an origin, and that is what is asserted now.
+    tree = ast.parse(source)
+    run = next(node for node in ast.walk(tree)
+               if isinstance(node, ast.FunctionDef) and node.name == "run")
+    for call in ast.walk(run):
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "create_window"):
+            keywords = {keyword.arg for keyword in call.keywords}
+            assert "url" in keywords, "the console window must load a URL"
+            assert "html" not in keywords, (
+                "the console window must not load inline HTML: it loses the "
+                "secure context and with it the mic")
     assert bootstrap.console_url().startswith("http://127.0.0.1"), (
         "the console must be served from loopback, which Chromium treats as a secure origin"
     )

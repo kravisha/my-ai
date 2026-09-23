@@ -58,15 +58,24 @@ long task kills the shell mid-work, and a menu costs one extra keystroke and rem
 
 - **Default is "keep working".** Escape again, or Enter, dismisses. The dangerous option is never the
   default and never reachable by repeating the same key.
-- **Exit is never silent.** Exiting writes a ledger event and takes the §9 before-shutdown checkpoint,
-  so "Jarvis forgot what he was doing because I pressed Escape" cannot happen.
+- **Exit is never silent.** Exiting pauses running tasks, takes the §9 before-shutdown checkpoint and
+  writes a ledger event — in that order, because a checkpoint taken mid-step describes a step half
+  applied. Performed by `gateway/upkeep.closing_down` behind `POST /shell/closing`, so the sequence is
+  tested rather than living in a pywebview callback nobody without Windows can run. A step that
+  cannot be done is reported as **failed**, never skipped, and the closing message says plainly that
+  the last few minutes may not be remembered.
 - **The menu works when the page is broken.** It is rendered by the shell host, not by the web app.
   If the page has failed to load, hung, or thrown, Escape must still work — an escape hatch that
   needs the thing it is escaping from is not one.
 - **It also works when Jarvis is mid-task.** Exiting during a supervised task leaves that task
   `paused` with its next action recorded, never half-applied.
 - **No password.** Windows already authenticated him at logon; adding a second credential to get out
-  of a shell only means being locked in when he most wants out.
+  of a shell only means being locked in when he most wants out. A test asserts the module mentions
+  none.
+
+**The Escape key is scoped to Jarvis's own window, not registered globally.** A global Escape would
+steal the key from Excel the moment Jarvis opens it for him, which is the one thing this shell exists
+to do.
 
 ### The failsafe below it
 
@@ -99,6 +108,14 @@ CI, and `shell.py` currently degrades to printing a URL. Two candidate hosts:
 **Chosen: pywebview**, because the escape hatch is a hard requirement and it needs a window Python
 can actually close. Edge remains the documented fallback for a machine where pywebview will not
 install, with the honest note that exit there is Alt+F4 rather than a menu.
+
+It lives in **`requirements-desktop.txt`**, not `requirements.txt`. pywebview needs a platform web
+view — WebView2 on Windows, GTK or Qt on Linux — and installing a GUI toolkit in CI to satisfy an
+import CI never calls buys a slower, more fragile build and nothing else. `shell.available()` already
+degrades honestly without it, which is addendum 40 §15's rule that a failed renderer must not cost
+the operator the console.
+
+    pip install -r requirements-desktop.txt
 
 ### Kiosk, not shell replacement — yet
 

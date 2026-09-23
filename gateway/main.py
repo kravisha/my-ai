@@ -377,6 +377,27 @@ async def health():
     return {"status": "ok", "configured": auth.is_configured()}
 
 
+@app.post("/shell/closing")
+async def shell_closing(
+    reason: str = "the shell was closed",
+    _: str = Depends(require(roles.CAP_SESSION)),
+):
+    """Everything owed before Jarvis's window goes away.
+
+    The shell (`desktop/`) is a separate process and knows how to open a window
+    and nothing about the organization - §7.1's rule, and the reason this is a
+    route rather than an import. It also means the sequence is testable, instead
+    of living inside a pywebview callback nobody without Windows can run.
+
+    Behind `session` rather than open: this pauses work and writes a checkpoint,
+    and an unauthenticated caller being able to make Jarvis stop what he is
+    doing would be a denial of service with a friendly name.
+
+    In a worker thread because every step is blocking HTTP to the DBA, and the
+    owner is waiting for a window to close."""
+    return await asyncio.to_thread(upkeep.closing_down, reason=reason)
+
+
 @app.get("/")
 async def index():
     """The Super User client (addendum 16 §8: a phone-accessible web client, no

@@ -1,0 +1,18 @@
+# The native shell's dependencies, kept OUT of requirements.txt on purpose.
+#
+# `desktop/shell.py` opens the window Jarvis lives in. pywebview needs a platform
+# web view - WebView2 on Windows 11 (already present), GTK or Qt on Linux - and
+# installing a GUI toolkit in CI to satisfy an import that CI never calls would
+# buy a slower, more fragile build and nothing else.
+#
+# `shell.available()` already degrades honestly when this is absent: it prints the
+# URL and exits cleanly rather than taking the runtime down, which is addendum 40
+# §15's rule that a failed renderer must not cost the operator the console.
+#
+# So this is a real requirement of the shell and not of the system:
+#
+#     pip install -r requirements-desktop.txt
+#
+# Everything else in requirements.txt is needed by the services, and the services
+# are what a headless machine, a container and CI actually run.
+pywebview==6.0

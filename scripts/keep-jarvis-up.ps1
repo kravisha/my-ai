@@ -54,6 +54,17 @@ $logDir      = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $channel     = 'C:\Users\Krish\Documents\Aria-Claude-Communications\Arya-Claude - Ongoing Conversation.md'
 $deployReq   = Join-Path $root 'deploy-request.json'
+$restartReq  = Join-Path $root 'RESTART-REQUESTED'
+# THE FAILSAFE. Past this many consecutive failures to come up, the supervisor
+# stops relaunching and makes sure a usable desktop exists instead.
+#
+# Under a kiosk this costs nothing - Explorer never stopped. It is built now
+# because it is the precondition for TQ-116b, replacing explorer.exe: a crash
+# loop must end at a desktop rather than a black screen, and that mechanism has
+# to exist and be exercised BEFORE the shell is the only thing Windows starts.
+# Writing it under pressure on the day the machine will not log in is the
+# arrangement to avoid.
+$maxFailures = 5
 
 # Start-Process cannot append, so each start would overwrite the evidence of the
 # crash that caused it. The previous file is kept as .prev first - one restart of
@@ -66,6 +77,18 @@ function Redirected($name) {
     if (Test-Path $f) { Move-Item -LiteralPath $f -Destination "$f.prev" -Force -ErrorAction SilentlyContinue }
   }
   return @{ Out = $out; Err = $err }
+}
+
+# Explorer, if it is not already there. A no-op under a kiosk and the difference
+# between a recoverable machine and a black screen under shell replacement.
+function Ensure-Desktop {
+  $explorer = Get-Process -Name explorer -ErrorAction SilentlyContinue
+  if (-not $explorer) {
+    Say 'no desktop is running - starting explorer'
+    Start-Process explorer.exe
+    return $true
+  }
+  return $false
 }
 
 function Say($m) {
@@ -166,6 +189,8 @@ Say '=== keep-jarvis-up starting ==='
 $gw  = $null
 $dba = $null
 $tun = @{ Proc = $null; Url = $null }
+$gwFailures = 0
+$standingDown = $false
 
 while ($true) {
   # The DBA first, and before the Gateway is even checked. Jarvis restores
@@ -184,6 +209,20 @@ while ($true) {
     Start-Sleep -Seconds 8
   }
 
+  # An explicit restart request from the shell's Escape menu. A file rather than
+  # a signal, because the supervisor is a separate process on its own loop and a
+  # request it can pick up when it next looks beats one that needs it to be
+  # listening at the moment it is sent. Removed as soon as it is seen: a marker
+  # nobody clears is a restart loop.
+  if (Test-Path $restartReq) {
+    Say 'restart requested by the shell'
+    Remove-Item $restartReq -Force -ErrorAction SilentlyContinue
+    if ($gw -and -not $gw.HasExited) { Stop-Process -Id $gw.Id -Force -ErrorAction SilentlyContinue }
+    $gw = $null
+    $gwFailures = 0
+    $standingDown = $false
+  }
+
   if (-not (Gateway-Alive)) {
     Say 'gateway not answering /health'
     # Say WHY, not just that. The last lines of the child's stderr are the
@@ -195,8 +234,26 @@ while ($true) {
       if ($tail) { Say ('last words from gateway: ' + ($tail -join ' | ')) }
     }
     if ($gw -and -not $gw.HasExited) { Stop-Process -Id $gw.Id -Force -ErrorAction SilentlyContinue }
-    $gw = Start-Gateway
-    Start-Sleep -Seconds 8
+    $gwFailures = $gwFailures + 1
+    if ($gwFailures -ge $maxFailures) {
+      # STOP RELAUNCHING. Five identical failures is not bad luck, and a loop
+      # that restarts a broken build for ever is how a machine becomes unusable
+      # while appearing to be looked after. Say why, make sure there is a
+      # desktop, and wait to be fixed.
+      if (-not $standingDown) {
+        Say "gateway has failed $gwFailures times in a row - standing down and leaving the desktop up"
+        Say "the cause is in $logDir\gateway.err.log - create $restartReq to make it try again"
+        Ensure-Desktop | Out-Null
+        $standingDown = $true
+      }
+    } else {
+      $gw = Start-Gateway
+      Start-Sleep -Seconds 8
+    }
+  } else {
+    if ($gwFailures -gt 0) { Say "gateway is back after $gwFailures failure(s)" }
+    $gwFailures = 0
+    $standingDown = $false
   }
 
   if (-not $tun.Proc -or $tun.Proc.HasExited) {

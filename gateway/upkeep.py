@@ -256,6 +256,89 @@ def checkpoint_before_shutdown(client: dbaclient.DBAClient | None = None, *,
         return None
 
 
+# The steps `desktop/escape.py` says are owed before the shell closes. Named
+# with the same strings, so the two cannot drift into meaning different things.
+PAUSE_TASKS = "pause_running_tasks"
+CHECKPOINT = "checkpoint_before_shutdown"
+RECORD_EVENT = "record_ledger_event"
+
+
+def closing_down(client: dbaclient.DBAClient | None = None, *,
+                 reason: str = "the shell was closed",
+                 agent: str = identity.AGENT_ID) -> dict:
+    """Everything owed before Jarvis's window goes away, in order.
+
+    The shell is a separate process and `desktop/` is deliberately ignorant of
+    the organization - it knows how to open a window and nothing else. So the
+    shell asks for this over HTTP and this is where it actually happens, which
+    also means it is testable rather than living inside a pywebview callback
+    nobody can run without Windows.
+
+    **Pause before checkpoint, on purpose.** A checkpoint taken while a task is
+    mid-step describes a step half-applied, and restoring to it would resume
+    from a state that never existed. Pausing first makes the checkpoint describe
+    something true - a task stopped at a named next action.
+
+    Returns one entry per step rather than a single boolean: "the window closed
+    but the checkpoint failed" is a thing the owner needs told, and a bare
+    success or failure cannot say it."""
+    result: dict = {"reason": reason, "performed": [], "failed": []}
+
+    if not dbaclient.is_configured():
+        result["failed"].append(f"{CHECKPOINT}: no DBA token is configured")
+        return result
+    try:
+        client = client or dbaclient.DBAClient(actor="shell")
+    except dbaclient.Unavailable as exc:
+        result["failed"].append(f"{CHECKPOINT}: {exc}")
+        return result
+
+    # 1. Pause anything running, recording where it got to.
+    try:
+        paused = []
+        for row in persistence.current(client, kind=persistence.TASK, agent=agent,
+                                       limit=200):
+            value = persistence.decode(row)
+            if isinstance(value, dict) and value.get("state") == "running":
+                persistence.put(client, persistence.TASK, row["name"],
+                                {**value, "state": "paused",
+                                 "paused_because": reason},
+                                agent=agent, reason="paused by the shell closing")
+                paused.append(row["name"])
+        result["paused"] = paused
+        result["performed"].append(PAUSE_TASKS)
+    except (dbaclient.Unavailable, dbaclient.Refused) as exc:
+        result["failed"].append(f"{PAUSE_TASKS}: {exc}")
+
+    # 2. The §9 before-shutdown checkpoint.
+    try:
+        record = checkpoint_module.take(
+            client, reason=checkpoint_module.BEFORE_SHUTDOWN, agent=agent)
+        result["checkpoint"] = record["name"]
+        result["performed"].append(CHECKPOINT)
+    except (dbaclient.Unavailable, dbaclient.Refused,
+            checkpoint_module.CheckpointInvalid) as exc:
+        result["failed"].append(f"{CHECKPOINT}: {exc}")
+
+    # 3. The ledger event, so a restart can explain the gap.
+    try:
+        from gateway import ledger
+
+        ledger.append(client, event_type=ledger.STATE_TRANSITION,
+                      summary=f"shell closed: {reason}",
+                      observation=f"paused {len(result.get('paused') or [])} task(s); "
+                                  f"checkpoint {result.get('checkpoint')}",
+                      actor="shell", verification_state=ledger.VERIFIED,
+                      agent=agent)
+        result["performed"].append(RECORD_EVENT)
+    except Exception as exc:  # noqa: BLE001 - a closing window must not be held
+        # open by its own bookkeeping; what changes is that it is not clean.
+        result["failed"].append(f"{RECORD_EVENT}: {exc}")
+
+    result["clean"] = not result["failed"]
+    return result
+
+
 def describe() -> dict:
     return {
         "enabled": enabled(),
@@ -264,6 +347,7 @@ def describe() -> dict:
         "promote_gaps_every_hours": PROMOTE_GAPS_EVERY_HOURS,
         "scan_logs_every_hours": SCAN_LOGS_EVERY_HOURS,
         "accepted_log_noise": len(logscan.baseline()),
+        "closing_steps": [PAUSE_TASKS, CHECKPOINT, RECORD_EVENT],
         "forces_a_checkpoint": sorted(
             kind for kind in persistence.KINDS
             if persistence.tier(kind) == persistence.IMMEDIATE),
