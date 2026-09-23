@@ -607,6 +607,37 @@ about something specific.
 
 Neither is a tool. A tool is something the model can call.
 
+### Where the record is kept
+
+`gateway/trustbook.py`. It lived in a Python list until 2026-09-23, so every
+restart wiped what Jarvis had earned - the same failure as a ladder nothing can
+climb, wearing a different hat. Persisting it exposed a second one: the grades
+were somewhere he could have written them.
+
+So it is two entity types, not one:
+
+| | written by |
+|---|---|
+| `guess` — what he thought Krish would want, and why | Jarvis |
+| `guess_verdict` — whether he was right, and how well he then did | the operator console only |
+
+`dba/permissions.OWNER_WRITTEN_TYPES` holds the second, so writing one needs
+`administer`. The checks in `anticipation.settle` and `rate` are still worth
+having - they catch the honest mistake at the call site and say why - but a check
+inside the process being judged is advice. The DBA's refusal, in another service
+over HTTP, is the part that holds when the advice is ignored.
+
+**Loading is deliberately hostile.** A verdict naming a guess that is not there
+is *reported*, not skipped: a missing row is ordinary, but an extra verdict is
+the shape a forged promotion would take, and a loader that quietly dropped one
+would be the place nobody looks. Two verdicts on one guess are reported the same
+way, and the first one stands.
+
+Timestamps are microseconds. At second granularity, three results judged in the
+same second sort arbitrarily and a failure can land ahead of the successes that
+followed it - which is exactly the bug `gateway/persistence.py` hit, for exactly
+the same reason.
+
 ---
 
 ## 3d. The sandbox a candidate is tested in

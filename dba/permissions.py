@@ -121,7 +121,12 @@ SENSITIVE_CLASSIFICATIONS = (entities.SENSITIVE, entities.HIGHLY_SENSITIVE)
 # require it for **every** write, not only for create. Update matters as much:
 # a one-shot grant Jarvis could mark unspent, or whose expiry he could move, is
 # a standing grant wearing a limit.
-OWNER_WRITTEN_TYPES = ("charter_grant",)
+#
+# `guess_verdict` is here for the same reason one step removed: it is the record
+# that decides how much latitude Jarvis is given, so a verdict he could write is
+# a promotion he awarded himself. The guess itself stays his to write - an
+# assistant who cannot record a prediction cannot be judged on one.
+OWNER_WRITTEN_TYPES = ("charter_grant", "guess_verdict")
 
 WRITING_ACTIONS = ("create", "update", "archive", "delete_authorized", "link",
                    "unlink", "reconcile")
