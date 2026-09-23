@@ -157,6 +157,23 @@ being deleted from a list of thirteen. It passed. The membership belongs to
 the thirteen out as literals — which is the constant rule above, again: a test
 that loops over the list cannot notice the list got shorter.
 
+### Never run two probe harnesses at once
+
+2026-09-23. Two mutations reported as **unnoticed** that were nothing of the
+kind: a second harness was still running and restored the source mid-run, so the
+test was checked against the original code. It lies the other way just as
+easily. Neither shows up as an error, and both are silent wrong answers from the
+thing whose whole job is to notice silent wrong answers.
+
+There is a lock file now, so this is enforced rather than remembered. The wider
+habit it belongs to: **do not start a background run and then start another one
+over it.** The same mistake has been made here with eight concurrent pytest
+processes, and it was blamed on the container.
+
+And the operational one underneath it: a shell that waits with
+`until ! pgrep -f "probes.py"` matches *its own command line* and waits for
+itself for ever. Wait on the output file, not on the process list.
+
 ### It is green here and red on his machine
 
 2026-09-23. Nineteen Windows CI failures, none of them visible on Linux, all in

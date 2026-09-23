@@ -3630,6 +3630,39 @@ sentence authorising a merge to master is itself transcribed by a third party.
 
 ---
 
+### TQ-127 — Bring-up: whether any of it runs on the machine it is for
+
+**NEED (GREEN) · PART BUILT 2026-09-23 · owner instruction 2026-09-23: *"Now make
+it run on my PC"***
+
+Everything built on 2026-09-23 was tested in a Linux container and none of it had
+started on Krish's Windows PC. The Windows runner found two failures that no
+local run could show, and both were in merged code.
+
+**Built:** `python -m desktop.bringup` — every precondition in dependency order,
+worst first, each red carrying the line that fixes it. A check whose dependency
+failed is reported as blocked and never as green. `app/keystore.py` answers where
+the charter key lives (Windows DPAPI, with a mandatory escrow copy), and
+`app/dpapi.py` is the adapter. Nine more `real_machine` tests cover the
+subsystems that had none. Documented in `docs/JARVIS_PERSISTENCE.md` §3c-octies
+and §3c-quater.
+
+**Left, and none of it can be done from here:**
+
+1. **Nobody has run it.** The whole thing is inference until the command is typed
+   on the PC. The first run is expected to be red in several places, which is
+   what it is for.
+2. **The key has never been made**, so the constitution is not installed there
+   and nothing Jarvis does on that machine is governed by it yet.
+3. **The supervisor does not know about the new subsystems.** It starts the DBA
+   and the Gateway; nothing checks bring-up on a schedule, so a subsystem that
+   stops would be noticed by a person or not at all.
+4. **`gateway/console.py` needs `DBA_TOKEN_OPERATOR_CONSOLE` in Krish's own
+   shell**, not in the one Jarvis runs in. Until then no guess can be settled and
+   the trust ladder cannot move at all.
+
+---
+
 ### TQ-119 — The interactive task: ask while working, and stop rather than guess
 
 **NEED (GREEN) · PART BUILT 2026-09-23 · owner directive 2026-09-23, quoted in full below · DBA

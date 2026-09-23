@@ -97,3 +97,4 @@ dba.db-shm
 deploy-request.json
 deploy-result.json
 DEPLOYED-COMMIT.txt
+.probe-harness-running

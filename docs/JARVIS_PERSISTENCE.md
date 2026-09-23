@@ -453,14 +453,41 @@ Encryption at rest does not protect against code running as Jarvis, because the
 key must be reachable from his process for him to read his own constitution.
 `secretbox.describe()` says so in the data, and a test asserts that it does.
 
-### Open: where the key lives
+### Where the key lives: DPAPI, and his own arrangement decided it
 
-`seal`/`unseal` take a key and never look for one, so the source is an adapter
-and the decision does not change this code. The two candidates are Windows DPAPI
-tied to Krish's account (Jarvis inherits it while running as Krish; survives a
-reboot unattended) and a passphrase entered at shell startup (stronger; Jarvis
-cannot read the constitution after an unattended restart). Unanswered, so
-unbuilt.
+`app/keystore.py` decides; `app/dpapi.py` is the adapter. Answered 2026-09-23.
+
+The two candidates were Windows DPAPI tied to Krish's account and a passphrase
+entered at startup. The passphrase is stronger and is the wrong answer, because
+of something already in this repository: `scripts/keep-jarvis-up.ps1` exists
+precisely to restart Jarvis with nobody at the keyboard, *"because Krish leaves
+on vacation tomorrow and the failure he cannot recover from"* is Jarvis staying
+down. A passphrase means that after the first unattended restart he cannot open
+his own constitution until Krish is home and types it. In his actual use, the
+stronger option produces a Jarvis governed by a document he cannot read.
+
+The seal was never protection from Jarvis and cannot be — this file says so
+three sections above, because he runs as a process with the filesystem and the
+key. What it protects is the document being read off the machine, or altered
+without it showing. DPAPI is exactly the right size for that and asks nothing of
+a person.
+
+**Which is why the escrow is not optional.** DPAPI ties the key to one Windows
+account: a reinstall, a lost profile or a new machine makes every amendment
+unreadable for ever, by Krish as much as by Jarvis. So the key is also written
+out wrapped in a passphrase he chooses and keeps elsewhere, salted per
+installation, and a keystore with no escrow is reported as incomplete on every
+single run until there is one. It is the one failure here with no recovery, so
+it is the one thing the module nags about — but it never *blocks*, because
+refusing to run over a missing backup would be a lock keeping him out of his own
+constitution to protect him from losing it.
+
+Four states, and each says what to do rather than that something is wrong:
+`absent`, `unreadable` (a key sealed by a different account — restore the
+escrow), `no_escrow` (works, has no backup), `ready`. A stale escrow — one
+holding a different key than the one in use — is reported as `no_escrow`,
+because a backup that restores the wrong key is worse than a missing one: it is
+mistaken for a backup.
 
 Also open: the plaintext `AI-CONSTITUTION.md` is in git history. Sealing it from
 here on does not remove it from past commits.
@@ -791,6 +818,60 @@ clock beyond `now`, no account and no way to read one. The producer is the piece
 that reads Krish's business account and the consumer is the piece that puts the
 open questions in front of him - the console already knows how to do the second
 for `noticing`, and the natural next step is one path for both.
+
+---
+
+## 3c-octies. Whether it runs on his machine at all
+
+`desktop/readiness.py` decides, `desktop/machine.py` looks things up,
+`desktop/bringup.py` is what he types. Probed by
+`tests/probes/readiness_probes.py`.
+
+Everything in sections 3c-bis to 3c-septies was written and tested in a Linux
+container, and none of it had ever started on the machine it is for. Two of them
+broke the first time Windows saw them — a glibc-only date format that took out
+every noticing, and a file read without an encoding that mangled the amendment
+headings. Neither was visible from here. So *"does it run on my PC"* needs an
+answer that is a list rather than a yes.
+
+    python -m desktop.bringup
+
+Three rules it is built on, each from something that already went wrong here:
+
+**An unchecked thing is never green.** `tests/test_real_machine.py` once had a
+log check that passed on a machine with no log, because scanning nothing returns
+nothing. A check whose precondition failed is `BLOCKED` and names what blocked
+it. There is no path from *"could not look"* to *"fine"*. The reading's defaults
+are the worst case for the same reason, field by field, asserted as literals so
+that adding a fact costs somebody one deliberate thought about what it means
+when nobody supplied it.
+
+**Order is by dependency, not importance.** Telling him the constitution is not
+installed, when the cause is that the DBA is down, is telling him about a
+symptom. `NEEDS` makes that computable — the same arrangement `taskrun` uses,
+for the same reason — and a test holds the table to the order the checks
+actually run in, because `_need_met` reads its predecessor directly rather than
+through a `None` branch nothing could reach.
+
+**Every red says what to do.** Whoever reads this is alone with it, possibly on a
+phone. `assert x` tells him nothing and so does *"constitution: FAILED"*.
+
+The four actions — make a key, write an escrow, restore a key, install the
+constitution — are flags rather than things it does on its own, because a status
+command that fixes things is one nobody can run to find out where they stand.
+Each refuses to overwrite what is already there: replacing a key is every
+amendment gone, silently, until somebody needs one.
+
+**It does not start anything.** `keep-jarvis-up.ps1` owns that: the thing that
+restarts Jarvis has to be the thing that survives him, and a bring-up that also
+ran him would be a second supervisor with different opinions. It says which one
+is not running and the exact line that starts it.
+
+Nine more `real_machine` tests cover the half built on 2026-09-23 — the key and
+its backup, the constitution opening, no amendment altered, the trust record
+surviving a restart, the console authenticating as the operator rather than as
+Jarvis, the upkeep loop actually sweeping, and the two Windows-only failures
+above, each asserted where it broke.
 
 ---
 

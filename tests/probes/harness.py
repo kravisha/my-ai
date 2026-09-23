@@ -13,6 +13,10 @@ Two rules it enforces, both learned the hard way in this repository:
 - **A probe whose snippet no longer appears exactly once is a failure, not a
   skip.** A probe that silently stopped applying reports success, which is worse
   than not having it.
+- **One harness at a time, enforced by a lock file.** Two runs edit the same
+  source files, and the loser reports mutations as uncaught that were never
+  really applied - a silent wrong answer from the thing whose job is to notice
+  silent wrong answers.
 - **A probe naming a test that does not exist is a failure too.** `pytest -k`
   matching nothing exits non-zero, which this harness would otherwise read as
   "caught" - so a probe left pointing at a renamed test reports success for ever.
@@ -31,6 +35,7 @@ pytest inside themselves, so pytest must never collect them.
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -83,8 +88,46 @@ def _missing(where, tests: tuple[str, ...]) -> list[str]:
     return absent
 
 
+LOCK = ROOT / ".probe-harness-running"
+
+
+class AlreadyRunning(RuntimeError):
+    """Another probe run has these files open."""
+
+
+def _take_the_lock() -> None:
+    """One harness at a time, because two of them edit the same files.
+
+    Found on 2026-09-23 by running a probe file while a batch was still going.
+    Two mutations reported as *unnoticed* that were nothing of the kind: the
+    other process restored the source mid-run, so the test it was checked
+    against passed against the original code. It lies the other way just as
+    easily - a file mutated by one run while another is measuring a different
+    module reads as "caught" for the wrong reason.
+
+    Neither shows up as an error. Both are silent wrong answers from the thing
+    whose entire job is to tell you when a test is not really testing."""
+    try:
+        with open(LOCK, "x", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+    except FileExistsError:
+        raise AlreadyRunning(
+            f"another probe run holds {LOCK.name} (pid "
+            f"{LOCK.read_text(encoding='utf-8').strip()}). Two harnesses edit "
+            f"the same source files, so their results are worthless - wait for "
+            f"it, or delete that file if you are sure it is dead.") from None
+
+
 def run_probes(probes: list[Probe], suites: dict[str, Path]) -> int:
     """Apply every probe, report what no test caught, and restore everything."""
+    _take_the_lock()
+    try:
+        return _run_probes(probes, suites)
+    finally:
+        LOCK.unlink(missing_ok=True)
+
+
+def _run_probes(probes: list[Probe], suites: dict[str, Path]) -> int:
     unknown = {module for module, *_ in probes} - set(suites)
     if unknown:
         print(f"probe files name modules with no suite: {sorted(unknown)}")

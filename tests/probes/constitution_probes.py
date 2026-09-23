@@ -268,10 +268,12 @@ PROBES: list[harness.Probe] = [
     ),
     (
         CONSTITUTION,
-        "a link with no grant at all is not noticed",
+        "a link with no grant at all is not noticed, so a hand seal is checked "
+        "against a grant it never had",
         "        if not grant_id:",
         "        if False:",
-        ("test_an_amendment_with_no_grant_at_all_is_detected",),
+        ("test_an_entry_nobody_signed_is_detected",
+         "test_a_clean_history_verifies"),
     ),
     (
         CONSTITUTION,
@@ -323,7 +325,7 @@ PROBES: list[harness.Probe] = [
         '    report["intact"] = not report["problems"]',
         '    report["intact"] = True',
         ("test_rewriting_the_sealed_text_directly_is_detected",
-         "test_an_amendment_with_no_grant_at_all_is_detected",
+         "test_an_entry_nobody_signed_is_detected",
          "test_altering_an_old_amendment_is_detected"),
     ),
     (
