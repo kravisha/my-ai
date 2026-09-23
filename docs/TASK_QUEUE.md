@@ -51,6 +51,11 @@ holds the queue, not the record.
 > **The product side has not moved since TQ-80** — no prices, no broker, no client. A deliberate
 > consequence of the chosen track, and under Providence no longer the critical path.
 >
+> **SUPERSEDED 2026-09-23.** The owner's self-evolving-OS directive puts TQ-116 to TQ-120 at the
+> head of this queue; see the checkpoint at the end of this file. The recommendations below are the
+> 2026-08-29 ordering and are kept because they are still true about the simulation, not because
+> they are still next.
+>
 > **RECOMMENDED NEXT, in order:**
 >
 > 1. **Re-run `python -m simulation verify`** — stale since `579f5c4`. See `HANDOFF.md` for the
@@ -3510,3 +3515,181 @@ the pattern against a real grant instead of trusting the green.
 **Live: 20/20.** Two trades placed, closed and attributed, alongside one broadcast day, six
 programmes, three unsold breaks, and a failure carried into breaking news that interrupted and
 resumed.
+
+---
+
+## Checkpoint 2026-09-23 — Jarvis as a self-evolving OS
+
+Owner directive, 2026-09-23: *"I want Jarvis to be a self evolving OS."* The five entries below
+are that directive decomposed, and they are **the head of this queue** — ahead of everything
+carried over from the 2026-08-29 checkpoint above.
+
+What landed first and is already built: persistence and the life ledger (`docs/JARVIS_PERSISTENCE.md`),
+the capability-gap lifecycle, the governed self-modification path with its approval gate, a
+structured event log, the log scanner, and a git-worktree sandbox a candidate change is tested in.
+The self-evolution half therefore exists. **What does not exist is the OS half**, and these are it.
+
+**Two decisions sit with the owner** and both are named in the entries: whether the shell replaces
+Explorer or merely covers it (TQ-116), and whether speech stays on the browser's cloud recogniser
+or moves on-device (TQ-117). TQ-116's second half is a **freeze** on itself until answered — it can
+leave a machine that logs in to nothing.
+
+---
+
+### TQ-116 — Jarvis owns the screen, and the two things that are not the same
+
+**NEED (YELLOW) · QUEUED · owner directive 2026-09-23: *"making Jarvis into a full fledged shell
+that on startup covers the whole of windows screen and not just a window"***
+
+`desktop/shell.py` already opens a native window — pywebview, 1440×900, pointed at the Gateway over
+loopback, with a documented reason for `url=` over `html=` (an HTML string has no origin, so no
+secure context, so no microphone). Covering the screen is a small change to that module. What the
+directive's words could also mean is not a small change, and the two must not be conflated:
+
+**(a) Fullscreen kiosk.** Jarvis owns the screen at logon; Explorer is still running underneath and
+Alt-Tab still works. Cheap, reversible, and verifiable in a minute. `scripts/keep-jarvis-up.ps1`
+already starts things at logon, so the launch path exists.
+
+**(b) Shell replacement.** Replacing `explorer.exe` through the Winlogon `Shell` value, so Windows
+starts Jarvis *instead of* the desktop. This is real and documented, and it is also how **a bug in
+Jarvis becomes a machine that logs in to nothing** — recoverable only through Safe Mode or a second
+administrator account. On the owner's only machine, sometimes while he is away.
+
+**(b) is frozen until the owner answers**, and when it is taken it is its own increment with its own
+preconditions, not a line inside a feature commit: a second administrator account that exists and
+has been logged into, a watchdog that restores Explorer when Jarvis fails to come up N times, a
+keyboard escape that is tested *before* it is needed, and a rollback exercised on a machine that can
+be reinstalled. Everything (b) needs is the same discipline §17 already demands of a code change,
+applied to the thing that decides whether the computer is usable at all.
+
+**Not verifiable from the development container.** No Windows, no screen. CI's Windows runner proves
+logic, not "does it cover the screen". Build it behind a thin adapter with a faked implementation for
+CI, and give the owner one command that verifies it at his keyboard.
+
+---
+
+### TQ-117 — Speech that does not leave the machine
+
+**NEED (ORANGE) · QUEUED · owner directive 2026-09-23: *"All approvals will be verbal"* ·
+contradicts `app/data_classification.py` and the local-first doctrine**
+
+`gateway/static/voice.html` works today: continuous `webkitSpeechRecognition` in, `speechSynthesis`
+out, relayed to `/voice/relay`. **That recogniser is not on-device.** In Chromium it ships audio to
+Google's speech service; in Edge and WebView2, to Azure. So *"Jarvis, prepare my expense statements
+from my business account"* is transcribed off this machine today, and under the verbal-approval
+directive every approval would take the same route.
+
+This is a live condition, not a future risk, which is why it is ORANGE rather than YELLOW. It also
+contradicts a position this repository already holds in code: `app/local_ai.py` and
+`app/model_routing.LocalFirstRouter` exist so that the local path is tried first, and
+`app/data_classification.py` classifies a field by *where it may go*.
+
+**Move speech-to-text on-device.** Whisper runs locally and well. Wake-word detection can stay
+trivial and stay in the browser — it is the content that matters, not the trigger. Text-to-speech is
+a smaller question: `speechSynthesis` synthesises locally in current browsers, so the outbound half
+is probably already fine and should be measured rather than assumed.
+
+**The decision the owner owns:** keep the cloud recogniser for now and accept the egress, or hold the
+verbal-approval work until local STT is in place. The second is the recommendation, because TQ-118
+makes voice the channel that authorises code changes and installs software.
+
+---
+
+### TQ-118 — Verbal approval that a microphone cannot forge
+
+**NEED (ORANGE) · QUEUED · owner directive 2026-09-23: *"All approvals will be verbal"* ·
+Persistence specification §13, §16, §18 · `gateway/selfmod.py`**
+
+The approval gate is built and has two surfaces, the conversation and a CLI. Adding voice is adding a
+third. What must not happen is the channel quietly weakening the gate, because a spoken approval has
+three properties the typed ones do not:
+
+- **It is not authenticated.** Anyone in the room can say it. So can a television, a recording, or a
+  phone on speaker.
+- **It is lossy.** Transcription confuses "no, don't approve that" with something approving. The
+  failure mode is not theoretical and its cost is an installed application or a merged code change.
+- **It leaves no record to dispute**, unless the audio is kept — and then it leaves a recording of
+  the owner's voice on disk, which is its own thing to get right.
+
+**What to build.** The gate's substance is unchanged — confirmed gap, evidence, approved scope, tests
+green, governance files unreachable. Only the arrival of the decision changes:
+
+1. Every verbal approval records **the audio and the transcript** onto the `approval_decision`
+   record, so the owner can hear what he actually said. `krish_said` already exists on the
+   conversation surface for exactly this reason and is the precedent.
+2. Irreversible actions get a **read-back and a distinct confirmation phrase**, not a bare "yes". A
+   mis-transcription must fail closed.
+3. The **UAC prompt stays** on installs. It is a second, OS-level confirmation that a microphone
+   cannot fake, and treating it as friction to remove would be removing the only factor voice does
+   not already have.
+4. The stored audio is classified under `app/data_classification.py` like any other sensitive field,
+   and has a retention period rather than accumulating for ever.
+
+**Freeze relationship:** this should not become the primary approval path before TQ-117, or the
+sentence authorising a merge to master is itself transcribed by a third party.
+
+---
+
+### TQ-119 — The interactive task: ask while working, and stop rather than guess
+
+**NEED (GREEN) · QUEUED · owner directive 2026-09-23, quoted in full below · DBA specification §45 ·
+Persistence specification §9, §11**
+
+The owner's own example, which is the clearest statement of what Jarvis is for that this queue holds:
+
+> *"I should say Jarvis prepare my expense statements by looking into my business account — ask me
+> questions while you are working on the account so that we don't have any confusion about what
+> needs to be done. Also use last year's statement as a model and ask me questions when you can't
+> find the data that you seek."*
+
+Four requirements, and none of them needs a Windows API:
+
+1. **A long-running task** that survives being interrupted. `persistence.TASK` and
+   `record_task_state` already persist progress, and `rehydrate` already restores it, so a task
+   resumed after a restart knows its next action.
+2. **A question queue.** Jarvis asks *while working* rather than finishing on assumptions. The DBA's
+   §45 ask-back is the pattern and the vocabulary already exists in `dba/askback.py`: a clarification
+   is not a failure, and nothing is committed on that path.
+3. **A prior artefact as the template.** Last year's statement is the specification for this year's.
+   Read its structure, map this year's data onto it, and report the fields that did not map.
+4. **Stopping rather than guessing** when data cannot be found. This is the one that decides whether
+   the feature is usable: a statement with a plausible invented figure in it is worse than no
+   statement, and the honest output is the statement plus the list of what is missing and why.
+
+**Unblocked.** Nothing here waits on TQ-116, TQ-117 or TQ-120, and it is the part of the directive
+described in the most detail. A reasonable order is to build this first and let the OS surface catch
+up to it.
+
+---
+
+### TQ-120 — Reaching the applications on this machine
+
+**NEED (YELLOW) · QUEUED · owner directive 2026-09-23: *"Jarvis should have api interfaces with all
+apps that run in my pc"* and *"should be able to install any app from the Microsoft store ... on my
+verbal approval"***
+
+**There is no universal API for Windows applications**, and a design that implies otherwise will
+produce a layer that works on three apps and lies about the rest. What exists, in the order it should
+be preferred:
+
+1. **A real API or CLI where the application has one.** Always first. Deterministic, documented, and
+   it does not break when somebody moves a button.
+2. **COM for Office** — Excel, Outlook, Word. First-class and scriptable, and it is exactly what
+   TQ-119's expense statements need. This is where to start, because it is the one with a user.
+3. **`winget`** for installation, including `--source msstore`. Covers the Store directive, and the
+   UAC prompt it raises is the second factor TQ-118 depends on.
+4. **UI Automation** as the general fallback — the accessibility tree, the same surface screen
+   readers drive. It reaches most applications and is slow and brittle where an application is badly
+   built.
+5. **Honest refusal** where none of the above reaches. A capability gap filed through
+   `app/capability_gaps.py` is the correct output, and the ranked monthly report is where it belongs.
+   Guessing at a UI is how an agent clicks the wrong button in somebody's bank.
+
+Nothing for any of this exists yet: no `uiautomation`, no `win32com`, no `winget` call, no
+`pywinauto` anywhere in the repository. Each layer is its own increment, and each needs the same
+platform-adapter treatment as TQ-116 — a real implementation and a faked one, because CI cannot open
+Excel.
+
+**A boundary worth naming now:** reading the owner's business account is reading his money. Whatever
+reaches it should be read-only until there is a specific reason for it not to be, and the write path
+should be its own queue entry with its own approval, not an implied consequence of the read path.
