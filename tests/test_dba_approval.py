@@ -434,7 +434,7 @@ def test_stale_validation_leaves_one_diagnostic_audit_row(db_path):
                   (pid,)) == 1
 
 
-def test_runtime_confidence_is_verified_only_when_every_input_is_known(db_path):
+def test_a_full_input_match_is_observed_inputs_match_never_verified(db_path):
     pid, digest, dec = _approved(db_path)
     conn = _conn(db_path)
     c = approval.claim_attempt(conn, principal=KRISH, request_id="rq-c", proposal_id=pid,
@@ -445,7 +445,15 @@ def test_runtime_confidence_is_verified_only_when_every_input_is_known(db_path):
                                    to_state="launched", launch_observation=LAUNCH).ok
     conn.close()
     r = _validate(db_path, pid, digest, dec, att, env="sha256:" + "e" * 64, untracked=[])
-    assert r.ok and r.data["runtime_confidence"] == "verified"
+    assert r.ok and r.data["runtime_confidence"] == "observed_inputs_match"
+    # Even the best case names what no evidence here covered (Arya 5818279752).
+    # Literals, not the constant: a shortened list must fail this test.
+    assert r.data["unmeasured"] == [
+        "process memory",
+        "code outside the declared distributions (base interpreter paths, .pth "
+        "additions, non-pip installs)",
+        "same-name same-version source changes", "host configuration"]
+    assert "verified" not in json.dumps(r.data)
 
 
 def test_known_environment_with_unverified_untracked_files_is_still_partial(db_path):

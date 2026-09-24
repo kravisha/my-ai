@@ -93,6 +93,12 @@ LAUNCHER_TRANSITIONS = {LAUNCHED: (CLAIMED,), FAILED: (CLAIMED, LAUNCHED),
                         UNCERTAIN: (CLAIMED, LAUNCHED)}
 
 RESULTS = ("accepted", "degraded", "failed")
+
+# Runtime inputs no evidence this module receives can speak to, so no verdict
+# may imply them. Reported on every validation, not only when something failed.
+NEVER_MEASURED = ("process memory", "code outside the declared distributions "
+                  "(base interpreter paths, .pth additions, non-pip installs)",
+                  "same-name same-version source changes", "host configuration")
 UNVERIFIED = "UNVERIFIED"
 
 # --- §5 the digest ---------------------------------------------------------------
@@ -613,8 +619,19 @@ def validate_attempt(conn: Database, *, principal, request_id, proposal_id, atte
             raise _Refusal(UNVERIFIED_RUNTIME, "the running process is not the one this "
                                                "attempt launched, or cannot be shown to be")
 
-        verified = (env != UNVERIFIED and env == att["environment_at_claim"]
-                    and untracked == [])
+        # A match is "observed inputs match", never "verified": the fingerprint
+        # covers only what its producer declares (Deploy's env-manifest/1:
+        # distribution identities + interpreter), and several runtime inputs are
+        # outside ANY of this evidence (Arya 5818279752, 5818337475). The value is
+        # opaque here; the producer sends UNVERIFIED for an unnameable_count > 0
+        # or an unknown schema, and a schema change compares unequal by design.
+        inputs_match = (env != UNVERIFIED and env == att["environment_at_claim"]
+                        and untracked == [])
+        unmeasured = list(NEVER_MEASURED)
+        if env == UNVERIFIED:
+            unmeasured.insert(0, "environment")
+        if untracked == UNVERIFIED:
+            unmeasured.insert(0, "untracked executables")
         new = {**data, "post_validation_state": result}
         _write_proposal(conn, proposal_id, expect_status=status, expect_json=raw,
                         status=result, data=new)
@@ -625,7 +642,8 @@ def validate_attempt(conn: Database, *, principal, request_id, proposal_id, atte
             raise _Refusal(STALE_WRITE, f"attempt {attempt_id} moved underneath the update")
         return {"proposal_id": proposal_id, "attempt_id": attempt_id,
                 "artifact_verdict": result,
-                "runtime_confidence": "verified" if verified else "partial",
+                "runtime_confidence": "observed_inputs_match" if inputs_match else "partial",
+                "unmeasured": unmeasured,
                 "launch_source": {"reported_by": att["launch_reported_by"],
                                   "launcher": att["launcher"],
                                   "assurance_basis": "correlation, not proof of origin"},
