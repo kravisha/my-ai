@@ -127,6 +127,23 @@ def _install_routes() -> None:
 _install_routes()
 
 
+@app.post("/approval/{operation}")
+def handle_approval(operation: str, payload: dict = Body(default=None),
+                    x_dba_agent: str | None = Header(default=None),
+                    x_dba_token: str | None = Header(default=None)):
+    """RevA's six execution-approval operations (dba/approval.py).
+
+    Their own route rather than `/request`, because each already carries its own
+    transaction and replay semantics; wrapping them in the generic request layer
+    would add a second of each. The principal is the authenticated agent and
+    nothing in the body can change it."""
+    from dba import approval
+
+    agent = _authenticate(x_dba_agent, x_dba_token)
+    status, body = approval.http_call(operation, agent, payload)
+    return JSONResponse(status_code=status, content=body)
+
+
 @app.post("/request")
 def handle_request(payload: dict = Body(...),
                    x_dba_agent: str | None = Header(default=None),

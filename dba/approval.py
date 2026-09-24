@@ -679,3 +679,94 @@ def _diagnose(conn: Database, principal, request_id, proposal_id, outcome: Resul
                        "refused", False, f"{label}: {outcome.message}"[:500])
     except Contended:
         pass    # the refusal stands without its diagnostic; nothing changed either way
+
+
+# --- the transport: POST /approval/{operation} (Arya 5818448805) --------------------
+
+PERMISSION_DENIED = "PERMISSION_DENIED"
+UNKNOWN_OPERATION = "UNKNOWN_OPERATION"
+
+
+def _roles() -> dict[str, frozenset[str]]:
+    """Who may call which operation. Least privilege, one line per operation.
+
+    Execution approval is Krish's console ONLY: Jarvis must not be able to
+    approve a change to itself. The launcher holds exactly the two attempt
+    operations and nothing in the generic policy. Imported lazily because
+    permissions imports nothing from here and must stay that way."""
+    from dba import permissions as p
+    return {
+        "approve_change": frozenset({p.OPERATOR_CONSOLE}),
+        "freeze_candidate": frozenset({p.JARVIS, p.OPERATOR_CONSOLE}),
+        "revise_proposal": frozenset({p.JARVIS, p.OPERATOR_CONSOLE}),
+        "claim_attempt": frozenset({p.LAUNCHER}),
+        "finish_attempt": frozenset({p.LAUNCHER}),
+        "validate_attempt": frozenset({p.JARVIS}),
+    }
+
+
+# The fixed allowlist: operation -> (function, required fields, optional fields).
+# A literal table, not reflection, so nothing outside it is reachable by name.
+OPERATIONS = {
+    "freeze_candidate": (freeze_candidate, ("request_id", "proposal_id", "candidate_artifact"), ()),
+    "revise_proposal": (revise_proposal, ("request_id", "proposal_id", "changes"), ()),
+    "approve_change": (approve_change, ("request_id", "proposal_id", "confirmed_digest",
+                                        "decision"), ("note",)),
+    "claim_attempt": (claim_attempt, ("request_id", "proposal_id", "decision_id",
+                                      "candidate_artifact"), ("environment_fingerprint",)),
+    "finish_attempt": (finish_attempt, ("request_id", "attempt_id", "to_state"),
+                       ("launch_observation",)),
+    "validate_attempt": (validate_attempt, ("request_id", "proposal_id", "attempt_id",
+                                            "decision_id", "approved_digest",
+                                            "candidate_artifact", "runtime_evidence",
+                                            "result"), ()),
+}
+
+# A body that names an identity is refused, not ignored: silently dropping it
+# would hide an attempt to speak as someone else.
+IDENTITY_FIELDS = ("principal", "requested_by", "actor", "decided_by")
+
+_HTTP_STATUS = {PERMISSION_DENIED: 403, UNKNOWN_OPERATION: 404, VALIDATION_ERROR: 400,
+                CONTENDED: 503}
+
+
+def http_call(operation: str, principal: str, payload: Any, connect=None) -> tuple[int, dict]:
+    """One authenticated call. `principal` comes from the route's
+    authentication and nowhere else. Returns (status, body); never raises."""
+    def answer(result: Result) -> tuple[int, dict]:
+        body = {"ok": result.ok, "code": result.code, "message": result.message,
+                "data": result.data, "replayed": result.replayed}
+        return (200 if result.ok else _HTTP_STATUS.get(result.code, 409)), body
+
+    if operation not in OPERATIONS:
+        return answer(Result(ok=False, code=UNKNOWN_OPERATION,
+                             message=f"{operation!r} is not an approval operation"))
+    if principal not in _roles()[operation]:
+        return answer(Result(ok=False, code=PERMISSION_DENIED,
+                             message=f"{principal} may not call {operation}"))
+    if not isinstance(payload, dict):
+        return answer(Result(ok=False, code=VALIDATION_ERROR, message="body must be an object"))
+    spoofed = sorted(set(payload) & set(IDENTITY_FIELDS))
+    if spoofed:
+        return answer(Result(ok=False, code=VALIDATION_ERROR,
+                             message=f"identity comes from authentication; the body may not "
+                                     f"set {', '.join(spoofed)}"))
+    function, required, optional = OPERATIONS[operation]
+    missing = [f for f in required if f not in payload]
+    extra = sorted(set(payload) - set(required) - set(optional))
+    if missing or extra:
+        return answer(Result(ok=False, code=VALIDATION_ERROR,
+                             message=f"missing {missing or 'nothing'}; unexpected "
+                                     f"{extra or 'nothing'}"))
+    from dba import store
+    try:
+        conn = (connect or store.connect)()
+    except (sqlite3.Error, OSError) as bad:
+        return answer(Result(ok=False, code=CONTENDED,
+                             message=f"the database could not be opened: {bad}"))
+    try:
+        store.init_schema(conn)
+        init_schema(conn)
+        return answer(function(conn, principal=principal, **payload))
+    finally:
+        conn.close()

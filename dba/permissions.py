@@ -53,6 +53,7 @@ DBA = "dba"
 # §13: any agent on this machine may need persistent state. The COO is the
 # first of the backend's own agents to have one.
 COO = "coo"
+LAUNCHER = "launcher"
 
 POLICY: dict[str, frozenset[str]] = {
     # The orchestrator. Everything except `delete` and `administer`: §5.6 wants
@@ -80,6 +81,11 @@ POLICY: dict[str, frozenset[str]] = {
     # §13's "any agent operating on the computer may require persistent state".
     # Ordinary working access, nothing sensitive, no deletion.
     COO: frozenset({READ, CREATE, UPDATE}),
+    # RevA: the self-change launcher. NOTHING in the generic policy - it may only
+    # claim and finish attempts through `dba/approval.py`'s own role table. No
+    # token is configured for it anywhere, so it cannot call this service at all
+    # until Krish issues one (the live integration blocker, Arya 5818448805).
+    LAUNCHER: frozenset(),
 }
 
 # §8's actions mapped to the permission each needs. Not derived from the action
