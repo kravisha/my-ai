@@ -22,6 +22,11 @@ $logs = Join-Path $root 'logs\boot'
 
 function Gate($state, $healthy) { { param($RemainingMs) [pscustomobject]@{ State = $state; Healthy = $healthy } }.GetNewClosure() }
 function Probe($answer) { { param($RemainingMs) $answer }.GetNewClosure() }
+# Successive answers: before the start, then the confirming re-probe after it.
+function Seq([object[]]$answers) {
+    $i = [ref]0
+    { param($RemainingMs) $a = $answers[[math]::Min($i.Value, $answers.Count - 1)]; $i.Value++; $a }.GetNewClosure()
+}
 function New-Starter {
     $s = [pscustomobject]@{ Calls = New-Object System.Collections.ArrayList; Order = $null }
     $s | Add-Member ScriptMethod Block { $self = $this; { param($Python, $Root, $Degraded) [void]$self.Calls.Add(@($Python, $Root, $Degraded)); [pscustomobject]@{ Id = 4242 } }.GetNewClosure() }
@@ -35,7 +40,7 @@ function Boot($gate, $probe, $starter, [int]$budget = 60, $elapsed = $null) {
 }
 
 Write-Output 'B1  root with spaces, non-DevPC path: exact paths reach the starter'
-$s = New-Starter; $r = Boot (Gate 'AlreadyUp' $true) (Probe 'Absent') $s.Block()
+$s = New-Starter; $r = Boot (Gate 'AlreadyUp' $true) (Seq 'Absent', 'Healthy') $s.Block()
 Check 'exit 0' ($r.ExitCode -eq 0) $r.ExitCode
 Check 'starter got the exact python path' ($s.Calls.Count -eq 1 -and $s.Calls[0][0] -eq $py) ($s.Calls | Out-String)
 Check 'starter got the exact root (spaces intact)' ($s.Calls[0][1] -eq $root)
@@ -46,15 +51,15 @@ Check 'real starter passes argv as an array (-m gateway.run), not a joined strin
 Write-Output 'B2  order: the Gateway is never touched before the DBA gate answers'
 $order = New-Object System.Collections.ArrayList
 $g = { param($RemainingMs) [void]$order.Add('gate'); [pscustomobject]@{ State = 'AlreadyUp'; Healthy = $true } }.GetNewClosure()
-$p = { param($RemainingMs) [void]$order.Add('probe'); 'Absent' }.GetNewClosure()
+$p = { param($RemainingMs) [void]$order.Add('probe'); if ($order.Count -lt 3) { 'Absent' } else { 'Healthy' } }.GetNewClosure()
 $st = { param($Python, $Root, $Degraded) [void]$order.Add('start'); [pscustomobject]@{ Id = 1 } }.GetNewClosure()
 $null = Boot $g $p $st
-Check 'gate -> probe -> start' (($order -join ',') -eq 'gate,probe,start') ($order -join ',')
+Check 'gate -> probe -> start -> confirming probe' (($order -join ',') -eq 'gate,probe,start,probe') ($order -join ',')
 
 Write-Output 'B3  DBA not healthy: Gateway started DEGRADED, exit 3, trace says so'
 foreach ($case in @(@('StartFailed', $false), @('HealthTimeout', $false), @('ForeignPort', $false),
                     @('ProbeUnavailable', $null), @('GateMissing', $null))) {
-    $s = New-Starter; $r = Boot (Gate $case[0] $case[1]) (Probe 'Absent') $s.Block()
+    $s = New-Starter; $r = Boot (Gate $case[0] $case[1]) (Seq 'Absent', 'Healthy') $s.Block()
     Check "$($case[0]): exit 3" ($r.ExitCode -eq 3) $r.ExitCode
     Check "$($case[0]): started once, flagged degraded" ($s.Calls.Count -eq 1 -and $s.Calls[0][2] -eq $true)
     Check "$($case[0]): trace says DEGRADED" (($r.Trace -join "`n") -match 'DEGRADED')
@@ -100,6 +105,64 @@ $regSrc = Join-Path $repo 'scripts\register-jarvis-task.ps1'
 Check 'no absolute user path literal in the register script' (-not (Select-String -LiteralPath $regSrc -Pattern 'C:\\Users' -SimpleMatch -Quiet))
 Check 'no RestartInterval / restart-on-failure in the register script' (-not (Select-String -LiteralPath $regSrc -Pattern '-RestartInterval|-RestartCount' -Quiet))
 Check 'the registration uses the definition, not its own literals' ((Get-Content -Raw -LiteralPath $regSrc) -match 'MultipleInstances \$Definition\.MultipleInstances')
+Write-Output 'B13 launched is not healthy (Arya 5819049570): exit 9 unless the re-probe confirms'
+foreach ($after in @('Absent', 'OwnUnresponsive', 'Unknown', 'Foreign')) {
+    $s = New-Starter; $r = Boot (Gate 'AlreadyUp' $true) (Seq 'Absent', $after) $s.Block()
+    Check "re-probe '$after': exit 9" ($r.ExitCode -eq 9) $r.ExitCode
+    Check "re-probe '$after': trace says NOT confirmed" (($r.Trace -join ' ') -match 'health NOT confirmed')
+}
+$s = New-Starter; $r = Boot (Gate 'HealthTimeout' $false) (Seq 'Absent', 'Healthy') $s.Block()
+Check 'started + confirmed but DBA sick: exit 3, and the trace says launcher-side only' ($r.ExitCode -eq 3 -and (($r.Trace -join ' ') -match 'launcher-side record only'))
+
+Write-Output 'B11b every stage is followed by an elapsed check; the starter gets the remainder'
+$t2 = [ref]0; $clk = { $t2.Value }.GetNewClosure()
+$lateHealthy = { param($m) $t2.Value += 31000; 'Healthy' }.GetNewClosure()
+$r = Boot (Gate 'AlreadyUp' $true) $lateHealthy (New-Starter).Block() 30 $clk
+Check 'a probe that returns Healthy AFTER the budget: exit 8, not 0' ($r.ExitCode -eq 8) $r.ExitCode
+$t2.Value = 0; $gotMs = [ref]$null
+$g = { param($m) $t2.Value += 12000; [pscustomobject]@{ State = 'AlreadyUp'; Healthy = $true } }.GetNewClosure()
+$pp = (Seq 'Absent', 'Healthy')
+$st = { param($Python, $Root, $Degraded, $RemainingMs) $gotMs.Value = $RemainingMs; [pscustomobject]@{ Id = 7 } }.GetNewClosure()
+$r = Boot $g $pp $st 30 $clk
+Check 'the starter received the remaining 18000 ms' ($gotMs.Value -eq 18000) $gotMs.Value
+$t2.Value = 0
+$slowStart = { param($a, $b, $c, $m) $t2.Value += 40000; [pscustomobject]@{ Id = 8 } }.GetNewClosure()
+$probeCalls = [ref]0
+$countingProbe = { param($m) $probeCalls.Value++; if ($probeCalls.Value -eq 1) { 'Absent' } else { 'Healthy' } }.GetNewClosure()
+$r = Boot (Gate 'AlreadyUp' $true) $countingProbe $slowStart 30 $clk
+Check 'a start that overran: exit 8, health not claimed' ($r.ExitCode -eq 8) $r.ExitCode
+Check 'and the confirming probe was NOT run on an exhausted budget' ($probeCalls.Value -eq 1) $probeCalls.Value
+
+Write-Output 'B11c the real probe decisions: one deadline across TCP, owner and HTTP'
+$t3 = [ref]0; $c3 = { $t3.Value }.GetNewClosure()
+function PortState([int]$rem, $connect, $owner, $health) {
+    $t3.Value = 0
+    Get-GatewayPortState -RemainingMs $rem -Connect $connect -Owner $owner -Health $health -ElapsedMs $c3
+}
+$ok = { 'connected' }; $ours = { 'python -m gateway.run' }; $yes = { param($ms) $true }
+Check 'refused -> Absent' ((PortState 5000 { param($ms) 'refused' } $ours $yes) -eq 'Absent')
+Check 'timeout -> Unknown' ((PortState 5000 { param($ms) 'timeout' } $ours $yes) -eq 'Unknown')
+Check 'error -> Unknown' ((PortState 5000 { param($ms) 'error' } $ours $yes) -eq 'Unknown')
+Check 'owner unreadable -> Unknown, not Foreign' ((PortState 5000 $ok { $null } $yes) -eq 'Unknown')
+Check 'not gateway.run -> Foreign' ((PortState 5000 $ok { 'node server.js' } $yes) -eq 'Foreign')
+Check 'health false -> OwnUnresponsive' ((PortState 5000 $ok $ours { param($ms) $false }) -eq 'OwnUnresponsive')
+Check 'health true -> Healthy' ((PortState 5000 $ok $ours $yes) -eq 'Healthy')
+$seenMs = New-Object System.Collections.ArrayList
+$cn = { param($ms) [void]$seenMs.Add(@('tcp', $ms)); $t3.Value += 2500; 'connected' }.GetNewClosure()
+$ow = { param($ms) [void]$seenMs.Add(@('owner', $ms)); $t3.Value += 1000; 'python -m gateway.run' }.GetNewClosure()
+$hl = { param($ms) [void]$seenMs.Add(@('http', $ms)); $true }.GetNewClosure()
+$null = PortState 5000 $cn $ow $hl
+Check 'TCP got min(cap 3000, 5000) = 3000' ($seenMs[0][1] -eq 3000) $seenMs[0][1]
+Check 'the owner stage got only what TCP left (2500), and it IS bounded now' ($seenMs[1][0] -eq 'owner' -and $seenMs[1][1] -eq 2500) ($seenMs[1] -join ':')
+Check 'HTTP got only what TCP + owner left (1500), not the original 5000' ($seenMs[2][1] -eq 1500) $seenMs[2][1]
+$ownerSrc = (Get-Content -Raw -LiteralPath $boot)
+Check 'real owner adapter bounds BOTH CIM queries with -OperationTimeoutSec' (([regex]::Matches($ownerSrc, '-OperationTimeoutSec \$sec')).Count -eq 2)
+$slowOwner = { $t3.Value += 9000; 'python -m gateway.run' }.GetNewClosure()
+Check 'the unbounded owner stage overran -> Unknown, HTTP never asked' ((PortState 5000 $ok $slowOwner { param($ms) throw 'must not be called' }) -eq 'Unknown')
+$lateHttp = { param($ms) $t3.Value += 9000; $true }.GetNewClosure()
+Check 'HTTP answered after the deadline -> Unknown, not Healthy' ((PortState 5000 $ok $ours $lateHttp) -eq 'Unknown')
+Check 'no time at entry -> Unknown without connecting' ((PortState 0 { param($ms) throw 'must not be called' } $ours $yes) -eq 'Unknown')
+
 Write-Output 'B7  missing venv python: loud, named, nothing probed'
 $touched = New-Object System.Collections.ArrayList
 $r = Invoke-JarvisBoot -Root $root -Python (Join-Path $root 'nope\python.exe') -LogDir $logs `

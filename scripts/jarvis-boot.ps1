@@ -11,14 +11,15 @@
 # The real probes and starter are thin adapters at the bottom.
 #
 # Exit codes (the scheduler and any host wrapper must pass them through):
-#   0  Gateway healthy, DBA healthy
+#   0  Gateway health-CONFIRMED, DBA healthy
 #   2  a Gateway start was attempted and did not produce a process
 #   3  DEGRADED: Gateway running or started, but the DBA is not confirmed healthy
 #   4  the venv python is missing - no guess from PATH
 #   5  something FOREIGN holds the Gateway port - not ours, not killed
 #   6  the Gateway port's state is UNKNOWN - no start decided on an unknown
 #   7  our own Gateway holds the port and does not answer - no second process
-#   8  the whole-boot budget ran out before a start could be decided
+#   8  the whole-boot budget ran out (or a stage overran it); nothing decided on the overrun
+#   9  a Gateway was LAUNCHED but its health was NOT confirmed (launched is not healthy)
 #
 # The DBA gate is Claude Deploy's (scripts/dba-gate.ps1, his to move into the
 # repo). This script only CONSUMES its typed result {State, Healthy}; Healthy is
@@ -39,7 +40,7 @@ function Invoke-JarvisBoot {
         [Parameter(Mandatory)] [string]$LogDir,
         [Parameter(Mandatory)] [scriptblock]$DbaGate,        # param([int]$RemainingMs) -> {State; Healthy}
         [Parameter(Mandatory)] [scriptblock]$GatewayProbe,   # param([int]$RemainingMs) -> one of GatewayStates
-        [Parameter(Mandatory)] [scriptblock]$StartGateway,   # param($Python, $Root, [bool]$Degraded) -> process or $null
+        [Parameter(Mandatory)] [scriptblock]$StartGateway,   # param($Python, $Root, [bool]$Degraded, [int]$RemainingMs) -> process or $null
         [int]$BudgetSeconds = 60,
         [scriptblock]$ElapsedMs = $null                      # injected clock for tests
     )
@@ -80,6 +81,10 @@ function Invoke-JarvisBoot {
     $gw = & $GatewayProbe (Remaining)
     if ($script:GatewayStates -notcontains $gw) { $gw = 'Unknown' }
     Note "gateway state=$gw"
+    # A stage that RETURNS after the budget is gone has overrun it, whatever it
+    # saw. The whole-boot bound is the contract, so the run ends here (Arya
+    # 5819049570: no post-probe elapsed check existed).
+    if ((Remaining) -le 0) { return Done 8 "the Gateway probe overran the budget (it saw '$gw'); no decision taken on it" }
 
     switch ($gw) {
         'Healthy' {
@@ -94,12 +99,59 @@ function Invoke-JarvisBoot {
     # Absent: the one state that permits a start.
     if ((Remaining) -le 0) { return Done 8 'budget exhausted before the start; nothing started' }
     $degraded = -not $dbaHealthy
-    Note ("starting Gateway{0}" -f $(if ($degraded) { ' DEGRADED (DBA not confirmed healthy)' } else { '' }))
-    $proc = & $StartGateway $Python $Root $degraded
+    # DEGRADED is a LAUNCHER-SIDE record only: nothing tells the Gateway process
+    # that the DBA was not confirmed healthy. Whatever it reports about the DBA is
+    # its own observation, not this flag.
+    Note ("starting Gateway{0}" -f $(if ($degraded) { ' DEGRADED (DBA not confirmed healthy; launcher-side record only, the Gateway is not told)' } else { '' }))
+    $proc = & $StartGateway $Python $Root $degraded (Remaining)
     if ($null -eq $proc) { return Done 2 'the Gateway start produced no process' }
-    Note "Gateway started pid=$($proc.Id)"
-    if ($degraded) { return Done 3 "Gateway started DEGRADED; DBA is $dbaState" }
-    return Done 0 'Gateway started; DBA healthy'
+    Note "Gateway launched pid=$($proc.Id)"
+    if ((Remaining) -le 0) { return Done 8 'the start overran the budget; health not confirmed' }
+
+    # LAUNCHED IS NOT HEALTHY. One re-probe within what is left; no waiting loop -
+    # the next scheduler tick re-checks a Gateway still coming up.
+    $after = & $GatewayProbe (Remaining)
+    if ($script:GatewayStates -notcontains $after) { $after = 'Unknown' }
+    Note "gateway after start=$after"
+    if ((Remaining) -le 0) { return Done 8 "the confirming probe overran the budget (it saw '$after')" }
+    if ($after -ne 'Healthy') { return Done 9 "Gateway launched (pid $($proc.Id)) but health NOT confirmed: $after" }
+    if ($degraded) { return Done 3 "Gateway started and healthy but DEGRADED; DBA is $dbaState" }
+    return Done 0 'Gateway started and health-confirmed; DBA healthy'
+}
+
+function Get-GatewayPortState {
+    <#
+      The real probe's DECISIONS, over injected stages, so the budget arithmetic
+      is tested without a socket. One deadline for the whole probe: each stage
+      gets only what the stages before it left (Arya 5819049570).
+
+        Connect { param($ms) } -> 'refused' | 'connected' | 'timeout' | 'error'
+        Owner   { param($ms) } -> the listening process's command line, or $null.
+                                  The real adapter bounds BOTH its CIM queries with
+                                  -OperationTimeoutSec (whole seconds, so up to one
+                                  extra second per query is possible). That is an
+                                  enforced client-side timeout, but its behaviour
+                                  against a hung local WMI provider is UNMEASURED; an
+                                  overrun still turns the answer into Unknown.
+        Health  { param($ms) } -> $true | $false
+    #>
+    param([int]$RemainingMs, [scriptblock]$Connect, [scriptblock]$Owner,
+          [scriptblock]$Health, [scriptblock]$ElapsedMs, [int]$StageCapMs = 3000)
+    $start = & $ElapsedMs
+    function Left { [int]($RemainingMs - ((& $ElapsedMs) - $start)) }
+    if ((Left) -le 0) { return 'Unknown' }
+    $tcp = & $Connect ([math]::Min($StageCapMs, (Left)))
+    if ($tcp -eq 'refused') { return 'Absent' }
+    if ($tcp -ne 'connected') { return 'Unknown' }
+    if ((Left) -le 0) { return 'Unknown' }
+    $cmd = & $Owner ([math]::Min($StageCapMs, (Left)))
+    if ((Left) -le 0) { return 'Unknown' }                 # the owner stage overran
+    if (-not $cmd) { return 'Unknown' }                    # someone listens; owner unreadable
+    if ($cmd -notmatch 'gateway\.run') { return 'Foreign' }
+    $ok = & $Health ([math]::Min($StageCapMs, (Left)))
+    if ((Left) -lt 0) { return 'Unknown' }
+    if ($ok -eq $true) { return 'Healthy' }
+    return 'OwnUnresponsive'
 }
 
 # ------------------------------------------------------------------------------
@@ -128,33 +180,53 @@ function Get-RealDbaGate([string]$Root) {
 }
 
 function Get-RealGatewayProbe([int]$Port = 8100) {
-    return {
-        param($RemainingMs)
-        $ms = [math]::Min(3000, [math]::Max(0, $RemainingMs))
-        if ($ms -le 0) { return 'Unknown' }
+    # Thin adapters only; every decision is in Get-GatewayPortState.
+    $connect = {
+        param($ms)
         $client = New-Object Net.Sockets.TcpClient
         try {
             $task = $client.ConnectAsync('127.0.0.1', $Port)
-            if (-not $task.Wait($ms)) { return 'Unknown' }
+            if (-not $task.Wait([math]::Max(1, $ms))) { return 'timeout' }
+            'connected'
         } catch {
             $inner = $_.Exception.GetBaseException()
-            if ($inner -is [Net.Sockets.SocketException] -and $inner.SocketErrorCode -eq 'ConnectionRefused') { return 'Absent' }
-            return 'Unknown'
+            if ($inner -is [Net.Sockets.SocketException] -and $inner.SocketErrorCode -eq 'ConnectionRefused') { 'refused' } else { 'error' }
         } finally { $client.Dispose() }
-        $owner = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-        $cmd = if ($owner) { (Get-CimInstance Win32_Process -Filter "ProcessId=$($owner.OwningProcess)").CommandLine } else { '' }
-        if ($cmd -notmatch 'gateway\.run') { return 'Foreign' }
-        try {
-            $sec = [math]::Max(1, [int]([math]::Min(3000, $RemainingMs) / 1000))
-            $code = (Invoke-WebRequest "http://127.0.0.1:$Port/health" -TimeoutSec $sec -UseBasicParsing).StatusCode
-            if ($code -eq 200) { 'Healthy' } else { 'OwnUnresponsive' }
-        } catch { 'OwnUnresponsive' }
+    }.GetNewClosure()
+    $owner = {
+        param($ms)
+        # Both queries through CIM so both take -OperationTimeoutSec (the
+        # Get-NetTCPConnection cmdlet exposes no timeout; its class does). Split
+        # the stage's time between them; whole seconds, minimum 1.
+        $sec = [math]::Max(1, [int][math]::Floor($ms / 2000))
+        $l = Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetTCPConnection `
+                 -Filter "LocalPort=$Port AND State=2" -OperationTimeoutSec $sec -ErrorAction SilentlyContinue |
+             Select-Object -First 1
+        if ($l) {
+            (Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)" `
+                 -OperationTimeoutSec $sec -ErrorAction SilentlyContinue).CommandLine
+        }
+    }.GetNewClosure()
+    $health = {
+        param($ms)
+        # Invoke-WebRequest takes whole seconds: round UP only within the cap, never past it.
+        $sec = [math]::Max(1, [int][math]::Floor($ms / 1000))
+        try { (Invoke-WebRequest "http://127.0.0.1:$Port/health" -TimeoutSec $sec -UseBasicParsing).StatusCode -eq 200 }
+        catch { $false }
+    }.GetNewClosure()
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $elapsed = { $clock.ElapsedMilliseconds }.GetNewClosure()
+    return {
+        param($RemainingMs)
+        Get-GatewayPortState -RemainingMs $RemainingMs -Connect $connect -Owner $owner -Health $health -ElapsedMs $elapsed
     }.GetNewClosure()
 }
 
 function Get-RealGatewayStarter {
     return {
-        param($Python, $Root, [bool]$Degraded)
+        # $RemainingMs is received so the contract is uniform; Start-Process
+        # -PassThru does not wait for the child, so it has nothing to bound.
+        param($Python, $Root, [bool]$Degraded, [int]$RemainingMs)
         try {
             Start-Process -FilePath $Python -ArgumentList @('-m', 'gateway.run') -WorkingDirectory $Root `
                 -WindowStyle Hidden -PassThru
