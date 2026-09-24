@@ -565,6 +565,67 @@ def test_generic_write_cannot_overwrite_a_managed_proposals_result(db_path, monk
     assert _row(db_path, pid) == before
 
 
+def _traced_agent(path, statements, busy_ms=None):
+    """A DBAgent whose connections record every SQL statement in order."""
+    from dba import agent as agent_module
+
+    def connect():
+        conn = Database(path)
+        conn._conn.set_trace_callback(statements.append)
+        if busy_ms is not None:
+            conn._conn.execute(f"PRAGMA busy_timeout={busy_ms}")
+        return conn
+
+    return agent_module.DBAgent(connect=connect)
+
+
+def test_the_guard_reads_the_existing_proposal_under_the_write_lock(db_path):
+    """Arya 5818198789: shown, not argued. BEGIN IMMEDIATE must precede the
+    guard's read of the existing row, or a freeze can commit in between."""
+    from dba import contract
+    pid = _proposal(db_path)
+    statements = []
+    resp = _traced_agent(db_path, statements).handle(contract.Request(
+        action=contract.UPDATE, requested_by=OPERATOR, entity_type="change_proposal",
+        entity_id=pid, data={"post_validation_state": "failed"}, request_id="rq-trace"))
+    assert resp.ok, resp.error
+    begin = next(i for i, s in enumerate(statements) if s.strip().upper() == "BEGIN IMMEDIATE")
+    guard = next(i for i, s in enumerate(statements)
+                 if s.startswith("SELECT status, data_json FROM entities WHERE id ="))
+    assert begin < guard, statements[:guard + 1]
+
+
+def test_a_freeze_in_flight_blocks_the_generic_write_rather_than_racing_it(db_path):
+    """A writer holding the lock (a freeze mid-transaction) makes the guarded
+    generic write wait and then fail closed; it never slips in beside it."""
+    from dba import contract
+    pid = _proposal(db_path)
+    before = _row(db_path, pid)
+    holder = sqlite3.connect(db_path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        resp = _traced_agent(db_path, [], busy_ms=100).handle(contract.Request(
+            action=contract.UPDATE, requested_by=OPERATOR, entity_type="change_proposal",
+            entity_id=pid, data={"post_validation_state": "accepted"}, request_id="rq-race"))
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert not resp.ok
+    assert _row(db_path, pid) == before
+
+
+def test_a_freeze_committed_first_makes_the_later_generic_write_refused(db_path, monkeypatch):
+    from dba import agent as agent_module, contract
+    monkeypatch.setenv(store.PATH_ENV, str(db_path))
+    pid, digest = _frozen(db_path)                    # frozen, never validated
+    before = _row(db_path, pid)
+    resp = agent_module.DBAgent().handle(contract.Request(
+        action=contract.UPDATE, requested_by=OPERATOR, entity_type="change_proposal",
+        entity_id=pid, data={"post_validation_state": "accepted"}, request_id="rq-after"))
+    assert not resp.ok and resp.error["error_code"] == contract.PROTECTED_FIELD
+    assert _row(db_path, pid) == before
+
+
 def test_legacy_proposal_keeps_its_generic_writes(db_path, monkeypatch):
     """The other half: an unfrozen proposal is untouched by RevA, so the
     existing selfmod path still records its validation result."""
