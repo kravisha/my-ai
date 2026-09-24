@@ -93,7 +93,8 @@ def test_a_console_with_no_operator_token_refuses_to_run(monkeypatch):
 
 def test_the_console_speaks_as_the_operator():
     assert console.describe()["speaks_as"] == "operator_console"
-    assert console.describe()["writes"] == ["guess_verdict"]
+    assert console.describe()["writes"] == [
+        "guess_verdict", "answers to parked task questions"]
 
 
 def test_a_conversational_yes_does_not_settle_a_guess():

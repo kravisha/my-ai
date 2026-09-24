@@ -39,7 +39,8 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from gateway import anticipation, dbaclient, identity, noticing, trustbook
+from gateway import (anticipation, dbaclient, identity, noticing, taskrun,
+                     trustbook)
 
 OPERATOR = "operator_console"
 TOKEN_ENV = "DBA_TOKEN_OPERATOR_CONSOLE"
@@ -126,10 +127,58 @@ def standing(client: dbaclient.DBAClient, domain: str, *,
     return trustbook.standing(client, domain, agent=agent)
 
 
+# --- questions from work in progress (TQ-119) -----------------------------------
+#
+# `gateway/taskrun.py` parks a question when it cannot find something and
+# carries on with the rest. This is where Krish sees them and answers. The
+# answer goes back through `Need.answered`, so it is refused unless it comes
+# from the person the question was put to, and the run is saved before this
+# returns - an answer that lived only in this process would be lost the moment
+# the console closed.
+
+
+def questions(client: dbaclient.DBAClient) -> tuple[list[dict], dict[str, str]]:
+    """Every open question across every stored run, and every run that would
+    not load. The second is shown, not hidden: its questions are in it."""
+    runs, corrupt = taskrun.stored_runs(client)
+    waiting = []
+    for name in sorted(runs):
+        for asked in runs[name].open_questions():
+            waiting.append({"run": name, "goal": runs[name].goal,
+                            "line": asked.about, "asked": asked.asked,
+                            "tried": asked.tried, "of": asked.of})
+    return waiting, corrupt
+
+
+def _stored(client: dbaclient.DBAClient, run: str) -> taskrun.Run:
+    found = taskrun.load(client, run)
+    if found is None:
+        raise taskrun.NotFound(f"no stored run called {run!r}")
+    return found
+
+
+def reply(client: dbaclient.DBAClient, run: str, line: str, value: str, *,
+          by: str = "krish") -> taskrun.Need:
+    """Answer one parked question and save the run."""
+    work = _stored(client, run)
+    need = work.need(line).answered(value, by=by)
+    taskrun.save(client, run, work, reason=f"{by} answered {line!r}")
+    return need
+
+
+def leave_out(client: dbaclient.DBAClient, run: str, line: str, *,
+              because: str, by: str = "krish") -> taskrun.Need:
+    """Krish's decision that a line does not belong this time."""
+    work = _stored(client, run)
+    need = work.need(line).waive(by=by, because=because)
+    taskrun.save(client, run, work, reason=f"{by} left out {line!r}")
+    return need
+
+
 def describe() -> dict:
     return {
         "speaks_as": OPERATOR,
-        "writes": ["guess_verdict"],
+        "writes": ["guess_verdict", "answers to parked task questions"],
         "a_conversational_yes_settles_a_guess": False,
         "silence_is": anticipation.NOT_NOW,
     }
@@ -155,6 +204,20 @@ def main(argv=None) -> int:
     judged.add_argument("--by", default="krish")
 
     commands.add_parser("lapse", help="settle what was never answered")
+
+    commands.add_parser("questions", help="what work in progress is asking")
+
+    replied = commands.add_parser("reply", help="answer one of those")
+    replied.add_argument("run")
+    replied.add_argument("line")
+    replied.add_argument("answer")
+    replied.add_argument("--by", default="krish")
+
+    left = commands.add_parser("leave-out", help="drop a line from this run")
+    left.add_argument("run")
+    left.add_argument("line")
+    left.add_argument("--because", required=True)
+    left.add_argument("--by", default="krish")
 
     shown = commands.add_parser("standing", help="what a domain has earned")
     shown.add_argument("domain")
@@ -186,6 +249,28 @@ def main(argv=None) -> int:
     if args.command == "lapse":
         print(f"{len(lapse(client))} mention(s) settled as "
               f"{anticipation.NOT_NOW}")
+        return 0
+    if args.command == "questions":
+        waiting, corrupt = questions(client)
+        for name, why in sorted(corrupt.items()):
+            print(f"CANNOT LOAD {name}: {why}")
+        if not waiting and not corrupt:
+            print("Nothing waiting.")
+        for one in waiting:
+            print(f"{one['run']} / {one['line']}: {one['asked']}")
+            print(f"    already tried: {one['tried']}")
+        return 1 if corrupt else 0
+    if args.command in ("reply", "leave-out"):
+        try:
+            if args.command == "reply":
+                reply(client, args.run, args.line, args.answer, by=args.by)
+            else:
+                leave_out(client, args.run, args.line, because=args.because,
+                          by=args.by)
+        except (taskrun.NotFound, taskrun.NotYours, taskrun.Corrupt) as refused:
+            print(refused, file=sys.stderr)
+            return 2
+        print("recorded")
         return 0
     earned = standing(client, args.domain)
     print(f"{args.domain}: {earned.rung}")

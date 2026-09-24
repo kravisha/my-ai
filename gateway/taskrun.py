@@ -59,7 +59,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from gateway import identity
+from gateway import dbaclient, identity, persistence
 
 # --- what can happen to a need --------------------------------------------------
 
@@ -170,6 +170,11 @@ class Need:
     # "carry on with the independent work" computable rather than a judgement.
     blocked_by: str | None = None
     question: Question | None = None
+    # Who left it out and why, kept apart from `source` so that a restored run
+    # can put the waiver back through `waive` - and its refusals - rather than
+    # trusting a sentence that says somebody decided.
+    waived_by: str = ""
+    waived_because: str = ""
 
     def found(self, value: str, *, source: str) -> "Need":
         """Fill it, from somewhere.
@@ -253,6 +258,8 @@ class Need:
                 f"own work. Leaving something out is the owner's decision, and "
                 f"an assistant who may take it has no holes to report.")
         self.state = WAIVED
+        self.waived_by = by.strip()
+        self.waived_because = because.strip()
         self.source = f"{by.strip()} left it out: {because.strip()}"
         return self
 
@@ -399,6 +406,152 @@ class Run:
             timespec="seconds")}
 
 
+# --- surviving a restart ---------------------------------------------------------
+#
+# TQ-119 requirement 1: a run outlives the process doing it. A morning's work on
+# the expense statement cannot be lost to a reboot, and the questions Krish was
+# asked cannot vanish with it - an unanswered question that disappears is a hole
+# that looks like it was never there.
+#
+# A stored run is **replayed**, not unpickled. `restore` rebuilds it by calling
+# the same methods the work called the first time, so every refusal above holds
+# again on the way back in: a line stored as found with no source, an answer
+# from somebody the question was never put to, a waiver in Jarvis's name, a
+# dependency loop, a line the model does not have. The store is a place a value
+# can be edited without anybody going through this module, and restoring by
+# assignment would make it the easiest road around every rule here.
+
+STORED_FORMAT = 1
+PREFIX = "taskrun/"
+
+
+class Corrupt(ValueError):
+    """A stored run that does not replay. Refused rather than repaired: a run
+    patched into a shape that loads is a run whose history nobody can vouch
+    for."""
+
+
+def to_dict(run: "Run") -> dict:
+    """Everything needed to replay a run, and nothing derived."""
+    return {
+        "format": STORED_FORMAT,
+        "goal": run.goal,
+        "for_whom": run.for_whom,
+        "started": run.started.isoformat(),
+        "model": {"name": run.model.name,
+                  "fields": [{"name": one.name, "means": one.means}
+                             for one in run.model.fields]},
+        "needs": [{
+            "name": one.name,
+            "state": one.state,
+            "value": one.value,
+            "source": one.source,
+            "blocked_by": one.blocked_by,
+            "waived_by": one.waived_by,
+            "waived_because": one.waived_because,
+            "question": None if one.question is None else {
+                "asked": one.question.asked,
+                "tried": one.question.tried,
+                "of": one.question.of,
+                "at": one.question.at.isoformat(),
+                "answer": one.question.answer,
+                "answered_by": one.question.answered_by,
+            },
+        } for one in run.needs],
+    }
+
+
+def restore(stored: dict) -> "Run":
+    """Replay a stored run through the methods that made it.
+
+    Raises `Corrupt` naming the line, never a half-built run."""
+    if not isinstance(stored, dict) or stored.get("format") != STORED_FORMAT:
+        raise Corrupt(f"not a stored run in format {STORED_FORMAT}")
+    try:
+        model = Model(name=stored["model"]["name"],
+                      fields=tuple(Field(name=one["name"], means=one["means"])
+                                   for one in stored["model"]["fields"]))
+        run = Run(stored["goal"], model, for_whom=stored["for_whom"])
+        run.started = datetime.fromisoformat(stored["started"])
+        lines = stored["needs"]
+        if [one["name"] for one in lines] != [one.name for one in run.needs]:
+            raise Corrupt(
+                "the stored lines are not the model's lines. A line added or "
+                "dropped outside the run is a different statement.")
+        for line in lines:
+            if line["blocked_by"] is not None:
+                run.depends(line["name"], on=line["blocked_by"])
+        for line in lines:
+            _replay(run.need(line["name"]), line)
+    except Corrupt:
+        raise
+    except (NotFound, NotYours, KeyError, TypeError, ValueError) as refused:
+        raise Corrupt(f"stored run does not replay: {refused}") from refused
+    return run
+
+
+def _replay(need: Need, line: dict) -> None:
+    state = line["state"]
+    if state not in STATES:
+        raise Corrupt(f"{need.name}: unknown state {state!r}")
+    if state == FOUND:
+        need.found(line["value"], source=line["source"])
+    elif state == WAIVED:
+        need.waive(by=line["waived_by"], because=line["waived_because"])
+    elif state in (ASKED, ANSWERED):
+        asked = line["question"]
+        if asked is None:
+            raise Corrupt(f"{need.name}: {state} with no question")
+        need.ask(asked["asked"], tried=asked["tried"], of=asked["of"])
+        need.question.at = datetime.fromisoformat(asked["at"])
+        if state == ANSWERED:
+            need.answered(asked["answer"], by=asked["answered_by"])
+        elif asked["answer"] is not None:
+            raise Corrupt(f"{need.name}: asked, and yet carries an answer")
+    elif line["value"] is not None or line["question"] is not None:
+        # UNMET. A value on an unmet line is last year's number waiting for
+        # somebody to flip the state.
+        raise Corrupt(f"{need.name}: unmet, and yet carries a value or question")
+
+
+def key(name: str) -> str:
+    if not (name or "").strip():
+        raise NotFound("a stored run needs a name; it is how it comes back")
+    return PREFIX + name.strip()
+
+
+def save(client: dbaclient.DBAClient, name: str, run: "Run", *,
+         reason: str | None = None) -> dict:
+    """Write the run as it stands. Call after every change, not at the end:
+    §9's immediate tier, because the end is exactly what a restart takes."""
+    return persistence.put(client, persistence.TASK, key(name), to_dict(run),
+                           reason=reason or f"task run {name!r}")
+
+
+def load(client: dbaclient.DBAClient, name: str) -> "Run | None":
+    stored = persistence.get(client, persistence.TASK, key(name))
+    return None if stored is None else restore(stored)
+
+
+def stored_runs(client: dbaclient.DBAClient
+                ) -> tuple[dict[str, "Run"], dict[str, str]]:
+    """Every run in the store by name, and every one that would not replay.
+
+    The second is returned rather than dropped: a run that silently fell out of
+    the list takes its open questions with it, and an absent question is not an
+    answered one."""
+    runs, corrupt = {}, {}
+    for row in persistence.current(client, kind=persistence.TASK):
+        name = row.get("name") or ""
+        if not name.startswith(PREFIX):
+            continue
+        try:
+            runs[name[len(PREFIX):]] = restore(persistence.decode(row))
+        except Corrupt as refused:
+            corrupt[name[len(PREFIX):]] = str(refused)
+    return runs, corrupt
+
+
 def describe() -> dict:
     return {
         "states": list(STATES),
@@ -408,4 +561,6 @@ def describe() -> dict:
         "finishes_with_a_hole": False,
         "answers_its_own_questions": False,
         "dependency_loops": "refused",
+        "survives_a_restart": True,
+        "restored_by": "replay through the same refusals",
     }
