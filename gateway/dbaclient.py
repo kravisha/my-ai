@@ -292,6 +292,59 @@ class DBAClient:
             result = result.get("count")
         return int(result or 0)
 
+    # --- RevA: execution approval (dba/approval.py over POST /approval/{op}) --
+
+    def approval(self, operation: str, **fields: Any) -> dict:
+        """One approval operation. Returns `{"data": ..., "replayed": bool}`.
+
+        WHO is calling is whoever this client's transport authenticates as; the
+        DBA refuses a body that names an identity, so none is sent. A role the
+        operation does not allow comes back as `Refused` with code
+        PERMISSION_DENIED - enforced by the service, not by which methods exist
+        here. Contention and missing credentials are `Unavailable`, never an
+        empty success."""
+        status, body = self._transport("POST", f"/approval/{operation}", dict(fields))
+        body = body if isinstance(body, dict) else {}
+        code = body.get("code")
+        if status == 200 and body.get("ok"):
+            return {"data": body.get("data") or {}, "replayed": bool(body.get("replayed"))}
+        if status >= 500:
+            # A 500 is a fault of UNKNOWN effect, not a refusal: reporting it as
+            # Refused would tell a caller the operation definitely did not happen.
+            raise Unavailable(
+                f"the DBA failed while serving {operation} ({status}); the outcome is "
+                f"unknown - re-read state before acting, never retry blindly")
+        if status == 401 or (
+                status == 403 and code is None):
+            # 401/403-without-a-code is the authentication layer, not the policy.
+            raise Unavailable(
+                f"the DBA could not serve {operation} ({status}): "
+                f"{body.get('message') or body.get('detail') or 'no detail given'}")
+        raise Refused(f"{operation} was refused: {body.get('message') or body}",
+                      code=code, response=body)
+
+    # The operations Jarvis itself holds. Execution approval is deliberately
+    # NOT here: it is Krish's, through the operator console's own identity, and
+    # the service refuses it from Jarvis whatever this client offers.
+
+    def freeze_candidate(self, *, request_id: str, proposal_id: str,
+                         candidate_artifact: str) -> dict:
+        return self.approval("freeze_candidate", request_id=request_id,
+                             proposal_id=proposal_id, candidate_artifact=candidate_artifact)
+
+    def revise_proposal(self, *, request_id: str, proposal_id: str, changes: dict) -> dict:
+        return self.approval("revise_proposal", request_id=request_id,
+                             proposal_id=proposal_id, changes=changes)
+
+    def validate_attempt(self, *, request_id: str, proposal_id: str, attempt_id: str,
+                         decision_id: str, approved_digest: str, candidate_artifact: str,
+                         runtime_evidence: dict, result: str) -> dict:
+        return self.approval("validate_attempt", request_id=request_id,
+                             proposal_id=proposal_id, attempt_id=attempt_id,
+                             decision_id=decision_id, approved_digest=approved_digest,
+                             candidate_artifact=candidate_artifact,
+                             runtime_evidence=runtime_evidence, result=result)
+
     # --- liveness ------------------------------------------------------------
 
     def health(self) -> dict:

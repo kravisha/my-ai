@@ -732,7 +732,14 @@ _HTTP_STATUS = {PERMISSION_DENIED: 403, UNKNOWN_OPERATION: 404, VALIDATION_ERROR
 
 def http_call(operation: str, principal: str, payload: Any, connect=None) -> tuple[int, dict]:
     """One authenticated call. `principal` comes from the route's
-    authentication and nowhere else. Returns (status, body); never raises."""
+    authentication and nowhere else. Returns (status, body) for every outcome
+    the operations know: success, refusal, contention.
+
+    It does NOT promise never to raise (Arya 5818622167 caught the earlier
+    docstring saying so). An unexpected fault in schema set-up or an operation
+    propagates and the service answers HTTP 500 - an outcome of UNKNOWN effect,
+    which the client reports as Unavailable, never as a structured refusal.
+    Each operation's own transaction means such a fault rolled its writes back."""
     def answer(result: Result) -> tuple[int, dict]:
         body = {"ok": result.ok, "code": result.code, "message": result.message,
                 "data": result.data, "replayed": result.replayed}
@@ -765,8 +772,12 @@ def http_call(operation: str, principal: str, payload: Any, connect=None) -> tup
         return answer(Result(ok=False, code=CONTENDED,
                              message=f"the database could not be opened: {bad}"))
     try:
-        store.init_schema(conn)
-        init_schema(conn)
+        try:
+            store.init_schema(conn)
+            init_schema(conn)
+        except Contended as exc:
+            return answer(Result(ok=False, code=CONTENDED,
+                                 message=f"schema set-up could not take the lock ({exc})"))
         return answer(function(conn, principal=principal, **payload))
     finally:
         conn.close()

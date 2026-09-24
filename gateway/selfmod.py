@@ -137,6 +137,19 @@ class NotApproved(PermissionError):
     """§13's gate, closed. The proposal has not been approved."""
 
 
+# The DBA's execution lifecycle (dba/approval.EXECUTION_STATUSES), restated
+# rather than imported: the Gateway talks to the DBA over HTTP and does not
+# import its internals, the same rule dbaclient.py follows for its vocabulary.
+_EXECUTION_STATUSES = ("awaiting_execution_approval", "approved_for_execution", "superseded")
+
+
+class ExecutionManaged(NotApproved):
+    """RevA: this proposal has a frozen candidate, so its decision belongs to
+    the atomic `approve_change` path on Krish's own console identity, not to
+    `decide()`. A subclass of NotApproved so every existing caller that already
+    reports a closed gate reports this one too."""
+
+
 class PreconditionsUnmet(RuntimeError):
     """§17's list, with at least one item not satisfied."""
 
@@ -405,6 +418,20 @@ def decide(client: dbaclient.DBAClient, proposal: dict, *, decision: str,
         raise ValueError(
             "a decision needs to say who made it. §30 asks who approved it, "
             "and an unattributed approval answers nobody's question.")
+
+    # RevA: BEFORE anything is written. The stored record decides, not the
+    # dict the caller holds - a stale copy would say "unfrozen" about a
+    # proposal that was frozen since. Refusing after the create below would
+    # leave an orphan decision record beside a proposal the DBA then refuses
+    # to update, which is the two-call defect RevA exists to remove.
+    current = client.get(proposal["id"]) or {}
+    if (current.get("candidate_artifact") or current.get("change_id")
+            or current.get("status") in _EXECUTION_STATUSES):
+        raise ExecutionManaged(
+            f"{failures.APPROVAL_REQUIRED}: this proposal has a frozen candidate "
+            f"(status {current.get('status')!r}). Its execution decision is made "
+            f"with approve_change on Krish's console, bound to the exact candidate "
+            f"he is shown - not recorded here.")
 
     client.create(DECISION_TYPE, {
         "name": f"{decision} for {proposal.get('name')}"[:200],
