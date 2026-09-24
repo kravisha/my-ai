@@ -9,6 +9,11 @@ The other one is arithmetic dressed as kindness. Silence settled as `wrong`
 rather than `not_now` teaches Jarvis to stop noticing, which is the opposite of
 what a week of no reply actually means.
 
+The third is the task questions. `reply` and `leave_out` go through
+`taskrun.Need`'s own methods so that its refusals hold; a console that assigned
+the fields instead would still work, still save, and would let Jarvis answer
+his own question by typing it here.
+
 Run it directly:
 
     python tests/probes/console_probes.py
@@ -151,6 +156,51 @@ PROBES: list[harness.Probe] = [
         '                             settled_by="no answer", agent=agent)',
         '                             settled_by="krish", agent=agent)',
         ("test_a_mention_krish_never_answered_lapses_to_not_now",),
+    ),
+    # --- the questions a task parked -------------------------------------------
+    (
+        CONSOLE,
+        "an answer is assigned rather than answered, so anybody may give it",
+        "    run.need(about).answered(answer, by=by)",
+        "    line = run.need(about)\n"
+        "    line.question.answer = answer\n"
+        "    line.question.answered_by = by\n"
+        "    line.value = answer\n"
+        "    line.source = f\"{by} said so\"\n"
+        "    line.state = taskrun.ANSWERED",
+        ("test_jarvis_cannot_use_the_console_to_answer_his_own_question",),
+    ),
+    (
+        CONSOLE,
+        "the answer is given and then not saved",
+        '    taskrun.save(client, run, agent=agent,\n'
+        '                 reason=f"{by} answered the question about {about!r}")',
+        '    pass',
+        ("test_krish_answers_a_task_question_from_his_console",),
+    ),
+    (
+        CONSOLE,
+        "a question already answered is put to Krish again",
+        "        for one in run.open_questions():",
+        "        for one in (line.question for line in run.needs\n"
+        "                    if line.question is not None):",
+        ("test_nothing_is_waiting_when_no_run_asked_anything",),
+    ),
+    (
+        CONSOLE,
+        "the newest question is put first, so the oldest waits longest",
+        '    found.sort(key=lambda one: one["at"])',
+        '    found.sort(key=lambda one: one["at"], reverse=True)',
+        ("test_questions_from_every_run_are_listed_oldest_first",),
+    ),
+    (
+        CONSOLE,
+        "a line is left out by assignment, so Jarvis may leave one out",
+        "    run.need(about).waive(by=by, because=because)",
+        "    line = run.need(about)\n"
+        "    line.state = taskrun.WAIVED\n"
+        "    line.source = f\"{by} left it out: {because}\"",
+        ("test_jarvis_cannot_leave_a_line_out_through_the_console",),
     ),
 ]
 
