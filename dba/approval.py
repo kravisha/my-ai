@@ -739,7 +739,10 @@ def http_call(operation: str, principal: str, payload: Any, connect=None) -> tup
     docstring saying so). An unexpected fault in schema set-up or an operation
     propagates and the service answers HTTP 500 - an outcome of UNKNOWN effect,
     which the client reports as Unavailable, never as a structured refusal.
-    Each operation's own transaction means such a fault rolled its writes back."""
+    A fault raised INSIDE an operation's transaction rolls its writes back; one
+    raised after the commit (closing the connection, building the response) does
+    not, which is exactly why the client must treat any 500 as outcome unknown
+    and re-read state (Arya 5818910728)."""
     def answer(result: Result) -> tuple[int, dict]:
         body = {"ok": result.ok, "code": result.code, "message": result.message,
                 "data": result.data, "replayed": result.replayed}
