@@ -44,7 +44,7 @@ import json
 import sqlite3
 
 from backend.db import Contended, Database, now_iso
-from dba import (askback, audit, contract, entities, ids, operations,
+from dba import (approval, askback, audit, contract, entities, ids, operations,
                  permissions, records, store)
 
 
@@ -257,6 +257,32 @@ class DBAgent:
             return contract.failure(
                 request, code=contract.VALIDATION_ERROR,
                 message=f"{action} needs an entity_type.")
+
+        if (action in (contract.CREATE, contract.UPDATE)
+                and entity_type.name == approval.PROPOSAL_TYPE):
+            # The existing record decides whether the proposal is execution-
+            # managed, so it must be read under the write lock: sqlite3 runs a
+            # bare SELECT outside any transaction, and a freeze committing
+            # between this read and the write would let a legacy write land on
+            # a frozen proposal. Only inside this request's own transaction -
+            # outside one, `execute` would commit the BEGIN straight away.
+            if conn._in_transaction and not conn._conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            existing = conn.fetchone(
+                "SELECT status, data_json FROM entities WHERE id = ?",
+                (request.entity_id,)) if request.entity_id else None
+            protected = approval.protected_writes(
+                request.data,
+                json.loads(existing["data_json"]) if existing else None,
+                existing["status"] if existing else None)
+            if protected:
+                return contract.failure(
+                    request, code=contract.PROTECTED_FIELD,
+                    message=(f"{', '.join(protected)} can be written only by the "
+                             f"execution-approval operations in dba/approval.py; a "
+                             f"generic write would let an approval be forged or "
+                             f"repurposed."),
+                    details={"fields": protected})
 
         if action == contract.CREATE:
             return operations.create(conn, entity_type, request)

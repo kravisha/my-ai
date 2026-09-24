@@ -82,11 +82,14 @@ TIMEOUT = "timeout"
 SCHEMA_MISMATCH = "schema_mismatch"
 INTERNAL_ERROR = "internal_error"
 UNKNOWN_ACTION = "unknown_action"
+# Rev A §6: a field or status only `dba/approval.py` may write. Not a
+# permission question - no principal may write it through the generic path.
+PROTECTED_FIELD = "protected_field"
 
 ERROR_CODES = (
     VALIDATION_ERROR, PERMISSION_DENIED, NOT_FOUND, DUPLICATE_DETECTED,
     CONFLICT_DETECTED, TRANSACTION_FAILED, DATABASE_UNAVAILABLE, TIMEOUT,
-    SCHEMA_MISMATCH, INTERNAL_ERROR, UNKNOWN_ACTION,
+    SCHEMA_MISMATCH, INTERNAL_ERROR, UNKNOWN_ACTION, PROTECTED_FIELD,
 )
 
 # Which failures a caller may safely try again, stated here rather than decided
