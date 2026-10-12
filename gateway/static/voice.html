@@ -166,6 +166,76 @@ button { font-family: inherit; cursor: pointer; }
 .hidden { display: none !important; }
 footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align: center; }
 .link { background: none; border: 0; color: var(--muted); text-decoration: underline; }
+/* Jarvis presentation: existing controls and transport keep their identities. */
+body { background: radial-gradient(ellipse at 50% 22%, #14283b 0, #090f19 58%); }
+header { background: #0b1422; border-bottom: 1px solid #263c51; }
+header .row { max-width: 1320px; margin-inline: auto; }
+main { max-width: 1320px; padding: 24px; }
+.presence { text-align: center; padding: 18px 0 30px; }
+.presence h1 { margin: 8px 0; font-size: clamp(25px, 4vw, 38px); font-weight: 500; }
+.presence p { color: #b4c5d7; margin: 8px auto; max-width: 560px; }
+.eyebrow { color: #8edfea; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; }
+.orb-stage { position: relative; width: 180px; height: 180px; margin: 12px auto 22px; }
+.orb-halo { position: absolute; inset: -16px; border: 1px solid #72deef30; border-radius: 50%; }
+.orb-halo::after { content: ""; position: absolute; inset: 10px; border: 1px solid #72deef20; border-radius: 50%; }
+.orb { position: absolute; inset: 10px; overflow: hidden; border-radius: 46% 54% 58% 42%;
+  background: radial-gradient(circle at 30% 25%, #d7ffff, #55ddea 22%, #3b79bb 52%, #153c66 76%);
+  box-shadow: inset -12px -18px 30px #091528b0, 0 0 45px #54ddea30;
+  animation: jarvis-flow 11s ease-in-out infinite alternate; }
+.orb::before, .orb::after { content: ""; position: absolute; inset: 12%; border-radius: 40% 60% 35% 65%;
+  border: 2px solid #c8ffff70; transform: rotate(-30deg); }
+.orb::after { inset: 23% -15%; transform: rotate(35deg); border-width: 15px; border-color: #c8ffff30; }
+.native-conversation .orb { animation-play-state: paused; }
+.native-conversation .orb.capture-ready { animation-play-state: running; animation-duration: 5s; }
+@keyframes jarvis-flow {
+  from { transform: rotate(-12deg) scale(.95); border-radius: 46% 54% 58% 42%; }
+  to { transform: rotate(18deg) scale(1.04); border-radius: 59% 41% 44% 56%; }
+}
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.workspace > .box { min-width: 0; margin: 0; padding: 22px; border-radius: 20px; background: #111e2bea; }
+.workspace .box h2 { text-transform: none; color: #e8f3ff; font-size: 20px; letter-spacing: 0; }
+.workspace textarea { min-height: 125px; }
+.reply-panel { min-height: 380px; }
+#log { max-height: 540px; overflow-y: auto; margin-top: 12px; }
+#log:empty::before { content: "Your replies will appear here. Sign in, then type or tap the microphone to begin.";
+  color: var(--muted); display: block; padding: 22px 0; }
+#log.native-log:empty::before { content: "Your replies will appear here. Type a message and send it to Jarvis."; }
+.native-conversation .relay, .native-conversation .inbox { display: none; }
+.native-header button:not(#muteVoice), .native-conversation button { display: none; }
+.native-conversation #diagnosticPanel button { display: inline-block; }
+.native-main { display: grid; grid-template-areas: "words" "presence" "reply"; gap: 18px; }
+.native-main .native-conversation { display: contents; }
+.native-conversation > .box:first-child { grid-area: words; }
+.native-main > .presence { grid-area: presence; padding: 0; }
+.native-main > .presence .orb-stage { width: 140px; height: 140px; }
+.native-main > .presence .eyebrow, .native-main > .presence h1,
+.native-main > .presence p:not(#voiceInvitation) { display: none; }
+.native-conversation .reply-panel { grid-area: reply; min-height: 180px; }
+.native-conversation textarea { min-height: 64px; }
+.native-conversation .attachrow { display: none; }
+.native-conversation #log { max-height: 340px; }
+.native-activity { grid-area: activity; align-self: start; padding: 20px; border: 1px solid #324758;
+  border-radius: 18px; background: #142334; overflow-wrap: anywhere; }
+.native-activity pre { white-space: pre-wrap; font: inherit; }
+.native-main.claude-active { grid-template-columns: minmax(0, 1fr) 290px;
+  grid-template-areas: "words activity" "presence activity" "reply activity"; }
+@media (max-width: 900px) {
+  .native-main.claude-active { grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "words" "presence" "reply" "activity"; }
+}
+.workspace .relay, .workspace .inbox { margin-top: 4px; }
+.box .section-note { color: #a6b9cf; font-size: 13px; margin: -2px 0 16px; }
+#loginBox { max-width: 480px; margin: 0 auto 24px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 3px solid #8ee5ff; outline-offset: 3px;
+}
+.chip { min-height: 36px; }
+@media (max-width: 800px) {
+  main { padding: 16px; } .workspace { grid-template-columns: minmax(0, 1fr); }
+  .presence { padding-top: 10px; } .orb-stage { width: 140px; height: 140px; }
+  .reply-panel { min-height: 230px; } #log { max-height: 420px; }
+}
+@media (prefers-reduced-motion: reduce) { .orb { animation: none; } }
 </style>
 </head>
 <body>
@@ -174,18 +244,28 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   <div class="row">
     <strong>Jarvis</strong>
     <span id="dot" class="dot"></span>
-    <span id="state">signed out</span>
+    <span id="state" role="status">signed out</span>
   </div>
   <div class="row small">
-    <span id="voicestate">voice: auto</span>
+    <span id="voicestate">voice: on</span>
     <span id="instance">__INSTANCE__</span>
     <span class="chip" style="background:rgba(0,0,0,.25)">v__VERSION__</span>
     <button id="enableAudio" class="chip">tap to enable voice</button>
     <button id="stopSpeak" class="chip hidden">stop talking</button>
+    <button id="muteVoice" class="chip" aria-pressed="false">Mute voice</button>
+    <button id="nativeStart" class="chip hidden">Start / Connect</button>
   </div>
 </header>
 
 <main>
+
+  <section class="presence" aria-labelledby="jarvis-title">
+    <div class="orb-stage" aria-hidden="true"><div class="orb-halo"></div><div class="orb"></div></div>
+    <div class="eyebrow">Your personal assistant</div>
+    <h1 id="jarvis-title">Hello. I’m Jarvis.</h1>
+    <p>What would you like to work on?</p>
+    <p class="hint" id="voiceInvitation" role="status">Enable voice to hear me. Sign in to start a conversation.</p>
+  </section>
 
   <div id="loginBox" class="card">
     <label for="user">Super User sign-in</label>
@@ -196,15 +276,24 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     <p class="hint" id="loginHint">Your credentials go to this Gateway only.</p>
   </div>
 
-  <div id="app" class="hidden">
+  <div id="app" class="workspace hidden">
 
     <!-- BOX 1 — talking to Jarvis -->
     <section class="box">
-      <h2>1 &nbsp;Talk to Jarvis</h2>
+      <h2>Your words</h2>
       <label for="text">What you said — edit it before sending</label>
       <textarea id="text" rows="3" placeholder="Tap the mic and speak, or just type here…"></textarea>
 
       <div id="heard" class="heard">Nothing captured yet.</div>
+      <div id="diagnosticPanel" class="hidden">
+        <div id="diagnosticCue" role="status" aria-live="polite" style="font-size:26px;font-weight:800;padding:20px;border:3px solid currentColor;border-radius:12px;color:#f4bc54">WAIT — microphone not ready</div>
+        <div class="actions">
+          <button id="diagnosticStart" class="primary">Start recognition test</button>
+          <button id="diagnosticRepeat" disabled>Repeat sentence</button>
+          <button id="diagnosticNext" disabled>Next sentence</button>
+          <button id="diagnosticStop" disabled>Stop test</button>
+        </div>
+      </div>
 
       <div class="actions">
         <button id="mic" class="mic">Tap to speak</button>
@@ -241,7 +330,7 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
       <div id="tray" class="tray hidden"></div>
 
       <div id="micstatus" class="micstatus">Microphone not yet used.</div>
-      <p class="hint">
+      <p class="hint" id="inputHint">
         Typing always works, even when the microphone does not. Your phone
         keyboard's mic key types into this box too.
         <br>Attachments: up to four at a time, 15 MB each. Photos, PDFs, text
@@ -249,9 +338,24 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
       </p>
     </section>
 
+    <section class="box reply-panel" aria-labelledby="replyTitle">
+      <h2 id="replyTitle">Jarvis replies</h2>
+      <p class="section-note">Read the answer here, or listen with voice enabled.</p>
+      <div id="log" role="log" aria-label="Jarvis replies" aria-live="off"></div>
+      <p id="nativeCommStatus" class="hint hidden" role="status"></p>
+    </section>
+    <aside id="nativeActivity" class="native-activity hidden" aria-label="Claude activity">
+      <h2>Claude activity</h2>
+      <p id="nativeActivityOrigin" class="hint"></p>
+      <pre id="nativeActivityQuestion"></pre>
+      <p id="nativeActivityState" class="hint" role="status"></p>
+      <pre id="nativeActivityAnswer"></pre>
+    </aside>
+
     <!-- BOX 2 — what Jarvis sends on to Claude Dev -->
     <section class="box relay">
-      <h2>2 &nbsp;Message to Claude</h2>
+      <h2>Message to Claude</h2>
+      <p class="section-note">Shared-channel relay. A live Claude session connection has not been verified.</p>
       <label for="relay">Jarvis drafts here, or you write it. Nothing is sent until you press the button.</label>
       <textarea id="relay" rows="3" placeholder="A message to carry to Claude Dev…"></textarea>
       <div class="actions">
@@ -273,7 +377,7 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
 
     <!-- The return path. Krish: "how do I receive the feedback from you?" -->
     <section class="box inbox">
-      <h2>3 &nbsp;From Claude</h2>
+      <h2>From Claude</h2>
       <div id="inboxlist"><em>Nothing yet. Replies from Claude appear here.</em></div>
       <div class="row">
         <button id="checkInbox" type="button">Check now</button>
@@ -282,7 +386,6 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
       <div id="inboxstatus" class="micstatus">Checking every 30 seconds.</div>
     </section>
 
-    <div id="log"></div>
   </div>
 
 </main>
@@ -296,6 +399,500 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  // Explicit standalone host mode: no legacy storage, login, websocket, mic or
+  // inbox initialization. The native facade is not an HTTP endpoint.
+  if (window.__JARVIS_NATIVE__) {
+    const epoch = window.__JARVIS_NATIVE__.epoch;
+    let bridge = null, revision = 0, inFlight = false, closed = false, localBusy = false;
+    let audioEnabled = false, muted = false, playbackGeneration = 0, speechGeneration = 0, pollTimer = null;
+    const activeSpeech = new Map();
+    // Krish's voice contract: one ordinary visible button, Silence. Spoken
+    // "Silence" must stop output immediately while recognition keeps listening.
+    // Only "Jarvis, back to voice mode" resumes output. Silence is neither a
+    // microphone toggle nor remote/computer-action cancellation (Escape is separate).
+    // Opt-in native ASR runs voiceCommand BEFORE model/busy routing.
+    // Real mic/audio acceptance still requires
+    // mid-utterance stop, no queued leakage, continued resume recognition, and
+    // explicit resume restoring output. Mock speech checks alone do not prove it.
+    let localRows = [], commRows = [], binding = null, pendingRequest = null;
+    const timeline = [], commTimeline = new Map(), ownHandoffBodies = new Set();
+    let activityRequest = null;
+    let recoveryBlocked = false;
+    const seenTokens = new Set();
+    const config = window.__JARVIS_NATIVE__;
+    let microphoneState = config.microphone_available ? "not started" : "unavailable";
+    let voiceTimer = null, voicePollBusy = false, voiceDraining = false, lastVoiceEvent = 0;
+    const voiceTurns = [];
+    let voiceStarting = false;
+    let diagnostic = null, diagnosticTimer = null;
+    $("loginBox").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("app").classList.add("native-conversation");
+    document.querySelector("main").classList.add("native-main");
+    document.querySelector("header").classList.add("native-header");
+    $("nativeCommStatus").classList.remove("hidden");
+    $("nativeCommStatus").textContent = "Claude is not connected. Local conversation is not saved.";
+    $("voicestate").textContent = "voice: unavailable";
+    $("voiceInvitation").textContent = config.local_model
+      ? "Talk to Jarvis here. To request Claude explicitly, begin with ‘Ask Claude’."
+      : "The local conversation handler is not configured.";
+    $("state").textContent = "native host · disconnected";
+    $("inboxstatus").textContent = "No live Claude connection verified.";
+    $("micstatus").textContent = config.microphone_available ? "Microphone is configured; waiting for host readiness." : "Microphone is disabled in this integration stage.";
+    $("heard").textContent = "Microphone is off until setup is complete. Typed text stays separate from recognition.";
+    $("text").placeholder = "Type a message to Jarvis…";
+    $("inputHint").textContent = config.comm_available
+      ? "Save status appears with each answer. Say ‘Jarvis, list conversations’ to resume saved work. Attachments are unavailable."
+      : "Typed conversation stays in this window and is not saved. Attachments are unavailable in this integration stage.";
+    $("log").classList.add("native-log");
+    for (const id of ["mic", "send", "attach", "draftRelay", "enableAudio", "muteVoice", "readInbox"]) $(id).disabled = true;
+    $("sendRelay").textContent = "Ask Claude";
+    $("sendRelay").disabled = true;
+    $("checkInbox").textContent = "Check Claude";
+    $("checkInbox").disabled = true;
+    $("stopSpeak").classList.remove("hidden");
+    $("stopSpeak").textContent = "Stop request";
+    $("stopSpeak").disabled = true;
+    $("relaystatus").textContent = "Communication adapter unavailable. Nothing has been sent.";
+    document.querySelector(".relay .section-note").textContent = "Native communication adapter. Ask Claude is an explicit escalation.";
+    document.querySelector(".relay .hint").textContent = "Connection, delivery and reply states appear only when the adapter reports them.";
+    $("nativeStart").classList.remove("hidden");
+    $("nativeStart").disabled = true;
+    $("muteVoice").textContent = "Silence";
+    $("muteVoice").disabled = false;
+    function interruptOutput() {
+      speechGeneration++;
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      for (const triple of activeSpeech.values()) call("speech_unknown", ...triple);
+      activeSpeech.clear();
+    }
+    function silence() {
+      muted = true; interruptOutput();
+      $("muteVoice").setAttribute("aria-pressed", "true");
+      $("voicestate").textContent = "speech: silent · microphone " + microphoneState;
+      // Never call recognition.stop(), Comm.stop(), or cancel local inference.
+    }
+    function voiceCommand(text) {
+      const command = text.toLowerCase().replace(/[.,!?]/g, "").trim().replace(/\s+/g, " ");
+      if (command === "silence") { silence(); return true; }
+      if (command === "jarvis back to voice mode") {
+        muted = false; speechGeneration++;
+        audioEnabled = !!config.speech_available && "speechSynthesis" in window;
+        $("muteVoice").setAttribute("aria-pressed", "false");
+        $("voicestate").textContent = (audioEnabled ? "speech: enabled" : "speech: unavailable") + " · microphone " + microphoneState;
+        return true;
+      }
+      if (command === "jarvis shut down" || command === "jarvis shutdown" || command === "jarvis close without saving") {
+        if (bridge) bridge.close_app(epoch, command === "jarvis close without saving").then(window.jarvisCloseResult)
+          .catch(() => window.jarvisCloseResult({host_epoch: epoch, ok: false, close_allowed: false, error: "close_unconfirmed", outcome_unknown: true}));
+        return true;
+      }
+      if (command === "jarvis connect to claude") { call("start"); return true; }
+      if (command === "jarvis list conversations" || command === "jarvis new conversation" || /^jarvis resume conversation \d+$/.test(command)) {
+        conversationCommand(command); return true;
+      }
+      return false;
+    }
+    function diagnosticCue(message, ready = false) {
+      $("diagnosticCue").textContent = message;
+      $("diagnosticCue").style.color = ready ? "#54dc8b" : "#f4bc54";
+      document.querySelector(".orb").classList.toggle("capture-ready", ready);
+    }
+    $("diagnosticPanel").classList.remove("hidden");
+    $("diagnosticStart").onclick = () => recognitionDiagnostic("Jarvis recognition test");
+    $("diagnosticStop").onclick = () => recognitionDiagnostic("Jarvis stop recognition test");
+    function diagnosticBoundary(next) {
+      if (!diagnostic || diagnostic.done || microphoneState !== "listening") return;
+      if (next && diagnostic.sentence < 10) diagnostic.sentence++;
+      diagnostic.attempt++;
+      diagnosticCue("READY — Read sentence " + diagnostic.sentence, true);
+    }
+    $("diagnosticNext").onclick = () => diagnosticBoundary(true);
+    $("diagnosticRepeat").onclick = () => diagnosticBoundary(false);
+    async function recognitionDiagnostic(text) {
+      const command = text.toLowerCase().trim().replace(/[.,!?]/g, "");
+      if (command === "jarvis stop recognition test") {
+        if (!diagnostic) return true;
+        diagnostic.done = true; voiceTurns.length = 0;
+        diagnosticCue("WAIT — stopping microphone");
+        $("diagnosticNext").disabled = $("diagnosticRepeat").disabled = $("diagnosticStop").disabled = true;
+        if (diagnosticTimer) clearTimeout(diagnosticTimer);
+        if (voiceTimer) { clearInterval(voiceTimer); voiceTimer = null; }
+        const stopped = await bridge.voice_stop(epoch);
+        diagnosticCue(stopped?.worker_stopped ? "STOPPED — results retained below" : "WAIT — microphone stop unconfirmed");
+        $("micstatus").textContent = stopped?.worker_stopped ? "Microphone: stopped. Test results retained below." : "Microphone stop requested; worker completion unconfirmed.";
+        $("voicestate").textContent = "Recognition test ended · speech off";
+        $("voiceInvitation").textContent = "Test ended. Results are verbatim recognizer output, not corrected text. Close this window after review; restart for normal voice use.";
+        return true;
+      }
+      if (command !== "jarvis recognition test") return false;
+      if (diagnostic || localBusy || inFlight || voiceTimer) {
+        $("voiceInvitation").textContent = "Recognition test requires this fresh setup window with microphone off."; return true;
+      }
+      diagnostic = {done: false, count: 0, sentence: 1, attempt: 1, ready: false};
+      $("diagnosticStart").disabled = true;
+      $("diagnosticStop").disabled = false;
+      diagnosticCue("WAIT — starting microphone");
+      audioEnabled = false; muted = true; voiceTurns.length = 0; interruptOutput();
+      const started = await bridge.voice_diagnostic_start(epoch);
+      if (!started?.ok) { diagnostic.done = true; diagnosticCue("WAIT — microphone failed to start"); $("voiceInvitation").textContent = "Recognition test could not start."; return true; }
+      $("voiceInvitation").textContent = "Recognition-only test: read statement 1, then pause. Each result is retained separately below; a statement may produce multiple results. Nothing spoken executes or reaches a model. Type ‘Jarvis stop recognition test’ to end. Automatic stop after two minutes.";
+      $("heard").textContent = "Wait for the moving orb and READY cue before speaking. No command execution or model calls.";
+      voiceTimer = setInterval(pollVoice, 100);
+      diagnosticTimer = setTimeout(() => recognitionDiagnostic("Jarvis stop recognition test"), 120000);
+      pollVoice();
+      return true;
+    }
+    let conversationChoices = [];
+    window.jarvisCloseResult = result => {
+      if (result?.host_epoch !== epoch || result.close_allowed) return;
+      render(result);
+      const receipt = result.result || {};
+      const unsaved = Array.isArray(receipt.unsaved) ? receipt.unsaved : [];
+      $("voiceInvitation").textContent = "Jarvis is still open: saving is incomplete or unconfirmed. "
+        + (unsaved.length ? "Unsaved event IDs: " + unsaved.join(", ") + ". " : "")
+        + (receipt.error ? "Save error: " + receipt.error + ". " : "")
+        + (receipt.checkpoint_persisted === true && unsaved.length ? "Checkpoint saved; these conversation turns are NOT saved. " : "")
+        + "Say ‘Jarvis, shut down’ to check saving again, or ‘Jarvis, close without saving’ to close explicitly.";
+    };
+    async function conversationCommand(command) {
+      if (localBusy || inFlight || pendingRequest) {
+        $("voiceInvitation").textContent = "Wait for the current operation before changing conversations."; return;
+      }
+      if (command === "jarvis list conversations") {
+        const reply = await call("conversations");
+        if (!reply?.ok) return;
+        conversationChoices = reply.result;
+        $("voiceInvitation").textContent = conversationChoices.length
+          ? conversationChoices.map((item, i) => (i + 1) + ": " + item.conversation_id + (item.closed_cleanly === true ? " · saved on close" : " · close status unconfirmed")).join("\n") + "\nType ‘Jarvis resume conversation’ followed by its number, or ‘Jarvis new conversation’, then press Enter. The microphone stays off during setup."
+          : "Type ‘Jarvis new conversation’ and press Enter. The microphone stays off during setup.";
+        return;
+      }
+      let reply;
+      if (command === "jarvis new conversation") reply = await call("new_conversation");
+      else {
+        const item = conversationChoices[Number(command.split(" ").pop()) - 1];
+        if (!item) { $("voiceInvitation").textContent = "Say ‘Jarvis, list conversations’ first and choose a listed number."; return; }
+        reply = await call("select_conversation", item.conversation_id);
+      }
+      if (reply?.ok && (reply.result.selected || reply.result.created)) {
+        localRows.length = 0; timeline.length = 0; commTimeline.clear(); ownHandoffBodies.clear();
+        commRows = reply.view.transcript.filter(row => row.conversation_id === reply.result.conversation_id);
+        paintTranscript();
+        $("voiceInvitation").textContent = "Conversation selected: " + reply.result.conversation_id;
+        startVoiceAfterSetup();
+      } else $("voiceInvitation").textContent = "Conversation unchanged: " + (reply?.result?.reason || reply?.error || "operation unconfirmed");
+    }
+    function paintTranscript() {
+      const log = $("log"); log.replaceChildren();
+      for (const row of localRows) if (!timeline.includes(row)) timeline.push(row);
+      commRows.forEach((row, index) => {
+        if (row.kind === "user" && ownHandoffBodies.has(row.payload.text)) return;
+        if (row.event_id) {
+          const own = localRows.find(item => item.event_id === row.event_id);
+          if (own) {
+            const prior = commTimeline.get(row.event_id);
+            if (prior) { const position = timeline.indexOf(prior); if (position >= 0) timeline.splice(position, 1); commTimeline.delete(row.event_id); }
+            Object.assign(own, row); return;
+          }
+        }
+        const key = row.event_id || (row.request_id ? row.request_id + ":" + row.kind + ":" + (row.sequence ?? index) : "row:" + index);
+        if (commTimeline.has(key)) Object.assign(commTimeline.get(key), row);
+        else { const copy = {...row}; commTimeline.set(key, copy); timeline.push(copy); }
+      });
+      for (const row of timeline) {
+        const el = document.createElement("div"); el.className = "entry";
+        const meta = document.createElement("div"); meta.className = "meta";
+        const speaker = row.kind === "assistant_local" ? "Jarvis · local" : row.kind === "user" && row.origin !== "jarvis" ? "Krish" : row.responder || row.kind;
+        meta.textContent = speaker + (row.restored ? " · restored" : "")
+          + (row.kind === "assistant_claude" && row.origin === "krish-via-jarvis" ? " · answering Krish via Jarvis" : row.kind === "assistant_claude" && row.origin === "jarvis" ? " · Jarvis asked" : "")
+          + (row.kind === "assistant_claude" && row.origin && row.origin_echoed !== undefined && row.origin_echoed !== row.origin ? " · origin echo unverified" : "")
+          + (row.late ? " · late" : "") + (row.speech ? " · speech: " + row.speech : "");
+        if (row.persisted) meta.textContent += row.persisted.turn === true ? " · saved" : " · not saved";
+        if (row.persisted && row.persisted.turn !== true) meta.textContent += " · event ID: " + (row.event_id || "unavailable")
+          + " · save error: " + (row.persisted.error || "unconfirmed");
+        const body = document.createElement("pre"); body.textContent = row.payload.text;
+        el.append(meta, body); log.append(el);
+      }
+    }
+    function receiveSpeech(descriptors) {
+      for (const d of descriptors || []) {
+        if (seenTokens.has(d.token_id) || !binding || d.epoch !== binding.self_epoch || d.cancel_generation !== binding.cancel_generation) continue;
+        seenTokens.add(d.token_id);
+        const triple = [d.token_id, d.epoch, d.cancel_generation];
+        if (!audioEnabled || muted || !config.speech_available) { call("speech_unknown", ...triple); continue; }
+        const generation = speechGeneration;
+        const utterance = new SpeechSynthesisUtterance(d.text);
+        activeSpeech.set(d.token_id, triple);
+        utterance.onstart = () => { if (!closed && !muted && generation === speechGeneration) call("speech_started", ...triple); };
+        utterance.onend = () => { activeSpeech.delete(d.token_id); if (!closed && !muted && generation === speechGeneration) call("speech_completed", ...triple); };
+        utterance.onerror = () => { activeSpeech.delete(d.token_id); if (!closed && generation === speechGeneration) call("speech_error", ...triple, "PlaybackError"); };
+        try { window.speechSynthesis.speak(utterance); }
+        catch (_) { call("speech_error", ...triple, "PlaybackError"); }
+      }
+    }
+    function render(reply) {
+      if (closed || reply?.host_epoch !== epoch) return;
+      if (!reply.ok) {
+        $("relaystatus").textContent = "Native operation: " + (reply.error || "unavailable")
+          + (reply.outcome_unknown ? ". Outcome unknown — do not resend automatically." : ".");
+        $("nativeCommStatus").textContent = $("relaystatus").textContent;
+        return;
+      }
+      if (!Number.isInteger(reply.revision) || reply.revision <= revision || !reply.view) return;
+      revision = reply.revision;
+      const snapshot = reply.view.snapshot;
+      binding = snapshot.binding;
+      recoveryBlocked = snapshot.recovery?.state === "unresolved";
+      pendingRequest = snapshot.pending;
+      $("state").textContent = binding.bound ? "Claude relationship bound" : "Claude relationship unbound";
+      $("dot").classList.toggle("on", binding.bound === true);
+      $("sendRelay").disabled = !binding.bound || !!snapshot.pending || recoveryBlocked;
+      $("relaystatus").textContent = Object.entries(snapshot.status)
+        .map(([key, value]) => key + ": " + value.state + " (" + value.source + ")").join(" · ") || "No request state reported.";
+      $("nativeCommStatus").textContent = $("relaystatus").textContent;
+      if (recoveryBlocked) $("nativeCommStatus").textContent += " · Recovery unresolved: " + snapshot.recovery.errors.join("; ");
+      commRows = reply.view.transcript.filter(row => !binding.conversation_id || !row.conversation_id || row.conversation_id === binding.conversation_id);
+      const unsavedRows = commRows.filter(row => row.persisted && row.persisted.turn !== true);
+      if (unsavedRows.length) $("nativeCommStatus").textContent += " · Conversation NOT fully saved: "
+        + unsavedRows.map(row => row.event_id || "event ID unavailable").join(", ");
+      if (activityRequest) {
+        $("nativeActivityState").textContent = $("nativeCommStatus").textContent;
+        const answer = commRows.find(row => row.request_id === activityRequest && row.kind === "assistant_claude");
+        if (answer) $("nativeActivityAnswer").textContent = (answer.responder || "Claude") + ":\n" + answer.payload.text;
+      }
+      paintTranscript();
+      // Only explicit eligible descriptors can request playback, never rows.
+      if (reply.result?.speech) receiveSpeech(reply.result.speech);
+    }
+    async function call(method, ...args) {
+      const control = method === "stop" || method.startsWith("speech_");
+      if (!bridge || closed || (inFlight && !control)) return;
+      if (!control) inFlight = true;
+      try {
+        const reply = await bridge[method](epoch, ...args); render(reply);
+        if (method === "start" && reply.ok && !pollTimer) pollTimer = setInterval(() => call("poll"), 2000);
+        return reply;
+      }
+      catch (_) { $("relaystatus").textContent = "Native bridge unavailable; operation outcome unconfirmed."; $("nativeCommStatus").textContent = $("relaystatus").textContent; }
+      finally { if (!control) inFlight = false; }
+    }
+    $("sendRelay").onclick = () => call("escalate", $("relay").value, "krish-via-jarvis");
+    $("checkInbox").onclick = () => call("poll");
+    $("nativeStart").onclick = () => { $("nativeStart").disabled = true; call("start"); };
+    $("stopSpeak").onclick = () => {
+      // Local cancellation does not assert a remote CANCEL_ACK.
+      playbackGeneration++;
+      speechGeneration++; activeSpeech.clear();
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      call("stop");
+    };
+    async function handoff(text, origin, reason, userEventId = null) {
+      const handoffGeneration = playbackGeneration;
+      const context = timeline.filter(item => item.kind !== "user" || item.payload.text !== text)
+        .slice(-6).map(item => ({speaker: item.responder || item.kind, text: item.payload.text.slice(0, 800)}));
+      const row = {kind: "Jarvis · " + origin, payload: {text: ""}};
+      localRows.push(row);
+      $("nativeActivity").classList.remove("hidden");
+      document.querySelector("main").classList.add("claude-active");
+      $("nativeActivityOrigin").textContent = origin === "user-command" ? "Krish’s request, relayed by Jarvis" : "Jarvis is requesting help";
+      $("nativeActivityQuestion").textContent = text;
+      $("nativeActivityAnswer").textContent = "";
+      activityRequest = null;
+      if (recoveryBlocked || !binding?.bound || pendingRequest || inFlight) {
+        row.payload.text = recoveryBlocked ? "Saved pending state is unresolved. This was not sent. " + $("nativeCommStatus").textContent
+          : !binding?.bound ? "Claude is not connected, so this was not sent."
+          : "Another communication operation is pending. This was not sent; ask again when it finishes.";
+        $("nativeActivityState").textContent = row.payload.text;
+        paintTranscript(); $("voiceInvitation").textContent = row.payload.text; return;
+      }
+      const body = "Origin: " + origin + "\n" + (reason ? "Local result: " + reason + "\n" : "")
+        + "User message:\n" + text + "\nRecent conversation context (may be incomplete):\n" + JSON.stringify(context);
+      if (body.length > 16000) {
+        row.payload.text = "The Claude handoff is too long and was not sent. Please shorten the message.";
+        $("nativeActivityState").textContent = row.payload.text;
+        paintTranscript(); return;
+      }
+      ownHandoffBodies.add(body);
+      row.payload.text = "Jarvis is asking big brother Claude. Sending request…";
+      $("nativeActivityState").textContent = row.payload.text;
+      paintTranscript(); $("voiceInvitation").textContent = row.payload.text;
+      const typedOrigin = origin === "user-command" ? "krish-via-jarvis" : "jarvis";
+      const result = config.comm_available
+        ? await call("consult", userEventId, typedOrigin, body)
+        : await call("escalate", body, typedOrigin);
+      if (closed || handoffGeneration !== playbackGeneration) return;
+      activityRequest = result?.result?.message_id || null;
+      // Publication truth comes from the facade's correlated view, never sent=true alone.
+      row.payload.text = result?.ok ? "Claude handoff attempted. " + $("nativeCommStatus").textContent
+        : "Claude handoff outcome unconfirmed. No automatic retry was made.";
+      $("nativeActivityState").textContent = row.payload.text;
+      paintTranscript(); $("voiceInvitation").textContent = row.payload.text;
+    }
+    async function submitText(text, outputGeneration = speechGeneration) {
+      if (!text) return;
+      if (/^jarvis (?:stop )?recognition test[.!?]?$/i.test(text.trim())) { await recognitionDiagnostic(text); return; }
+      if (diagnostic?.done && /^jarvis (?:shut down|shutdown|close without saving)[.!?]?$/i.test(text.trim())) { voiceCommand(text); return; }
+      if (diagnostic) { $("voiceInvitation").textContent = "Recognition-only mode. Type ‘Jarvis stop recognition test’ to stop capture; close the window after reviewing results."; return; }
+      if (closed || voiceCommand(text)) return;
+      if (!bridge || localBusy) return;
+      if (config.comm_available && (!binding?.conversation_id || recoveryBlocked)) {
+        $("voiceInvitation").textContent = "Choose a conversation first. Type ‘Jarvis list conversations’ or ‘Jarvis new conversation’.";
+        return;
+      }
+      if (!pendingRequest) {
+        $("nativeActivity").classList.add("hidden");
+        document.querySelector("main").classList.remove("claude-active");
+        activityRequest = null;
+      }
+      localBusy = true; $("send").disabled = true;
+      const generation = playbackGeneration;
+      const userRow = {kind: "user", payload: {text}};
+      localRows.push(userRow); paintTranscript();
+      const explicitClaude = /^(?:please\s+)?(?:ask|tell|consult)\s+(?:big brother\s+)?claude\b/i.test(text);
+      $("voiceInvitation").textContent = "Jarvis is answering locally using " + config.local_model + "…";
+      try {
+        if (explicitClaude) {
+          if (config.comm_available) {
+            const identity = await bridge.submission_id(epoch);
+            if (!identity?.ok || identity.host_epoch !== epoch) throw new Error("identity unavailable");
+            // Preserve original words; the consultation envelope is a separate field.
+            const record = await bridge.record_user_turn(epoch, text, "krish-via-jarvis", identity.submission_id);
+            if (record?.host_epoch !== epoch || !record.ok || !record.result?.user_event_id) {
+              $("voiceInvitation").textContent = "Question recording refused or unconfirmed: " + (record?.result?.reason || record?.error || "unknown") + ". No consultation sent.";
+              return;
+            }
+            userRow.event_id = record.result.user_event_id;
+            render(record);
+          }
+          await handoff(text, "user-command", null, userRow.event_id); return;
+        }
+        const reply = await bridge.local_turn(epoch, text);
+        if (closed || reply.host_epoch !== epoch || generation !== playbackGeneration) return;
+        const answer = reply.local;
+        userRow.event_id = reply.user_receipt?.user_event_id;
+        if (reply.ok && answer?.status === "needs_claude") {
+          await handoff(text, "Jarvis-question", answer.reason || "local capability insufficient", userRow.event_id); return;
+        }
+        const output = reply.ok && answer?.status === "reply" ? answer.text
+          : "Local answer unavailable: " + (answer?.reason || reply.error || "unknown") + ". To request help, type ‘Ask Claude’ followed by your question.";
+        const saved = reply.answer_receipt?.persisted;
+        const saveState = saved?.turn === true ? "saved" : reply.answer_receipt?.outcome_unknown ? "save outcome unknown" : "not saved";
+        localRows.push({event_id: reply.answer_receipt?.event_id, kind: "Jarvis · local · " + saveState,
+          responder: (answer?.model || config.local_model) + " · local · " + saveState, payload: {text: output}});
+        paintTranscript();
+        $("voiceInvitation").textContent = reply.ok && answer?.status === "reply" ? "Answered locally. What would you like to do next?" : output;
+        if (reply.ok && answer?.status === "reply" && audioEnabled && !muted && outputGeneration === speechGeneration) window.speechSynthesis.speak(new SpeechSynthesisUtterance(answer.text));
+      } catch (_) { $("voiceInvitation").textContent = "Local operation unavailable. No automatic escalation was sent."; }
+      finally { localBusy = false; if (!closed) $("send").disabled = false; }
+    }
+    $("send").onclick = () => submitText($("text").value.trim());
+    async function drainVoiceTurns() {
+      if (voiceDraining || localBusy || closed) return;
+      voiceDraining = true;
+      try {
+        while (voiceTurns.length && !closed && !localBusy) {
+          const turn = voiceTurns.shift();
+          await submitText(turn.text, turn.outputGeneration);
+        }
+      } finally { voiceDraining = false; }
+    }
+    async function pollVoice() {
+      if (voicePollBusy || closed || !bridge) return;
+      voicePollBusy = true;
+      try {
+        const result = await bridge.voice_events(epoch);
+        if (closed || !result.ok || result.host_epoch !== epoch || !Array.isArray(result.events)) return;
+        microphoneState = result.state;
+        if (diagnostic && !diagnostic.done) {
+          const ready = result.state === "listening" && !result.error;
+          $("diagnosticNext").disabled = $("diagnosticRepeat").disabled = !ready;
+          if (!ready) diagnosticCue("WAIT — microphone " + result.state + (result.error ? ": " + result.error : ""));
+          else if (!diagnostic.ready) diagnosticCue("READY — Read sentence " + diagnostic.sentence, true);
+          diagnostic.ready = ready;
+        }
+        $("micstatus").textContent = "Microphone: " + microphoneState + (result.error ? " · " + result.error : "");
+        $("voicestate").textContent = (muted ? "speech: silent" : audioEnabled ? "speech: enabled" : "speech: unavailable") + " · microphone " + microphoneState;
+        if (result.state === "error") { voiceTurns.length = 0; return; }
+        for (const event of result.events) {
+          if (!Number.isInteger(event.id) || event.id <= lastVoiceEvent || typeof event.text !== "string") continue;
+          lastVoiceEvent = event.id;
+          if (event.kind === "hypothesis") $("heard").textContent = "Hearing: " + event.text;
+          if (diagnostic && !diagnostic.done && event.kind === "hypothesis") diagnosticCue("LISTENING / PROCESSING — sentence " + diagnostic.sentence);
+          if (event.kind !== "final") continue;
+          $("heard").textContent = "Heard: " + event.text;
+          if (diagnostic) {
+            if (!diagnostic.done) {
+              diagnostic.count++;
+              localRows.push({kind: "Sentence " + diagnostic.sentence + " · attempt " + diagnostic.attempt + " · ASR result " + diagnostic.count + " · verbatim · " + (event.grammar || "grammar unknown") + " · confidence " + (event.confidence ?? "unknown"), payload: {text: event.text}});
+              diagnosticCue("RESULT — sentence " + diagnostic.sentence + ". Review below; choose Next or Repeat.");
+              paintTranscript();
+              if (diagnostic.count >= 40) recognitionDiagnostic("Jarvis stop recognition test");
+            }
+            continue;
+          }
+          // Commands bypass both local inference and the normal-turn queue.
+          if (voiceCommand(event.text)) continue;
+          if (config.comm_available && (!binding?.conversation_id || recoveryBlocked)) continue;
+          // Final-utterance interruption is implemented; onset/echo behavior
+          // remains an acoustic acceptance item, not inferred from this event.
+          if (window.speechSynthesis?.speaking || window.speechSynthesis?.pending) interruptOutput();
+          if (voiceTurns.length >= 8) {
+            $("micstatus").textContent = "Voice turn queue full. This utterance was not submitted.";
+            continue;
+          }
+          voiceTurns.push({text: event.text, outputGeneration: speechGeneration});
+        }
+        // Do not await inference here: the next poll must still hear Silence.
+        drainVoiceTurns();
+      } catch (_) { $("micstatus").textContent = "Microphone bridge unavailable."; }
+      finally { voicePollBusy = false; }
+    }
+    $("enableAudio").onclick = () => {}; // Hidden legacy control cannot bypass explicit resume.
+    $("muteVoice").onclick = silence;
+    $("text").onkeydown = event => {
+      // Temporary keyboard fallback while native ASR is not yet connected.
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("send").onclick(); }
+    };
+    async function startVoiceAfterSetup() {
+      if (!config.microphone_available || voiceStarting || voiceTimer || closed || !bridge) return;
+      if (config.comm_available && (!binding?.conversation_id || recoveryBlocked)) return;
+      voiceStarting = true;
+      try {
+        const result = await bridge.voice_start(epoch);
+        if (closed) return;
+        if (!result.ok) { $("micstatus").textContent = "Microphone start unavailable: " + (result.error || "unknown"); return; }
+        voiceTimer = setInterval(pollVoice, 100);
+        $("heard").textContent = "Ready. Say ‘Jarvis, back to voice mode’, then ask a question.";
+        pollVoice();
+      } catch (_) { if (!closed) $("micstatus").textContent = "Microphone start failed."; }
+      finally { voiceStarting = false; }
+    }
+    window.addEventListener("pywebviewready", async () => {
+      bridge = window.pywebview?.api;
+      if (!bridge) return;
+      $("checkInbox").disabled = false;
+      $("stopSpeak").disabled = false;
+      $("nativeStart").disabled = false;
+      $("send").disabled = !config.local_model;
+      $("enableAudio").disabled = !config.speech_available;
+      $("muteVoice").disabled = false;
+      await call("view");
+      if (config.comm_available && !binding?.conversation_id) {
+        $("micstatus").textContent = "Microphone: off — choose a conversation first.";
+        $("voicestate").textContent = "Setup · microphone off";
+        await conversationCommand("jarvis list conversations");
+        if (config.microphone_available) $("voiceInvitation").textContent += " Or type ‘Jarvis recognition test’ for the transcription-only test.";
+      } else startVoiceAfterSetup();
+    }, { once: true });
+    window.addEventListener("beforeunload", () => {
+      closed = true; playbackGeneration++; speechGeneration++; activeSpeech.clear(); if (pollTimer) clearInterval(pollTimer);
+      if (voiceTimer) clearInterval(voiceTimer); voiceTurns.length = 0;
+      if (diagnosticTimer) clearTimeout(diagnosticTimer);
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    }, { once: true });
+    return;
+  }
   /* Storage that cannot take the page down with it.
      `window.localStorage` THROWS on property access in iOS private browsing and
      when a browser is set to block site data - it does not return null. A bare
@@ -322,23 +919,30 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   const DRAFT_KEY = "jv_relay_draft";
 
   let token = store.getItem("jv_token") || "";
-  let voicePref = store.getItem("jv_voice") || "auto";   // auto | always | never
+  const savedVoicePref = store.getItem("jv_voice");
+  let voicePref = ["auto", "always", "never"].includes(savedVoicePref) ? savedVoicePref : "always";
   let audioUnlocked = false;
+  let greeted = false;
   let ws = null, recog = null, recognising = false;
   let relayDraft = null;   // set while Jarvis is composing the box-2 message
 
   /* ---------------------------------------------------------------- speaking */
 
   function speak(text, force) {
-    if (voicePref === "never" && !force) return;
-    if (!("speechSynthesis" in window) || !audioUnlocked) return;
+    if (voicePref === "never" && !force) return false;
+    if (!("speechSynthesis" in window) || !audioUnlocked) return false;
     try {
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.02;
       u.onstart = () => $("stopSpeak").classList.remove("hidden");
       u.onend = () => $("stopSpeak").classList.add("hidden");
+      u.onerror = () => {
+        $("stopSpeak").classList.add("hidden");
+        $("voiceInvitation").textContent = "Voice playback was interrupted or unavailable. Your reply is still on screen.";
+      };
       speechSynthesis.speak(u);
-    } catch (_) {}
+      return true;
+    } catch (_) { return false; }
   }
   function stopSpeaking() {
     try { speechSynthesis.cancel(); } catch (_) {}
@@ -375,7 +979,9 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   }
   function paintVoice() {
     $("voicestate").textContent =
-      { auto: "voice: auto", always: "voice: always", never: "voice: off" }[voicePref];
+      { auto: "voice: auto", always: "voice: on", never: "voice: off" }[voicePref];
+    $("muteVoice").textContent = voicePref === "never" ? "Unmute voice" : "Mute voice";
+    $("muteVoice").setAttribute("aria-pressed", String(voicePref === "never"));
   }
 
   /* ------------------------------------------------------------------ render */
@@ -861,16 +1467,17 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   }
 
   function finish() {
-    const { el, buf } = current;
+    const { el, buf, suppressSpeech } = current;
     const tag = el.querySelector(".tag");
-    const asText = voicePref === "never" || (voicePref === "auto" && betterAsText(buf));
+    const asText = suppressSpeech || voicePref === "never" || (voicePref === "auto" && betterAsText(buf));
     if (asText) {
       tag.textContent = "text only"; tag.className = "tag textonly";
       // The rule: a switch to text is announced, never silent.
-      if (voicePref !== "never") speak("Sending this as text, it reads better than it hears.", true);
+      if (!suppressSpeech && voicePref !== "never") speak("Sending this as text, it reads better than it hears.", true);
     } else {
-      tag.textContent = "spoken"; tag.className = "tag spoken";
-      speak(speakable(buf));
+      const requested = speak(speakable(buf));
+      tag.textContent = requested ? "voice requested" : "text only — enable voice to listen";
+      tag.className = requested ? "tag" : "tag textonly";
     }
     current = null;
     $("send").disabled = false;
@@ -1223,7 +1830,23 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
   $("draftRelay").onclick = draftRelay;
   $("sendRelay").onclick = sendRelay;
   $("signout").onclick = signOut;
-  $("stopSpeak").onclick = stopSpeaking;
+  $("stopSpeak").onclick = () => {
+    if (current) current.suppressSpeech = true;
+    stopSpeaking();
+  };
+  $("muteVoice").onclick = () => {
+    voicePref = voicePref === "never" ? "always" : "never";
+    store.setItem("jv_voice", voicePref);
+    if (voicePref === "never") {
+      if (current) current.suppressSpeech = true;
+      stopSpeaking();
+    }
+    paintVoice();
+    $("voiceInvitation").textContent = voicePref === "never"
+      ? "Voice is muted. You can still type and read replies."
+      : audioUnlocked ? "Voice is enabled. Type below, or tap the microphone after signing in."
+                      : "Enable voice to hear me. Sign in to start a conversation.";
+  };
 
   /* The attachment controls. The two pickers are opened by a real tap on a real
      button - `input.click()` from anything else is refused by mobile Safari, and
@@ -1247,9 +1870,20 @@ footer { padding: 18px 14px calc(env(safe-area-inset-bottom) + 18px); text-align
     };
   }
   $("enableAudio").onclick = () => {
+    if (!("speechSynthesis" in window)) {
+      $("voiceInvitation").textContent = "This browser has no voice playback. You can still type and read replies.";
+      return;
+    }
     audioUnlocked = true;
     $("enableAudio").classList.add("hidden");
-    speak("Voice is on.", true);
+    if (voicePref === "never") {
+      $("voiceInvitation").textContent = "Audio is enabled; voice is muted. Unmute when you want spoken replies.";
+      return;
+    }
+    $("voiceInvitation").textContent = "Voice is enabled. Type below, or tap the microphone after signing in.";
+    if (!greeted) {
+      greeted = speak("Hello, I’m Jarvis. What would you like to work on?");
+    }
   };
 
   /* Keep the draft, and restore it before anything else can need it.
