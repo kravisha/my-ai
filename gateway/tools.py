@@ -51,6 +51,7 @@ findings with their own attribution when that path exists; until then, one
 truthful value.
 """
 
+import hashlib
 import logging
 
 from app import boundaries, initiative
@@ -1195,14 +1196,33 @@ TOOL_RISK = {
         summary="write down the case for moving a constraint that is costing something"),
     # Recoverable rather than reversible: reopening a resolved item is possible
     # and is itself an event somebody reads, which is the definition.
-    # Recording Krish's decision on a change to Jarvis's own code. RECOVERABLE
-    # rather than reversible - the record is append-only, so a wrong entry is
-    # corrected by a later decision and never by erasing this one - and
-    # reaching OWNER, because it is his authority being written down. That
-    # combination makes `initiative.decide` return act_and_report: Jarvis must
-    # say plainly what he recorded, which is the whole safeguard.
+    # Recording Krish's decision on a change to Jarvis's own code.
+    #
+    # THIS WAS RECOVERABLE AND THAT WAS THE DEFECT. Independent review finding
+    # #1, 2026-09-23. The old reasoning was: the record is append-only, so a
+    # wrong entry is corrected by a later decision - therefore recoverable,
+    # therefore act_and_report, and "Jarvis must say plainly what he recorded"
+    # was called the whole safeguard.
+    #
+    # That measured the paperwork instead of the effect. What the record does is
+    # hand over `write_candidate_code`, `commit_candidate_change`, `request_build`
+    # and `request_deployment` - permissions `gateway/selfmod.py` deliberately
+    # gives to nobody until a proposal is approved. Approving IS the transfer. A
+    # correctable note that unlocks an uncorrectable capability is not
+    # recoverable, and reporting a transfer after making it is a notification,
+    # not a safeguard.
+    #
+    # IRREVERSIBLE routes it to PROPOSE, which `initiative.decide` settles
+    # BEFORE the boldness dial is even read - so no setting, including one
+    # nobody has invented yet, can buy this back. PROPOSE then reaches the
+    # readback gate below, where `confirmed_by` comes from the session, the
+    # model never handles a token, the mandate covers this exact call, and it is
+    # spent once. That is Arya's STRICT ruling (2026-09-23: exact change and
+    # base revision, no immaterial-edit exception) already implemented in
+    # `gateway/readback.py` - so this is one classification, not a second
+    # consent mechanism competing with the first.
     "decide_self_change": dict(
-        reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
+        reversibility=initiative.IRREVERSIBLE, reach=initiative.OWNER,
         summary="record Krish's decision on a proposed change to Jarvis's own code"),
     "resolve_scoreboard_item": dict(
         reversibility=initiative.RECOVERABLE, reach=initiative.OWNER,
@@ -1377,9 +1397,38 @@ def particulars_for(name: str, arguments: dict) -> tuple:
             continue
         rendered = value if isinstance(value, str) else _text(value)
         made.append(readback.Particular(
-            label=label, value=rendered[:400],
+            label=label, value=_speakable(rendered),
             source=readback.TOLD if label in told else readback.INFERRED))
     return tuple(made)
+
+
+# How much of a value is read back aloud before it is summarised. A read-back is
+# spoken, and a person cannot hold a 2,000-character diff in their ear.
+SPOKEN_PREFIX_CHARS = 400
+
+
+def _speakable(rendered: str) -> str:
+    """A value short enough to say, that still identifies itself exactly.
+
+    Independent review finding #4, 2026-09-23. This used to be `rendered[:400]`,
+    and the scope of a mandate is built from these values - so two proposals
+    differing only in their 401st character produced IDENTICAL particulars, one
+    mandate covered both, and an approval silently extended to a changed suffix.
+    The longer the change, the easier it was to alter unnoticed, which is exactly
+    backwards.
+
+    Dropping the truncation outright would fix the scope and break the read-back,
+    because Jarvis would recite the whole diff. So the prefix stays for the ear
+    and a digest of the FULL value is appended for the comparison. Two values
+    that differ anywhere now differ here, however far in the difference is.
+
+    The digest is also honest about itself: a value carrying `...+sha256:` tells
+    the listener there is more than was read out, rather than presenting a
+    truncation as the whole thing."""
+    if len(rendered) <= SPOKEN_PREFIX_CHARS:
+        return rendered
+    digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
+    return f"{rendered[:SPOKEN_PREFIX_CHARS]}...+sha256:{digest}"
 
 
 def understanding_for(name: str, arguments: dict) -> readback.Understanding:
@@ -1891,6 +1940,80 @@ def _remember_note(client, event_type: str, summary: str, observation: str) -> N
 _SELF_CHANGE_TOOL_NAMES = frozenset(tool["name"] for tool in SELF_CHANGE_TOOLS)
 
 
+def _self_change_refusal(name: str, arguments: dict, *, subject: str | None) -> dict | None:
+    """Why this self-change call cannot proceed at all, or None if it might.
+
+    Called BEFORE the readback gate, and that order is the point. Reclassifying
+    `decide_self_change` to IRREVERSIBLE put the confirmation gate in front of
+    `_execute_self_change`, which meant its argument checks stopped running: a
+    call with no authenticated owner, or an empty quote, or an unknown change id
+    came back asking Krish to confirm something that was always going to be
+    refused. Five existing tests caught it; three of them were simply right.
+
+    Asking for authorisation before checking whether the request is even
+    well-formed is worse than not asking, because an approval that is then
+    rejected on its arguments teaches the owner that confirmations are noise -
+    and the whole value of this gate is that he reads it.
+
+    Cheap and read-only: no DBA connection, no writes. The expensive checks and
+    the decision itself stay in `_execute_self_change`, which still repeats these
+    guards rather than trusting a caller to have run them."""
+    if name != "decide_self_change":
+        return None
+    if not (subject or "").strip():
+        return {"error":
+                "this session has no authenticated owner, so there is "
+                "nobody to record as having decided. Refusing rather "
+                "than writing down an anonymous approval."}
+    if not (arguments.get("krish_said") or "").strip():
+        return {"error":
+                "krish_said is required: quote what he actually said. "
+                "A decision recorded without his words leaves nothing "
+                "he can read back and dispute."}
+    if arguments.get("decision") not in selfmod.DECISIONS:
+        return {"error": f"decision must be one of {selfmod.DECISIONS}"}
+
+    # Existence too, and for the same reason: a confirmation for a change that
+    # does not exist is a question with no useful answer. This is the one check
+    # that needs the DBA, and it is read-only - `_execute_self_change` opens the
+    # same connection a moment later. A DBA that is down is reported as such
+    # rather than silently becoming "please confirm".
+    change_id = (arguments.get("change_id") or "").strip()
+    try:
+        client = dbaclient.DBAClient(actor="conversation")
+    except dbaclient.Unavailable as exc:
+        return {"error": f"{failures.DBA_UNAVAILABLE}: {exc}"}
+    try:
+        proposal = client.get(change_id) if change_id else None
+        if proposal is None:
+            return {"error": f"there is no proposed change {change_id!r}. Use "
+                             f"pending_self_changes to list them."}
+    except (dbaclient.Unavailable, dbaclient.Refused) as exc:
+        return {"error": f"the DBA refused or was unavailable: {exc}"}
+
+    # BIND THE CONSENT TO THE BASE REVISION, by stamping it into the arguments
+    # so it becomes one of the read-back's particulars and therefore part of the
+    # mandate's scope.
+    #
+    # Arya's requirement, and the hole is real: a mandate's scope is built from
+    # the call's particulars, and `change_id` is stable by design. So a proposal
+    # whose CONTENT moved - a rebase, a force-push, an edit to the record - still
+    # produces an identical tool call, matches the mandate Krish already
+    # answered, and proceeds on an approval he gave for something else.
+    #
+    # Same shape as the 400-character truncation a layer up: consent that looks
+    # specific while covering more than it names. Her STRICT ruling says a changed
+    # base needs fresh approval, so the base has to be inside the thing being
+    # compared rather than alongside it.
+    #
+    # Stamped here rather than in `particulars_for`, which sees only arguments and
+    # has no way to reach the proposal. The label is readable on purpose: a
+    # read-back that says "base_revision: 9f2c... - I wrote that" is a sentence
+    # Krish can react to.
+    arguments["base_revision"] = str(proposal.get("baseline_version") or "unknown")
+    return None
+
+
 def _execute_self_change(name: str, arguments: dict, *, subject: str | None) -> dict:
     """The conversation half of the approval gate (§13).
 
@@ -2028,6 +2151,23 @@ def execute(conn: Database, name: str, arguments: dict, *, role: str,
     # returns exactly what it returned before, because every caller and every
     # test reads these dicts and a new key in all of them would be a change to
     # sixteen contracts to carry one sentence the prompt already carries.
+    # VALIDATE BEFORE ASKING. Found by the five tests that reclassifying
+    # `decide_self_change` to IRREVERSIBLE broke, 2026-09-24.
+    #
+    # The readback gate below now intercepts this tool before `_execute_self_change`
+    # runs, so the tool's own argument checks - no authenticated owner, an empty
+    # quote, an unknown change id - never happened. A call that was always going
+    # to be refused came back as "please confirm" instead.
+    #
+    # That is worse than the defect it replaced. It asks Krish to authorise
+    # something that cannot proceed, and an approval given for a call that then
+    # fails on its arguments teaches him that confirmations are noise. Three of
+    # those five tests were right and my change was wrong; they are unchanged.
+    if name in _SELF_CHANGE_TOOL_NAMES:
+        refusal = _self_change_refusal(name, arguments, subject=subject)
+        if refusal is not None:
+            return refusal
+
     try:
         verdict, confirmed = initiative_verdict(name, arguments)
     except initiative.InitiativeError as unclassified:

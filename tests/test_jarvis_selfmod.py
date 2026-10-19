@@ -801,13 +801,30 @@ def test_the_decider_is_the_session_and_never_an_argument(client, conversation):
     is called with a name the model supplied *and* a different session owner,
     and the record must show the session's."""
     proposal = _proposal(client)
+    # Since finding #1, this tool is IRREVERSIBLE and therefore proposed rather
+    # than performed, so the decision is only recorded after Krish confirms
+    # through the session. The confirmation is added here and NOT ONE ASSERTION
+    # BELOW IS WEAKENED: the point of this test is that `decided_by` comes from
+    # the session whatever the model puts in `arguments`, and that is exactly
+    # what still has to hold. If closing the consent hole had required relaxing
+    # this, the fix would have been wrong rather than the test.
+    steered = {"change_id": proposal["id"], "decision": "approve",
+               "krish_said": "yes, go ahead",
+               # Everything a model might try to steer the record with:
+               "decided_by": "jarvis", "subject": "jarvis", "by": "jarvis"}
+
+    # The read-back has to be OFFERED before it can be answered: the first call
+    # proposes, Krish answers through the session, the second call proceeds.
+    # Confirming first raises NotConfirmed, which is correct behaviour and was
+    # how this test taught me the order.
+    first = conversation.execute(None, "decide_self_change", dict(steered),
+                                 role="operator", subject="krish")
+    assert "needs_confirmation" in first
+    conversation.confirm_pending(confirmed_by="krish",
+                                 action_name="decide_self_change")
 
     result = conversation.execute(
-        None, "decide_self_change",
-        {"change_id": proposal["id"], "decision": "approve",
-         "krish_said": "yes, go ahead",
-         # Everything a model might try to steer the record with:
-         "decided_by": "jarvis", "subject": "jarvis", "by": "jarvis"},
+        None, "decide_self_change", dict(steered),
         role="operator", subject="krish")
 
     assert result["decided_by"] == "krish"
@@ -844,16 +861,190 @@ def test_a_decision_without_his_words_is_refused(client, conversation):
 
 
 def test_his_words_are_stored_verbatim_on_the_decision(client, conversation):
+    # Confirmation added for the same reason as the test above: the tool is now
+    # proposed before it acts. What is being asserted is unchanged - his words
+    # reach the record exactly as given.
     proposal = _proposal(client)
-    conversation.execute(
-        None, "decide_self_change",
-        {"change_id": proposal["id"], "decision": "reject",
-         "krish_said": "no - use the phone's own PDF viewer"},
-        role="operator", subject="krish")
+    words = {"change_id": proposal["id"], "decision": "reject",
+             "krish_said": "no - use the phone's own PDF viewer"}
+    conversation.execute(None, "decide_self_change", dict(words),
+                         role="operator", subject="krish")
+    conversation.confirm_pending(confirmed_by="krish",
+                                 action_name="decide_self_change")
+    conversation.execute(None, "decide_self_change", dict(words),
+                         role="operator", subject="krish")
 
     decision = client.find("approval_decision",
                            {"proposal_id": proposal["id"]})[0]
     assert "use the phone's own PDF viewer" in decision["note"]
+
+
+def test_a_fabricated_approval_is_not_recorded(client, conversation):
+    """Independent review finding #1: identity authenticated, consent not.
+
+    `decided_by` comes from the session and cannot be steered - that half was
+    always right. `krish_said` is written by the MODEL and was checked only for
+    being non-empty, so a model could approve a change to its own code by
+    inventing a sentence, and the record would name Krish because Krish happened
+    to be logged in to TALK.
+
+    The project's own reasoning condemns it. SPEC_RECONCILIATION §163 rejected
+    "evil to prevent more evil" for being self-ratifying - the party who
+    benefits from the judgement is the party making it - and accepted the
+    inquisitiveness exception only because its condition could be checked by
+    reading the store. A model-supplied quote nobody verifies is self-ratifying
+    approval by exactly that argument.
+
+    So this call must now be PROPOSED rather than performed. Note what is
+    asserted: `needs_confirmation`, NOT an error. tools.py says why - "an error
+    invites the model to try again with different arguments, which for an
+    irreversible action is the worst possible response to being stopped." An
+    earlier draft of this test asserted an error and would have failed for the
+    right reason while looking like the fix had not worked."""
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes, go ahead, approve it"},
+        role="operator", subject="krish")
+
+    assert "needs_confirmation" in result, result
+    assert client.count("approval_decision", {}) == 0, (
+        "nothing may be recorded on an unconfirmed self-change approval")
+
+
+def test_an_agent_cannot_confirm_its_own_self_change(client, conversation):
+    """readback already refuses this and the refusal must reach here.
+
+    A permission the asker can issue is not a permission - the same rule
+    gateway/charter.py applies to a key Jarvis writes."""
+    from gateway import identity
+
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes"},
+        role="operator", subject="krish",
+        confirmed_by=identity.AGENT_ID)
+
+    assert "needs_confirmation" in result or "error" in result
+    assert client.count("approval_decision", {}) == 0
+
+
+def test_a_confirmed_self_change_is_recorded(client, conversation):
+    """The other half, and the one that stops this being a gate that refuses
+    everything. A check that cannot pass is as useless as one that cannot fire,
+    and this project has produced both this month.
+
+    The confirmation comes through `confirm_pending`, which is a module function
+    rather than a tool precisely so the model cannot call it."""
+    proposal = _proposal(client)
+    arguments = {"change_id": proposal["id"], "decision": "approve",
+                 "krish_said": "yes, go ahead"}
+
+    first = conversation.execute(None, "decide_self_change", dict(arguments),
+                                 role="operator", subject="krish")
+    assert "needs_confirmation" in first
+
+    conversation.confirm_pending(confirmed_by="krish",
+                                 action_name="decide_self_change")
+
+    second = conversation.execute(None, "decide_self_change", dict(arguments),
+                                  role="operator", subject="krish")
+
+    assert "needs_confirmation" not in second, second
+    assert second.get("recorded") == "approve", second
+    assert second["decided_by"] == "krish"
+    assert client.count("approval_decision", {}) == 1
+
+
+def test_a_mandate_does_not_cover_a_changed_proposal(client, conversation):
+    """Arya's STRICT ruling: consent binds to the exact proposed change, and any
+    modification - including whitespace - needs fresh approval.
+
+    The register looks a mandate up by what the call IS, so a drifted argument
+    finds nothing and is proposed again. This asserts that property rather than
+    trusting the docstring that claims it."""
+    proposal = _proposal(client)
+    other = _proposal(client)
+
+    conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes"}, role="operator", subject="krish")
+    conversation.confirm_pending(confirmed_by="krish",
+                                 action_name="decide_self_change")
+
+    # Same tool, same decision, DIFFERENT proposal. The mandate must not reach it.
+    drifted = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": other["id"], "decision": "approve",
+         "krish_said": "yes"}, role="operator", subject="krish")
+
+    assert "needs_confirmation" in drifted, (
+        "a mandate for one proposal must not authorise a different one")
+
+
+def test_a_mandate_does_not_survive_the_base_revision_changing(client, conversation):
+    """Arya, 5806918876: "verify the approved proposal/base revision cannot
+    change underneath an unchanged proposal ID."
+
+    The gap she is pointing at is real and is not covered by binding the
+    arguments. A mandate's scope is built from the tool call's particulars, and
+    `change_id` is stable by design - so a proposal whose CONTENT moves while its
+    id stays put produces an identical call, matches the existing mandate, and
+    proceeds on an approval Krish gave for something else.
+
+    That is the same failure as the 400-character truncation one layer up:
+    consent that appears specific while covering more than it names. Her STRICT
+    ruling is explicit that a changed base needs fresh approval."""
+    proposal = _proposal(client)
+    arguments = {"change_id": proposal["id"], "decision": "approve",
+                 "krish_said": "yes, go ahead"}
+
+    assert "needs_confirmation" in conversation.execute(
+        None, "decide_self_change", dict(arguments),
+        role="operator", subject="krish")
+    conversation.confirm_pending(confirmed_by="krish",
+                                 action_name="decide_self_change")
+
+    # The base moves underneath an unchanged id - a rebase, a force-push, or an
+    # edit to the record. Nothing about the tool call changes.
+    client.update(proposal["id"], {"baseline_version": "f" * 40})
+
+    after = conversation.execute(None, "decide_self_change", dict(arguments),
+                                 role="operator", subject="krish")
+
+    assert "needs_confirmation" in after, (
+        "an approval must not survive the base revision it was given against")
+    assert client.count("approval_decision", {}) == 0
+
+
+def test_two_values_differing_after_400_characters_are_not_the_same_scope(client):
+    """Finding #4: `particulars_for` truncated every value at 400 characters.
+
+    Two proposals differing only in their 401st character produced identical
+    particulars, so one mandate covered both - an approval covering a changed
+    suffix. Truncation exists so a read-back stays speakable, so the fix keeps a
+    short prefix and adds a digest of the FULL value; the scope is exact while
+    the spoken form stays short."""
+    from gateway import tools
+
+    shared = "x" * 400
+    one = tools.particulars_for("decide_self_change",
+                               {"files": shared + "AAA"})
+    two = tools.particulars_for("decide_self_change",
+                               {"files": shared + "BBB"})
+
+    scope_one = {p.label: p.value for p in one}
+    scope_two = {p.label: p.value for p in two}
+
+    assert scope_one != scope_two, (
+        "values differing only after character 400 must not share a scope, or "
+        "one approval covers both")
 
 
 def test_the_conversation_can_list_and_show_without_deciding(client, conversation):
