@@ -21,7 +21,9 @@
 
 $ErrorActionPreference = 'Continue'
 $claude    = "$env:USERPROFILE\.local\bin\claude.exe"
-$workdir   = 'C:\Users\Krish\ClaudeStuff'
+# The folder that holds the repository: ClaudeStuff on the PC this was
+# written on, Deployments on the one Jarvis lives on now.
+$workdir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $directive = Join-Path $workdir 'REBOOT-DIRECTIVE.md'
 $log       = Join-Path $env:TEMP 'claude-dev-wake.log'
 

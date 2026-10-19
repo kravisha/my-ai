@@ -17,7 +17,8 @@
 
 $ErrorActionPreference = 'Continue'
 $root   = Split-Path -Parent $PSScriptRoot
-$python = 'C:\Python314\python.exe'
+. (Join-Path $PSScriptRoot 'jarvis-python.ps1')
+$python = Find-JarvisPython $root
 $port   = 8100
 $log    = Join-Path $env:TEMP 'jarvis-gateway-keepalive.log'
 
@@ -33,6 +34,11 @@ function Alive {
 }
 
 Say '=== start-jarvis-gateway launched ==='
+if (-not $python) {
+  Say 'NO PYTHON FOR JARVIS: not $env:JARVIS_PYTHON, not .venv, not C:\Python314, not on PATH. Stopping.'
+  exit 1
+}
+Say "using $python"
 
 function Clear-WedgedGateway {
   <#

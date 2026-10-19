@@ -22,7 +22,9 @@
 # behaviour we spent the evening building guards against. It opens, it waits.
 
 $ErrorActionPreference = 'Continue'
-$workdir = 'C:\Users\Krish\ClaudeStuff'
+# The folder that holds the repository: ClaudeStuff on the PC this was
+# written on, Deployments on the one Jarvis lives on now.
+$workdir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $inbox   = 'C:\Users\Krish\Documents\Aria-Claude-Communications\CLAUDE-TO-KRISH.md'
 $claude  = "$env:USERPROFILE\.local\bin\claude.exe"
 $log     = Join-Path $env:TEMP 'jarvis-good-morning.log'

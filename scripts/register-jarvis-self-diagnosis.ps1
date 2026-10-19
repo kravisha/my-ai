@@ -14,10 +14,11 @@
 # The report reads logs/model_calls.jsonl and writes into reports/. Both are
 # gitignored: they are what this machine did, not what the code is.
 
-$root   = 'C:\Users\Krish\ClaudeStuff\my-ai'
-$python = Join-Path $root '.venv\Scripts\python.exe'
+$root   = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'jarvis-python.ps1')
+$python = Find-JarvisPython $root
 
-if (-not (Test-Path -LiteralPath $python)) { throw "MISSING: $python" }
+if (-not $python) { throw "MISSING: no Python for Jarvis (see scripts\jarvis-python.ps1)" }
 
 $me = "$env:USERDOMAIN\$env:USERNAME"
 

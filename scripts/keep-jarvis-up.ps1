@@ -32,13 +32,18 @@
 
 $ErrorActionPreference = 'Continue'
 $root        = Split-Path -Parent $PSScriptRoot
-$python      = 'C:\Python314\python.exe'
+. (Join-Path $PSScriptRoot 'jarvis-python.ps1')
+$python      = Find-JarvisPython $root
 $cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 $port        = 8100
 $dbaPort     = 8200
 $urlFile     = Join-Path $root 'CURRENT-URL.txt'
 $cfLog       = Join-Path $env:TEMP 'jarvis-tunnel.log'
 $runLog      = Join-Path $env:TEMP 'jarvis-keepup.log'
+if (-not $python) {
+  Add-Content -LiteralPath $runLog -Encoding utf8 -Value ('{0}  NO PYTHON FOR JARVIS: not $env:JARVIS_PYTHON, not .venv, not C:\Python314, not on PATH. Stopping rather than relaunching nothing for ever.' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+  exit 1
+}
 # THE CHILDREN'S OWN OUTPUT, WHICH USED TO GO NOWHERE. Every Start-Process below
 # was -WindowStyle Hidden with no redirection, so a Python traceback - a missing
 # dependency, a bad environment variable, a syntax error in anything imported at

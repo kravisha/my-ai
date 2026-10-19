@@ -15,17 +15,14 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-$python = 'C:\Python314\python.exe'
-if (-not (Test-Path $python)) {
-    $found = Get-Command python -ErrorAction SilentlyContinue
-    if ($found) {
-        $python = $found.Source
-    } else {
-        Write-Host "No Python found at $python and none on PATH."
-        Write-Host "Install Python 3.11 or newer, then run this again."
-        exit 1
-    }
+. (Join-Path $PSScriptRoot 'jarvis-python.ps1')
+$python = Find-JarvisPython $root
+if (-not $python) {
+    Write-Host "No Python found: not `$env:JARVIS_PYTHON, not .venv, not on PATH."
+    Write-Host "Install Python 3.11 or newer, then run this again."
+    exit 1
 }
+Write-Host "using $python"
 
 Push-Location $root
 try {
