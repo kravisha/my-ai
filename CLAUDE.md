@@ -283,6 +283,14 @@ this place in future."*
   *"read outbox 20261018-2138"*, this is the folder he means.
 - It is **local to the PC, not Google Drive.** The Drive folders `Outbox` and
   `Archive - local outbox (copy, read-only)` are partial copies and lag behind.
+- **Checking it is the last step of every task.** Owner instruction,
+  2026-10-19: *"Once you finish any task, the last step of your task is to see
+  if you have any more new tasks to do and if you have any more new tasks to
+  do, pick up on the task and continue."* So after finishing anything, read
+  every outbox message not yet acted on, do what is addressed to you, and
+  carry on with the next one. A session on the PC reads the folder; a cloud
+  session reads the Drive mirror (`My Drive/Echo Mailbox/Outbox`) and says
+  plainly when the mirror is behind.
 - A cloud session cannot read it. Ask Krish to paste the file
   (`Get-Content <path>`), or have a session running on the PC read it.
 
