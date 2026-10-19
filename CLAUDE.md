@@ -272,6 +272,33 @@ split, because the adapter is the part that cannot be tested here. See
 | The shell and the escape hatch | `docs/JARVIS_SHELL.md` |
 | The DBA | `docs/DBA_AGENT.md`, `docs/DBA_AGENT_DEVELOPMENT.md` |
 
+### Echo's outbox: where the agents' messages are
+
+Owner instruction, 2026-10-19: *"This is the echoes outbox. Please don't forget
+this place in future."*
+
+- **Echo's outbox:** `C:\Users\krish\Strata-workspace\outbox` on the PC.
+  Messages are named `YYYYMMDD-HHMM-<from>-to-<to>-<subject>.md`, for example
+  `20261018-2138-echo-to-claude-work-and-dev-wake-up.md`. When Krish says
+  *"read outbox 20261018-2138"*, this is the folder he means.
+- It is **local to the PC, not Google Drive.** The Drive folders `Outbox` and
+  `Archive - local outbox (copy, read-only)` are partial copies and lag behind.
+- A cloud session cannot read it. Ask Krish to paste the file
+  (`Get-Content <path>`), or have a session running on the PC read it.
+
+### What runs on the PC, as of 2026-10-19
+
+Only two things must be up all the time: the public website
+(`https://aiforpurepublicuse.ai`, published through the Cloudflare tunnel) and
+**Echo on port 8080**. Everything else is local to the PC and must stay local.
+The old always-on Jarvis server is retired: `gateway.run` on 127.0.0.1:8100 is
+started by hand when wanted. Do not run `keep-jarvis-up.ps1` or the
+`register-*.ps1` scripts to "get Jarvis online", because they publish him.
+
+The repository on the PC is `C:\Users\krish\Deployments\my-ai`, and its
+Python is `.venv\Scripts\python.exe` (3.13). There is no `C:\Python314` and no
+`ClaudeStuff` folder on that machine.
+
 Tests that need the real PC are marked `real_machine` and excluded from the
 default run: `pytest -m real_machine`. The ones needing a person are
 `python -m desktop.verify`. The mutation harness is
