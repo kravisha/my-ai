@@ -17,7 +17,7 @@
 # spent all day naming.
 
 $me     = "$env:USERDOMAIN\$env:USERNAME"
-$script = 'C:\Users\Krish\ClaudeStuff\my-ai\scripts\jarvis-good-morning.ps1'
+$script = Join-Path $PSScriptRoot 'jarvis-good-morning.ps1'
 
 if (-not (Test-Path -LiteralPath $script)) { throw "MISSING: $script" }
 

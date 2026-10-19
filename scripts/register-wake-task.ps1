@@ -10,7 +10,7 @@
 # because nothing restarted the only thing that reads.
 
 $me     = "$env:USERDOMAIN\$env:USERNAME"
-$script = 'C:\Users\Krish\ClaudeStuff\my-ai\scripts\wake-claude-dev.ps1'
+$script = Join-Path $PSScriptRoot 'wake-claude-dev.ps1'
 
 if (-not (Test-Path -LiteralPath $script)) { throw "MISSING: $script" }
 

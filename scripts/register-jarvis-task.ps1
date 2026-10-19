@@ -14,7 +14,7 @@
 # https://<your-host>.ts.net returns by itself after a reboot.
 
 $me     = "$env:USERDOMAIN\$env:USERNAME"
-$script = 'C:\Users\Krish\ClaudeStuff\my-ai\scripts\start-jarvis-gateway.ps1'
+$script = Join-Path $PSScriptRoot 'start-jarvis-gateway.ps1'
 
 if (-not (Test-Path -LiteralPath $script)) { throw "MISSING: $script" }
 
