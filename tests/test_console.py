@@ -20,8 +20,9 @@ from fastapi.testclient import TestClient
 
 from app import model_calls
 from dba import agent as agent_module, main as dba_main, registry, store
+from dba import audit, store as dba_store
 from gateway import (anticipation, console, dbaclient, identity, noticing,
-                     trustbook)
+                     persistence, taskrun, trustbook)
 from gateway.anticipation import (FULL_STOP, NOT_NOW, OBSERVE, PERFECT, WANTED,
                                   WRONG, Guess)
 
@@ -93,7 +94,7 @@ def test_a_console_with_no_operator_token_refuses_to_run(monkeypatch):
 
 def test_the_console_speaks_as_the_operator():
     assert console.describe()["speaks_as"] == "operator_console"
-    assert console.describe()["writes"] == ["guess_verdict"]
+    assert console.describe()["writes"] == ["guess_verdict", "agent_state"]
 
 
 def test_a_conversational_yes_does_not_settle_a_guess():
@@ -239,3 +240,171 @@ def test_a_domain_climbs_once_krish_starts_answering(jarvis, krish):
         console.rate(krish, verdict["id"], quality=PERFECT)
 
     assert console.standing(krish, "commitments").rung == FULL_STOP
+
+
+# --- the questions a task parked ---------------------------------------------------
+
+def a_run(goal="prepare the Q3 expense statement"):
+    """A run with one line found, one asked about, one untouched."""
+    made = taskrun.Run(goal, taskrun.Model(
+        name="last year's expense statement", fields=(
+            taskrun.Field("travel", "flights and hotels charged to the business"),
+            taskrun.Field("software", "subscriptions charged to the business card"),
+            taskrun.Field("mileage", "car mileage at the standard rate"))))
+    made.need("travel").found("1,240.00", source="business account, Jul-Sep")
+    made.ask("software", "is the Figma seat business or personal?",
+             tried="both cards show it")
+    return made
+
+
+def test_the_question_a_run_parked_reaches_krish(jarvis, krish):
+    """Until this nothing put the question in front of him, so a run that
+    asked could only stall. The run is named on each so that the answer can
+    find its way back."""
+    made = a_run()
+    taskrun.save(jarvis, made)
+
+    waiting = console.questions(krish)
+
+    assert [(one["run"], one["about"]) for one in waiting] == \
+        [("run:prepare-the-q3-expense-statement", "software")]
+    assert waiting[0]["asked"] == "is the Figma seat business or personal?"
+    assert waiting[0]["tried"] == "both cards show it"
+    assert waiting[0]["of"] == "krish"
+    assert waiting[0]["goal"] == "prepare the Q3 expense statement"
+
+
+def test_questions_from_every_run_are_listed_oldest_first(jarvis, krish):
+    later = a_run("prepare the Q2 VAT return")
+    later.need("software").question.at += timedelta(minutes=5)
+    taskrun.save(jarvis, later)
+    taskrun.save(jarvis, a_run())
+    assert [one["run"] for one in console.questions(krish)] == [
+        "run:prepare-the-q3-expense-statement",
+        "run:prepare-the-q2-vat-return"]
+
+
+def test_nothing_is_waiting_when_no_run_asked_anything(jarvis, krish):
+    made = a_run()
+    made.need("software").answered("business", by="krish")
+    taskrun.save(jarvis, made)
+    assert console.questions(krish) == []
+
+
+def test_krish_answers_a_task_question_from_his_console(jarvis, krish):
+    taskrun.save(jarvis, a_run())
+
+    console.reply(krish, "run:prepare-the-q3-expense-statement", "software",
+                  "business")
+
+    after = taskrun.load(jarvis, "run:prepare-the-q3-expense-statement")
+    software = after.need("software")
+    assert software.state == taskrun.ANSWERED
+    assert software.value == "business"
+    assert software.source == "krish said so"
+    assert software.question.answered_by == "krish"
+    assert console.questions(krish) == []
+    # The rest of the run came back untouched.
+    assert after.need("travel").value == "1,240.00"
+    assert after.need("mileage").state == taskrun.UNMET
+
+
+def test_the_answer_is_written_by_the_operator_not_by_jarvis(jarvis, krish):
+    """The provenance the docstring claims: the revision carrying Krish's
+    answer was created by the operator console, so the DBA's own audit says he
+    wrote it. A field saying `answered_by: krish` inside a row Jarvis wrote
+    would be Jarvis's word for it."""
+    taskrun.save(jarvis, a_run())
+    console.reply(krish, "run:prepare-the-q3-expense-statement", "software",
+                  "business")
+    rows = persistence.current(jarvis, kind=persistence.TASK,
+                               name="run:prepare-the-q3-expense-statement")
+    assert len(rows) == 1 and rows[0]["revision"] == 2
+    conn = dba_store.connect()
+    try:
+        trail = audit.for_entity(conn, rows[0]["id"])
+    finally:
+        conn.close()
+    created = [one for one in trail if one["action"] == "create"]
+    assert [one["requesting_agent"] for one in created] == ["operator_console"]
+
+
+def test_jarvis_cannot_use_the_console_to_answer_his_own_question(jarvis, krish):
+    """The refusal is `Need.answered`'s, reached through the console rather
+    than around it. And nothing is saved on the way to refusing."""
+    taskrun.save(jarvis, a_run())
+    with pytest.raises(taskrun.NotYours):
+        console.reply(krish, "run:prepare-the-q3-expense-statement", "software",
+                      "business", by=identity.AGENT_ID)
+    with pytest.raises(taskrun.NotYours):
+        console.reply(krish, "run:prepare-the-q3-expense-statement", "software",
+                      "business", by="somebody else")
+    after = taskrun.load(jarvis, "run:prepare-the-q3-expense-statement")
+    assert after.need("software").state == taskrun.ASKED
+    assert len(persistence.history(
+        jarvis, persistence.TASK, "run:prepare-the-q3-expense-statement")) == 1
+
+
+def test_a_reply_about_a_line_nobody_asked_about_is_refused(jarvis, krish):
+    taskrun.save(jarvis, a_run())
+    with pytest.raises(taskrun.NotFound, match="nothing was asked"):
+        console.reply(krish, "run:prepare-the-q3-expense-statement", "mileage",
+                      "none")
+    with pytest.raises(taskrun.NotFound, match="not part of"):
+        console.reply(krish, "run:prepare-the-q3-expense-statement", "rent",
+                      "none")
+
+
+def test_a_reply_to_a_run_that_was_never_saved_is_refused(jarvis, krish):
+    with pytest.raises(taskrun.NotFound, match="not a saved run"):
+        console.reply(krish, "run:never", "software", "business")
+
+
+def test_krish_leaves_a_line_out_from_his_console(jarvis, krish):
+    taskrun.save(jarvis, a_run())
+    console.leave_out(krish, "run:prepare-the-q3-expense-statement", "mileage",
+                      because="none this quarter")
+    after = taskrun.load(jarvis, "run:prepare-the-q3-expense-statement")
+    assert after.need("mileage").state == taskrun.WAIVED
+    assert after.need("mileage").source == "krish left it out: none this quarter"
+
+
+def test_jarvis_cannot_leave_a_line_out_through_the_console(jarvis, krish):
+    taskrun.save(jarvis, a_run())
+    with pytest.raises(taskrun.NotYours):
+        console.leave_out(krish, "run:prepare-the-q3-expense-statement",
+                          "mileage", because="probably none", by=identity.AGENT_ID)
+    after = taskrun.load(jarvis, "run:prepare-the-q3-expense-statement")
+    assert after.need("mileage").state == taskrun.UNMET
+
+
+def test_an_answered_run_can_be_finished_by_jarvis(jarvis, krish):
+    """The loop, closed: Jarvis asks, Krish answers here, Jarvis carries on."""
+    taskrun.save(jarvis, a_run())
+    console.reply(krish, "run:prepare-the-q3-expense-statement", "software",
+                  "business")
+    console.leave_out(krish, "run:prepare-the-q3-expense-statement", "mileage",
+                      because="none this quarter")
+    done = taskrun.load(jarvis, "run:prepare-the-q3-expense-statement").finish()
+    assert done["holes"] == [] and done["questions"] == []
+
+
+def test_the_terminal_lists_and_answers_questions(jarvis, krish, monkeypatch, capsys):
+    monkeypatch.setattr(console, "operator_client", lambda: krish)
+    taskrun.save(jarvis, a_run())
+
+    assert console.main(["questions"]) == 0
+    shown = capsys.readouterr().out
+    assert "run:prepare-the-q3-expense-statement  software: is the Figma seat" in shown
+    assert "already tried: both cards show it" in shown
+
+    assert console.main(["reply", "run:prepare-the-q3-expense-statement",
+                         "software", "--answer", "business"]) == 0
+    assert "0 question(s) still open" in capsys.readouterr().out
+    assert console.main(["questions"]) == 0
+    assert "Nothing waiting." in capsys.readouterr().out
+
+    assert console.main(["leave-out", "run:prepare-the-q3-expense-statement",
+                         "mileage", "--because", "none this quarter"]) == 0
+    assert taskrun.load(jarvis, "run:prepare-the-q3-expense-statement") \
+        .need("mileage").state == taskrun.WAIVED

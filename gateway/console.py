@@ -30,6 +30,18 @@ A mention Krish never answered is settled `not_now` after
 different one from *the need never existed*. It is written here rather than by
 the sweep for the same reason everything else is: Jarvis does not write the
 records that judge him, and "no answer" is still a judgement.
+
+## The questions a task parked are answered here too
+
+`gateway/taskrun.py` asks while it works and sets the question aside; until this
+nothing put the question in front of Krish, so a run could only ever stall.
+`questions` lists every open one across every saved run, and `reply` writes
+his answer back into the run through `taskrun.Need.answered`, which is the
+same method with the same refusal: only the person the question was put to may
+settle it. The revision that carries the answer is created by the operator
+console, so the DBA's own audit says Krish wrote it and not Jarvis - the
+answer's provenance is in the store's record of who wrote the row, not only in
+the `answered_by` field the row happens to contain.
 """
 
 from __future__ import annotations
@@ -39,7 +51,8 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from gateway import anticipation, dbaclient, identity, noticing, trustbook
+from gateway import (anticipation, dbaclient, identity, noticing, taskrun,
+                     trustbook)
 
 OPERATOR = "operator_console"
 TOKEN_ENV = "DBA_TOKEN_OPERATOR_CONSOLE"
@@ -126,12 +139,71 @@ def standing(client: dbaclient.DBAClient, domain: str, *,
     return trustbook.standing(client, domain, agent=agent)
 
 
+# --- the questions a task parked -----------------------------------------------
+
+def questions(client: dbaclient.DBAClient, *,
+              agent: str = identity.AGENT_ID) -> list[dict]:
+    """Every open question in every saved run, oldest first.
+
+    One flat list rather than one per run, because Krish is answering
+    questions, not reviewing runs: the run is named on each so that the answer
+    can find its way back."""
+    found = []
+    for run in taskrun.open_runs(client, agent=agent):
+        for one in run.open_questions():
+            found.append({"run": run.key, "goal": run.goal, "about": one.about,
+                          "asked": one.asked, "tried": one.tried, "of": one.of,
+                          "at": one.at, "paused_because": run.paused_because})
+    found.sort(key=lambda one: one["at"])
+    return found
+
+
+def _saved_run(client: dbaclient.DBAClient, key: str, *,
+               agent: str) -> taskrun.Run:
+    run = taskrun.load(client, key, agent=agent)
+    if run is None:
+        raise taskrun.NotFound(
+            f"{key!r} is not a saved run. `questions` lists the ones there are.")
+    return run
+
+
+def reply(client: dbaclient.DBAClient, key: str, about: str, answer: str, *,
+          by: str = "krish", agent: str = identity.AGENT_ID) -> taskrun.Run:
+    """Krish's answer to one question a run parked, written back into the run.
+
+    Goes through `Need.answered` rather than assigning fields, so every refusal
+    that method makes holds here: nothing asked, nobody named, or somebody the
+    question was never put to. `by` defaults to Krish because this is his
+    console, and it is still checked against who was asked rather than
+    trusted."""
+    run = _saved_run(client, key, agent=agent)
+    run.need(about).answered(answer, by=by)
+    taskrun.save(client, run, agent=agent,
+                 reason=f"{by} answered the question about {about!r}")
+    return run
+
+
+def leave_out(client: dbaclient.DBAClient, key: str, about: str, *,
+              because: str, by: str = "krish",
+              agent: str = identity.AGENT_ID) -> taskrun.Run:
+    """Krish's decision that a line does not belong in this statement.
+
+    The other honest answer to a question: not a value, but *there is none*.
+    `Need.waive` records it as his with his reason, and refuses Jarvis."""
+    run = _saved_run(client, key, agent=agent)
+    run.need(about).waive(by=by, because=because)
+    taskrun.save(client, run, agent=agent,
+                 reason=f"{by} left {about!r} out: {because}")
+    return run
+
+
 def describe() -> dict:
     return {
         "speaks_as": OPERATOR,
-        "writes": ["guess_verdict"],
+        "writes": ["guess_verdict", "agent_state"],
         "a_conversational_yes_settles_a_guess": False,
         "silence_is": anticipation.NOT_NOW,
+        "answers_a_task_question_as": "whoever it was put to",
     }
 
 
@@ -158,6 +230,20 @@ def main(argv=None) -> int:
 
     shown = commands.add_parser("standing", help="what a domain has earned")
     shown.add_argument("domain")
+
+    commands.add_parser("questions", help="what a task stopped to ask you")
+
+    replied = commands.add_parser("reply", help="answer one of them")
+    replied.add_argument("run")
+    replied.add_argument("about")
+    replied.add_argument("--answer", required=True)
+    replied.add_argument("--by", default="krish")
+
+    left = commands.add_parser("leave-out", help="say a line does not belong")
+    left.add_argument("run")
+    left.add_argument("about")
+    left.add_argument("--because", required=True)
+    left.add_argument("--by", default="krish")
 
     args = parser.parse_args(argv)
     try:
@@ -186,6 +272,24 @@ def main(argv=None) -> int:
     if args.command == "lapse":
         print(f"{len(lapse(client))} mention(s) settled as "
               f"{anticipation.NOT_NOW}")
+        return 0
+    if args.command == "questions":
+        rows = questions(client)
+        if not rows:
+            print("Nothing waiting.")
+        for row in rows:
+            print(f"{row['run']}  {row['about']}: {row['asked']}")
+            print(f"    already tried: {row['tried']}")
+            print(f"    for {row['goal']}")
+        return 0
+    if args.command == "reply":
+        run = reply(client, args.run, args.about, args.answer, by=args.by)
+        print(f"recorded; {len(run.open_questions())} question(s) still open")
+        return 0
+    if args.command == "leave-out":
+        run = leave_out(client, args.run, args.about, because=args.because,
+                        by=args.by)
+        print(f"recorded; {len(run.open_questions())} question(s) still open")
         return 0
     earned = standing(client, args.domain)
     print(f"{args.domain}: {earned.rung}")

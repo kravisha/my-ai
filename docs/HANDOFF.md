@@ -158,9 +158,11 @@ Four refusals make all three instructions hold at once:
 4. A blocked line parks its question while the rest of the work carries on, and
    `finish()` refuses while anything is neither filled nor asked about.
 
-**It has no producer and no consumer.** Nothing reads the business account, and
-nothing puts its open questions in front of Krish. That is TQ-119 and it is the
-highest-value thing left.
+A run is saved through `persistence.TASK` and restored exactly as it was, with
+the same refusals on the way back, and the console (`python -m gateway.console
+questions`) is where Krish sees and answers what it asked. **It has no
+producer.** Nothing reads the business account. That is what is left of TQ-119
+and it is the highest-value thing left.
 
 ---
 
@@ -258,9 +260,10 @@ Read this section before you debug anything.
 
 1. **TQ-127 — nobody has run bring-up on the PC.** Everything in §8 is inference
    until it is typed there. This is the handover.
-2. **TQ-119 — `gateway/taskrun.py` has no producer or consumer.** It is the
-   piece Krish described in the most detail and the closest thing to the actual
-   job. Nothing reads the business account; nothing puts its questions to him.
+2. **TQ-119 — `gateway/taskrun.py` has no producer.** It is the piece Krish
+   described in the most detail and the closest thing to the actual job. A run
+   survives a restart and its questions reach his console; nothing yet reads
+   the business account.
 3. **The supervisor does not know about the new subsystems.** It starts the DBA
    and the Gateway. Nothing checks bring-up on a schedule, so a subsystem that
    stopped would be noticed by a person or not at all.

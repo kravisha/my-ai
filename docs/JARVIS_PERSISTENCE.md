@@ -811,13 +811,56 @@ them. Reporting a statement as done with a silent hole in it is the failure this
 whole arrangement exists against, and it is the one that looks most like
 success.
 
+### A run survives a restart, and comes back exactly as it was
+
+A morning's work that dies with the process is a morning Krish answers the same
+questions twice. `save` writes the whole run - every line, where its value came
+from, every question and who it was put to - as one `task` state item through
+`gateway/persistence.py`, revised rather than overwritten, and `load` brings it
+back. Nothing is summarised on the way out, because the summary is where
+provenance would be lost. The key is made from the goal rather than the clock,
+so a restart finds the run it was in the middle of instead of starting a fresh
+one and leaving the old one an orphan with Krish's answers in it.
+
+**A saved bundle is a claim like any other.** The store is writable by anything
+that can reach it, and a value restored without a source is indistinguishable
+afterwards from one that was found. So `restore` rebuilds the run through the
+same methods a live one is built with - `found`, `ask`, `answered`, `waive` -
+rather than assigning fields, and every refusal above holds on the way back: a
+value with no source, a value on a line that was never filled, an answer under
+a name the question was not put to, a waiver with nobody's name on it, a state
+the record cannot support. Thirteen probes each drop one of those on the
+restore path alone.
+
+`record_task_state` writes notes under the same kind. A note read as a run
+would be one with nothing to do and nothing missing, which `finish` would call
+done; a marker field tells the two apart and a note is left alone.
+
+`gateway/upkeep.closing_down` pauses every running task before its shutdown
+checkpoint, and a saved run is one of the things it pauses. The restore carries
+why the work stopped, and the narration says so on its first line after the
+goal.
+
+### The questions reach him, and the answer is his
+
+`gateway/console.py` is the consumer. `questions` lists every open question
+across every saved run, oldest first, each naming the run it belongs to; `reply`
+writes his answer back through `Need.answered`, and `leave-out` through
+`Need.waive`, so the refusals are the module's own: only the one who was asked
+may answer, and Jarvis may not waive a line of his own work by typing it at the
+console. A console that assigned the fields instead would still work, still
+save, and would have removed the check - so a probe does exactly that.
+
+The revision that carries the answer is created by the operator console, which
+means the DBA's own audit says Krish wrote it. The answer's provenance is in
+the store's record of who wrote the row, not only in an `answered_by` field the
+row happens to contain - a field Jarvis could have written.
+
 ### Not yet done
 
-Nothing calls this. It is the decision half of the split: it has no store, no
-clock beyond `now`, no account and no way to read one. The producer is the piece
-that reads Krish's business account and the consumer is the piece that puts the
-open questions in front of him - the console already knows how to do the second
-for `noticing`, and the natural next step is one path for both.
+Nothing reads the business account. The producer - the piece that opens the
+account, follows the model and fills what it can - is the half that needs the
+machine, and it is the next task rather than a later one.
 
 ---
 

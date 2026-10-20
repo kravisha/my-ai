@@ -52,6 +52,17 @@ not guessed at either.
 `finish` refuses while any need is unmet and unasked. Reporting a statement as
 done with a silent hole in it is the failure this whole arrangement is against,
 and it is the one that looks most like success.
+
+## A run survives a restart, and comes back exactly as it was
+
+A morning's work that dies with the process is a morning Krish answers the same
+questions twice. `save` writes the whole run - every line, where its value came
+from, every question and who it was put to - as one `task` state item through
+`gateway/persistence.py`, and `load` brings it back. Nothing is summarised on
+the way out, because the summary is where provenance would be lost, and a line
+that came back with a value and no source is refused by `restore` rather than
+believed: a bundle is a claim like any other, and a figure that cannot say where
+it came from is a forgery whether it was typed or restored.
 """
 
 from __future__ import annotations
@@ -59,7 +70,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from gateway import identity
+from gateway import identity, persistence
 
 # --- what can happen to a need --------------------------------------------------
 
@@ -155,6 +166,11 @@ class Question:
     @property
     def open(self) -> bool:
         return self.answer is None
+
+    def to_dict(self) -> dict:
+        return {"about": self.about, "asked": self.asked, "tried": self.tried,
+                "of": self.of, "at": self.at.isoformat(),
+                "answer": self.answer, "answered_by": self.answered_by}
 
 
 @dataclass
@@ -260,11 +276,19 @@ class Need:
     def settled(self) -> bool:
         return self.state in SETTLED
 
+    def to_dict(self) -> dict:
+        return {"name": self.name, "means": self.means, "state": self.state,
+                "value": self.value, "source": self.source,
+                "blocked_by": self.blocked_by,
+                "question": None if self.question is None
+                else self.question.to_dict()}
+
 
 class Run:
     """One task, in progress, with its questions and its holes visible."""
 
-    def __init__(self, goal: str, model: Model, *, for_whom: str = "krish"):
+    def __init__(self, goal: str, model: Model, *, for_whom: str = "krish",
+                 key: str | None = None):
         if not (goal or "").strip():
             raise NotFound("a task needs a goal")
         if _same(for_whom, identity.AGENT_ID):
@@ -277,6 +301,14 @@ class Run:
         self.for_whom = for_whom
         self.needs: list[Need] = model.needs()
         self.started = _now()
+        # The name it is saved under. Stable across restarts by construction:
+        # a key derived from the clock would make every restart a new run and
+        # the old one an orphan with Krish's answers in it.
+        self.key = (key or "").strip() or _key_for(self.goal)
+        # Set by the shell closing (`gateway/upkeep.py` pauses running tasks
+        # before its checkpoint) and carried back so the narration can say why
+        # the work stopped rather than only that it did.
+        self.paused_because: str | None = None
 
     def need(self, name: str) -> Need:
         for one in self.needs:
@@ -364,6 +396,8 @@ class Run:
     def narrate(self) -> list[str]:
         """For a person to read while it is happening."""
         lines = [f"{self.goal} (following {self.model.name})"]
+        if self.paused_because:
+            lines.append(f"  paused: {self.paused_because}")
         for one in self.needs:
             if one.settled:
                 lines.append(f"  [x] {one.name}: {one.value}  - {one.source}")
@@ -399,6 +433,140 @@ class Run:
             timespec="seconds")}
 
 
+    # --- surviving a restart --------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Everything, so that `restore` needs nothing else.
+
+        The model travels with the run rather than being looked up again,
+        because a model that changed while the run was down would make the
+        restored needs disagree with the shape they were built from."""
+        return {
+            MARKER: 1,
+            "goal": self.goal,
+            "for_whom": self.for_whom,
+            "started": self.started.isoformat(),
+            "model": {"name": self.model.name,
+                      "fields": [{"name": one.name, "means": one.means}
+                                 for one in self.model.fields]},
+            "needs": [one.to_dict() for one in self.needs],
+            # `gateway/upkeep.py` reads this to pause a running task when the
+            # shell closes, and writes `paused_because` beside it.
+            "state": RUNNING,
+            "paused_because": self.paused_because,
+        }
+
+
+# The field that marks a `task` state item as one of these rather than a note
+# saved by `record_task_state`. Both live under `persistence.TASK`; a run is
+# restored, a note is merely read.
+MARKER = "taskrun"
+RUNNING = "running"
+
+
+def _key_for(goal: str) -> str:
+    slug = "".join(char if char.isalnum() else "-" for char in goal.lower())
+    slug = "-".join(part for part in slug.split("-") if part)
+    return f"run:{slug[:60]}"
+
+
+def _when(text: str | None) -> datetime:
+    if not text:
+        return _now()
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return _now()
+
+
+def restore(bundle: dict) -> Run:
+    """A run, exactly as it was saved.
+
+    Refuses a bundle that would let a value in without a source, because a
+    stored bundle is editable by anything that can reach the store and a figure
+    restored without provenance is indistinguishable afterwards from one that
+    was found. Every other refusal in this module holds here too, by using the
+    same methods rather than assigning fields."""
+    if not isinstance(bundle, dict) or not bundle.get(MARKER):
+        raise NotFound("this is not a saved run")
+    shape = bundle.get("model") or {}
+    model = Model(name=shape.get("name") or "", fields=tuple(
+        Field(one.get("name") or "", one.get("means") or "")
+        for one in shape.get("fields") or ()))
+    run = Run(bundle.get("goal") or "", model,
+              for_whom=bundle.get("for_whom") or "krish",
+              key=bundle.get("key") or "")
+    run.started = _when(bundle.get("started"))
+    run.paused_because = bundle.get("paused_because") or None
+
+    saved = {one.get("name"): one for one in bundle.get("needs") or ()}
+    for need in run.needs:
+        kept = saved.get(need.name)
+        if kept is None:
+            continue
+        state = kept.get("state")
+        asked = kept.get("question")
+        if asked is not None:
+            question = need.ask(asked.get("asked") or "",
+                                tried=asked.get("tried") or "",
+                                of=asked.get("of") or "")
+            question.at = _when(asked.get("at"))
+            if asked.get("answer") is not None:
+                need.answered(asked["answer"], by=asked.get("answered_by") or "")
+        if state == FOUND:
+            need.found(kept.get("value"), source=kept.get("source") or "")
+        elif state == WAIVED:
+            need.state = WAIVED
+            need.source = kept.get("source") or ""
+            if not need.source:
+                raise NotFound(
+                    f"{need.name}: saved as left out with nobody's name on it")
+        elif state == UNMET and kept.get("value") is not None:
+            raise NotFound(
+                f"{need.name}: the saved run has a value on a line that was "
+                f"never filled. That is a figure with no provenance, and it is "
+                f"refused here for the same reason `found` refuses it.")
+        if need.state != state:
+            raise NotFound(
+                f"{need.name}: saved as {state!r} but its record only supports "
+                f"{need.state!r}")
+    for need in run.needs:
+        kept = saved.get(need.name) or {}
+        if kept.get("blocked_by"):
+            run.depends(need.name, on=kept["blocked_by"])
+    return run
+
+
+def save(client, run: Run, *, agent: str = identity.AGENT_ID,
+         reason: str | None = None) -> dict:
+    """Write the run as one `task` state item, revised not overwritten."""
+    return persistence.put(client, persistence.TASK, run.key, run.to_dict(),
+                           agent=agent,
+                           reason=reason or f"task run {run.key} saved")
+
+
+def load(client, key: str, *, agent: str = identity.AGENT_ID) -> Run | None:
+    """The run saved under `key`, or `None` if there is none."""
+    kept = persistence.get(client, persistence.TASK, key, agent=agent)
+    if not isinstance(kept, dict) or not kept.get(MARKER):
+        return None
+    return restore({**kept, "key": key})
+
+
+def open_runs(client, *, agent: str = identity.AGENT_ID) -> list[Run]:
+    """Every saved run, whatever state it is in.
+
+    A note saved by `record_task_state` sits under the same kind and is not one
+    of these; it is left alone rather than misread as a run with no lines."""
+    runs = []
+    for row in persistence.current(client, kind=persistence.TASK, agent=agent,
+                                   limit=200):
+        kept = persistence.decode(row)
+        if isinstance(kept, dict) and kept.get(MARKER):
+            runs.append(restore({**kept, "key": row.get("name") or ""}))
+    return runs
+
+
 def describe() -> dict:
     return {
         "states": list(STATES),
@@ -408,4 +576,6 @@ def describe() -> dict:
         "finishes_with_a_hole": False,
         "answers_its_own_questions": False,
         "dependency_loops": "refused",
+        "survives_restart": True,
+        "restored_value_needs_a_source": True,
     }

@@ -5,7 +5,7 @@ that we don't have any confusion about what needs to be done. Also use last
 year's statement as a model and ask me questions when you can't find the data
 that you seek."*
 
-This module fails silently in three directions, which is why it is probed rather
+This module fails silently in four directions, which is why it is probed rather
 than reviewed:
 
 - **A figure arrives with no provenance.** Drop the `source` requirement and
@@ -16,6 +16,11 @@ than reviewed:
   Krish's name.
 - **A hole is reported as a finished line.** The most dangerous failure in the
   whole module looks exactly like success.
+- **A saved run is believed on the way back.** The bundle in the store is
+  editable by anything that can reach the store, and a value restored without
+  a source, or an answer restored under somebody else's name, is afterwards
+  indistinguishable from one that was found or given. Every refusal above has
+  to hold on the restore path too, and each of these drops one there.
 
 Run it directly:
 
@@ -437,6 +442,119 @@ PROBES: list[harness.Probe] = [
         "                lines.append(f\"  [ ] {one.name}: waiting on {one.blocked_by}\")",
         "                lines.append(f\"  [ ] {one.name}: not yet\")",
         ("test_the_narration_shows_the_question_and_the_work_behind_it",),
+    ),
+
+    # --- a saved run is a claim like any other ------------------------------
+    (
+        TASKRUN,
+        "a restored value with no source is given one",
+        '            need.found(kept.get("value"), source=kept.get("source") or "")',
+        '            need.found(kept.get("value"), source=kept.get("source") or "restored")',
+        ("test_a_saved_value_with_no_source_is_refused_on_the_way_back",),
+    ),
+    (
+        TASKRUN,
+        "a value on a line that was never filled is restored quietly",
+        '        elif state == UNMET and kept.get("value") is not None:',
+        '        elif False:',
+        ("test_a_saved_value_on_an_unfilled_line_is_refused",),
+    ),
+    (
+        TASKRUN,
+        "a restored answer is assigned rather than answered, so anybody's name "
+        "is accepted on it",
+        '                need.answered(asked["answer"], by=asked.get("answered_by") or "")',
+        '                question.answer = asked["answer"]\n'
+        '                question.answered_by = asked.get("answered_by") or ""\n'
+        '                need.value = asked["answer"]\n'
+        '                need.source = f"{question.answered_by} said so"\n'
+        '                need.state = ANSWERED',
+        ("test_a_saved_answer_from_somebody_else_is_refused_on_the_way_back",),
+    ),
+    (
+        TASKRUN,
+        "a waiver comes back with nobody's name on it",
+        '            if not need.source:\n'
+        '                raise NotFound(\n'
+        '                    f"{need.name}: saved as left out with nobody\'s name on it")',
+        '            if False:\n'
+        '                raise NotFound(\n'
+        '                    f"{need.name}: saved as left out with nobody\'s name on it")',
+        ("test_a_saved_waiver_with_nobody_s_name_on_it_is_refused",),
+    ),
+    (
+        TASKRUN,
+        "a saved state the record cannot support is believed",
+        '        if need.state != state:',
+        '        if False:',
+        ("test_a_saved_state_the_record_does_not_support_is_refused",),
+    ),
+    (
+        TASKRUN,
+        "anything shaped like a dict is restored as a run",
+        '    if not isinstance(bundle, dict) or not bundle.get(MARKER):\n'
+        '        raise NotFound("this is not a saved run")',
+        '    if not isinstance(bundle, dict):\n'
+        '        raise NotFound("this is not a saved run")',
+        ("test_a_bundle_that_is_not_a_run_is_refused",),
+    ),
+    (
+        TASKRUN,
+        "a note saved by `record_task_state` is loaded as a run with nothing "
+        "to do",
+        '    if not isinstance(kept, dict) or not kept.get(MARKER):\n'
+        '        return None\n'
+        '    return restore({**kept, "key": key})',
+        '    if not isinstance(kept, dict):\n'
+        '        return None\n'
+        '    return restore({**kept, MARKER: 1, "key": key})',
+        ("test_a_note_saved_by_record_task_state_is_not_mistaken_for_a_run",),
+    ),
+    (
+        TASKRUN,
+        "`open_runs` hands back the notes as well",
+        '        if isinstance(kept, dict) and kept.get(MARKER):\n'
+        '            runs.append(restore({**kept, "key": row.get("name") or ""}))',
+        '        if isinstance(kept, dict):\n'
+        '            runs.append(restore({**kept, MARKER: 1, "key": row.get("name") or ""}))',
+        ("test_a_note_saved_by_record_task_state_is_not_mistaken_for_a_run",),
+    ),
+    (
+        TASKRUN,
+        "what a line was waiting on is not restored",
+        '            run.depends(need.name, on=kept["blocked_by"])',
+        '            pass',
+        ("test_a_restored_run_remembers_what_waits_on_what",),
+    ),
+    (
+        TASKRUN,
+        "the key comes from the clock, so every restart is a new run and the "
+        "old one an orphan with Krish's answers in it",
+        '        self.key = (key or "").strip() or _key_for(self.goal)',
+        '        self.key = (key or "").strip() or f"run:{_now().isoformat()}"',
+        ("test_a_run_has_a_stable_key_made_from_its_goal",),
+    ),
+    (
+        TASKRUN,
+        "why the work stopped is lost on the way back",
+        '    run.paused_because = bundle.get("paused_because") or None',
+        '    run.paused_because = None',
+        ("test_the_shell_closing_pauses_a_saved_run_and_the_restore_says_so",),
+    ),
+    (
+        TASKRUN,
+        "a run is saved in a state the shell's pause does not look for",
+        '            "state": RUNNING,',
+        '            "state": "in_progress",',
+        ("test_the_shell_closing_pauses_a_saved_run_and_the_restore_says_so",),
+    ),
+    (
+        TASKRUN,
+        "`describe` claims a restored value needs a source when it no longer "
+        "checks",
+        '        "restored_value_needs_a_source": True,',
+        '        "restored_value_needs_a_source": False,',
+        ("test_describe_says_what_this_module_refuses",),
     ),
     (
         TASKRUN,
