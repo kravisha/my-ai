@@ -716,6 +716,74 @@ def test_his_words_are_stored_verbatim_on_the_decision(client, conversation):
     assert "use the phone's own PDF viewer" in decision["note"]
 
 
+def test_a_quote_krish_never_said_is_refused(client, conversation):
+    """Arya's independent review, finding #1: identity is authenticated but
+    consent is not.
+
+    `decided_by` comes from the session and cannot be steered - that half was
+    always right. `krish_said` is supplied by the MODEL and, before this test,
+    was checked against nothing. So a model could approve a change to its own
+    code by inventing a sentence, and the record would name Krish as the
+    decider because Krish happened to be logged in to TALK.
+
+    The project already rejected this shape of reasoning. SPEC_RECONCILIATION
+    §163 threw out "evil to prevent more evil" for being self-ratifying - the
+    party who benefits is the party who judges - and accepted the
+    inquisitiveness exception only because its condition could be checked by
+    reading the store. A model-supplied quote nobody reads back is
+    self-ratifying approval by exactly that argument.
+
+    So consent is now verified against what Krish actually typed."""
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes, go ahead, approve it"},
+        role="operator", subject="krish",
+        owner_said=["what are you proposing?", "show me the files it touches"])
+
+    assert "error" in result, "a fabricated approval must be refused"
+    assert "not find" in result["error"].lower() or "never said" in result["error"].lower()
+    assert client.count("approval_decision", {}) == 0, (
+        "nothing may be recorded when consent cannot be verified")
+
+
+def test_a_quote_he_did_say_is_still_accepted(client, conversation):
+    """The other half, and the one that stops this becoming a gate that refuses
+    everything. A check that cannot pass is as useless as one that cannot fire,
+    and this project has produced both this month."""
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes, go ahead"},
+        role="operator", subject="krish",
+        owner_said=["show me the proposal", "ok yes, go ahead - but test it first"])
+
+    assert "error" not in result, result
+    assert result["recorded"] == "approve"
+    assert result["decided_by"] == "krish"
+
+
+def test_an_interface_that_cannot_show_what_he_said_refuses(client, conversation):
+    """Fails closed, for the reason this module already gives about `role`: a
+    caller that forgot to pass something must not silently get the most
+    permissive behaviour. An interface with no transcript cannot verify consent,
+    so it does not get to record one."""
+    proposal = _proposal(client)
+
+    result = conversation.execute(
+        None, "decide_self_change",
+        {"change_id": proposal["id"], "decision": "approve",
+         "krish_said": "yes, go ahead"},
+        role="operator", subject="krish")
+
+    assert "error" in result
+    assert client.count("approval_decision", {}) == 0
+
+
 def test_the_conversation_can_list_and_show_without_deciding(client, conversation):
     proposal = _proposal(client)
 
