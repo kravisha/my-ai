@@ -43,7 +43,7 @@ from typing import Iterator
 from app import capability_gaps, model_calls
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import devchannel, interface, recording, roles, skills, store, tools, uiversion
+from gateway import devchannel, interface, recording, roles, skills, speech, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -249,7 +249,7 @@ def run_turn(
     db_path, history: list[dict], provider: ModelProvider, max_tokens: int = MAX_REPLY_TOKENS,
     *, role: str, subject: str | None = None,
     agent_name: str | None = None, conversation_id: int | None = None,
-    recorder=None,
+    recorder=None, spoken: bool = False,
 ) -> Iterator[dict]:
     """One turn, tools and all, as a stream of events:
 
@@ -298,6 +298,11 @@ def run_turn(
     # client's is assembled separately and must not receive them.
     system = (client_prompt(agent_name or "your representative", role)
               if role == roles.ROLE_CLIENT else operator_prompt())
+    # A turn that arrived by voice is answered for the ear (Krish, 2026-11-21:
+    # "this is how realistically they should talk"). Appended for that turn
+    # only: a typed question still gets a list when a list is the answer.
+    if spoken:
+        system += speech.DELIVERY_PARAGRAPH
     messages = model_messages(history)
     said: list[str] = []
     conn = store.get_connection(db_path)

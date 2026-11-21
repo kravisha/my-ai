@@ -338,11 +338,20 @@ Tap the microphone. Speech is recognised and replies are spoken, the transcript
 stays visible, and typing still works mid-conversation — the same conversation
 either way, which is what addendum 16 §9 asks for.
 
-Recognition and synthesis are the **browser's own** Web Speech API: no new
-dependency, no API key, no second bill, and no audio for this service to hold.
+Recognition is the **browser's own** Web Speech API: no new dependency and no
+audio for this service to hold. Synthesis asks the Gateway first: `POST /speech`
+(`gateway/speech.py`) returns the reply in a real voice from whichever provider
+has a key in the environment (`ELEVENLABS_API_KEY` or `OPENAI_API_KEY`; see
+`.env.example`), one stable voice per agent, with the reply rewritten for the
+ear before it is sent. With no key the page uses the browser's own voice, as it
+did before. A turn that arrived by voice is also answered for the ear: short
+sentences, no markdown. `docs/VOICE_AND_PRESENCE.md` has the target and the
+milestones after this one.
 
 **Where the audio goes.** In Chrome, speech recognition uploads audio to Google's
-servers to be transcribed; in Safari, to Apple's. Speaking is local to the device.
+servers to be transcribed; in Safari, to Apple's. With a voice provider
+configured, the text of every reply is sent to that provider to be spoken;
+without one, speaking is local to the device.
 That is a real disclosure for a project whose purpose is controlling what leaves,
 so it is stated here rather than left to be discovered. If that trade is
 unacceptable, the replacement is a server-side speech provider, and it changes one

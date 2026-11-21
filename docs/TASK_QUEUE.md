@@ -3910,3 +3910,27 @@ questions"*, and that is the opposite of this repository's prime directive — *
 then ask whether the question was a good one. The owner's own directive wins. What is worth taking is
 *don't stall while waiting*; what is not worth taking is *ask less*. Parking a question and moving on is
 only legitimate if the question is still asked.
+
+---
+
+## TQ-128 · Agents that talk like the recording
+
+**NEED (ORANGE) · owner instruction, 2026-11-21: *"This is how realistically they should talk. Please make this happen."***
+
+The owner sent a recording of an AI host on a live stream and named it the final goal: a human voice,
+short spoken sentences with a pause between thoughts, the viewer addressed by name, a face that speaks
+the words and keeps moving while listening, and interruption. `docs/VOICE_AND_PRESENCE.md` is the
+study and the milestone list.
+
+- **M1 — a real voice.** DONE 2026-11-21: `gateway/speech.py`, `POST /speech`, a stable voice per
+  agent, the spoken form of a reply, and the model told to write for the ear on a voice turn.
+- **M2 — pacing and first-word latency.** QUEUED. Sentence-by-sentence synthesis, first audio under
+  two seconds, the recording's one-second pause between thoughts.
+- **M3 — the host's register.** BLOCKED on the owner: what an agent may say about itself (addendum
+  53 §7.9's persona freeze).
+- **M4 — a face.** BLOCKED on the owner: hosted talking head (words leave the machine) or a local
+  model on the PC (needs a GPU).
+
+Open with the owner: which voice provider holds the key, and where Kali and Tara live - neither name
+is in this repository.
+

@@ -48,7 +48,7 @@ from pydantic import BaseModel
 
 from app import capability_gaps, eventlog, model_budget, model_calls, user_messages
 from app.model_gateway import default_provider
-from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, store, technology, uiversion, upkeep
+from gateway import attachments, auth, client_agent, clients, conversation, exposure, interface, jarvis, machine, rehydrate, roles, scoreboard, speech, store, technology, uiversion, upkeep
 from gateway.streaming import iterate_in_thread
 
 logger = logging.getLogger("gateway")
@@ -639,6 +639,57 @@ async def voice_inbox(
     return {"ok": True, "messages": messages[-5:], "total": len(messages)}
 
 
+class SpeechRequest(BaseModel):
+    text: str
+
+
+@app.post("/speech")
+async def speech_for(
+    body: SpeechRequest,
+    token: str = Depends(require(roles.CAP_SESSION)),
+    conn=Depends(gateway_db),
+):
+    """One reply, as audio in a real voice (gateway/speech.py).
+
+    Krish, 2026-11-21, with a recording of an AI host talking on a live stream:
+    *"This is how realistically they should talk."* The page used to hand each
+    reply to the browser's `speechSynthesis`; now it asks here first and plays
+    what comes back, and only if nothing does - no provider configured, or the
+    provider down - does the browser voice take over. The reply is already on
+    the screen in either case, so the worst outcome of this route failing is
+    the voice it had before.
+
+    **204, not an error, when no provider is configured.** That is a
+    deployment without a key, which is the state every Gateway was in until
+    today and is not a fault. 503 is reserved for a provider that is configured
+    and did not answer, because that one somebody should look at.
+
+    Gated on `session` rather than a narrower capability: a client hears their
+    representative, and the operator hears Jarvis, and the text comes from the
+    caller - this route reads nothing it is not handed. The voice is chosen
+    from the caller's own agent record, so a client cannot ask for another's.
+    """
+    role = store.session_role(conn, token)
+    agent_name = None
+    if role == roles.ROLE_CLIENT:
+        subject = store.session_subject(conn, token)
+        if subject:
+            agent_name = client_agent.ensure(conn, subject)["name"]
+    try:
+        result = await asyncio.to_thread(speech.speak, body.text, agent_name)
+    except speech.SpeechUnavailable as exc:
+        logger.warning("speech: %s", exc)
+        raise HTTPException(status_code=503, detail="The voice did not answer.")
+    if result is None:
+        return Response(status_code=204)
+    return Response(
+        content=result["audio"], media_type=result["content_type"],
+        headers={"Cache-Control": "no-store",
+                 "X-Speech-Provider": result["provider"],
+                 "X-Speech-Truncated": "1" if result["truncated"] else "0"},
+    )
+
+
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest, http_request: Request, conn=Depends(gateway_db)):
     """503 when no Super User is configured, 401 when the credential is wrong.
@@ -1034,7 +1085,9 @@ async def conversation_socket(
             "since": agent["created_at"],
             "returning": agent["returning"],
             "meetings": agent["meetings"],
-            "voice": agent["voice"],
+            # The record's slot plus the derived persona: what the page would
+            # read if it rendered a voice picker, and what /speech will use.
+            "voice": {**agent["voice"], **speech.voice_for(agent["name"])},
             "visual": agent["visual"],
         }
         ready["introduction"] = client_agent.introduction(agent)
@@ -1063,6 +1116,10 @@ async def conversation_socket(
         if not text:
             await websocket.send_json({"type": "error", "error": "empty message"})
             continue
+        # The page says whether this turn was spoken, and the reply is written
+        # for the ear when it was (gateway/speech.DELIVERY_PARAGRAPH). Read as
+        # a strict boolean: a frame is whatever arrived on a socket.
+        spoken_turn = message.get("spoken") is True
         if len(text) > MAX_MESSAGE_CHARS:
             await websocket.send_json({"type": "error", "error": "message too long"})
             continue
@@ -1139,7 +1196,8 @@ async def conversation_socket(
             try:
                 async for event in iterate_in_thread(
                     lambda: conversation.run_turn(db_path, history, provider, role=role,
-                                              subject=subject, agent_name=agent_name)
+                                              subject=subject, agent_name=agent_name,
+                                              spoken=spoken_turn)
                 ):
                     if event["type"] == "text":
                         said.append(event["text"])

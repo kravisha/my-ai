@@ -271,6 +271,7 @@ split, because the adapter is the part that cannot be tested here. See
 | Persistence, the ledger, self-modification | `docs/JARVIS_PERSISTENCE.md` |
 | The shell and the escape hatch | `docs/JARVIS_SHELL.md` |
 | The DBA | `docs/DBA_AGENT.md`, `docs/DBA_AGENT_DEVELOPMENT.md` |
+| How an agent should talk, and the voice/face milestones | `docs/VOICE_AND_PRESENCE.md` |
 
 ### Echo's outbox: where the agents' messages are
 
