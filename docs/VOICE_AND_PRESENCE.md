@@ -240,6 +240,25 @@ So the look is settled, and two things with it:
   live, and rendered clips of the same character for everything that can be
   made ahead - introductions, lessons, a daily message, social posts.
 
+**The verdict on the first demos, 2026-11-22 01:52.** Two demos were tried
+on the PC: a realistic Tara portrait with an animated mouth, and a stylised
+one. Both were rejected as terrible in playback: the realistic portrait is
+right, its mouth is *"really bad"*. The lesson is that a mouth-flap driven by
+audio amplitude, however smoothed, is not what the samples do; the samples
+are neural talking-portrait renders, and that is the floor. Two more facts
+from the same call:
+
+- **The target face is the realistic Tara portrait**, not the stylised
+  character. The samples set the standard of motion, not the look.
+- **The face is small:** a circle about two inches across at the top of the
+  call tab. At that size a 256-pixel render is enough, which puts the
+  real-time talking-head models (MuseTalk, LivePortrait, SadTalker at 256)
+  within reach of the PC's GPU for a live reply.
+
+So M4a is now: the realistic Tara portrait, an audio-driven talking-portrait
+model, rendered at circle size, live if the GPU allows and offline if not.
+The amplitude mouth-flap is retired.
+
 Three routes, in rising order of cost and fidelity:
 
 1. **A rendered avatar driven by the audio** on the page: a 2D or 3D head
