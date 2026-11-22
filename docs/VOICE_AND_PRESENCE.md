@@ -259,6 +259,17 @@ So M4a is now: the realistic Tara portrait, an audio-driven talking-portrait
 model, rendered at circle size, live if the GPU allows and offline if not.
 The amplitude mouth-flap is retired.
 
+**The brief, 2026-11-22 01:58.** The second demo's mouth was *"distorted...
+hideous"*, and the owner said the thing that simplifies everything: *"I do not
+care what the face looks like. Just any face is fine for me. I just need the
+animations."* So likeness is not a requirement for M4a, and the agreed brief
+is: **stop generating motion from scratch.** Use the sample clips as driving
+videos and transfer their blinks, head turns and expressions onto any face
+(LivePortrait), then lip-sync the result to the agent's audio (LatentSync, or
+MuseTalk). Done means a clip whose motion, blinks and lip-sync look natural
+beside the samples, with the render time and what failed reported. The
+sample clips are kept in the project's shared folder under `voice-samples/`.
+
 Three routes, in rising order of cost and fidelity:
 
 1. **A rendered avatar driven by the audio** on the page: a 2D or 3D head
