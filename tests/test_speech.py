@@ -383,6 +383,10 @@ def test_the_delivery_paragraph_asks_for_what_the_recording_has():
     paragraph = speech.DELIVERY_PARAGRAPH
     for ask in ("Short sentences", "Answer first", "No markdown", "URL", "sign off"):
         assert ask in paragraph
+    # The third sample (2026-11-22) is a Hindi comedy skit. The agents answer
+    # in the language they were spoken to, Hinglish included.
+    assert "Hindi" in paragraph and "Hinglish" in paragraph
+    assert "answers Hindi in English is wrong" in paragraph
 
 
 def test_run_turn_takes_the_flag_and_defaults_to_typed(tmp_path):

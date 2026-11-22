@@ -176,6 +176,37 @@ not yet real time. The still image is the agent's stable face (addendum 43
 §16), and it answers the "static portrait" objection in `DEFAULT_VISUAL`
 because the portrait is the input, not the output.
 
+**A third sample, 2026-11-22 00:04.** 23 seconds of short Hindi comedy
+skits ("Husband ki laadli"): two stylised characters in a kitchen, a two-shot
+with a background, cuts between skits. What it adds to the target, beyond the
+second sample: **Hindi and Hinglish speech** with comic timing, and **two
+agents in one frame reacting to each other** - she rolls her eyes and
+side-glances while he talks; he grins while she scolds. Lip-sync on both.
+Consequences: the voice provider must speak Hindi (ElevenLabs' multilingual
+models and OpenAI's do; the delivery paragraph now says to answer in the
+language spoken), and M4b's real-time face needs an *idle-and-listening*
+state that reacts, not only a speaking state. Two agents in one scene is a
+compositing question for after M4b.
+
+**A fourth sample, 2026-11-22 00:10.** 25 seconds of the same character as
+the second sample, and the point of it is the *body*: a finger wagged at the
+camera, a hand to the chin, a palm raised, the head turned a quarter to each
+side, eyes closed laughing, a cheeky grin, the shoulders in it. Fixed framing
+and a still background again, but this is not a talking head with blinks; it
+is a figure acting the line. So there are two tiers of "face", and the
+samples span both:
+
+| Tier | What moves | What produces it locally | Speed on a single GPU |
+|---|---|---|---|
+| Talking head | mouth, eyes, brows, small head motion | SadTalker, Hallo, EchoMimic, LivePortrait | seconds per second of audio; MuseTalk and LivePortrait reach real time |
+| Acting figure | the above plus hands, shoulders, turns, laughs | audio-driven video generation: Wan 2.2 S2V, OmniAvatar, Hallo3, MultiTalk | minutes per few seconds of clip, 24 GB VRAM or more |
+
+M4a delivers the first tier first because it is the one that can answer a
+reply while the person is still in the room. The second tier is the samples'
+look and is reachable on the PC's GPU as an *offline* render - a clip made
+ahead, not a live reply - until the models get faster. Both tiers start from
+the same still image, so the portrait chosen for an agent serves both.
+
 Three routes, in rising order of cost and fidelity:
 
 1. **A rendered avatar driven by the audio** on the page: a 2D or 3D head

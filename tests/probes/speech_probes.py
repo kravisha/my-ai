@@ -214,6 +214,13 @@ PROBES: list[harness.Probe] = [
         "    recorder=None, spoken: bool = True,",
         ("test_run_turn_takes_the_flag_and_defaults_to_typed",),
     ),
+    (
+        SPEECH,
+        "the spoken register answers Hindi in English",
+        "- Speak the language the person spoke. Hindi, Hinglish and English are all fine, and a reply that switches the way they switch is right; a reply that answers Hindi in English is wrong.\n",
+        "",
+        ("test_the_delivery_paragraph_asks_for_what_the_recording_has",),
+    ),
     # --- the page ---------------------------------------------------------------
     (
         PAGE,
