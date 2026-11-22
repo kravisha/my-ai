@@ -77,7 +77,12 @@ NAME_POOL = (
 
 DEFAULT_VOICE = {
     "preferred_language": "en",
-    "synthesis": "browser-provided; no voice is bundled or assumed",
+    # The voice itself is derived from the name by gateway/speech.voice_for and
+    # synthesised by whichever provider the Gateway is configured with; the
+    # browser's own voice is the fallback when none is. Not stored here because
+    # the derivation is the stable fact, and a stored id would go stale the day
+    # the provider changed (Krish, 2026-11-21; docs/VOICE_AND_PRESENCE.md).
+    "synthesis": "gateway/speech.py: a persona derived from the name, rendered by the configured provider; browser voice when none is",
     "source": "addendum 43 §16 (stable voice)",
 }
 

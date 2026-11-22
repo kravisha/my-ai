@@ -441,10 +441,12 @@
   // visible transcript, text when wanted, and switching between the two without
   // losing context.
   //
-  // Recognition and synthesis are the browser's own (Web Speech API): no new
-  // dependency, no API key, no audio for this service to hold, and the
-  // transcript is what reaches the model either way, so moving to a server-side
-  // provider later changes this file and nothing else.
+  // Recognition is the browser's own (Web Speech API): no new dependency, no
+  // API key, and the transcript is what reaches the model either way.
+  // Synthesis asks the Gateway first - POST /speech, gateway/speech.py, a
+  // neural voice behind a configured provider - and uses the browser's own
+  // voice only when the Gateway has none (Krish, 2026-11-21, with a recording
+  // of how an agent should sound: docs/VOICE_AND_PRESENCE.md).
   //
   // THE COST: in Chrome, SpeechRecognition sends audio to Google's servers to be
   // transcribed; in Safari, to Apple's. That is a real disclosure for a project
@@ -518,6 +520,10 @@
     bargeInArmed: false,
     warnedNoBargeIn: false,
     spokenText: "",
+    // The reply currently playing from /speech, if any, and a counter that
+    // every stop bumps so a fetch that lands after an interruption is dropped.
+    audio: null,
+    generation: 0,
     vad: { startedAt: null, floor: null, threshold: null, above: null, fired: false },
   };
 
@@ -715,20 +721,84 @@
       }
     }
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = utterance.onerror = () => {
-      voice.speaking = false;
-      voice.spokenText = "";
-      startListening();
-    };
     setVoiceState(
       voice.bargeInArmed ? "speaking - talk over me to interrupt" : "speaking - tap Stop to interrupt",
       "speaking"
     );
+    // The real voice first (gateway/speech.py, Krish 2026-11-21: "this is how
+    // realistically they should talk"), the browser's own only when the
+    // Gateway has none to give. The reply is on the screen already, so a
+    // synthesis that fails costs the voice it had before and nothing else.
+    //
+    // `voice.generation` is what lets an interruption win a race: a reply
+    // stopped while its audio was still being fetched must not start playing
+    // when the fetch lands.
+    const generation = ++voice.generation;
+    fetchSpeech(text).then((audioUrl) => {
+      if (generation !== voice.generation || !voice.speaking) {
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        return;
+      }
+      if (audioUrl) playAudio(audioUrl, finishSpeaking);
+      else speakWithBrowser(text, finishSpeaking);
+    });
+  }
+
+  function finishSpeaking() {
+    voice.speaking = false;
+    voice.spokenText = "";
+    startListening();
+  }
+
+  // Asks the Gateway for the reply as audio. Resolves to an object URL, or to
+  // null when there is nothing to play: 204 means no provider is configured,
+  // anything else failed, and both mean the browser voice.
+  async function fetchSpeech(text) {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    if (!token) return null;
+    try {
+      const response = await fetch("/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ text }),
+      });
+      if (response.status !== 200) return null;
+      const blob = await response.blob();
+      if (!blob.size) return null;
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function playAudio(url, done) {
+    const audio = new Audio(url);
+    voice.audio = audio;
+    const finish = () => {
+      if (voice.audio === audio) voice.audio = null;
+      URL.revokeObjectURL(url);
+      done();
+    };
+    audio.addEventListener("ended", finish);
+    audio.addEventListener("error", finish);
+    audio.play().catch(finish);
+  }
+
+  function speakWithBrowser(text, done) {
+    if (!synth) { done(); return; }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = utterance.onerror = done;
     synth.speak(utterance);
   }
 
   function stopSpeaking() {
+    // Bumping the generation is what stops a fetch still in flight from
+    // playing when it returns; pausing is what stops one already playing.
+    voice.generation++;
+    if (voice.audio) {
+      try { voice.audio.pause(); } catch (err) {}
+      voice.audio = null;
+    }
     if (synth && (synth.speaking || synth.pending)) synth.cancel();
     voice.speaking = false;
     voice.spokenText = "";
@@ -934,7 +1004,9 @@
     // assistant is as much an interruption as tapping Stop.
     stopSpeaking();
     addTurn("user", text);
-    socket.send(JSON.stringify({ type: "message", text }));
+    // `spoken` tells the Gateway to answer for the ear rather than the screen
+    // when voice is on: short sentences, no markdown (gateway/speech.py).
+    socket.send(JSON.stringify({ type: "message", text, spoken: voice.enabled }));
     els.input.value = "";
     els.input.style.height = "auto";
     els.send.disabled = true;

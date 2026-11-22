@@ -209,11 +209,15 @@ def test_the_agent_has_no_face_and_says_so(gateway_conn):
     assert agent["visual"]["source"]
 
 
-def test_the_voice_record_does_not_promise_a_voice(gateway_conn):
-    """Which voices exist is the browser's answer, the same line the console
-    already draws."""
+def test_the_voice_record_says_where_the_voice_comes_from(gateway_conn):
+    """Until 2026-11-21 the record promised nothing and the browser answered.
+    Now gateway/speech.py derives a persona from the name and a configured
+    provider renders it; the record says so, and says the browser is still
+    what happens when none is configured. tests/test_speech.py holds the
+    derivation itself."""
     voice = client_agent.ensure(gateway_conn, "customer")["voice"]
-    assert "browser-provided" in voice["synthesis"]
+    assert "gateway/speech.py" in voice["synthesis"]
+    assert "browser voice when none is" in voice["synthesis"]
 
 
 def test_an_agent_from_a_newer_build_is_refused_not_replaced(gateway_conn):
