@@ -155,7 +155,28 @@ personas) before it is a prompt. Not started; needs the owner.
 
 ### M4 — A face
 
-Requirement 5. Three routes, in rising order of cost and fidelity:
+Requirement 5.
+
+**A second sample, 2026-11-21 23:59.** Krish sent a 24-second clip: a
+stylised 3D character (big eyes, doll proportions, a saree, a living-room
+background), labelled AI-generated, animated from what is plainly one still
+image. What it does: lip shapes track the speech; eyebrows frown, lift and
+soften with the sense of the words; the eyes dart and settle; the head tilts
+and nods; one hand gestures briefly. Framing is fixed, the background is
+still, and the clip is a single take with no cuts. The audio is a casual
+spoken voice; the silence map has two pauses of about half a second in 20
+seconds of speech, so the pacing lesson from the first recording holds.
+*"If this can be done on a phone, I'm sure it can be done on this computer...
+Please give something like this at least."*
+
+So the target for M4's first delivery is narrower than the first recording and
+reachable: **one still image plus one reply's audio, rendered into a short
+talking clip with blinks, eyebrows and head motion, on the PC.** Not photoreal,
+not yet real time. The still image is the agent's stable face (addendum 43
+§16), and it answers the "static portrait" objection in `DEFAULT_VISUAL`
+because the portrait is the input, not the output.
+
+Three routes, in rising order of cost and fidelity:
 
 1. **A rendered avatar driven by the audio** on the page: a 2D or 3D head
    with visemes from the audio stream, moving while idle. Works today in a
@@ -169,8 +190,14 @@ Requirement 5. Three routes, in rising order of cost and fidelity:
    GPU and a real-time pipeline. The only one that honours "what runs on the
    PC must stay local" (CLAUDE.md, 2026-10-19) without a disclosure.
 
-The recording is route 2 or 3. Which one is the owner's decision, and the
-`visual` slot on the agent record is where the answer is written.
+The first recording is route 2 or 3; the second sample is what route 3
+produces from a still image. **M4a, started 2026-11-22:** route 3 on the PC,
+offline first - an audio-driven talking-portrait model (SadTalker, then
+EchoMimic or Hallo if the GPU allows) rendering one reply at a time to a clip
+the page plays. M4b is the same thing fast enough to feel live, which is a
+different model class (MuseTalk, LivePortrait with an audio driver) and is
+not promised until M4a has a render time to reason from. The `visual` slot on
+the agent record is where the chosen portrait is written.
 
 ---
 
@@ -180,4 +207,4 @@ The recording is route 2 or 3. Which one is the owner's decision, and the
    the PC so that nothing leaves? M1 takes either cloud key; local is a third
    row in the table and an adapter.
 2. Where do Kali and Tara live? They are not in this repository.
-3. Face: route 2 (hosted, words leave) or route 3 (local, needs a GPU)?
+3. ~~Face: route 2 (hosted, words leave) or route 3 (local, needs a GPU)?~~ Answered by the second sample and "on this computer": route 3, local.

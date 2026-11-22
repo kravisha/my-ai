@@ -3928,8 +3928,9 @@ study and the milestone list.
   two seconds, the recording's one-second pause between thoughts.
 - **M3 — the host's register.** BLOCKED on the owner: what an agent may say about itself (addendum
   53 §7.9's persona freeze).
-- **M4 — a face.** BLOCKED on the owner: hosted talking head (words leave the machine) or a local
-  model on the PC (needs a GPU).
+- **M4 — a face.** IN_PROGRESS 2026-11-22. The owner's second sample (a stylised character animated
+  from one still image) and "on this computer" settle the route: local, offline first (M4a), real
+  time after (M4b).
 
 Open with the owner: which voice provider holds the key, and where Kali and Tara live - neither name
 is in this repository.
