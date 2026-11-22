@@ -3926,8 +3926,8 @@ study and the milestone list.
   agent, the spoken form of a reply, and the model told to write for the ear on a voice turn.
 - **M2 — pacing and first-word latency.** QUEUED. Sentence-by-sentence synthesis, first audio under
   two seconds, the recording's one-second pause between thoughts.
-- **M3 — the host's register.** BLOCKED on the owner: what an agent may say about itself (addendum
-  53 §7.9's persona freeze).
+- **M3 — the host's register.** Bearing DONE 2026-11-22 (`gateway/persona.py`, from the owner's call);
+  biography BLOCKED on the owner: what an agent may say about itself (addendum 53 §7.9's persona freeze).
 - **M4 — a face.** IN_PROGRESS 2026-11-22. The owner's second sample (a stylised character animated
   from one still image) and "on this computer" settle the route: local, offline first (M4a), real
   time after (M4b).

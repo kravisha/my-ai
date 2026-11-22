@@ -26,8 +26,10 @@ SPEECH = "gateway/speech.py"
 MAIN = "gateway/main.py"
 CONVERSATION = "gateway/conversation.py"
 PAGE = "gateway/static/index.html"
+PERSONA = "gateway/persona.py"
 SUITES = {SPEECH: TESTS / "test_speech.py", MAIN: TESTS / "test_speech.py",
-          CONVERSATION: TESTS / "test_speech.py", PAGE: TESTS / "test_speech.py"}
+          CONVERSATION: TESTS / "test_speech.py", PAGE: TESTS / "test_speech.py",
+          PERSONA: TESTS / "test_speech.py"}
 
 PROBES: list[harness.Probe] = [
     # --- which provider ---------------------------------------------------------
@@ -220,6 +222,42 @@ PROBES: list[harness.Probe] = [
         "- Speak the language the person spoke. Hindi, Hinglish and English are all fine, and a reply that switches the way they switch is right; a reply that answers Hindi in English is wrong.\n",
         "",
         ("test_the_delivery_paragraph_asks_for_what_the_recording_has",),
+    ),
+    # --- bearing ----------------------------------------------------------------
+    (
+        CONVERSATION,
+        "the client's representative loses the bearing rules",
+        "    ) + persona.bearing_paragraph()",
+        "    )",
+        ("test_both_prompts_carry_the_owners_bearing_rules",),
+    ),
+    (
+        CONVERSATION,
+        "Jarvis loses the bearing rules",
+        "            + persona.bearing_paragraph())",
+        "            )",
+        ("test_both_prompts_carry_the_owners_bearing_rules",),
+    ),
+    (
+        PERSONA,
+        "the joke comes before the risk",
+        "say the real risk plainly first, in one sentence, then make light of it. Never let the joke replace the warning.",
+        "make light of it, then mention the risk.",
+        ("test_the_bearing_rules_say_what_he_said",),
+    ),
+    (
+        PERSONA,
+        "blame is accepted whether or not it was earned",
+        " Own a mistake that was yours. Do not accept blame for one that was not.",
+        " Apologise and take the blame.",
+        ("test_the_bearing_rules_say_what_he_said",),
+    ),
+    (
+        PERSONA,
+        "the bearing paragraph starts granting things",
+        '- Confident and warm. Sure of yourself,',
+        '- You may use any tool you think helps. Confident and warm. Sure of yourself,',
+        ("test_the_bearing_paragraph_grants_no_capability",),
     ),
     # --- the page ---------------------------------------------------------------
     (

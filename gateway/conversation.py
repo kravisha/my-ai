@@ -43,7 +43,7 @@ from typing import Iterator
 from app import capability_gaps, model_calls
 from app.model_provider import ModelProvider
 from backend.db import Database
-from gateway import devchannel, interface, recording, roles, skills, speech, store, tools, uiversion
+from gateway import devchannel, interface, persona, recording, roles, skills, speech, store, tools, uiversion
 
 SYSTEM_PROMPT = """You are the analysis and specification assistant for Project \
 Jarvis, speaking with the project's Super User through the AI Communication \
@@ -187,7 +187,8 @@ def client_prompt(agent_name: str, role: str) -> str:
     actually do."""
     return CLIENT_SYSTEM_PROMPT.format(
         name=agent_name,
-        capabilities=skills.capability_paragraph(role) + uiversion.prompt_paragraph())
+        capabilities=skills.capability_paragraph(role) + uiversion.prompt_paragraph()
+    ) + persona.bearing_paragraph()
 
 
 def operator_prompt() -> str:
@@ -222,7 +223,8 @@ def operator_prompt() -> str:
     return (SYSTEM_PROMPT + tools.initiative_paragraph(roles.ROLE_OPERATOR)
             + tools.learning_paragraph(roles.ROLE_OPERATOR)
             + interface.prompt_paragraph()
-            + devchannel.prompt_paragraph() + uiversion.prompt_paragraph())
+            + devchannel.prompt_paragraph() + uiversion.prompt_paragraph()
+            + persona.bearing_paragraph())
 
 
 

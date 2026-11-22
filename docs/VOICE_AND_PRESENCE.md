@@ -144,14 +144,25 @@ time-to-first-audio and keep it under two seconds. This changes
 `gateway/speech.py` (a `segments()` splitter), the route (a streaming
 response or a sequence of requests), and the page's player (a queue).
 
-### M3 — The host's register
+### M3 — The host's register — bearing built 2026-11-22, biography still open
 
-Requirement 4, beyond the name. The recording's host has a life: projects she
-is working on, a community, opinions. The Gateway's agents have a record and
-a role. The next step is what an agent is *allowed* to say about itself and
-its day, grounded in the record rather than invented, which is a
-Constitution question (addendum 43 §16, addendum 53 §7.9's freeze on
-personas) before it is a prompt. Not started; needs the owner.
+Requirement 4, beyond the name. Two halves.
+
+**Bearing, built.** On a call on 2026-11-22 the owner said how the agents
+should carry themselves and approved it as a standing personality:
+confident and warm; humour even in the face of something intimidating, with
+the real risk said plainly first; progressive delivery, the first useful part
+as soon as it exists; natural varied fillers while the answer forms, never a
+made-up fact; draw a worry in rather than brushing past it; acknowledge
+irritation in a beat, fix it, then lighten; own a mistake only when it was
+yours. `gateway/persona.py` is that paragraph, appended to both prompts, and
+`tests/test_speech.py` holds that it grants no capability.
+
+**Biography, open.** The recording's host has a life: projects, a community,
+opinions. What an agent is *allowed* to say about itself and its day,
+grounded in the record rather than invented, is a Constitution question
+(addendum 43 §16, addendum 53 §7.9's freeze on personas) before it is a
+prompt. Needs the owner.
 
 ### M4 — A face
 

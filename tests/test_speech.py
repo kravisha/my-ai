@@ -439,3 +439,39 @@ def test_the_voice_record_names_the_derivation_and_the_fallback(gateway_conn):
     assert "gateway/speech.py" in voice["synthesis"]
     assert "browser voice when none is" in voice["synthesis"]
     json.dumps(voice)
+
+
+# --- how an agent carries itself (gateway/persona.py, Krish 2026-11-22) -------
+
+
+def test_both_prompts_carry_the_owners_bearing_rules():
+    """One paragraph, both prompts. The rules are about bearing, and Jarvis and
+    a client's representative carry themselves the same way; what each may do
+    is still the tool tables' decision."""
+    from gateway import persona
+    assert persona.bearing_paragraph() in conversation.operator_prompt()
+    assert persona.bearing_paragraph() in conversation.client_prompt("Ada", roles.ROLE_CLIENT)
+
+
+def test_the_bearing_rules_say_what_he_said():
+    """His points, each as a phrase that must survive a rewrite: the risk
+    before the joke, the first useful part first, fillers that are not facts,
+    and blame only when it is earned."""
+    from gateway import persona
+    paragraph = persona.bearing_paragraph()
+    for rule in ("Confident and warm", "real risk plainly first", "Never let the joke replace the warning",
+                 "first useful part as soon as you have it", "never a made-up fact",
+                 "never the same one twice in a row", "draw the worry in",
+                 "Own a mistake that was yours", "Do not accept blame for one that was not"):
+        assert rule in paragraph, rule
+
+
+def test_the_bearing_paragraph_grants_no_capability():
+    """It is about manner, not permission. A sentence in it that named a tool
+    or a capability would be a grant the tables never made."""
+    from gateway import persona, skills
+    paragraph = persona.bearing_paragraph().lower()
+    for word in ("tool", "capability", "you may", "you can now", "allowed to"):
+        assert word not in paragraph, word
+    for capability in roles.CAPABILITIES:
+        assert capability.lower() not in paragraph
