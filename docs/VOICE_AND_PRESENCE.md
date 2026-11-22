@@ -207,6 +207,28 @@ look and is reachable on the PC's GPU as an *offline* render - a clip made
 ahead, not a live reply - until the models get faster. Both tiers start from
 the same still image, so the portrait chosen for an agent serves both.
 
+**A fifth sample, 2026-11-22 00:15, and the brief for Tara and Kali.** The
+same creator's character in a blue saree, a Hindi monologue, and the most
+acting yet: a hand on the chest, a finger to the chin, eyes shut in
+exasperation, a frown, a grin, a face-palm. With it the owner's words:
+*"adult faces for Tara and Kali. It's rendered though, so it doesn't improve
+live interaction performance. I'm giving you samples so you can use these
+samples to see how we should look like. This is the closest thing."*
+
+So the look is settled, and two things with it:
+
+- **The look of Tara and Kali:** the samples' style - stylised 3D, soft
+  lighting, large expressive eyes, Indian dress and jewellery, a plain bright
+  interior - **with adult proportions and adult faces**, not the doll
+  proportions of the samples. Expression is the point: eyebrows, eyes, hands.
+  One still image per agent, in that style, is the first deliverable of the
+  face work and the input to every renderer after it.
+- **Rendered is accepted.** The owner knows an acting-figure clip is an
+  offline render and does not speed up a live reply. So M4's tiers are not
+  "first and then better"; they are two products: a talking head that answers
+  live, and rendered clips of the same character for everything that can be
+  made ahead - introductions, lessons, a daily message, social posts.
+
 Three routes, in rising order of cost and fidelity:
 
 1. **A rendered avatar driven by the audio** on the page: a 2D or 3D head
@@ -237,5 +259,5 @@ the agent record is where the chosen portrait is written.
 1. Which voice provider is in force: ElevenLabs, OpenAI, or a local model on
    the PC so that nothing leaves? M1 takes either cloud key; local is a third
    row in the table and an adapter.
-2. Where do Kali and Tara live? They are not in this repository.
+2. Where do Kali and Tara live? They are not in this repository. (2026-11-22: confirmed as the owner's agents and the first two to get faces; their home is still to be named.)
 3. ~~Face: route 2 (hosted, words leave) or route 3 (local, needs a GPU)?~~ Answered by the second sample and "on this computer": route 3, local.
